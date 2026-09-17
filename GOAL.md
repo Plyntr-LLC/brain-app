@@ -35,7 +35,7 @@ Each person uses their own CLI login. Never bake a Plyntr SuperGrok (or Cursor) 
 
 ## Checkpoint (rollback here)
 
-**Tag: `working-chat-2026-09-17`**
+**Tag: `working-chat-2026-09-17`** (`33275f2`)
 
 Joe 2026-09-17: Grok, Cursor, and ChatGPT chats send. Compact UI, warm sessions, folder switch, Grok/Cursor pickers. ChatGPT model picker still lists Grok’s two models; ChatGPT effort is not Codex’s. If a later pass wrecks Chat, roll back:
 

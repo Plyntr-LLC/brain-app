@@ -1,6 +1,7 @@
 # Rollback point
 
 **Tag:** `working-chat-2026-09-17`  
+**Commit:** `33275f2`  
 **Date:** 2026-09-17  
 **Joe:** Grok, Cursor, and ChatGPT chats send. This is the “pretty well” snapshot.
 
