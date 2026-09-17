@@ -16,6 +16,7 @@ export type Session = {
   team?: Team
   kind?: 'client' | 'agency'
   role?: string
+  brainKind?: 'hq' | 'project'
   business: string
   orgLogin?: string
   ai?: AiKind

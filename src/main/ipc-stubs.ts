@@ -51,6 +51,28 @@ export function registerStubIpc(): void {
     }
   })
 
+  function bridgeFile(): string {
+    return join(app.getPath('userData'), 'bridge.json')
+  }
+  ipcMain.handle('bridge:load', () => {
+    try {
+      return JSON.parse(readFileSync(bridgeFile(), 'utf8'))
+    } catch {
+      return null
+    }
+  })
+  ipcMain.handle('bridge:save', (_e, data: unknown) => {
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    writeFileSync(bridgeFile(), JSON.stringify(data || {}))
+    return { ok: true }
+  })
+  ipcMain.handle('bridge:openUrl', (_e, raw: string) => {
+    const url = String(raw || '')
+    if (!/^https?:\/\//i.test(url)) throw new Error('That is not a web address.')
+    shell.openExternal(url)
+    return { ok: true }
+  })
+
   ipcMain.handle('auth:resolveCode', async (_e, raw: string) => {
     const code = String(raw || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase()
     const res = await ads2ai.resolveInvite(code)

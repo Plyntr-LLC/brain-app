@@ -14,6 +14,11 @@ const brain = {
         watching: boolean
       }
     }>,
+  bridge: {
+    load: () => ipcRenderer.invoke('bridge:load') as Promise<Record<string, unknown> | null>,
+    save: (data: unknown) => ipcRenderer.invoke('bridge:save', data) as Promise<{ ok: boolean }>,
+    openUrl: (url: string) => ipcRenderer.invoke('bridge:openUrl', url) as Promise<{ ok: boolean }>
+  },
   auth: {
     resolveCode: (code: string) => ipcRenderer.invoke('auth:resolveCode', code),
     requestCode: (email: string) => ipcRenderer.invoke('auth:requestCode', email),

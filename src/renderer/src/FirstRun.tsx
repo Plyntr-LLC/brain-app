@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { DOWNLOAD_AB, OWNER_NEEDS, STEPS, type AiKind, type PathKind, type Session } from '@shared/contracts'
 import { blankSession, needsDone, remainingNeeds, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
+import { BridgeWizard, type BridgeDraft } from './BridgeWizard'
 
 export function FirstRun() {
   const [s, setS] = useState<Session>(() => blankSession('create', true))
@@ -103,6 +104,12 @@ export function FirstRun() {
     <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${!railOpen && s.screen !== 'chat' ? 'rail-off' : ''}`}>
       <div className="titlebar">
         <span>{title}</span>
+        {s.role ? (
+          <span className="role-lock">
+            {s.role === 'team' || s.role === 'member' ? 'Team' : s.role === 'scout' ? 'Scout' : 'Owner'}
+            {s.brainKind === 'project' ? ' · project' : s.brainKind === 'hq' ? ' · HQ' : ''}
+          </span>
+        ) : null}
         <span className={`sync-pill ${s.abWatching ? 'on' : ''}`}>
           {s.abWatching ? 'Agency Brain · watching this folder' : 'Folder not watching yet'}
         </span>
@@ -145,6 +152,22 @@ export function FirstRun() {
             <div className="demo">
               <span>Chat is live against the folder Agency Brain is watching. New GitHub orgs and clones stay off.</span>
             </div>
+          )}
+          {s.screen === 'bridge' && (
+            <BridgeWizard
+              watching={s.abWatching}
+              onCancel={() => go('welcome')}
+              onDone={(draft: BridgeDraft) => {
+                const role = draft.role
+                const teamLike = role === 'team'
+                go(teamLike ? 'chat' : s.abWatching ? 'chat' : 'aipick', {
+                  role,
+                  brainKind: draft.brainKind,
+                  business: draft.hqName || draft.company || s.business,
+                  path: teamLike ? 'join' : s.abWatching ? 'second' : 'create'
+                })
+              }}
+            />
           )}
           {s.screen === 'welcome' && (
             <>
@@ -206,6 +229,9 @@ export function FirstRun() {
                 </button>
                 <button className="ghost" type="button" onClick={() => void skipToExisting()}>
                   This computer already has a brain — skip to chat
+                </button>
+                <button className="ghost" type="button" onClick={() => go('bridge')}>
+                  Set up HQ and project brains
                 </button>
               </div>
             </>
