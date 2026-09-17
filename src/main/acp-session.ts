@@ -282,13 +282,28 @@ function eventsFromUpdate(update: Record<string, unknown>): StreamEvent[] {
   return []
 }
 
+const TUI_CMD = new Set([
+  'theme',
+  'vim-mode',
+  'minimal',
+  'fullscreen',
+  'dashboard',
+  'timestamps',
+  'multiline',
+  'compact-mode',
+  'terminal-setup',
+  'terminal-check',
+  'home',
+  'welcome'
+])
+
 function parseCommands(raw: unknown): SessionCmd[] {
   if (!Array.isArray(raw)) return []
   const out: SessionCmd[] = []
   for (const row of raw) {
     const r = asRecord(row)
     const name = String(r.name || '').replace(/^\//, '')
-    if (!name) continue
+    if (!name || TUI_CMD.has(name)) continue
     const input = asRecord(r.input)
     const hint = String(input.hint || r.inputHint || '')
     out.push({ name, description: String(r.description || ''), hint: hint || undefined })
@@ -623,7 +638,6 @@ export async function acpResume(opts: {
 }): Promise<LiveRun> {
   return withTabLock(opts.tabId, async () => {
     const pool = await bootPool(opts.kind, opts.cwd)
-    tabPool.set(opts.tabId, poolKey(opts.kind, opts.cwd))
     const loadedRes = asRecord(
       await pool.rpc.request(
         'session/load',
@@ -633,6 +647,7 @@ export async function acpResume(opts: {
     )
     const sid = String(loadedRes.sessionId || opts.sessionId || '')
     if (!sid) throw new Error('Could not load that session.')
+    tabPool.set(opts.tabId, poolKey(opts.kind, opts.cwd))
     const have = pool.tabs.get(opts.tabId)
     if (have) pool.bySid.delete(have.sessionId)
     const live = readLive(loadedRes)

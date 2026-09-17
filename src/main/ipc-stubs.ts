@@ -302,7 +302,7 @@ export function registerStubIpc(): void {
           cwd,
           sessionId: payload.sessionId
         })
-        const messages = grokTranscript(cwd, payload.sessionId)
+        const messages = payload.kind === 'grok' ? grokTranscript(cwd, payload.sessionId) : []
         return { ok: true, sessionId: live.sessionId || payload.sessionId, messages }
       } catch (e) {
         return { ok: false, error: String((e as Error).message || e) }

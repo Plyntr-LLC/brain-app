@@ -53,9 +53,9 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Right sidebar: In use files, live Model / Effort / Mode / Folder. Folder switch is local to this window (recents in this app’s userData). It does not change Mike’s watched path.
 - `/compact` goes to the live session. Auto-compact shows a wheel + “Compacting…” then a short note. Transcript on screen stays.
 - Grok and Cursor model/mode pickers follow the live session. ChatGPT/Codex picker does **not** yet (still falls through to `grok models`).
-- Slash catalog exists. Skills send `/name` into the warm session. Most builtins are still local UI, not ACP. That is Inbox, not done.
+- Slash: ACP `available_commands_update` is the session catalog (TUI chrome filtered). Session commands send `/name` on the live session (`/compact` pattern). App jobs are real (`/rename`, `/export` save dialog, `/resume` session/load + transcript, `/fork` `x.ai/session/fork`, `/delete` closes the tab). Grok-only: resume/login/logout/doctor.
 - Drag/drop, paste (including screenshots), and Attach on Chat for images and docs. Grok/Cursor: ACP image + embedded resource. Claude: image + PDF document. Codex: localImage + inlined text docs. Pathless clipboard files stash under userData/drops. 20 MB cap.
-- Clock strip under the titlebar: Local, Eastern, Central, Pacific. 12-hour US. DST via IANA (`America/New_York`, `America/Chicago`, `America/Los_Angeles`).
+- Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
 
 ## How Joe runs Inbox
 
@@ -71,9 +71,9 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 **Large (one item = one slice):** all remaining slash ACP parity; signed Mac; Windows; Brain Bridge wizard; auto-install.
 
-**First slice:** LIVE 2026-09-17. Grok 4.6 xhigh **APPROVE**. Codex pickers, context meter, persist chats. Next slice: slash ACP parity (large).
+**First slice:** LIVE 2026-09-17. Grok 4.6 xhigh **APPROVE**. Codex pickers, context meter, persist chats.
 
-Slash ACP parity is the slice after that (large). Then packaging / wizard / auto-install, one at a time.
+**Slash ACP:** LIVE 2026-09-18. Grok 4.6 xhigh **APPROVE**. Then packaging / wizard / auto-install, one at a time.
 
 ## Hard rules
 
@@ -87,8 +87,7 @@ Slash ACP parity is the slice after that (large). Then packaging / wizard / auto
 
 ## Now
 
-1. ChatGPT/Codex pickers: model list and effort must come from Codex (`model/list` / thread params), never `grok models`. Joe 2026-09-17: ChatGPT tab showed Grok’s two models; effort was wrong too.
-2. **Every slash command is a real ACP / session call** (or an in-app panel that does the same job). Non-negotiable. `/compact` is the pattern. `/rewind`, `/fork`, `/context`, `/session-info`, `/usage`, `/resume`, and the rest in `runSlash` must stop being cosmetic. TUI-only chrome (`/theme`, `/vim-mode`, `/dashboard`, …) should be hidden, not a fake panel.
+Empty. Next Inbox items are large slices of their own: signed Mac, Windows, Brain Bridge wizard, auto-install. Wait for **next 3**.
 
 ## Inbox
 
@@ -98,7 +97,7 @@ Bugs and product gaps. One line each. Date + what.
 - [x] 2026-09-17 Joe: ChatGPT/Codex model picker lists Grok’s two models. Effort from Codex `model/list` (`reasoningEffort`). Picker no longer falls back to Grok models. Done: 2026-09-17. Evidence: `slash.ts` gpt branch, `codex-app.ts` `listCodexCaps`. Joe should click-check the ChatGPT Model list.
 - [x] 2026-09-17 Joe: Drag/drop, paste, and Attach images and docs in Chat (Grok, Cursor, Claude, Codex). Done: 2026-09-17. Grok 4.6 xhigh APPROVE. Evidence: `attach.ts`, composer drop/paste/Attach.
 - [x] 2026-09-17 Joe: Titlebar clocks — local, Eastern, Central, Pacific — easy to compare. Done: 2026-09-17. Grok 4.6 xhigh APPROVE. Evidence: `WorldClocks.tsx`.
-- [ ] 2026-09-17 Joe: **All slash commands must work as real ACP/session calls.** Non-negotiable. Audit `runSlash` in `src/renderer/src/TerminalWorkspace.tsx`. Skills already go to the session. Builtins that only trim bubbles or pop “that is the TUI” are not done.
+- [x] 2026-09-17 Joe: **All slash commands must work as real ACP/session calls.** Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `runSlash`, `acpResume`, `acpFork`, `available_commands_update`.
 - [x] 2026-09-17: Chat tabs die on quit. Persist `userData/chats.json` by cwd, flush on quit, `session/load` / `thread/resume`. Done: 2026-09-17. Evidence: `persist.ts`, `acp-session.ts` resumeId.
 - [x] 2026-09-17: Live context meter. Grok `_meta.totalTokens`, Codex `thread/tokenUsage/updated`. Done: 2026-09-17. Evidence: runmeta Context.
 - [ ] 2026-09-17 Joe: **Signed Mac app** (electron-builder + Apple notarization) so a newbie downloads one file. Needs Joe yes before we pay/notarize.

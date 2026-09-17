@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import type { AiKind, Session } from '@shared/contracts'
 import { mdToHtml, tidy, type FileHit } from './ptyChat'
+import { WorldClocks } from './WorldClocks'
 
 type Mode = 'chat' | 'term'
 type Attach = { path: string; name: string; mime: string; preview?: string }
@@ -52,6 +53,34 @@ const TUI_ONLY = new Set([
 ])
 
 const SESSION_QUIET = new Set(['compact', 'rewind', 'undo', 'flush', 'dream'])
+
+const APP_ONLY = new Set([
+  'new',
+  'clear',
+  'delete',
+  'help',
+  'usage',
+  'cost',
+  'model',
+  'm',
+  'effort',
+  'copy',
+  'export',
+  'quit',
+  'exit',
+  'rename',
+  'title',
+  'history',
+  'context',
+  'session-info',
+  'status',
+  'info',
+  'resume',
+  'fork',
+  'login',
+  'logout',
+  'doctor'
+])
 
 const NEED_ARG = new Set([
   'imagine',
@@ -781,6 +810,18 @@ function ChatPane({
       }
       void window.brain.slash.sessions(cwd).then((rows) => setResumeRows(rows))
       return true
+    }
+    const sessionHit = sessionCmds.find((c) => c.name === name)
+    if (sessionHit && !APP_ONLY.has(name)) {
+      if (sessionHit.hint && !arg) {
+        setSay(`/${name} `)
+        return true
+      }
+      if (SESSION_QUIET.has(name)) {
+        void sendQuiet(arg ? `/${name} ${arg}` : `/${name}`)
+        return true
+      }
+      return false
     }
     if (NEED_ARG.has(name) && !arg) {
       setSay(`/${name} `)
@@ -1774,6 +1815,7 @@ export function TerminalWorkspace({
             >
               {folderName}
             </button>
+            <WorldClocks />
           </div>
         </aside>
       </div>

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { DOWNLOAD_AB, OWNER_NEEDS, STEPS, type AiKind, type PathKind, type Session } from '@shared/contracts'
 import { blankSession, needsDone, remainingNeeds, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
-import { WorldClocks } from './WorldClocks'
 
 export function FirstRun() {
   const [s, setS] = useState<Session>(() => blankSession('create', true))
@@ -108,7 +107,6 @@ export function FirstRun() {
           {s.abWatching ? 'Agency Brain · watching this folder' : 'Folder not watching yet'}
         </span>
       </div>
-      <WorldClocks />
       <div className="body">
         <aside className="rail">
           <h2>Where you are</h2>

@@ -30,24 +30,32 @@ function clockParts(now: Date, tz?: string): { time: string; abbr: string } {
 
 export function WorldClocks() {
   const [now, setNow] = useState(() => new Date())
+  const [open, setOpen] = useState(false)
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 1000)
     return () => window.clearInterval(id)
   }, [])
+  const local = clockParts(now)
   return (
-    <div className="clockstrip" aria-label="Times">
-      {ZONES.map((z) => {
-        const { time, abbr } = clockParts(now, z.tz)
-        return (
-          <div className="clock" key={z.id}>
-            <span className="zone">
-              {z.label}
-              {abbr ? ` · ${abbr}` : ''}
-            </span>
-            <span className="t">{time}</span>
-          </div>
-        )
-      })}
+    <div className="clocks-side" aria-label="Times">
+      <div className="runmeta-k">Times</div>
+      <button type="button" className="runmeta-v" onClick={() => setOpen((v) => !v)}>
+        {local.time}
+      </button>
+      {open
+        ? ZONES.map((z) => {
+            const { time, abbr } = clockParts(now, z.tz)
+            return (
+              <div className="clock-row" key={z.id}>
+                <span>
+                  {z.label}
+                  {abbr ? ` · ${abbr}` : ''}
+                </span>
+                <strong>{time}</strong>
+              </div>
+            )
+          })
+        : null}
     </div>
   )
 }
