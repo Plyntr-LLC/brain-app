@@ -2,6 +2,7 @@
   "name": "brain-app",
   "version": "0.1.0",
   "private": true,
+  "author": "Plyntr LLC",
   "description": "The room in front of Agency Brain: first-run, interview, chat.",
   "main": "./out/main/index.js",
   "type": "module",
@@ -9,7 +10,8 @@
     "dev": "BRAIN_APP_DRY_RUN=1 electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false",
-    "preview": "electron-vite preview"
+    "preview": "electron-vite preview",
+    "pack:mac": "node scripts/pack-mac.cjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
@@ -23,6 +25,7 @@
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.7.0",
     "electron": "^37.2.5",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^4.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

@@ -56,6 +56,7 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Slash: ACP `available_commands_update` is the session catalog (TUI chrome filtered). Session commands send `/name` on the live session (`/compact` pattern). App jobs are real (`/rename`, `/export` save dialog, `/resume` session/load + transcript, `/fork` `x.ai/session/fork`, `/delete` closes the tab). Grok-only: resume/login/logout/doctor.
 - Drag/drop, paste (including screenshots), and Attach on Chat for images and docs. Grok/Cursor: ACP image + embedded resource. Claude: image + PDF document. Codex: localImage + inlined text docs. Pathless clipboard files stash under userData/drops. 20 MB cap.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
+- Mac one-file installer: `npm run pack:mac` writes `dist/Brain-0.1.0-mac.dmg` (arm64). Unsigned until a Developer ID Application cert is on this Mac. `BRAIN_APP_NOTARIZE=1` is refused until Joe says yes.
 
 ## How Joe runs Inbox
 
@@ -73,7 +74,9 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 **First slice:** LIVE 2026-09-17. Grok 4.6 xhigh **APPROVE**. Codex pickers, context meter, persist chats.
 
-**Slash ACP:** LIVE 2026-09-18. Grok 4.6 xhigh **APPROVE**. Then packaging / wizard / auto-install, one at a time.
+**Slash ACP:** LIVE 2026-09-18. Grok 4.6 xhigh **APPROVE**.
+
+**Signed Mac pack:** LIVE 2026-09-18. Grok 4.6 xhigh **APPROVE**. One-file arm64 dmg. Notarize still blocked until Joe yes.
 
 ## Hard rules
 
@@ -87,7 +90,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Empty. Next Inbox items are large slices of their own: signed Mac, Windows, Brain Bridge wizard, auto-install. Wait for **next 3**.
+Empty. Next Inbox items are large slices of their own: Windows, Brain Bridge wizard, auto-install. Wait for **next 3**.
 
 ## Inbox
 
@@ -100,7 +103,7 @@ Bugs and product gaps. One line each. Date + what.
 - [x] 2026-09-17 Joe: **All slash commands must work as real ACP/session calls.** Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `runSlash`, `acpResume`, `acpFork`, `available_commands_update`.
 - [x] 2026-09-17: Chat tabs die on quit. Persist `userData/chats.json` by cwd, flush on quit, `session/load` / `thread/resume`. Done: 2026-09-17. Evidence: `persist.ts`, `acp-session.ts` resumeId.
 - [x] 2026-09-17: Live context meter. Grok `_meta.totalTokens`, Codex `thread/tokenUsage/updated`. Done: 2026-09-17. Evidence: runmeta Context.
-- [ ] 2026-09-17 Joe: **Signed Mac app** (electron-builder + Apple notarization) so a newbie downloads one file. Needs Joe yes before we pay/notarize.
+- [x] 2026-09-17 Joe: **Signed Mac app** (electron-builder + Apple notarization) so a newbie downloads one file. Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `npm run pack:mac` → `dist/Brain-0.1.0-mac.dmg`. Unsigned (no Developer ID Application cert). Notarize gated until Joe yes.
 - [ ] 2026-09-17 Joe: **Windows app** with Windows paths for Agency Brain, CLI bins, and installers. Not a Mac build renamed.
 - [ ] 2026-09-17 Joe: **Brain Bridge in this app.** Setup wizard (HQ + project brains, role permissions owner/scout/team) lands the person in this Chat with only what they are allowed. One walk, then they are in. Code today: `~/Projects/brain-bridge`, `docs/client-setup-wizard.html` in the agency brain.
 - [ ] 2026-09-17 Joe: **Auto-install for newbies.** If Homebrew, Grok/Claude/Cursor/Codex CLI, or Agency Brain is missing, the wizard downloads and installs it (with Joe/user consent on spend). Zero technical skill after “download this app.” Detect, explain in one line, install, then Chat.
