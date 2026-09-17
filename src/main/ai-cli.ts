@@ -45,6 +45,7 @@ export type StreamEvent =
   | { kind: 'text'; data: string }
   | { kind: 'file'; path: string; tool?: string }
   | { kind: 'status'; data: string }
+  | { kind: 'context'; used?: number; total?: number; percent?: number }
   | { kind: 'done' }
   | { kind: 'error'; data: string }
 

@@ -12,6 +12,8 @@ export type LiveRun = {
   model?: string
   effort?: string
   agentMode?: string
+  sessionId?: string
+  contextTotal?: number
   models?: Cap[]
   efforts?: Cap[]
   agentModes?: Cap[]
@@ -26,6 +28,7 @@ type Tab = {
   models?: Cap[]
   efforts?: Cap[]
   agentModes?: Cap[]
+  contextTotal?: number
   promptId: number | null
   onEvent?: (ev: StreamEvent) => void
   text: string
@@ -171,10 +174,14 @@ function readLive(res: Record<string, unknown>): LiveRun {
   const modesBlock = asRecord(res.modes)
   const agentModes = capsFromOptions(modesBlock.availableModes)
   const agentMode = typeof modesBlock.currentModeId === 'string' ? modesBlock.currentModeId : undefined
+  const contextTotal =
+    Number(meta.contextWindow || meta.context_window || meta.totalContextTokens || modelsBlock.contextWindow || 0) ||
+    undefined
   return {
     model,
     effort,
     agentMode,
+    contextTotal,
     models: models.length ? models : undefined,
     efforts: efforts.length ? efforts : undefined,
     agentModes: agentModes.length ? agentModes : undefined
@@ -291,6 +298,33 @@ function handleNote(pool: Pool, msg: RpcMsg): void {
   }
   const phase = compactPhase(method, update)
   if (phase && tab.onEvent) tab.onEvent({ kind: 'status', data: phase })
+  const metaU = asRecord(params._meta || update._meta)
+  const usage = asRecord(update.usage || params.usage)
+  const used = Number(
+    usage.input_tokens ||
+      usage.inputTokens ||
+      usage.context_tokens ||
+      usage.total_tokens ||
+      metaU.totalTokens ||
+      update.tokens_used ||
+      params.tokens_used ||
+      0
+  )
+  const total =
+    tab.contextTotal ||
+    Number(update.context_window || metaU.contextWindow || metaU.totalContextTokens || 0) ||
+    0
+  const pctRaw = update.percentage ?? update.used_percentage ?? metaU.percentage
+  const percent =
+    typeof pctRaw === 'number'
+      ? Math.min(100, Math.round(pctRaw))
+      : used && total
+        ? Math.min(100, Math.round((used / total) * 100))
+        : undefined
+  if ((used || percent != null) && tab.onEvent) {
+    if (total) tab.contextTotal = total
+    tab.onEvent({ kind: 'context', used: used || undefined, total: total || undefined, percent })
+  }
   if (!tab.onEvent) return
   for (const ev of eventsFromUpdate(update)) {
     if (ev.kind === 'text') tab.text += ev.data
@@ -433,6 +467,8 @@ function snapshot(tab: Tab): LiveRun {
     model: tab.model,
     effort: tab.effort,
     agentMode: tab.agentMode,
+    sessionId: tab.sessionId,
+    contextTotal: tab.contextTotal,
     models: tab.models,
     efforts: tab.efforts,
     agentModes: tab.agentModes
@@ -443,6 +479,8 @@ function assignLive(tab: Tab, live: LiveRun): void {
   if (live.model) tab.model = live.model
   if (live.effort) tab.effort = live.effort
   if (live.agentMode) tab.agentMode = live.agentMode
+  if (live.sessionId) tab.sessionId = live.sessionId
+  if (live.contextTotal) tab.contextTotal = live.contextTotal
   if (live.models) tab.models = live.models
   if (live.efforts) tab.efforts = live.efforts
   if (live.agentModes) tab.agentModes = live.agentModes
@@ -455,6 +493,7 @@ export async function acpWarm(opts: {
   model?: string
   effort?: string
   agentMode?: string
+  resumeId?: string
 }): Promise<LiveRun> {
   return withTabLock(opts.tabId, async () => {
     const pool = await bootPool(opts.kind, opts.cwd)
@@ -465,11 +504,26 @@ export async function acpWarm(opts: {
       assignLive(have, live)
       return snapshot(have)
     }
+    let res: Record<string, unknown> | null = null
+    if (opts.resumeId) {
+      try {
+        res = asRecord(
+          await pool.rpc.request(
+            'session/load',
+            { sessionId: opts.resumeId, cwd: opts.cwd, mcpServers: [] },
+            60_000
+          )
+        )
+        if (res && !res.sessionId) res.sessionId = opts.resumeId
+      } catch {
+        res = null
+      }
+    }
     const params =
       opts.kind === 'grok'
         ? { cwd: opts.cwd, mcpServers: [], _meta: { yoloMode: true, rules: RULES } }
         : { cwd: opts.cwd, mcpServers: [] }
-    const res = asRecord(await pool.rpc.request('session/new', params, 90_000))
+    if (!res || !res.sessionId) res = asRecord(await pool.rpc.request('session/new', params, 90_000))
     const sessionId = String(res.sessionId || '')
     if (!sessionId) throw new Error(`${opts.kind} did not return a session`)
     const live = readLive(res)
@@ -482,6 +536,7 @@ export async function acpWarm(opts: {
       models: live.models,
       efforts: live.efforts,
       agentModes: live.agentModes,
+      contextTotal: live.contextTotal,
       promptId: null,
       text: ''
     })

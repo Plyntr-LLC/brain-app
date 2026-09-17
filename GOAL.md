@@ -69,11 +69,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 **Large (one item = one slice):** all remaining slash ACP parity; signed Mac; Windows; Brain Bridge wizard; auto-install.
 
-**First slice (when Joe says next 3):**
-
-1. ChatGPT/Codex model list + effort from Codex, not Grok.
-2. Live context meter (percent or tokens).
-3. Persist chat tabs or `session/load` so quit is not amnesia.
+**First slice (when Joe says next 3):** landed in working tree 2026-09-17. Grok 4.6 xhigh review: REJECT ×2, then remaining four bugs fixed (session/load id, Codex tokenUsage shape, persist by cwd + quit flush, ChatGPT picker never uses Grok list). Waiting Joe click-check on a ChatGPT tab Model list. Next slice: slash ACP parity (large).
 
 Slash ACP parity is the slice after that (large). Then packaging / wizard / auto-install, one at a time.
 
@@ -97,10 +93,10 @@ Slash ACP parity is the slice after that (large). Then packaging / wizard / auto
 Bugs and product gaps. One line each. Date + what.
 
 - [x] 2026-09-17 Joe: Cursor send `Invalid params` from Grok `reasoning_effort`. Caps-driven Cursor pickers. Joe: Cursor chat works. Done: 2026-09-17.
-- [ ] 2026-09-17 Joe: ChatGPT/Codex model picker lists Grok’s two models. Effort levels are not Codex’s. `src/main/slash.ts` `listSlash` falls through to `grok models` unless kind is cursor. Caps from Codex app-server.
+- [x] 2026-09-17 Joe: ChatGPT/Codex model picker lists Grok’s two models. Effort from Codex `model/list` (`reasoningEffort`). Picker no longer falls back to Grok models. Done: 2026-09-17. Evidence: `slash.ts` gpt branch, `codex-app.ts` `listCodexCaps`. Joe should click-check the ChatGPT Model list.
 - [ ] 2026-09-17 Joe: **All slash commands must work as real ACP/session calls.** Non-negotiable. Audit `runSlash` in `src/renderer/src/TerminalWorkspace.tsx`. Skills already go to the session. Builtins that only trim bubbles or pop “that is the TUI” are not done.
-- [ ] 2026-09-17: Chat tabs die on quit. Warm process is killed on quit. Persist tabs or `session/load`.
-- [ ] 2026-09-17: Live context meter (percent or tokens) so compact is not a surprise.
+- [x] 2026-09-17: Chat tabs die on quit. Persist `userData/chats.json` by cwd, flush on quit, `session/load` / `thread/resume`. Done: 2026-09-17. Evidence: `persist.ts`, `acp-session.ts` resumeId.
+- [x] 2026-09-17: Live context meter. Grok `_meta.totalTokens`, Codex `thread/tokenUsage/updated`. Done: 2026-09-17. Evidence: runmeta Context.
 - [ ] 2026-09-17 Joe: **Signed Mac app** (electron-builder + Apple notarization) so a newbie downloads one file. Needs Joe yes before we pay/notarize.
 - [ ] 2026-09-17 Joe: **Windows app** with Windows paths for Agency Brain, CLI bins, and installers. Not a Mac build renamed.
 - [ ] 2026-09-17 Joe: **Brain Bridge in this app.** Setup wizard (HQ + project brains, role permissions owner/scout/team) lands the person in this Chat with only what they are allowed. One walk, then they are in. Code today: `~/Projects/brain-bridge`, `docs/client-setup-wizard.html` in the agency brain.

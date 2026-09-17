@@ -58,12 +58,30 @@ app.whenReady().then(() => {
   })
 })
 
+let quitFlushed = false
+
 app.on('window-all-closed', () => {
   killAllPtys()
   killAllWarm()
   if (process.platform !== 'darwin') app.quit()
 })
-app.on('before-quit', () => {
-  killAllPtys()
-  killAllWarm()
+app.on('before-quit', (e) => {
+  if (quitFlushed) {
+    killAllPtys()
+    killAllWarm()
+    return
+  }
+  const win = BrowserWindow.getAllWindows()[0]
+  if (!win || win.isDestroyed()) {
+    quitFlushed = true
+    killAllPtys()
+    killAllWarm()
+    return
+  }
+  e.preventDefault()
+  win.webContents.send('app:will-quit')
+  setTimeout(() => {
+    quitFlushed = true
+    app.quit()
+  }, 600)
 })

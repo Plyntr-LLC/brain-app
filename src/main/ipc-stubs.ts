@@ -6,6 +6,7 @@ import * as ads2ai from './ads2ai'
 import { detectApp, readWatching, writesAllowed } from './agency-brain'
 import * as ai from './ai-cli'
 import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot } from './files'
+import { loadChats, saveChats, type SavedChats } from './persist'
 import { cancelWarm, closeWarm, promptWarm, resetWarm, warmSession } from './warm'
 import { contextBlurb, grokCli, listSlash, usageBlurb } from './slash'
 import { getMemberToken, setMemberToken } from './session-token'
@@ -219,6 +220,7 @@ export function registerStubIpc(): void {
         model?: string
         effort?: string
         agentMode?: string
+        resumeId?: string
       }
     ) => {
       const watching = readWatching()
@@ -230,7 +232,8 @@ export function registerStubIpc(): void {
         cwd,
         model: payload.model,
         effort: payload.effort,
-        agentMode: payload.agentMode
+        agentMode: payload.agentMode,
+        resumeId: payload.resumeId
       })
       return { ok: true, ...live }
     }
@@ -260,6 +263,11 @@ export function registerStubIpc(): void {
     return true
   })
   ipcMain.handle('chat:stop', async (_e, tabId: string) => cancelWarm(tabId) || ai.stopPrompt(tabId))
+  ipcMain.handle('chat:loadState', async (_e, cwd?: string) => loadChats(cwd))
+  ipcMain.handle('chat:saveState', async (_e, state: SavedChats) => {
+    saveChats(state)
+    return true
+  })
   ipcMain.handle('chat:needs', async () => ({ filled: {}, remaining: [] }))
   ipcMain.handle('slash:list', async (_e, cwd?: string, kind?: string) => {
     const watching = readWatching()

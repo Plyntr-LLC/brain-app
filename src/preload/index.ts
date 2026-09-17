@@ -107,10 +107,13 @@ const brain = {
     onEvent: (
       cb: (ev: {
         tabId: string
-        kind: 'thought' | 'text' | 'file' | 'status' | 'done' | 'error'
+        kind: 'thought' | 'text' | 'file' | 'status' | 'context' | 'done' | 'error'
         data?: string
         path?: string
         tool?: string
+        used?: number
+        total?: number
+        percent?: number
       }) => void
     ) => {
       const handler = (_: unknown, ev: Parameters<typeof cb>[0]) => cb(ev)
@@ -127,12 +130,15 @@ const brain = {
       model?: string
       effort?: string
       agentMode?: string
+      resumeId?: string
     }) =>
       ipcRenderer.invoke('chat:warm', payload) as Promise<{
         ok: boolean
         model?: string
         effort?: string
         agentMode?: string
+        sessionId?: string
+        contextTotal?: number
         models?: { id: string; label: string }[]
         efforts?: { id: string; label: string }[]
         agentModes?: { id: string; label: string }[]
@@ -145,6 +151,20 @@ const brain = {
       effort?: string
     }) => ipcRenderer.invoke('chat:reset', payload),
     close: (tabId: string) => ipcRenderer.invoke('chat:close', tabId),
+    loadState: (cwd?: string) => ipcRenderer.invoke('chat:loadState', cwd),
+    onWillQuit: (cb: () => void) => {
+      const handler = () => cb()
+      ipcRenderer.on('app:will-quit', handler)
+      return () => {
+        ipcRenderer.removeListener('app:will-quit', handler)
+      }
+    },
+    saveState: (state: {
+      cwd: string
+      active: string
+      tabs: Record<string, unknown>[]
+      messages: Record<string, { who: string; text: string }[]>
+    }) => ipcRenderer.invoke('chat:saveState', state),
     needs: () => ipcRenderer.invoke('chat:needs')
   }
 }

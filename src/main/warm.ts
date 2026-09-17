@@ -22,6 +22,7 @@ export type WarmOpts = {
   model?: string
   effort?: string
   agentMode?: string
+  resumeId?: string
 }
 
 export async function warmSession(opts: WarmOpts): Promise<LiveRun> {
@@ -32,14 +33,21 @@ export async function warmSession(opts: WarmOpts): Promise<LiveRun> {
       cwd: opts.cwd,
       model: opts.model,
       effort: opts.effort,
-      agentMode: opts.agentMode
+      agentMode: opts.agentMode,
+      resumeId: opts.resumeId
     })
   }
   if (opts.kind === 'claude') {
     return claudeWarm({ tabId: opts.tabId, cwd: opts.cwd, model: opts.model, effort: opts.effort })
   }
   if (opts.kind === 'gpt') {
-    return codexWarm({ tabId: opts.tabId, cwd: opts.cwd, model: opts.model, effort: opts.effort })
+    return codexWarm({
+      tabId: opts.tabId,
+      cwd: opts.cwd,
+      model: opts.model,
+      effort: opts.effort,
+      resumeId: opts.resumeId
+    })
   }
   return { model: opts.model, effort: opts.effort }
 }

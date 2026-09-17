@@ -22,6 +22,7 @@ type Tab = {
   models?: Cap[]
   efforts?: Cap[]
   agentModes?: Cap[]
+  cliSessionId?: string
   alwaysApprove?: boolean
   path?: string
   fileKind?: string
@@ -232,15 +233,19 @@ function ChatPane({
   sessionId,
   active,
   greeting,
+  initialMessages,
   model,
   effort,
   agentMode,
+  resumeId,
   alwaysApprove,
   onFiles,
   onNew,
   onModel,
   onEffort,
   onCaps,
+  onTranscript,
+  onContext,
   onApprove
 }: {
   id: string
@@ -249,9 +254,11 @@ function ChatPane({
   sessionId: string
   active: boolean
   greeting: string
+  initialMessages?: Msg[]
   model?: string
   effort?: string
   agentMode?: string
+  resumeId?: string
   alwaysApprove?: boolean
   onFiles: (id: string, files: FileHit[]) => void
   onNew: () => void
@@ -261,13 +268,18 @@ function ChatPane({
     model?: string
     effort?: string
     agentMode?: string
+    sessionId?: string
     models?: Cap[]
     efforts?: Cap[]
     agentModes?: Cap[]
   }) => void
+  onTranscript: (id: string, messages: Msg[]) => void
+  onContext: (id: string, ctx: { used?: number; total?: number; percent?: number }) => void
   onApprove: (v: boolean) => void
 }) {
-  const [messages, setMessages] = useState<Msg[]>([{ who: 'brain', text: greeting }])
+  const [messages, setMessages] = useState<Msg[]>(
+    initialMessages && initialMessages.length ? initialMessages : [{ who: 'brain', text: greeting }]
+  )
   const [say, setSay] = useState('')
   const [busy, setBusy] = useState(false)
   const [cmds, setCmds] = useState<{ name: string; kind: 'builtin' | 'skill'; description: string }[]>([])
@@ -308,6 +320,9 @@ function ChatPane({
           }
           return next
         })
+      }
+      if (ev.kind === 'context') {
+        onContext(id, { used: ev.used, total: ev.total, percent: ev.percent })
       }
       if (ev.kind === 'status' && ev.data === 'compacting') {
         compactingRef.current = true
@@ -364,6 +379,10 @@ function ChatPane({
 
   useEffect(() => {
     thread.current?.scrollTo(0, thread.current.scrollHeight)
+  }, [messages, busy])
+
+  useEffect(() => {
+    onTranscript(id, messages)
   }, [messages, active])
 
   useEffect(() => {
@@ -376,20 +395,21 @@ function ChatPane({
   useEffect(() => {
     if (!cwd) return
     void window.brain.chat
-      .warm({ tabId: id, kind, cwd, model, effort, agentMode })
+      .warm({ tabId: id, kind, cwd, model, effort, agentMode, resumeId })
       .then((r) => {
         if (r?.models?.length) setModels(r.models)
         onCaps({
           model: r?.model,
           effort: r?.effort,
           agentMode: r?.agentMode,
+          sessionId: r?.sessionId,
           models: r?.models,
           efforts: r?.efforts,
           agentModes: r?.agentModes
         })
       })
       .catch(() => {})
-  }, [id, kind, cwd, model, effort, agentMode])
+  }, [id, kind, cwd, model, effort, agentMode, resumeId])
 
   useEffect(() => {
     return () => {
@@ -397,7 +417,8 @@ function ChatPane({
     }
   }, [id, cwd])
 
-  const EFFORTS = ['low', 'medium', 'high', 'xhigh']
+  const EFFORTS =
+    kind === 'gpt' ? ['low', 'medium', 'high'] : kind === 'cursor' ? [] : ['low', 'medium', 'high', 'xhigh']
   const slashOn = say.startsWith('/')
   const after = slashOn ? say.slice(1) : ''
   const space = after.indexOf(' ')
@@ -871,8 +892,8 @@ export function TerminalWorkspace({
   const [pick, setPick] = useState<null | 'model' | 'effort' | 'folder' | 'agentMode'>(null)
   const [models, setModels] = useState<{ id: string; label: string }[]>([])
   const [recents, setRecents] = useState<{ path: string; name: string; watching?: boolean }[]>([])
-  const [tabs, setTabs] = useState<Tab[]>(() => [
-    {
+  function freshTab(): Tab {
+    return {
       id: nid(),
       type: 'chat',
       kind: setupKind,
@@ -881,8 +902,9 @@ export function TerminalWorkspace({
       sessionId: crypto.randomUUID(),
       effort: setupKind === 'cursor' ? undefined : 'high'
     }
-  ])
-  const [active, setActive] = useState(tabs[0].id)
+  }
+  const [tabs, setTabs] = useState<Tab[]>([])
+  const [active, setActive] = useState('')
   const [filesByTab, setFilesByTab] = useState<Record<string, FileHit[]>>({})
   const [filesOpen, setFilesOpen] = useState(true)
   const [picker, setPicker] = useState(false)
@@ -894,7 +916,12 @@ export function TerminalWorkspace({
   const [editId, setEditId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const refsList = useRef<HTMLUListElement>(null)
-  const [lastChatId, setLastChatId] = useState(tabs[0].id)
+  const [lastChatId, setLastChatId] = useState('')
+  const [transcripts, setTranscripts] = useState<Record<string, Msg[]>>({})
+  const [contextByTab, setContextByTab] = useState<Record<string, { used?: number; total?: number; percent?: number }>>({})
+  const [hydrated, setHydrated] = useState(false)
+  const [hydratedCwd, setHydratedCwd] = useState('')
+  const saveRef = useRef({ cwd: '', active: '', tabs: [] as Tab[], transcripts: {} as Record<string, Msg[]> })
 
   const tab = tabs.find((t) => t.id === active) || tabs[0]
   const chatId = tab?.type === 'chat' ? tab.id : lastChatId
@@ -905,6 +932,101 @@ export function TerminalWorkspace({
   useEffect(() => {
     if (!cwd && s.brainPath) setCwd(s.brainPath)
   }, [s.brainPath, cwd])
+
+  useEffect(() => {
+    if (!cwd) return
+    let live = true
+    const wanted = cwd
+    setHydrated(false)
+    setHydratedCwd('')
+    void window.brain.chat
+      .loadState(wanted)
+      .then((raw) => {
+        if (!live) return
+        const saved = raw as {
+          cwd?: string
+          active?: string
+          tabs?: Tab[]
+          messages?: Record<string, Msg[]>
+        } | null
+        if (saved?.cwd === wanted && Array.isArray(saved.tabs) && saved.tabs.length) {
+          setTabs(saved.tabs)
+          setActive(saved.active || saved.tabs[0].id)
+          setLastChatId(saved.tabs.find((t) => t.type === 'chat')?.id || saved.tabs[0].id)
+          if (saved.messages) setTranscripts(saved.messages)
+        } else {
+          const t = freshTab()
+          setTabs([t])
+          setActive(t.id)
+          setLastChatId(t.id)
+        }
+      })
+      .catch(() => {
+        if (!live) return
+        const t = freshTab()
+        setTabs([t])
+        setActive(t.id)
+        setLastChatId(t.id)
+      })
+      .finally(() => {
+        if (!live) return
+        setHydratedCwd(wanted)
+        setHydrated(true)
+      })
+    return () => {
+      live = false
+    }
+  }, [cwd])
+
+  useEffect(() => {
+    saveRef.current = { cwd, active, tabs, transcripts }
+    if (!hydrated || !cwd || hydratedCwd !== cwd) return
+    const payload = {
+      cwd,
+      active,
+      tabs: tabs.map((x) => ({
+        id: x.id,
+        type: x.type,
+        title: x.title,
+        kind: x.kind,
+        mode: x.mode,
+        model: x.model,
+        effort: x.effort,
+        agentMode: x.agentMode,
+        cliSessionId: x.cliSessionId,
+        path: x.path
+      })),
+      messages: transcripts
+    }
+    const t = window.setTimeout(() => {
+      void window.brain.chat.saveState(payload)
+    }, 500)
+    return () => window.clearTimeout(t)
+  }, [hydrated, hydratedCwd, cwd, active, tabs, transcripts])
+
+  useEffect(() => {
+    return window.brain.chat.onWillQuit(() => {
+      const s = saveRef.current
+      if (!s.cwd || !s.tabs.length) return
+      void window.brain.chat.saveState({
+        cwd: s.cwd,
+        active: s.active,
+        tabs: s.tabs.map((x) => ({
+          id: x.id,
+          type: x.type,
+          title: x.title,
+          kind: x.kind,
+          mode: x.mode,
+          model: x.model,
+          effort: x.effort,
+          agentMode: x.agentMode,
+          cliSessionId: x.cliSessionId,
+          path: x.path
+        })),
+        messages: s.transcripts
+      })
+    })
+  }, [])
 
   useEffect(() => {
     window.brain.ai.detect().then(setDetected).catch(() => {})
@@ -1175,45 +1297,51 @@ export function TerminalWorkspace({
           )}
         </aside>
         <div className="stage">
-          {tabs
-            .filter((t) => t.type === 'chat')
-            .map((t) => (
-              <ChatPane
-                key={'c' + t.id}
-                id={t.id}
-                kind={t.kind || 'grok'}
-                cwd={cwd}
-                sessionId={t.sessionId || t.id}
-                model={t.model}
-                effort={t.effort}
-                agentMode={t.agentMode}
-                alwaysApprove={t.alwaysApprove}
-                active={t.id === active}
-                greeting={`You're in ${folderName}. Type / for commands.`}
-                onFiles={onFiles}
-                onNew={() => addTab(t.kind || 'grok')}
-                onModel={(m) => setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, model: m } : x)))}
-                onEffort={(e) => setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, effort: e } : x)))}
-                onCaps={(c) =>
-                  setTabs((all) =>
-                    all.map((x) =>
-                      x.id === t.id
-                        ? {
-                            ...x,
-                            model: c.model || x.model,
-                            effort: c.efforts && c.efforts.length === 0 ? undefined : c.effort ?? x.effort,
-                            agentMode: c.agentMode || x.agentMode,
-                            models: c.models ?? x.models,
-                            efforts: c.efforts,
-                            agentModes: c.agentModes ?? x.agentModes
-                          }
-                        : x
+          {hydrated &&
+            tabs
+              .filter((t) => t.type === 'chat')
+              .map((t) => (
+                <ChatPane
+                  key={'c' + t.id}
+                  id={t.id}
+                  kind={t.kind || 'grok'}
+                  cwd={cwd}
+                  sessionId={t.sessionId || t.id}
+                  resumeId={t.cliSessionId}
+                  model={t.model}
+                  effort={t.effort}
+                  agentMode={t.agentMode}
+                  alwaysApprove={t.alwaysApprove}
+                  active={t.id === active}
+                  greeting={`You're in ${folderName}. Type / for commands.`}
+                  initialMessages={transcripts[t.id]}
+                  onFiles={onFiles}
+                  onNew={() => addTab(t.kind || 'grok')}
+                  onModel={(m) => setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, model: m } : x)))}
+                  onEffort={(e) => setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, effort: e } : x)))}
+                  onCaps={(c) =>
+                    setTabs((all) =>
+                      all.map((x) =>
+                        x.id === t.id
+                          ? {
+                              ...x,
+                              model: c.model || x.model,
+                              effort: c.efforts && c.efforts.length === 0 ? undefined : c.effort ?? x.effort,
+                              agentMode: c.agentMode || x.agentMode,
+                              cliSessionId: c.sessionId || x.cliSessionId,
+                              models: c.models ?? x.models,
+                              efforts: c.efforts,
+                              agentModes: c.agentModes ?? x.agentModes
+                            }
+                          : x
+                      )
                     )
-                  )
-                }
-                onApprove={(v) => setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, alwaysApprove: v } : x)))}
-              />
-            ))}
+                  }
+                  onTranscript={(id, msgs) => setTranscripts((m) => ({ ...m, [id]: msgs }))}
+                  onContext={(id, ctx) => setContextByTab((m) => ({ ...m, [id]: ctx }))}
+                  onApprove={(v) => setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, alwaysApprove: v } : x)))}
+                />
+              ))}
           {tabs
             .filter((t) => t.type === 'file' && t.id === active)
             .map((t) => (
@@ -1243,7 +1371,14 @@ export function TerminalWorkspace({
             {pick && (
               <div className="runpick">
                 {pick === 'model' &&
-                  (chatTab?.models?.length ? chatTab.models : models.length ? models : [{ id: 'grok-4.6', label: 'Grok 4.6' }]).map((m) => (
+                  (chatTab?.models?.length
+                    ? chatTab.models
+                    : chatTab?.kind === 'gpt' || chatTab?.kind === 'cursor'
+                      ? []
+                      : models.length
+                        ? models
+                        : [{ id: 'grok-4.6', label: 'Grok 4.6' }]
+                  ).map((m) => (
                     <button
                       type="button"
                       key={m.id}
@@ -1317,6 +1452,16 @@ export function TerminalWorkspace({
                 <button type="button" className="runmeta-v" onClick={() => setPick((p) => (p === 'agentMode' ? null : 'agentMode'))}>
                   {chatTab.agentModes.find((m) => m.id === chatTab.agentMode)?.label || chatTab.agentMode || 'Agent'}
                 </button>
+              </>
+            ) : null}
+            {contextByTab[chatId || ''] && (contextByTab[chatId || ''].percent != null || contextByTab[chatId || ''].used) ? (
+              <>
+                <div className="runmeta-k">Context</div>
+                <div className="runmeta-v">
+                  {contextByTab[chatId || ''].percent != null
+                    ? `${contextByTab[chatId || ''].percent}%`
+                    : `${Math.round((contextByTab[chatId || ''].used || 0) / 1000)}k tokens`}
+                </div>
               </>
             ) : null}
             <div className="runmeta-k">Folder</div>

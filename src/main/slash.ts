@@ -3,6 +3,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { resolveBin } from './ai-cli'
+import { listCodexCaps } from './codex-app'
 
 export type SlashCmd = { name: string; kind: 'builtin' | 'skill'; description: string }
 
@@ -140,6 +141,17 @@ export async function listSlash(
       } catch {
         /* */
       }
+    }
+    skills = []
+    return { commands: builtins, models }
+  }
+  if (kind === 'gpt') {
+    try {
+      const caps = await listCodexCaps(cwd)
+      if (caps.models?.length) models = caps.models
+      else models = []
+    } catch {
+      models = []
     }
     skills = []
     return { commands: builtins, models }
