@@ -5,6 +5,7 @@ import { DOWNLOAD_AB, GITHUB_APP_INSTALL, GITHUB_NEW_ORG, type AiKind } from '..
 import * as ads2ai from './ads2ai'
 import { detectApp, readWatching, writesAllowed } from './agency-brain'
 import * as ai from './ai-cli'
+import { asAttachBuf, inspectAttach, stashBytes } from './attach'
 import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot } from './files'
 import { loadChats, saveChats, type SavedChats } from './persist'
 import { cancelWarm, closeWarm, promptWarm, resetWarm, warmSession } from './warm'
@@ -159,6 +160,29 @@ export function registerStubIpc(): void {
     if (!abs || !existsSync(abs)) throw new Error('That folder is not on this computer.')
     return saveRecent(abs)
   })
+  ipcMain.handle('files:stash', async (_e, name: string, bytes: unknown, mime: string) => {
+    const buf = asAttachBuf(bytes)
+    if (!buf.length) throw new Error('That file was empty.')
+    if (buf.length > 20 * 1024 * 1024) throw new Error('That file is larger than 20 MB.')
+    return stashBytes(String(name || 'drop'), buf, String(mime || ''))
+  })
+  ipcMain.handle('files:pick', async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = {
+      title: 'Attach files',
+      properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'>
+    }
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (r.canceled || !r.filePaths.length) return { files: [], skipped: [] as string[] }
+    const files: { path: string; name: string; mime: string }[] = []
+    const skipped: string[] = []
+    for (const p of r.filePaths) {
+      const hit = inspectAttach(p)
+      if (hit.file) files.push(hit.file)
+      else if (hit.skip) skipped.push(hit.skip)
+    }
+    return { files, skipped }
+  })
   ipcMain.handle('files:pickFolder', async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     const opts = {
@@ -186,6 +210,7 @@ export function registerStubIpc(): void {
         alwaysApprove?: boolean
         history?: { who: 'brain' | 'me'; text: string }[]
         system?: string
+        attachments?: { path: string; name: string; mime: string }[]
       }
     ) => {
       const watching = readWatching()
@@ -204,6 +229,7 @@ export function registerStubIpc(): void {
         model: payload.model,
         effort: payload.effort,
         agentMode: payload.agentMode,
+        attachments: payload.attachments,
         onEvent
       })
       return { reply }

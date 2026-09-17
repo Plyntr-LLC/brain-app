@@ -56,7 +56,10 @@ export function saveChats(state: SavedChats): void {
   mkdirSync(app.getPath('userData'), { recursive: true })
   const messages: Record<string, SavedMsg[]> = {}
   for (const [id, list] of Object.entries(state.messages || {})) {
-    messages[id] = (list || []).filter((m) => m.who !== 'think').slice(-200)
+    messages[id] = (list || [])
+      .filter((m) => m.who !== 'think')
+      .slice(-200)
+      .map((m) => ({ who: m.who, text: m.text }))
   }
   const tabs = state.tabs.map((t) => ({
     id: t.id,

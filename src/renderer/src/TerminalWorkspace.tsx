@@ -6,7 +6,32 @@ import type { AiKind, Session } from '@shared/contracts'
 import { mdToHtml, tidy, type FileHit } from './ptyChat'
 
 type Mode = 'chat' | 'term'
-type Msg = { who: 'me' | 'brain' | 'think' | 'sys'; text: string }
+type Attach = { path: string; name: string; mime: string; preview?: string }
+
+function collectFiles(from: DataTransfer | null): File[] {
+  if (!from) return []
+  const out: File[] = []
+  if (from.items && from.items.length) {
+    for (const it of Array.from(from.items)) {
+      if (it.kind !== 'file') continue
+      const f = it.getAsFile()
+      if (f) out.push(f)
+    }
+  }
+  if (out.length) return out
+  return Array.from(from.files || [])
+}
+
+function filePath(f: File): string {
+  const tagged = f as File & { path?: string }
+  if (tagged.path) return tagged.path
+  try {
+    return window.brain.files.pathFor(f) || ''
+  } catch {
+    return ''
+  }
+}
+type Msg = { who: 'me' | 'brain' | 'think' | 'sys'; text: string; files?: Attach[] }
 type FileNode = { name: string; path: string; dir: boolean; kids?: FileNode[] }
 type Cap = { id: string; label: string }
 type Tab = {
@@ -288,6 +313,11 @@ function ChatPane({
   const [panel, setPanel] = useState<{ title: string; body: string } | null>(null)
   const [compacting, setCompacting] = useState(false)
   const compactingRef = useRef(false)
+  const [drops, setDrops] = useState<Attach[]>([])
+  const [over, setOver] = useState(false)
+  const [dropNote, setDropNote] = useState('')
+  const dropsRef = useRef<Attach[]>([])
+  const pendingDrops = useRef(Promise.resolve())
   const thread = useRef<HTMLDivElement>(null)
   const filesRef = useRef<FileHit[]>([])
   const turn = useRef({ think: false, answer: false })
@@ -707,8 +737,9 @@ function ChatPane({
   }
 
   async function send() {
+    await pendingDrops.current
     const t = say.trim()
-    if (!t) return
+    if (!t && !dropsRef.current.length) return
     const onlyCmd = slashOn && !/\s/.test(t.trim())
     if (onlyCmd && matches.length && matches[hi]) {
       applyPick(matches[hi])
@@ -747,13 +778,79 @@ function ChatPane({
     }
   }
 
+  function takeFiles(list: FileList | File[] | null) {
+    if (!list || !list.length) return
+    const files = Array.from(list)
+    pendingDrops.current = pendingDrops.current
+      .then(() => addFiles(files))
+      .catch((err: unknown) => {
+        setDropNote(String((err as Error).message || err))
+      })
+  }
+
+  async function addFiles(files: File[]) {
+    const next: Attach[] = []
+    const skipped: string[] = []
+    for (const f of files) {
+      if (f.size > 20 * 1024 * 1024) {
+        skipped.push(`${f.name} is larger than 20 MB`)
+        continue
+      }
+      const mime = f.type && f.type !== 'application/octet-stream' ? f.type : ''
+      const preview = mime.startsWith('image/') || /\.(png|jpe?g|gif|webp|heic)$/i.test(f.name) ? URL.createObjectURL(f) : undefined
+      const path = filePath(f)
+      if (path) {
+        next.push({ path, name: f.name, mime, preview })
+        continue
+      }
+      try {
+        const buf = new Uint8Array(await f.arrayBuffer())
+        const saved = await window.brain.files.stash(f.name, buf, mime)
+        next.push({ ...saved, preview })
+      } catch (err) {
+        skipped.push(`${f.name} (${String((err as Error).message || err)})`)
+      }
+    }
+    if (next.length) {
+      const merged = [...dropsRef.current, ...next]
+      dropsRef.current = merged
+      setDrops(merged)
+    }
+    setDropNote(skipped.length ? skipped.join('. ') : '')
+  }
+
+  function removeDrop(i: number) {
+    const gone = dropsRef.current[i]
+    if (gone?.preview) URL.revokeObjectURL(gone.preview)
+    const next = dropsRef.current.filter((_, j) => j !== i)
+    dropsRef.current = next
+    setDrops(next)
+  }
+
+  async function pickAttach() {
+    const got = await window.brain.files.pick()
+    if (!got) return
+    if (got.files.length) {
+      const merged = [...dropsRef.current, ...got.files]
+      dropsRef.current = merged
+      setDrops(merged)
+    }
+    setDropNote(got.skipped.length ? got.skipped.join('. ') : '')
+  }
+
   async function sendText(t: string) {
+    await pendingDrops.current
     if (busy) await stop()
     filesRef.current = []
     onFiles(id, [])
     setBusy(true)
     turn.current = { think: false, answer: false }
-    setMessages((m) => [...m, { who: 'me', text: t }])
+    const attached = dropsRef.current
+    dropsRef.current = []
+    setDrops([])
+    setDropNote('')
+    const shown = attached.length ? `${t}${t ? '\n' : ''}${attached.map((a) => a.name).join(', ')}` : t
+    setMessages((m) => [...m, { who: 'me', text: shown, files: attached }])
     try {
       await window.brain.chat.send({
         tabId: id,
@@ -766,6 +863,7 @@ function ChatPane({
         agentMode,
         alwaysApprove,
         history: [],
+        attachments: attached.map(({ path, name, mime }) => ({ path, name, mime })),
         system:
           'You are the brain on this computer. Answer in plain English. You may read files. Do not edit or write files. Do not dump tool names or keyboard shortcuts.'
       })
@@ -776,7 +874,22 @@ function ChatPane({
   }
 
   return (
-    <div className={`chatpane ${active ? 'on' : ''}`}>
+    <div
+      className={`chatpane ${active ? 'on' : ''} ${over ? 'drop-on' : ''}`}
+      onDragEnter={(e) => {
+        e.preventDefault()
+        setOver(true)
+      }}
+      onDragOver={(e) => e.preventDefault()}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) setOver(false)
+      }}
+      onDrop={(e) => {
+        e.preventDefault()
+        setOver(false)
+        takeFiles(collectFiles(e.dataTransfer))
+      }}
+    >
       {panel && (
         <div className="cmdpanel">
           <div className="invitehead">
@@ -802,6 +915,13 @@ function ChatPane({
               ) : (
                 <Rich text={m.text} />
               )}
+              {m.who === 'me' && m.files && m.files.some((f) => f.preview) ? (
+                <div className="attachrow in-bubble">
+                  {m.files.map((a, j) =>
+                    a.preview ? <img className="thumb" src={a.preview} alt={a.name} key={a.path + j} /> : null
+                  )}
+                </div>
+              ) : null}
             </div>
           ) : null
         )}
@@ -815,6 +935,7 @@ function ChatPane({
           </span>
         </div>
       )}
+      {over && <div className="dropveil">Drop images or docs here</div>}
       <div className="composer">
         {matches.length > 0 && (
           <div className="slashmenu">
@@ -833,11 +954,31 @@ function ChatPane({
             ))}
           </div>
         )}
+        {dropNote ? <div className="dropnote">{dropNote}</div> : null}
+        {drops.length > 0 && (
+          <div className="attachrow">
+            {drops.map((a, i) => (
+              <span className="chip" key={a.path + i}>
+                {a.preview ? <img src={a.preview} alt="" /> : null}
+                {a.name}
+                <button type="button" className="tabx" onClick={() => removeDrop(i)} aria-label="Remove">
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <input
           value={say}
           onChange={(e) => {
             setSay(e.target.value)
             setHi(0)
+          }}
+          onPaste={(e) => {
+            const files = collectFiles(e.clipboardData)
+            if (!files.length) return
+            takeFiles(files)
+            if (!e.clipboardData?.getData('text/plain')) e.preventDefault()
           }}
           onKeyDown={(e) => {
             if (matches.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
@@ -851,8 +992,11 @@ function ChatPane({
             }
             if (e.key === 'Enter') void send()
           }}
-          placeholder={busy ? 'Working — type to interrupt, or Stop' : 'Message, or / for commands'}
+          placeholder={busy ? 'Working — type to interrupt, or Stop' : 'Message, drop a file, or / for commands'}
         />
+        <button className="ghost" type="button" onClick={() => void pickAttach()} title="Attach">
+          Attach
+        </button>
         {busy ? (
           <button className="ghost" type="button" onClick={() => void stop()}>
             Stop

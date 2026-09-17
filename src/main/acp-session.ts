@@ -1,6 +1,7 @@
 import type { AiKind } from '../shared/contracts'
 import type { StreamEvent } from './ai-cli'
 import { binEnv, resolveBin } from './ai-cli'
+import { acpPromptParts, type Attach } from './attach'
 import { asRecord, asText, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 
 const RULES =
@@ -569,6 +570,7 @@ export async function acpPrompt(opts: {
   text: string
   model?: string
   effort?: string
+  attachments?: Attach[]
   onEvent: (ev: StreamEvent) => void
 }): Promise<string> {
   await acpWarm(opts)
@@ -580,10 +582,11 @@ export async function acpPrompt(opts: {
   tab.text = ''
   if (/^\s*\/compact\b/i.test(opts.text)) opts.onEvent({ kind: 'status', data: 'compacting' })
   try {
+    const prompt = acpPromptParts(opts.text, opts.attachments || [])
     const result = asRecord(
       await pool.rpc.request(
         'session/prompt',
-        { sessionId: tab.sessionId, prompt: [{ type: 'text', text: opts.text }] },
+        { sessionId: tab.sessionId, prompt },
         180_000
       )
     )

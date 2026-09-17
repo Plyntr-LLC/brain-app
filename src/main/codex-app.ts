@@ -1,6 +1,7 @@
 import type { StreamEvent } from './ai-cli'
 import { binEnv, resolveBin } from './ai-cli'
 import type { Cap, LiveRun } from './acp-session'
+import { codexInput, type Attach } from './attach'
 import { asRecord, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 
 const RULES =
@@ -280,6 +281,7 @@ export async function codexPrompt(opts: {
   text: string
   model?: string
   effort?: string
+  attachments?: Attach[]
   onEvent: (ev: StreamEvent) => void
 }): Promise<string> {
   await codexWarm(opts)
@@ -291,7 +293,7 @@ export async function codexPrompt(opts: {
   tab.text = ''
   const params: Record<string, unknown> = {
     threadId: tab.threadId,
-    input: [{ type: 'text', text: opts.text }]
+    input: codexInput(opts.text, opts.attachments || [])
   }
   if (opts.model) params.model = opts.model
   if (opts.effort) params.effort = opts.effort

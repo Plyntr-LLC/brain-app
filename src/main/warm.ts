@@ -52,7 +52,9 @@ export async function warmSession(opts: WarmOpts): Promise<LiveRun> {
   return { model: opts.model, effort: opts.effort }
 }
 
-export async function promptWarm(opts: WarmOpts & { text: string; onEvent: (ev: StreamEvent) => void }): Promise<string> {
+export async function promptWarm(
+  opts: WarmOpts & { text: string; attachments?: { path: string; name: string; mime: string }[]; onEvent: (ev: StreamEvent) => void }
+): Promise<string> {
   if (/^\s*\/compact\b/i.test(opts.text)) opts.onEvent({ kind: 'status', data: 'compacting' })
   if (opts.kind === 'grok' || opts.kind === 'cursor') return acpPrompt({ ...opts, kind: opts.kind })
   if (opts.kind === 'claude') return claudePrompt(opts)

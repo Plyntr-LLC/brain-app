@@ -161,11 +161,59 @@
 .bubble.me { align-self: flex-end; background: #fff; border-color: #cfc4b6; }
 .composer {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 0.45rem;
   border-top: 1px solid var(--line);
   padding-top: 0.75rem;
 }
+.attachrow {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.attachrow.in-bubble { margin-top: 0.4rem; }
+.attachrow .thumb,
+.chip img {
+  width: 1.6rem;
+  height: 1.6rem;
+  object-fit: cover;
+  border-radius: 2px;
+  border: 1px solid var(--line);
+}
+.attachrow .thumb { width: 3.2rem; height: 3.2rem; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 0.15rem 0.3rem 0.15rem 0.45rem;
+}
+.chip .tabx { font-size: 0.9rem; padding: 0 0.15rem; }
+.dropnote {
+  grid-column: 1 / -1;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--warn);
+}
+.dropveil {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  background: rgba(255, 253, 249, 0.92);
+  border: 2px dashed var(--orange);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Schibsted Grotesk", sans-serif;
+  font-weight: 700;
+  font-size: 1.1rem;
+  pointer-events: none;
+}
+.chatpane.drop-on { outline: 2px dashed var(--orange); outline-offset: -2px; }
 .demo {
   font-size: 0.72rem;
   font-weight: 600;
@@ -402,6 +450,7 @@
 }
 .slashmenu button.on { background: var(--paper); }
 .slashmenu span { color: var(--muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer .slashmenu { grid-column: 1 / -1; }
 .composer { position: relative; }
 .bubble code {
   font-family: ui-monospace, Menlo, Monaco, monospace;

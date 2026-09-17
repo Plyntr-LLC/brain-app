@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AiKind } from '../shared/contracts'
 
 const brain = {
@@ -78,7 +78,21 @@ const brain = {
     remember: (folder: string) =>
       ipcRenderer.invoke('files:remember', folder) as Promise<{ path: string; name: string }>,
     pickFolder: () =>
-      ipcRenderer.invoke('files:pickFolder') as Promise<{ path: string; name: string } | null>
+      ipcRenderer.invoke('files:pickFolder') as Promise<{ path: string; name: string } | null>,
+    pick: () =>
+      ipcRenderer.invoke('files:pick') as Promise<{
+        files: { path: string; name: string; mime: string }[]
+        skipped: string[]
+      }>,
+    pathFor: (file: File) => {
+      try {
+        return webUtils.getPathForFile(file as File) || ''
+      } catch {
+        return ''
+      }
+    },
+    stash: (name: string, bytes: Uint8Array, mime: string) =>
+      ipcRenderer.invoke('files:stash', name, bytes, mime) as Promise<{ path: string; name: string; mime: string }>
   },
   slash: {
     list: (cwd?: string, kind?: string) =>
@@ -103,6 +117,7 @@ const brain = {
       alwaysApprove?: boolean
       history?: { who: 'brain' | 'me'; text: string }[]
       system?: string
+      attachments?: { path: string; name: string; mime: string }[]
     }) => ipcRenderer.invoke('chat:send', payload),
     onEvent: (
       cb: (ev: {

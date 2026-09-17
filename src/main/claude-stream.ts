@@ -1,5 +1,6 @@
 import type { StreamEvent } from './ai-cli'
 import { binEnv, resolveBin } from './ai-cli'
+import { claudeContent, type Attach } from './attach'
 import { asRecord, asText, fileHits, spawnBin } from './line-rpc'
 
 const RULES =
@@ -92,13 +93,13 @@ function attach(s: Sess): void {
   })
 }
 
-function writeUser(s: Sess, text: string): void {
+function writeUser(s: Sess, text: string, files: Attach[] = []): void {
   const stdin = s.proc.stdin
   if (!stdin || stdin.destroyed) throw new Error('Claude stdin is closed')
   stdin.write(
     JSON.stringify({
       type: 'user',
-      message: { role: 'user', content: [{ type: 'text', text }] },
+      message: { role: 'user', content: claudeContent(text, files) },
       parent_tool_use_id: null
     }) + '\n'
   )
@@ -177,6 +178,7 @@ export async function claudePrompt(opts: {
   cwd: string
   text: string
   model?: string
+  attachments?: Attach[]
   onEvent: (ev: StreamEvent) => void
 }): Promise<string> {
   await claudeWarm(opts)
@@ -185,7 +187,7 @@ export async function claudePrompt(opts: {
   if (s.waiting) claudeCancel(opts.tabId)
   s.onEvent = opts.onEvent
   s.text = ''
-  writeUser(s, opts.text)
+  writeUser(s, opts.text, opts.attachments || [])
   await new Promise<void>((resolve) => {
     const t = setTimeout(() => {
       claudeCancel(opts.tabId)
