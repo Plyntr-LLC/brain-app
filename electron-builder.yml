@@ -25,4 +25,15 @@ mac:
 dmg:
   title: Brain
   writeUpdateInfo: false
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: Brain-${version}-win.${ext}
+  signAndEditExecutable: false
+nsis:
+  oneClick: true
+  perMachine: false
+  shortcutName: Brain
 publish: null

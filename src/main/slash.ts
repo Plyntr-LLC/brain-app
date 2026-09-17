@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { delimiter, join } from 'node:path'
-import { resolveBin } from './ai-cli'
+import { join } from 'node:path'
+import { binEnv, resolveBin } from './ai-cli'
 import { listCodexCaps } from './codex-app'
 
 export type SlashCmd = { name: string; kind: 'builtin' | 'skill'; description: string }
@@ -11,11 +11,7 @@ function run(bin: string, args: string[], cwd: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
       cwd,
-      env: {
-        ...process.env,
-        HOME: homedir(),
-        PATH: `${join(homedir(), '.local/bin')}${delimiter}${join(homedir(), '.grok/bin')}${delimiter}/opt/homebrew/bin${delimiter}${process.env.PATH || ''}`
-      },
+      env: binEnv(),
       stdio: ['ignore', 'pipe', 'pipe']
     })
     let out = ''

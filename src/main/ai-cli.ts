@@ -4,31 +4,63 @@ import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import type { AiKind } from '../shared/contracts'
 
-const EXTRA_PATH = [
-  join(homedir(), '.local/bin'),
-  join(homedir(), '.grok/bin'),
-  '/opt/homebrew/bin',
-  '/usr/local/bin'
-].join(delimiter)
+export function extraPath(): string {
+  const home = homedir()
+  const dirs =
+    process.platform === 'win32'
+      ? [
+          join(home, '.local', 'bin'),
+          join(home, '.grok', 'bin'),
+          join(home, 'AppData', 'Roaming', 'npm'),
+          join(home, 'AppData', 'Local', 'Programs'),
+          process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Programs') : '',
+          process.env.ProgramFiles ? join(process.env.ProgramFiles, 'Git', 'cmd') : '',
+          process.env['ProgramFiles(x86)'] ? join(process.env['ProgramFiles(x86)'] as string, 'Git', 'cmd') : ''
+        ]
+      : [join(home, '.local/bin'), join(home, '.grok/bin'), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin']
+  return dirs.filter(Boolean).join(delimiter)
+}
 
 export function binEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
     HOME: homedir(),
-    PATH: `${EXTRA_PATH}${delimiter}${process.env.PATH || ''}`
+    PATH: `${extraPath()}${delimiter}${process.env.PATH || ''}`
   }
 }
 
-const BINS: Record<AiKind, string[]> = {
-  grok: [join(homedir(), '.local/bin/grok'), join(homedir(), '.grok/bin/grok')],
-  claude: [join(homedir(), '.local/bin/claude'), '/opt/homebrew/bin/claude'],
-  gpt: ['/opt/homebrew/bin/codex', join(homedir(), '.local/bin/codex')],
-  cursor: [join(homedir(), '.local/bin/cursor-agent'), '/opt/homebrew/bin/cursor-agent']
+function winNames(base: string): string[] {
+  return process.platform === 'win32' ? [`${base}.exe`, `${base}.cmd`, base] : [base]
+}
+
+function binCandidates(kind: AiKind): string[] {
+  const home = homedir()
+  const names: Record<AiKind, string> = { grok: 'grok', claude: 'claude', gpt: 'codex', cursor: 'cursor-agent' }
+  const base = names[kind]
+  const out: string[] = []
+  for (const n of winNames(base)) {
+    out.push(join(home, '.local', 'bin', n), join(home, '.grok', 'bin', n))
+    if (process.platform !== 'win32') out.push(join('/opt/homebrew/bin', n), join('/usr/local/bin', n))
+  }
+  return out
+}
+
+function whichOnPath(kind: AiKind): string | null {
+  const names: Record<AiKind, string> = { grok: 'grok', claude: 'claude', gpt: 'codex', cursor: 'cursor-agent' }
+  const want = winNames(names[kind])
+  const dirs = `${extraPath()}${delimiter}${process.env.PATH || ''}`.split(delimiter).filter(Boolean)
+  for (const dir of dirs) {
+    for (const n of want) {
+      const p = join(dir, n)
+      if (existsSync(p)) return p
+    }
+  }
+  return null
 }
 
 export function resolveBin(kind: AiKind): string | null {
-  for (const p of BINS[kind]) if (existsSync(p)) return p
-  return null
+  for (const p of binCandidates(kind)) if (existsSync(p)) return p
+  return whichOnPath(kind)
 }
 
 export function detect(): Record<AiKind, boolean> {

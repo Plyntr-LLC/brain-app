@@ -1,19 +1,10 @@
 import { ipcMain, type WebContents } from 'electron'
 import { homedir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter } from 'node:path'
 import pty from 'node-pty'
 import type { IPty } from 'node-pty'
 import type { AiKind } from '../shared/contracts'
-import { resolveBin } from './ai-cli'
-
-const EXTRA_PATH = [
-  join(homedir(), '.local/bin'),
-  join(homedir(), '.grok/bin'),
-  '/opt/homebrew/bin',
-  '/usr/local/bin',
-  '/usr/bin',
-  '/bin'
-].join(delimiter)
+import { extraPath, resolveBin } from './ai-cli'
 
 type Sess = { proc: IPty; sender: WebContents }
 
@@ -25,7 +16,7 @@ function env(): Record<string, string> {
   e.HOME = homedir()
   e.TERM = 'xterm-256color'
   e.COLORTERM = 'truecolor'
-  e.PATH = `${EXTRA_PATH}${delimiter}${e.PATH || ''}`
+  e.PATH = `${extraPath()}${delimiter}${e.PATH || ''}`
   return e
 }
 

@@ -76,7 +76,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 **Slash ACP:** LIVE 2026-09-18. Grok 4.6 xhigh **APPROVE**.
 
-**Signed Mac pack:** LIVE 2026-09-18. Grok 4.6 xhigh **APPROVE**. One-file arm64 dmg. Notarize still blocked until Joe yes.
+**Signed Mac pack:** LIVE 2026-09-18. Grok 4.6 xhigh **APPROVE**. Signed + notarized dmg. Download: GitHub Releases.
 
 ## Hard rules
 
