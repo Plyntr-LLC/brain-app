@@ -1,5 +1,5 @@
 export type PathKind = 'create' | 'join' | 'second'
-export type AiKind = 'claude' | 'grok' | 'gpt'
+export type AiKind = 'claude' | 'grok' | 'gpt' | 'cursor'
 export type NeedId = 'what' | 'who' | 'offer' | 'voice' | 'now' | 'people' | 'you'
 
 export type Member = { email: string; name?: string; token: string }

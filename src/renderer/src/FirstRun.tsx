@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { DOWNLOAD_AB, OWNER_NEEDS, STEPS, type AiKind, type PathKind, type Session } from '@shared/contracts'
-import { blankSession, fillFromText, needsDone, remainingNeeds, stepState } from './flow'
+import { blankSession, needsDone, remainingNeeds, stepState } from './flow'
+import { TerminalWorkspace } from './TerminalWorkspace'
 
 export function FirstRun() {
   const [s, setS] = useState<Session>(() => blankSession('create', true))
@@ -11,15 +12,50 @@ export function FirstRun() {
   const [showOrg, setShowOrg] = useState(false)
   const [tick, setTick] = useState(0)
   const [err, setErr] = useState('')
-  const [say, setSay] = useState('')
-  const [messages, setMessages] = useState<{ who: 'brain' | 'me'; text: string }[]>([])
-  const [pause, setPause] = useState<string | null>(null)
-  const [people, setPeople] = useState<{ n: string; e: string; r: string }[]>([])
-  const [invite, setInvite] = useState({ n: '', e: '', r: 'Teammate' })
+  const [detected, setDetected] = useState<Partial<Record<AiKind, boolean>>>({})
+  const [showInvite, setShowInvite] = useState(false)
+  const [railOpen, setRailOpen] = useState(true)
 
   useEffect(() => {
-    window.brain?.env().then((e) => setS((prev) => ({ ...prev, dryRun: e.dryRun }))).catch(() => {})
+    window.brain?.env().then((e) => {
+      const existing = e.existingBrain as { brainPath?: string | null; name?: string | null; email?: string | null; watching?: boolean } | undefined
+      const ready = Boolean(existing?.brainPath)
+      setS((prev) => ({
+        ...prev,
+        dryRun: e.dryRun,
+        brainPath: existing?.brainPath || prev.brainPath,
+        business: existing?.name || prev.business || 'this computer',
+        email: existing?.email || prev.email,
+        abWatching: ready,
+        path: ready ? 'second' : prev.path,
+        screen: ready ? 'chat' : prev.screen,
+        ai: prev.ai || 'grok'
+      }))
+    }).catch(() => {})
+    window.brain?.ai.detect().then((d) => {
+      setDetected(d)
+      setS((prev) => {
+        if (prev.ai) return prev
+        const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.gpt ? 'gpt' : undefined
+        return pick ? { ...prev, ai: pick } : prev
+      })
+    }).catch(() => {})
   }, [])
+
+  async function skipToExisting() {
+    const w = await window.brain.ab.watching()
+    if (!w.brainPath) {
+      setErr('Agency Brain is not watching a folder on this computer yet.')
+      return
+    }
+    go('aipick', {
+      path: 'second',
+      brainPath: w.brainPath,
+      business: w.name || 'this computer',
+      email: w.email || '',
+      abWatching: true
+    })
+  }
 
   function go(screen: string, patch?: Partial<Session>) {
     setErr('')
@@ -41,41 +77,7 @@ export function FirstRun() {
   const title = s.business || 'Brain'
 
   function startChat() {
-    let text = ''
-    if (s.path === 'join') text = `This is ${s.business}'s shared brain. Your role is already set. ${remainingNeeds({ ...s, screen: 'chat' })[0]?.ask || ''}`
-    else if (s.path === 'second') text = 'Welcome back. This computer is on the brain. Agency Brain is watching the folder. What do you want to do?'
-    else text = `The shared folder is ready. I don't have a script. I need enough about the business for this brain to work. ${OWNER_NEEDS[0].ask}`
-    setMessages([{ who: 'brain', text }])
     go('chat')
-  }
-
-  async function send(text: string, forceWork = false) {
-    const t = text.trim()
-    if (!t) return
-    if (!forceWork && s.path !== 'join' && !needsDone(s) && /draft|invite |write |email|send |task/i.test(t)) {
-      setPause(t)
-      return
-    }
-    setSay('')
-    const filled = fillFromText(s, t)
-    const next = { ...s, filled }
-    setS(next)
-    const left = remainingNeeds(next)
-    let reply: string
-    if (s.path === 'join') reply = "I'll keep that in your private notes. What are you trying to get done?"
-    else if (s.path === 'second' || needsDone(next)) {
-      reply = needsDone(next) && s.path !== 'second'
-        ? "That's enough for the brain to function. You can invite people now, or tell me the first real job for this week."
-        : 'On it. (CLI, pointed at the folder Agency Brain is watching.)'
-    } else {
-      const skip = Object.values(filled).filter(Boolean).length > 1 ? 'I already have some of this. ' : ''
-      reply = skip + (left[0]?.ask || '')
-    }
-    try {
-      const live = await window.brain.chat.send(t)
-      if (live && live.reply && !s.dryRun) reply = live.reply
-    } catch { /* keep local */ }
-    setMessages((m) => [...m, { who: 'me', text: t }, { who: 'brain', text: reply }])
   }
 
   const abItems = useMemo(() => {
@@ -98,7 +100,7 @@ export function FirstRun() {
   }, [s, org])
 
   return (
-    <div className="app">
+    <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${!railOpen && s.screen !== 'chat' ? 'rail-off' : ''}`}>
       <div className="titlebar">
         <span>{title}</span>
         <span className={`sync-pill ${s.abWatching ? 'on' : ''}`}>
@@ -121,6 +123,11 @@ export function FirstRun() {
               </div>
             )
           })}
+          {s.screen === 'chat' && s.path !== 'join' && (
+            <button className="primary rail-btn" type="button" onClick={() => setShowInvite(true)}>
+              Invite
+            </button>
+          )}
           {s.screen === 'chat' && s.path !== 'second' && !needsDone(s) && (
             <>
               <h2 style={{ marginTop: '1.1rem' }}>The brain still needs</h2>
@@ -134,25 +141,9 @@ export function FirstRun() {
           )}
         </aside>
         <section className="main">
-          {s.dryRun && (
+          {s.screen !== 'chat' && (
             <div className="demo">
-              <span>Demo path:</span>
-              {(['create', 'join', 'second'] as PathKind[]).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  className={s.path === p ? 'on' : ''}
-                  onClick={() => {
-                    setS(blankSession(p, true))
-                    setMessages([])
-                    setChoice(p === 'second' ? 'existing' : '')
-                    setTick(0)
-                  }}
-                >
-                  {p === 'create' ? 'Owner, first time' : p === 'join' ? 'Teammate' : 'Owner, this computer'}
-                </button>
-              ))}
-              <span>dry-run on — will not touch Agency Brain config</span>
+              <span>Chat is live against the folder Agency Brain is watching. New GitHub orgs and clones stay off.</span>
             </div>
           )}
           {s.screen === 'welcome' && (
@@ -170,7 +161,7 @@ export function FirstRun() {
                   autoCorrect="off"
                 />
               </label>
-              <p className="tiny">Six letters and numbers, from the invite or from Your Clients. Dry-run accepts any six characters.</p>
+              <p className="tiny">Six letters and numbers, from the invite or from Your Clients.</p>
               {err && <p className="note">{err}</p>}
               <div className="actions">
                 <button
@@ -212,6 +203,9 @@ export function FirstRun() {
                 </button>
                 <button className="linkish" type="button" onClick={() => go('email')}>
                   I don't have a code
+                </button>
+                <button className="ghost" type="button" onClick={() => void skipToExisting()}>
+                  This computer already has a brain — skip to chat
                 </button>
               </div>
             </>
@@ -329,6 +323,9 @@ export function FirstRun() {
               {showOrg && <p className="tiny">Type it above. We'll check it's an organisation, not a person.</p>}
               {err && <p className="note">{err}</p>}
               <div className="actions">
+                <button className="ghost" type="button" onClick={() => void skipToExisting()}>
+                  Skip GitHub. Use the brain already on this computer
+                </button>
                 <button className="primary" type="button" disabled={org.trim().length < 2} onClick={async () => {
                   try {
                     const look = await window.brain.setup.lookupOrg(org.trim())
@@ -368,11 +365,11 @@ export function FirstRun() {
             <>
               <p className="kicker">Talking</p>
               <h1>Which AI should this use?</h1>
-              <p>Claude, Grok, or ChatGPT. The conversation is the same. It will run against the folder Agency Brain is watching.</p>
+              <p>Pick who you start with. You can open the others later from + in the tab bar.</p>
               <div className="ai-grid">
-                {([['claude', 'Claude', 'Claude Code login'], ['grok', 'Grok', 'Grok CLI login'], ['gpt', 'ChatGPT', 'ChatGPT / Codex login']] as const).map(([id, n, sub]) => (
-                  <button type="button" key={id} className={`ai ${s.ai === id ? 'on' : ''}`} onClick={() => setS({ ...s, ai: id })}>
-                    <strong>{n}</strong><span>{sub}</span>
+                {([['claude', 'Claude', 'Claude Code'], ['grok', 'Grok', 'Grok CLI'], ['cursor', 'Cursor', 'cursor-agent'], ['gpt', 'ChatGPT', 'Codex CLI']] as const).map(([id, n, sub]) => (
+                  <button type="button" key={id} className={`ai ${s.ai === id ? 'on' : ''}`} onClick={() => setS({ ...s, ai: id })} disabled={detected[id] === false}>
+                    <strong>{n}</strong><span>{detected[id] === false ? 'not found' : detected[id] ? `ready · ${sub}` : sub}</span>
                   </button>
                 ))}
               </div>
@@ -386,75 +383,28 @@ export function FirstRun() {
           {s.screen === 'aiwork' && (
             <>
               <p className="kicker">Working</p>
-              <h1>Connecting {s.ai === 'gpt' ? 'ChatGPT' : s.ai === 'grok' ? 'Grok' : 'Claude'}.</h1>
+              <h1>Opening {s.ai === 'gpt' ? 'Codex' : s.ai === 'grok' ? 'Grok' : 'Claude'} in this window.</h1>
               <ul className="work-list">
-                {['Opening login', 'Checking the CLI is signed in', 'Pointing it at the Agency Brain folder'].map((t, i) => (
+                {['Found the CLI on this computer', "You're already signed in there", 'Pointing it at the Agency Brain folder'].map((t, i) => (
                   <li key={t} className={tick > i + 1 ? 'done' : ''}>{tick > i + 1 ? '✓' : '·'} {t}</li>
                 ))}
               </ul>
+              <p className="tiny">{s.brainPath ? `Folder: ${s.brainPath}` : 'Using the folder Agency Brain is watching.'}</p>
               <div className="actions">
-                <button className="primary" type="button" disabled={tick < 4} onClick={() => { void window.brain.ai.login(s.ai as AiKind); startChat() }}>Start the conversation</button>
+                <button className="primary" type="button" disabled={tick < 4} onClick={async () => {
+                  try {
+                    await window.brain.ai.login(s.ai as AiKind)
+                    startChat()
+                  } catch (e) { setErr(String((e as Error).message || e)) }
+                }}>Open it</button>
               </div>
             </>
           )}
           {s.screen === 'chat' && (
-            <div className="chat">
-              {s.path === 'join' && <span className="role-lock">Role: Bookkeeper · you cannot change this</span>}
-              {s.path !== 'join' && !needsDone(s) && (
-                <div className="note">Questions follow what the brain still needs, not a script. A long first answer can skip several. Invites wait until those needs are filled.</div>
-              )}
-              {s.path !== 'join' && needsDone(s) && (
-                <div className="note ok">The brain has what it needs. You can invite people, or just talk.</div>
-              )}
-              {s.parked.length > 0 && <p className="tiny">Parked until setup is done: {s.parked.join(' · ')}</p>}
-              <div className="thread">
-                {messages.map((m, i) => (
-                  <div className={`bubble ${m.who === 'me' ? 'me' : ''}`} key={i}>{m.text}</div>
-                ))}
-              </div>
-              {s.path !== 'join' && needsDone(s) && (
-                <div style={{ border: '1px solid var(--line)', padding: '0.7rem 0.8rem', margin: '0 0 0.7rem', borderRadius: 2 }}>
-                  <strong style={{ fontFamily: 'Schibsted Grotesk, sans-serif', fontSize: '0.85rem' }}>Invite someone</strong>
-                  {people.map((p) => <p className="tiny" key={p.e}>{p.n} · {p.e} · {p.r}</p>)}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 8rem auto', gap: 6, marginTop: 8 }}>
-                    <input placeholder="Name" value={invite.n} onChange={(e) => setInvite({ ...invite, n: e.target.value })} />
-                    <input placeholder="Email" value={invite.e} onChange={(e) => setInvite({ ...invite, e: e.target.value })} />
-                    <select value={invite.r} onChange={(e) => setInvite({ ...invite, r: e.target.value })}>
-                      <option>Teammate</option><option>Scout</option><option>Owner</option>
-                    </select>
-                    <button className="ghost" type="button" onClick={() => {
-                      if (!invite.n || !invite.e) return
-                      setPeople([...people, invite])
-                      setMessages((m) => [...m, { who: 'brain', text: `Invited ${invite.n} as ${invite.r}. Their role stays ${invite.r} unless you change it.` }])
-                      setInvite({ n: '', e: '', r: 'Teammate' })
-                    }}>Invite</button>
-                  </div>
-                </div>
-              )}
-              <div className="composer">
-                <input value={say} onChange={(e) => setSay(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void send(say) }} placeholder={needsDone(s) ? 'Ask the brain…' : 'Answer however you want…'} />
-                <button className="primary" type="button" onClick={() => void send(say)}>Send</button>
-              </div>
-            </div>
+            <TerminalWorkspace session={s} showInvite={showInvite} setShowInvite={setShowInvite} railOpen={railOpen} setRailOpen={setRailOpen} />
           )}
         </section>
       </div>
-      {pause && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(26,22,18,0.35)', display: 'grid', placeItems: 'center' }}>
-          <div style={{ background: 'var(--card)', border: '1px solid var(--ink)', padding: '1.1rem 1.15rem', maxWidth: 420 }}>
-            <h2 style={{ margin: '0 0 0.4rem', fontSize: '1.1rem' }}>Pause setup for this?</h2>
-            <p>We can do that task. The brain still has gaps, and you cannot invite anyone yet.</p>
-            <div className="actions" style={{ marginTop: 8 }}>
-              <button className="primary" type="button" onClick={() => {
-                setS((p) => ({ ...p, parked: [...p.parked, pause] }))
-                setPause(null)
-                setMessages((m) => [...m, { who: 'brain', text: 'Saved that for after setup. ' + (remainingNeeds(s)[0]?.ask || '') }])
-              }}>Save it until setup is done</button>
-              <button className="ghost" type="button" onClick={() => { const t = pause; setPause(null); void send(t, true) }}>Pause setup and do it</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

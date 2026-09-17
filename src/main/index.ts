@@ -1,8 +1,23 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'node:path'
+import { readWatching } from './agency-brain'
 import { registerStubIpc } from './ipc-stubs'
+import { killAllPtys, registerPtyIpc } from './pty'
+import { killAllWarm, prewarm } from './warm'
 
 registerStubIpc()
+registerPtyIpc()
+
+process.on('uncaughtException', (err) => {
+  const msg = String((err as NodeJS.ErrnoException).message || err)
+  if ((err as NodeJS.ErrnoException).code === 'EPIPE' || msg.includes('EPIPE')) return
+  console.error(err)
+})
+process.on('unhandledRejection', (err) => {
+  const msg = String(err)
+  if (msg.includes('EPIPE')) return
+  console.error(err)
+})
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -17,7 +32,8 @@ function createWindow(): void {
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
-      sandbox: false
+      sandbox: false,
+      webviewTag: true
     }
   })
 
@@ -35,11 +51,19 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   createWindow()
+  const watching = readWatching()
+  if (watching.brainPath) prewarm('grok', watching.brainPath)
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
 
 app.on('window-all-closed', () => {
+  killAllPtys()
+  killAllWarm()
   if (process.platform !== 'darwin') app.quit()
+})
+app.on('before-quit', () => {
+  killAllPtys()
+  killAllWarm()
 })
