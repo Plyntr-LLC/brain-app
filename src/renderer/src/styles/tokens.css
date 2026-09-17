@@ -1,0 +1,76 @@
+:root {
+  --ink: #1a1612;
+  --muted: #5c534a;
+  --line: #d9d0c6;
+  --paper: #f3eee8;
+  --card: #fffdf9;
+  --orange: #f0810e;
+  --orange-deep: #c45f00;
+  --ok: #2c6e3a;
+  --ok-bg: #e8f0e6;
+  --warn: #8a5a12;
+  --warn-bg: #f8eedc;
+  --titlebar: 42px;
+  --rail: 230px;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--card);
+  color: var(--ink);
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 16px;
+  line-height: 1.45;
+  user-select: text;
+}
+h1, h2, h3, button, label, .kicker, .step, .titlebar, .role-lock, .need {
+  font-family: "Schibsted Grotesk", sans-serif;
+}
+button, a.dl {
+  font-family: "Schibsted Grotesk", sans-serif;
+  font-weight: 600;
+  font-size: 0.95rem;
+  padding: 0.5rem 0.9rem;
+  border-radius: 2px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+button.primary { background: var(--ink); color: #fff; border: 1px solid var(--ink); }
+button.primary:disabled { opacity: 0.4; cursor: not-allowed; }
+button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
+button.linkish { background: none; border: 0; color: var(--orange-deep); padding: 0; font-size: 0.88rem; }
+a.dl { background: #fff; color: var(--ink); border: 1px solid var(--ink); }
+input, select, textarea {
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 1.05rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  width: 100%;
+  background: #fff;
+  color: var(--ink);
+}
+.field {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0 0 0.85rem;
+  font-family: "Schibsted Grotesk", sans-serif;
+}
+.kicker { color: var(--orange-deep); font-size: 0.78rem; font-weight: 600; margin: 0 0 0.3rem; }
+h1 { font-size: 1.55rem; letter-spacing: -0.03em; margin: 0 0 0.45rem; line-height: 1.15; font-weight: 700; }
+p { margin: 0 0 0.7rem; }
+.muted, .tiny { color: var(--muted); }
+.tiny { font-size: 0.82rem; }
+.note {
+  background: var(--warn-bg);
+  color: var(--warn);
+  padding: 0.65rem 0.75rem;
+  border-radius: 2px;
+  font-size: 0.95rem;
+  margin: 0 0 0.8rem;
+}
+.note.ok { background: var(--ok-bg); color: var(--ok); }

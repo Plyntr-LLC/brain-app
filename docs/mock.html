@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brain · first-run mock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #1a1612;
+      --muted: #5c534a;
+      --line: #d9d0c6;
+      --paper: #f3eee8;
+      --card: #fffdf9;
+      --orange: #f0810e;
+      --orange-deep: #c45f00;
+      --ok: #2c6e3a;
+      --ok-bg: #e8f0e6;
+      --warn: #8a5a12;
+      --warn-bg: #f8eedc;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #e7dfd4;
+      color: var(--ink);
+      font-family: "Source Serif 4", Georgia, serif;
+      font-size: 16px;
+      line-height: 1.45;
+    }
+    h1, h2, h3, button, label, .kicker, .demo, .step, .titlebar, .role-lock, .need {
+      font-family: "Schibsted Grotesk", sans-serif;
+    }
+    .demo {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 0.85rem 1rem 0.4rem;
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      flex-wrap: wrap;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .demo span { margin-right: 0.25rem; }
+    .demo button {
+      background: transparent;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      padding: 0.2rem 0.55rem;
+      border-radius: 2px;
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .demo button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+    .stage { max-width: 1080px; margin: 0 auto 2rem; padding: 0 1rem; }
+    .window {
+      background: var(--card);
+      border: 1px solid #cfc4b6;
+      border-radius: 8px;
+      box-shadow: 0 18px 50px rgba(40, 28, 16, 0.12);
+      overflow: hidden;
+      min-height: 640px;
+      display: grid;
+      grid-template-rows: 42px 1fr;
+    }
+    .titlebar {
+      background: #efe8df;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      padding: 0 0.85rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+    .dots { display: flex; gap: 6px; }
+    .dots i { width: 10px; height: 10px; border-radius: 50%; display: block; background: #d9d0c6; }
+    .dots i:first-child { background: #e7b6a8; }
+    .sync-pill {
+      margin-left: auto;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--ok);
+      background: var(--ok-bg);
+      padding: 0.12rem 0.4rem;
+      border-radius: 2px;
+    }
+    .sync-pill.off { color: var(--muted); background: #efe8df; }
+    .body {
+      display: grid;
+      grid-template-columns: 230px 1fr;
+      min-height: 598px;
+    }
+    .rail {
+      background: var(--paper);
+      border-right: 1px solid var(--line);
+      padding: 1.1rem 0.95rem;
+    }
+    .rail h2 {
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin: 0 0 0.7rem;
+      font-weight: 600;
+    }
+    .step {
+      display: grid;
+      grid-template-columns: 1.1rem 1fr;
+      gap: 0.45rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin: 0 0 0.65rem;
+      align-items: start;
+    }
+    .step .mark {
+      width: 1.05rem; height: 1.05rem; border-radius: 2px;
+      border: 1px solid var(--line); background: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.7rem; margin-top: 0.08rem;
+    }
+    .step.done { color: var(--ok); }
+    .step.done .mark { background: var(--ok-bg); border-color: #cfe0cb; color: var(--ok); }
+    .step.now { color: var(--ink); }
+    .step.now .mark { border-color: var(--ink); background: var(--ink); color: #fff; }
+    .step.blocked { opacity: 0.55; }
+    .need {
+      display: grid;
+      grid-template-columns: 0.85rem 1fr;
+      gap: 0.35rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin: 0 0 0.35rem;
+    }
+    .need.got { color: var(--ok); }
+    .main { padding: 1.6rem 1.8rem 1.4rem; display: flex; flex-direction: column; }
+    .kicker { color: var(--orange-deep); font-size: 0.78rem; font-weight: 600; margin: 0 0 0.3rem; }
+    h1 { font-size: 1.55rem; letter-spacing: -0.03em; margin: 0 0 0.45rem; line-height: 1.15; font-weight: 700; }
+    p { margin: 0 0 0.7rem; }
+    .muted { color: var(--muted); }
+    .field {
+      display: grid; gap: 0.25rem; font-size: 0.78rem; font-weight: 600;
+      color: var(--muted); margin: 0 0 0.85rem; font-family: "Schibsted Grotesk", sans-serif;
+    }
+    input[type="text"], input[type="email"], select, textarea {
+      font-family: "Source Serif 4", Georgia, serif;
+      font-size: 1.05rem;
+      padding: 0.5rem 0.6rem;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      width: 100%;
+      background: #fff;
+      color: var(--ink);
+    }
+    .actions { margin-top: auto; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; padding-top: 1rem; }
+    button.primary, button.ghost, button.linkish, a.dl {
+      font-family: "Schibsted Grotesk", sans-serif;
+      font-weight: 600;
+      font-size: 0.95rem;
+      padding: 0.5rem 0.9rem;
+      border-radius: 2px;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+    }
+    button.primary { background: var(--ink); color: #fff; border: 1px solid var(--ink); }
+    button.primary:disabled { opacity: 0.4; cursor: not-allowed; }
+    button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
+    button.linkish { background: none; border: 0; color: var(--orange-deep); padding: 0; font-size: 0.88rem; }
+    a.dl { background: #fff; color: var(--ink); border: 1px solid var(--ink); }
+    .choice {
+      border: 1px solid var(--line); border-radius: 2px; padding: 0.85rem 0.95rem;
+      margin: 0 0 0.6rem; cursor: pointer; background: #fff;
+    }
+    .choice:hover, .choice.on { border-color: var(--ink); }
+    .choice h3 { margin: 0 0 0.2rem; font-size: 1rem; }
+    .choice p { margin: 0; font-size: 0.95rem; color: var(--muted); }
+    .work-list { list-style: none; padding: 0; margin: 0.4rem 0 1rem; }
+    .work-list li {
+      display: grid; grid-template-columns: 1.2rem 1fr; gap: 0.45rem;
+      margin: 0.4rem 0; color: var(--muted);
+    }
+    .work-list li.done { color: var(--ok); font-weight: 600; }
+    .map {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      padding: 0.7rem 0.8rem;
+      margin: 0 0 0.9rem;
+      font-size: 0.92rem;
+    }
+    .map strong { font-family: "Schibsted Grotesk", sans-serif; font-size: 0.78rem; }
+    .ai-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.55rem; margin: 0.6rem 0 1rem; }
+    .ai {
+      border: 1px solid var(--line); border-radius: 2px; padding: 0.85rem 0.7rem;
+      text-align: center; cursor: pointer; background: #fff;
+    }
+    .ai.on { border-color: var(--ink); background: #fff8f1; }
+    .ai strong { display: block; font-family: "Schibsted Grotesk", sans-serif; font-size: 0.95rem; }
+    .ai span { display: block; font-size: 0.8rem; color: var(--muted); margin-top: 0.2rem; }
+    .chat { display: flex; flex-direction: column; height: 100%; min-height: 540px; }
+    .thread {
+      flex: 1; overflow: auto; display: flex; flex-direction: column;
+      gap: 0.75rem; padding-bottom: 0.8rem;
+    }
+    .bubble {
+      max-width: 34rem; padding: 0.7rem 0.85rem; border-radius: 2px;
+      background: var(--paper); border: 1px solid var(--line);
+    }
+    .bubble.me { align-self: flex-end; background: #fff; border-color: #cfc4b6; }
+    .composer {
+      display: grid; grid-template-columns: 1fr auto; gap: 0.45rem;
+      border-top: 1px solid var(--line); padding-top: 0.75rem;
+    }
+    .role-lock {
+      font-size: 0.75rem; font-weight: 600; background: var(--ok-bg); color: var(--ok);
+      padding: 0.2rem 0.45rem; border-radius: 2px; display: inline-block; margin: 0 0 0.7rem;
+    }
+    .note {
+      background: var(--warn-bg); color: var(--warn); padding: 0.65rem 0.75rem;
+      border-radius: 2px; font-size: 0.95rem; margin: 0 0 0.8rem;
+    }
+    dialog {
+      border: 1px solid var(--ink); border-radius: 2px; padding: 1.1rem 1.15rem;
+      max-width: 28rem; background: var(--card);
+    }
+    dialog::backdrop { background: rgba(26, 22, 18, 0.35); }
+    dialog h2 { margin: 0 0 0.4rem; font-size: 1.1rem; }
+    .tiny { font-size: 0.82rem; color: var(--muted); }
+    .org-box { display: none; margin: 0.4rem 0 0.8rem; }
+    .org-box.show { display: block; }
+    @media (max-width: 800px) {
+      .body { grid-template-columns: 1fr; }
+      .rail { border-right: 0; border-bottom: 1px solid var(--line); }
+      .ai-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="demo">
+    <span>Demo path (us, not them):</span>
+    <button type="button" data-path="create" class="on">Owner, first time</button>
+    <button type="button" data-path="join">Teammate</button>
+    <button type="button" data-path="second">Owner, this computer</button>
+  </div>
+  <div class="stage">
+    <div class="window">
+      <div class="titlebar">
+        <div class="dots"><i></i><i></i><i></i></div>
+        <span id="win-title">Brain</span>
+        <span class="sync-pill off" id="sync-pill">Folder not watching yet</span>
+      </div>
+      <div class="body">
+        <aside class="rail">
+          <h2>Where you are</h2>
+          <div id="rail"></div>
+          <div id="needs-rail"></div>
+        </aside>
+        <section class="main" id="main"></section>
+      </div>
+    </div>
+  </div>
+
+  <dialog id="pause">
+    <h2>Pause setup for this?</h2>
+    <p>We can do that task. The brain still has gaps, and you cannot invite anyone yet.</p>
+    <div class="actions" style="margin-top:0.6rem">
+      <button class="primary" type="button" id="pause-later">Save it until setup is done</button>
+      <button class="ghost" type="button" id="pause-now">Pause setup and do it</button>
+    </div>
+  </dialog>
+
+  <script>
+    const STEPS = [
+      { id: "signed", label: "Signed in" },
+      { id: "ab", label: "Shared folder ready" },
+      { id: "ai", label: "AI connected" },
+      { id: "know", label: "Getting to know you" },
+      { id: "invite", label: "Invite your people" },
+    ];
+
+    const OWNER_NEEDS = [
+      { id: "what", label: "What you do",
+        ask: "Tell me what the business does, however you want to say it.",
+        re: /book|shed|gutter|we |i run|business|help |account|ministr|shop|garage|puppy/i },
+      { id: "who", label: "Who you serve",
+        ask: "Who is it for? Who buys, and what are they stuck with?",
+        re: /customer|client|who |serve|owner|homeowner|breeder|people who/i },
+      { id: "offer", label: "What you sell",
+        ask: "What do you actually sell, and what does it cost, even roughly?",
+        re: /sell|price|fee|\$|service|charge|retainer|hourly/i },
+      { id: "voice", label: "How you write",
+        ask: "When this writes as you, how should it sound?",
+        re: /plain|tone|sound|voice|friendly|direct|professional|casual|honest/i },
+      { id: "now", label: "What matters now",
+        ask: "What matters most over the next month or two?",
+        re: /month|week|priority|right now|matter|goal|this quarter/i },
+      { id: "people", label: "Who's on the team",
+        ask: "Who's on the team? Just you is a fine answer.",
+        re: /team|we have|employee|just me|solo|staff|scout|bookkeeper/i },
+    ];
+
+    const DL = "https://ads2ai.com/downloads";
+
+    let S = blank("create");
+    let timer = null;
+
+    function blank(path) {
+      return {
+        path,
+        screen: "email",
+        email: "",
+        code: "",
+        business: path === "join" || path === "second" ? "Harold's Books" : "",
+        setupChoice: path === "second" ? "existing" : (path === "join" ? "join" : ""),
+        orgMode: "new",
+        ai: "",
+        abStarted: false,
+        abDone: path === "join" ? false : false,
+        gitAuthed: false,
+        aiDone: false,
+        interviewDone: path === "second",
+        filled: path === "second" ? Object.fromEntries(OWNER_NEEDS.map(n => [n.id, true])) : {},
+        messages: [],
+        parked: [],
+        people: [],
+        showOrg: false,
+        workTick: 0,
+        downloaded: false,
+      };
+    }
+
+    function $(id) { return document.getElementById(id); }
+    function isOwnerPath() { return S.path === "create" || S.path === "second"; }
+    function isJoinComputer() { return S.path === "join" || S.path === "second" || S.setupChoice === "existing"; }
+
+    function stepState(id) {
+      if (id === "signed") return (S.screen === "email" || S.screen === "code") ? "now" : "done";
+      if (id === "ab") {
+        if (S.abDone) return "done";
+        if (["abget", "github", "abapply", "hello"].includes(S.screen)) return "now";
+        return S.email && S.screen !== "email" && S.screen !== "code" ? "now" : "";
+      }
+      if (id === "ai") {
+        if (S.aiDone) return "done";
+        if (["aipick", "aiwork"].includes(S.screen)) return "now";
+        return S.abDone ? "now" : "";
+      }
+      if (id === "know") {
+        if (S.interviewDone) return "done";
+        if (S.screen === "chat") return "now";
+        return "";
+      }
+      if (id === "invite") {
+        if (S.path === "join") return "blocked";
+        if (S.people.length) return "done";
+        if (S.interviewDone) return "now";
+        return "blocked";
+      }
+      return "";
+    }
+
+    function emptyNeeds() {
+      if (S.path === "join") return S.filled.you ? [] : [{ id: "you", label: "How you work", ask: "Who are you here, and how do you like to work?" }];
+      return OWNER_NEEDS.filter(n => !S.filled[n.id]);
+    }
+
+    function nextAsk() {
+      const n = emptyNeeds()[0];
+      return n ? n.ask : "";
+    }
+
+    function fillFromText(t) {
+      const got = [];
+      if (S.path === "join") {
+        if (t.length > 12) { S.filled.you = true; got.push("you"); }
+        return got;
+      }
+      OWNER_NEEDS.forEach(n => {
+        if (!S.filled[n.id] && n.re.test(t)) { S.filled[n.id] = true; got.push(n.id); }
+      });
+      if (t.length > 180) {
+        OWNER_NEEDS.slice(0, 3).forEach(n => {
+          if (!S.filled[n.id]) { S.filled[n.id] = true; got.push(n.id); }
+        });
+      }
+      if (/^[A-Z][^.]{8,80}$/.test(t.trim()) && !S.filled.what) {
+        S.filled.what = true; got.push("what");
+      }
+      return [...new Set(got)];
+    }
+
+    function renderRail() {
+      $("rail").innerHTML = STEPS.map(st => {
+        const k = stepState(st.id);
+        const mark = k === "done" ? "✓" : k === "now" ? "·" : k === "blocked" ? "–" : "";
+        const extra = st.id === "invite" && S.path === "join" ? " (owner does this)" : "";
+        return `<div class="step ${k}"><span class="mark">${mark}</span><span>${st.label}${extra}</span></div>`;
+      }).join("");
+
+      const nr = $("needs-rail");
+      if (S.screen === "chat" && !S.interviewDone && S.path !== "second") {
+        const items = S.path === "join"
+          ? [{ id: "you", label: "How you work" }]
+          : OWNER_NEEDS;
+        nr.innerHTML = `<h2 style="margin-top:1.1rem">The brain still needs</h2>` + items.map(n => {
+          const got = S.filled[n.id];
+          return `<div class="need ${got ? "got" : ""}"><span>${got ? "✓" : "○"}</span><span>${n.label}</span></div>`;
+        }).join("");
+      } else nr.innerHTML = "";
+
+      $("win-title").textContent = S.business || "Brain";
+      const pill = $("sync-pill");
+      if (S.abDone) {
+        pill.textContent = "Agency Brain · watching this folder";
+        pill.classList.remove("off");
+      } else {
+        pill.textContent = "Folder not watching yet";
+        pill.classList.add("off");
+      }
+    }
+
+    function go(screen) {
+      S.screen = screen;
+      if (screen === "abapply") startWork("ab");
+      if (screen === "aiwork") startWork("ai");
+      if (screen === "chat" && S.messages.length === 0) startChat();
+      render();
+    }
+
+    function startChat() {
+      if (S.path === "join") {
+        S.messages = [{ who: "brain", text: "This is " + S.business + "'s shared brain. Your role is already set. " + nextAsk() }];
+      } else if (S.path === "second") {
+        S.messages = [{ who: "brain", text: "Welcome back. This computer is on the brain. Agency Brain is watching the folder. What do you want to do?" }];
+      } else {
+        S.messages = [{ who: "brain", text: "The shared folder is ready. I don't have a script. I need enough about the business for this brain to work. " + nextAsk() }];
+      }
+    }
+
+    function startWork(kind) {
+      if (timer) clearInterval(timer);
+      S.workTick = 0;
+      const max = kind === "ab" ? (isJoinComputer() ? 4 : 6) : 4;
+      timer = setInterval(() => {
+        S.workTick += 1;
+        if (S.workTick >= max) {
+          clearInterval(timer);
+          if (kind === "ab") S.abDone = true;
+          if (kind === "ai") S.aiDone = true;
+        }
+        render();
+      }, 500);
+    }
+
+    function looksLikeWork(text) {
+      return /draft|invite |write |email|send |task/i.test(text);
+    }
+
+    function sendChat(text) {
+      const t = text.trim();
+      if (!t) return;
+      if (S.path !== "join" && !S.interviewDone && looksLikeWork(t)) {
+        S.pendingTask = t;
+        $("pause").showModal();
+        return;
+      }
+      acceptAnswer(t);
+    }
+
+    function acceptAnswer(t) {
+      S.messages.push({ who: "me", text: t });
+      if (S.path === "join") {
+        fillFromText(t);
+        S.interviewDone = true;
+        S.messages.push({ who: "brain", text: "I'll keep that in your private notes. What are you trying to get done?" });
+      } else if (S.path === "second" || S.interviewDone) {
+        S.messages.push({ who: "brain", text: "On it. (In the real app this is the CLI, pointed at the folder Agency Brain is watching.)" });
+      } else {
+        if (!S.business) S.business = t.split(/[.!,]/)[0].slice(0, 48);
+        fillFromText(t);
+        const left = emptyNeeds();
+        if (!left.length) {
+          S.interviewDone = true;
+          S.messages.push({ who: "brain", text: "That's enough for the brain to function. You can invite people now, or tell me the first real job for this week." });
+        } else {
+          const filledN = OWNER_NEEDS.filter(n => S.filled[n.id]).length;
+          const skip = filledN > 1 && left.length < OWNER_NEEDS.length - 1
+            ? "I already have some of this. "
+            : "";
+          S.messages.push({ who: "brain", text: skip + left[0].ask });
+        }
+      }
+      render();
+    }
+
+    function abItems() {
+      if (isJoinComputer() && S.path !== "create") {
+        return [
+          "Signing Agency Brain in with your email",
+          "Looking up the existing brain (will not create a new one)",
+          "Putting that folder on this computer",
+          "Sync is on. This window will not push git.",
+        ];
+      }
+      return [
+        "Installing Agency Brain in the background",
+        "Signing it in with " + (S.email || "your email"),
+        "Using the GitHub login you already did",
+        S.orgMode === "pick" ? "Using the organization you picked" : "Making an organization for " + S.business,
+        "Copying the Agency Brain template (not an empty folder)",
+        "Watching the folder. Skills and .team-config stay with Agency Brain.",
+      ];
+    }
+
+    function mapCard() {
+      const rows = [
+        ["Email", S.email || "—"],
+        ["Business", S.business || "—"],
+        ["GitHub", S.gitAuthed ? "signed in here, handed to Agency Brain" : "not yet"],
+        ["Path", isJoinComputer() && S.path !== "create" ? "Join existing folder" : "Create from template"],
+      ];
+      return `<div class="map"><strong>Mapped into Agency Brain. You do not open that app.</strong><br>` +
+        rows.map(r => `${r[0]}: ${esc(r[1])}`).join("<br>") + `</div>`;
+    }
+
+    function renderMain() {
+      const m = $("main");
+      const sc = S.screen;
+      if (sc === "email") {
+        m.innerHTML = `
+          <p class="kicker">Welcome</p>
+          <h1>We'll set this up together.</h1>
+          <p>You answer a few things in this window. Agency Brain gets the shared folder ready in the background. Then you talk to the brain here.</p>
+          <label class="field">Your email
+            <input type="email" id="email" value="${esc(S.email)}" placeholder="you@company.com" autocomplete="off">
+          </label>
+          <p class="tiny">Same sign-in Agency Brain already uses. One account, not two.</p>
+          <div class="actions"><button class="primary" type="button" id="next">Email me a code</button></div>`;
+        bindNext(() => { S.email = $("email").value.trim(); if (S.email) go("code"); });
+      } else if (sc === "code") {
+        m.innerHTML = `
+          <p class="kicker">Check your email</p>
+          <h1>Enter the code we sent.</h1>
+          <p class="muted">${esc(S.email)}</p>
+          <label class="field">Code
+            <input type="text" id="code" value="${esc(S.code)}" placeholder="184 392" autocomplete="off">
+          </label>
+          <div class="actions"><button class="primary" type="button" id="next">Continue</button></div>`;
+        bindNext(() => {
+          S.code = $("code").value.trim();
+          if (S.path === "join") go("hello");
+          else go("choice");
+        });
+      } else if (sc === "choice") {
+        m.innerHTML = `
+          <p class="kicker">Owner or scout</p>
+          <h1>Is this brain already set up?</h1>
+          <p>Teammates never see this.</p>
+          <div class="choice ${S.setupChoice === "new" ? "on" : ""}" data-c="new">
+            <h3>I'm setting this brain up</h3>
+            <p>First time. We'll get Agency Brain on this computer, then GitHub, then the conversation.</p>
+          </div>
+          <div class="choice ${S.setupChoice === "existing" ? "on" : ""}" data-c="existing">
+            <h3>It's already set up. I need it on this computer.</h3>
+            <p>Second laptop, or someone else already created it. We will not make a second brain.</p>
+          </div>
+          <div class="actions"><button class="primary" type="button" id="next" ${S.setupChoice ? "" : "disabled"}>Continue</button></div>`;
+        m.querySelectorAll(".choice").forEach(el => el.onclick = () => { S.setupChoice = el.dataset.c; render(); });
+        bindNext(() => {
+          if (S.setupChoice === "existing") { S.path = "second"; go("abget"); }
+          else go("name");
+        });
+      } else if (sc === "hello") {
+        m.innerHTML = `
+          <p class="kicker">You're in</p>
+          <h1>This is ${esc(S.business)}'s brain.</h1>
+          <p>Shared notes and an AI that already knows the shop. You talk to it here.</p>
+          <span class="role-lock">Your role: Bookkeeper · set by the owner</span>
+          <p class="muted">Agency Brain will put the folder on this computer in the background. You don't need to download anything extra.</p>
+          <div class="actions"><button class="primary" type="button" id="next">Continue</button></div>`;
+        bindNext(() => go("abapply"));
+      } else if (sc === "name") {
+        m.innerHTML = `
+          <p class="kicker">The business</p>
+          <h1>What's it called?</h1>
+          <label class="field">Business name
+            <input type="text" id="biz" value="${esc(S.business)}" placeholder="Harold's Books">
+          </label>
+          <p class="tiny">This is what we hand to Agency Brain for the organization name.</p>
+          <div class="actions"><button class="primary" type="button" id="next">Continue</button></div>`;
+        bindNext(() => { S.business = $("biz").value.trim(); if (S.business) go("abget"); });
+      } else if (sc === "abget") {
+        m.innerHTML = `
+          <p class="kicker">Owner and scout</p>
+          <h1>Get Agency Brain on this computer.</h1>
+          <p>It keeps the shared folder in sync. We'll start that in the background so you stay in this window. If the installer needs you, use the download.</p>
+          <p class="tiny">We do not open Agency Brain's wizard in here. We do not iframe it. Your answers in this app are what it uses.</p>
+          <div class="actions">
+            <button class="primary" type="button" id="next">Install in the background</button>
+            <a class="dl" href="${DL}" target="_blank" rel="noopener" id="dllink">Download Agency Brain</a>
+          </div>`;
+        $("dllink").addEventListener("click", () => { S.downloaded = true; });
+        bindNext(() => {
+          S.abStarted = true;
+          if (S.path === "second") go("abapply");
+          else go("github");
+        });
+      } else if (sc === "github") {
+        m.innerHTML = `
+          <p class="kicker">Private place</p>
+          <h1>Continue with GitHub.</h1>
+          <p>You'll log in on GitHub's site. That's the one screen we don't own. We pass that login to Agency Brain. It makes the organization and the brain. You stay here.</p>
+          <p class="tiny">Default: a new organization on your personal GitHub login.</p>
+          <p><button class="linkish" type="button" id="orgtoggle">Use a different organization</button></p>
+          <div class="org-box ${S.showOrg ? "show" : ""}">
+            <label class="field">Organization
+              <select id="org">
+                <option value="new" ${S.orgMode === "new" ? "selected" : ""}>Make a new one for ${esc(S.business)}</option>
+                <option value="pick" ${S.orgMode === "pick" ? "selected" : ""}>An organization I already have</option>
+              </select>
+            </label>
+          </div>
+          <div class="actions">
+            <button class="primary" type="button" id="next">Continue with GitHub</button>
+          </div>`;
+        $("orgtoggle").onclick = () => { S.showOrg = !S.showOrg; render(); };
+        const org = $("org");
+        if (org) org.onchange = () => { S.orgMode = org.value; };
+        bindNext(() => { S.gitAuthed = true; go("abapply"); });
+      } else if (sc === "abapply") {
+        const items = abItems();
+        m.innerHTML = `
+          <p class="kicker">In the background</p>
+          <h1>Getting the shared folder ready.</h1>
+          ${mapCard()}
+          <ul class="work-list">${items.map((t, i) => `<li class="${S.workTick > i ? "done" : ""}">${S.workTick > i ? "✓" : "·"} ${esc(t)}</li>`).join("")}</ul>
+          <p class="tiny">Ready when Agency Brain is watching. There is no “setup is complete” click inside that app. ${isOwnerPath() ? `If install didn't start, <a href="${DL}" target="_blank" rel="noopener">download Agency Brain</a>.` : ""}</p>
+          <div class="actions">
+            <button class="primary" type="button" id="next" ${S.abDone ? "" : "disabled"}>Continue</button>
+          </div>`;
+        bindNext(() => go("aipick"));
+      } else if (sc === "aipick") {
+        m.innerHTML = `
+          <p class="kicker">Talking</p>
+          <h1>Which AI should this use?</h1>
+          <p>Claude, Grok, or ChatGPT. The conversation is the same. It will run against the folder Agency Brain is watching.</p>
+          <div class="ai-grid">
+            ${[["claude","Claude","Claude Code login"],["grok","Grok","Grok CLI login"],["gpt","ChatGPT","ChatGPT / Codex login"]].map(([id,n,s]) => `
+              <div class="ai ${S.ai === id ? "on" : ""}" data-ai="${id}"><strong>${n}</strong><span>${s}</span></div>
+            `).join("")}
+          </div>
+          <div class="actions"><button class="primary" type="button" id="next" ${S.ai ? "" : "disabled"}>Continue with ${S.ai === "gpt" ? "ChatGPT" : S.ai ? S.ai[0].toUpperCase()+S.ai.slice(1) : "…"}</button></div>`;
+        m.querySelectorAll(".ai").forEach(el => el.onclick = () => { S.ai = el.dataset.ai; render(); });
+        bindNext(() => go("aiwork"));
+      } else if (sc === "aiwork") {
+        const name = S.ai === "gpt" ? "ChatGPT" : S.ai === "grok" ? "Grok" : "Claude";
+        m.innerHTML = `
+          <p class="kicker">Working</p>
+          <h1>Connecting ${name}.</h1>
+          <ul class="work-list">
+            <li class="${S.workTick > 0 ? "done" : ""}">${S.workTick > 0 ? "✓" : "·"} Opening ${name}'s login</li>
+            <li class="${S.workTick > 2 ? "done" : ""}">${S.workTick > 2 ? "✓" : "·"} Checking the CLI is signed in</li>
+            <li class="${S.workTick > 3 ? "done" : ""}">${S.workTick > 3 ? "✓" : "·"} Pointing it at the Agency Brain folder</li>
+          </ul>
+          <div class="actions">
+            <button class="primary" type="button" id="next" ${S.aiDone ? "" : "disabled"}">Start the conversation</button>
+          </div>`;
+        bindNext(() => go("chat"));
+      } else if (sc === "chat") {
+        const canInvite = S.path !== "join" && S.interviewDone;
+        const inviteBlocked = S.path !== "join" && !S.interviewDone;
+        m.innerHTML = `
+          <div class="chat">
+            ${S.path === "join" ? `<span class="role-lock">Role: Bookkeeper · you cannot change this</span>` : ""}
+            ${inviteBlocked ? `<div class="note">Questions follow what the brain still needs, not a script. A long first answer can skip several. Invites wait until those needs are filled. Try a real paragraph, or type “draft a client email” to see pause.</div>` : ""}
+            ${canInvite ? `<div class="note" style="background:var(--ok-bg);color:var(--ok)">The brain has what it needs. You can invite people, or just talk.</div>` : ""}
+            ${S.parked.length ? `<p class="tiny">Parked until setup is done: ${S.parked.map(esc).join(" · ")}</p>` : ""}
+            <div class="thread" id="thread">${S.messages.map(msg => `<div class="bubble ${msg.who === "me" ? "me" : ""}">${esc(msg.text)}</div>`).join("")}</div>
+            ${canInvite ? inviteForm() : ""}
+            <div class="composer">
+              <input type="text" id="say" placeholder="${S.interviewDone ? "Ask the brain…" : "Answer however you want…"}" autocomplete="off">
+              <button class="primary" type="button" id="send">Send</button>
+            </div>
+          </div>`;
+        const say = $("say");
+        $("send").onclick = () => { sendChat(say.value); };
+        say.addEventListener("keydown", e => { if (e.key === "Enter") sendChat(say.value); });
+        const thread = $("thread");
+        thread.scrollTop = thread.scrollHeight;
+        const add = $("addperson");
+        if (add) add.onclick = () => {
+          const n = $("pname").value.trim();
+          const e = $("pemail").value.trim();
+          const r = $("prole").value;
+          if (!n || !e) return;
+          S.people.push({ n, e, r });
+          S.messages.push({ who: "brain", text: `Invited ${n} as ${r}. They'll get an email with a code. Their role stays ${r} unless you change it.` });
+          render();
+        };
+      }
+    }
+
+    function inviteForm() {
+      const rows = S.people.map(p => `<p class="tiny">${esc(p.n)} · ${esc(p.e)} · ${esc(p.r)}</p>`).join("");
+      return `<div style="border:1px solid var(--line);padding:0.7rem 0.8rem;margin:0 0 0.7rem;border-radius:2px">
+        <strong style="font-family:Schibsted Grotesk,sans-serif;font-size:0.85rem">Invite someone</strong>
+        ${rows}
+        <div style="display:grid;grid-template-columns:1fr 1fr 8rem auto;gap:0.35rem;margin-top:0.45rem">
+          <input type="text" id="pname" placeholder="Name">
+          <input type="email" id="pemail" placeholder="Email">
+          <select id="prole">
+            <option>Teammate</option>
+            <option>Scout</option>
+            <option>Owner</option>
+          </select>
+          <button class="ghost" type="button" id="addperson">Invite</button>
+        </div>
+      </div>`;
+    }
+
+    function bindNext(fn) {
+      const b = $("next");
+      if (b) b.onclick = fn;
+    }
+    function esc(s) {
+      return String(s || "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+    }
+    function render() { renderRail(); renderMain(); }
+
+    document.querySelectorAll(".demo button").forEach(b => {
+      b.onclick = () => {
+        document.querySelectorAll(".demo button").forEach(x => x.classList.remove("on"));
+        b.classList.add("on");
+        if (timer) clearInterval(timer);
+        S = blank(b.dataset.path);
+        render();
+      };
+    });
+
+    $("pause-later").onclick = () => {
+      if (S.pendingTask) S.parked.push(S.pendingTask);
+      S.pendingTask = "";
+      $("pause").close();
+      S.messages.push({ who: "brain", text: "Saved that for after setup. " + (nextAsk() || "Let's finish getting the brain what it needs.") });
+      render();
+    };
+    $("pause-now").onclick = () => {
+      const t = S.pendingTask;
+      S.pendingTask = "";
+      $("pause").close();
+      acceptAnswer(t);
+    };
+
+    render();
+  </script>
+</body>
+</html>
