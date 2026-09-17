@@ -928,6 +928,14 @@ export function TerminalWorkspace({
   const chatTab = tabs.find((t) => t.id === chatId)
   const hits = filesByTab[chatId] || []
   const folderName = cwd.split('/').filter(Boolean).pop() || 'Agency Brain'
+  const modelChoices =
+    chatTab?.models && chatTab.models.length
+      ? chatTab.models
+      : chatTab?.kind === 'gpt' || chatTab?.kind === 'cursor'
+        ? []
+        : models.length
+          ? models
+          : [{ id: 'grok-4.6', label: 'Grok 4.6' }]
 
   useEffect(() => {
     if (!cwd && s.brainPath) setCwd(s.brainPath)
@@ -975,12 +983,32 @@ export function TerminalWorkspace({
       })
     return () => {
       live = false
+      const s = saveRef.current
+      if (s.cwd) {
+        window.brain.chat.saveStateSync({
+          cwd: s.cwd,
+          active: s.active,
+          tabs: s.tabs.map((x) => ({
+            id: x.id,
+            type: x.type,
+            title: x.title,
+            kind: x.kind,
+            mode: x.mode,
+            model: x.model,
+            effort: x.effort,
+            agentMode: x.agentMode,
+            cliSessionId: x.cliSessionId,
+            path: x.path
+          })),
+          messages: s.transcripts
+        })
+      }
     }
   }, [cwd])
 
   useEffect(() => {
-    saveRef.current = { cwd, active, tabs, transcripts }
     if (!hydrated || !cwd || hydratedCwd !== cwd) return
+    saveRef.current = { cwd, active, tabs, transcripts }
     const payload = {
       cwd,
       active,
@@ -1007,24 +1035,26 @@ export function TerminalWorkspace({
   useEffect(() => {
     return window.brain.chat.onWillQuit(() => {
       const s = saveRef.current
-      if (!s.cwd || !s.tabs.length) return
-      void window.brain.chat.saveState({
-        cwd: s.cwd,
-        active: s.active,
-        tabs: s.tabs.map((x) => ({
-          id: x.id,
-          type: x.type,
-          title: x.title,
-          kind: x.kind,
-          mode: x.mode,
-          model: x.model,
-          effort: x.effort,
-          agentMode: x.agentMode,
-          cliSessionId: x.cliSessionId,
-          path: x.path
-        })),
-        messages: s.transcripts
-      })
+      if (s.cwd) {
+        window.brain.chat.saveStateSync({
+          cwd: s.cwd,
+          active: s.active,
+          tabs: s.tabs.map((x) => ({
+            id: x.id,
+            type: x.type,
+            title: x.title,
+            kind: x.kind,
+            mode: x.mode,
+            model: x.model,
+            effort: x.effort,
+            agentMode: x.agentMode,
+            cliSessionId: x.cliSessionId,
+            path: x.path
+          })),
+          messages: s.transcripts
+        })
+      }
+      window.brain.chat.flushDone()
     })
   }, [])
 
@@ -1297,7 +1327,7 @@ export function TerminalWorkspace({
           )}
         </aside>
         <div className="stage">
-          {hydrated &&
+          {hydrated && hydratedCwd === cwd &&
             tabs
               .filter((t) => t.type === 'chat')
               .map((t) => (
@@ -1371,23 +1401,22 @@ export function TerminalWorkspace({
             {pick && (
               <div className="runpick">
                 {pick === 'model' &&
-                  (chatTab?.models?.length
-                    ? chatTab.models
-                    : chatTab?.kind === 'gpt' || chatTab?.kind === 'cursor'
-                      ? []
-                      : models.length
-                        ? models
-                        : [{ id: 'grok-4.6', label: 'Grok 4.6' }]
-                  ).map((m) => (
-                    <button
-                      type="button"
-                      key={m.id}
-                      className={m.id === chatTab?.model || m.label === chatTab?.model ? 'on' : ''}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => setChatModel(m.id)}
-                    >
-                      {m.label}
-                    </button>
+                  (modelChoices.length === 0 ? (
+                    <div className="tiny" style={{ padding: '0.4rem 0.55rem' }}>
+                      {chatTab?.models ? 'No models for this CLI.' : 'Loading models…'}
+                    </div>
+                  ) : (
+                    modelChoices.map((m) => (
+                      <button
+                        type="button"
+                        key={m.id}
+                        className={m.id === chatTab?.model || m.label === chatTab?.model ? 'on' : ''}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => setChatModel(m.id)}
+                      >
+                        {m.label}
+                      </button>
+                    ))
                   ))}
                 {pick === 'effort' &&
                   (chatTab?.efforts?.length ? chatTab.efforts : fallbackEfforts(chatTab?.kind)).map((e) => (

@@ -69,7 +69,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 **Large (one item = one slice):** all remaining slash ACP parity; signed Mac; Windows; Brain Bridge wizard; auto-install.
 
-**First slice (when Joe says next 3):** landed in working tree 2026-09-17. Grok 4.6 xhigh review: REJECT ×2, then remaining four bugs fixed (session/load id, Codex tokenUsage shape, persist by cwd + quit flush, ChatGPT picker never uses Grok list). Waiting Joe click-check on a ChatGPT tab Model list. Next slice: slash ACP parity (large).
+**First slice:** LIVE 2026-09-17. Grok 4.6 xhigh **APPROVE**. Codex pickers, context meter, persist chats. Next slice: slash ACP parity (large).
 
 Slash ACP parity is the slice after that (large). Then packaging / wizard / auto-install, one at a time.
 

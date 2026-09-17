@@ -268,6 +268,14 @@ export function registerStubIpc(): void {
     saveChats(state)
     return true
   })
+  ipcMain.on('chat:saveStateSync', (e, state: SavedChats) => {
+    try {
+      saveChats(state)
+      e.returnValue = true
+    } catch {
+      e.returnValue = false
+    }
+  })
   ipcMain.handle('chat:needs', async () => ({ filled: {}, remaining: [] }))
   ipcMain.handle('slash:list', async (_e, cwd?: string, kind?: string) => {
     const watching = readWatching()

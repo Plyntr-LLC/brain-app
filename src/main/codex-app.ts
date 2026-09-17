@@ -81,16 +81,8 @@ function handleNote(pool: Pool, msg: RpcMsg): void {
     const tu = asRecord(params.tokenUsage || params.usage || asRecord(params.turn).usage)
     const last = asRecord(tu.last)
     const totalU = asRecord(tu.total)
-    const used = Number(
-      last.inputTokens ||
-        last.totalTokens ||
-        totalU.inputTokens ||
-        tu.inputTokens ||
-        tu.input_tokens ||
-        tu.total_tokens ||
-        0
-    )
-    const total = Number(tu.modelContextWindow || last.modelContextWindow || 0)
+    const used = Number(totalU.totalTokens || last.totalTokens || last.inputTokens || 0)
+    const total = Number(tu.modelContextWindow || 0)
     const percent = used && total ? Math.min(100, Math.round((used / total) * 100)) : undefined
     if ((used || percent != null) && tab.onEvent) tab.onEvent({ kind: 'context', used: used || undefined, total: total || undefined, percent })
     if (msg.method === 'turn/completed') {

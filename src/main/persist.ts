@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 
@@ -77,7 +77,10 @@ export function saveChats(state: SavedChats): void {
     byCwd[prev.cwd] = { cwd: prev.cwd, active: prev.active || '', tabs: prev.tabs, messages: prev.messages || {} }
   }
   byCwd[state.cwd] = entry
-  writeFileSync(chatsFile(), JSON.stringify({ byCwd }))
+  const dest = chatsFile()
+  const tmp = dest + '.tmp'
+  writeFileSync(tmp, JSON.stringify({ byCwd }))
+  renameSync(tmp, dest)
 }
 
 export function chatsPathExists(): boolean {

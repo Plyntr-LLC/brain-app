@@ -165,6 +165,13 @@ const brain = {
       tabs: Record<string, unknown>[]
       messages: Record<string, { who: string; text: string }[]>
     }) => ipcRenderer.invoke('chat:saveState', state),
+    saveStateSync: (state: {
+      cwd: string
+      active: string
+      tabs: Record<string, unknown>[]
+      messages: Record<string, { who: string; text: string }[]>
+    }) => ipcRenderer.sendSync('chat:saveStateSync', state) as boolean,
+    flushDone: () => ipcRenderer.send('app:flush-done'),
     needs: () => ipcRenderer.invoke('chat:needs')
   }
 }

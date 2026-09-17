@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
 import { readWatching } from './agency-brain'
 import { registerStubIpc } from './ipc-stubs'
@@ -59,6 +59,7 @@ app.whenReady().then(() => {
 })
 
 let quitFlushed = false
+let quitStarted = false
 
 app.on('window-all-closed', () => {
   killAllPtys()
@@ -71,6 +72,10 @@ app.on('before-quit', (e) => {
     killAllWarm()
     return
   }
+  if (quitStarted) {
+    e.preventDefault()
+    return
+  }
   const win = BrowserWindow.getAllWindows()[0]
   if (!win || win.isDestroyed()) {
     quitFlushed = true
@@ -78,10 +83,18 @@ app.on('before-quit', (e) => {
     killAllWarm()
     return
   }
+  quitStarted = true
   e.preventDefault()
   win.webContents.send('app:will-quit')
   setTimeout(() => {
+    if (quitFlushed) return
     quitFlushed = true
     app.quit()
-  }, 600)
+  }, 2000)
+})
+
+ipcMain.on('app:flush-done', () => {
+  if (quitFlushed) return
+  quitFlushed = true
+  app.quit()
 })

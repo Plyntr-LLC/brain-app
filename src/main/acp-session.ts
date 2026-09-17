@@ -505,25 +505,34 @@ export async function acpWarm(opts: {
       return snapshot(have)
     }
     let res: Record<string, unknown> | null = null
+    let loaded = false
     if (opts.resumeId) {
       try {
-        res = asRecord(
+        const loadedRes = asRecord(
           await pool.rpc.request(
             'session/load',
             { sessionId: opts.resumeId, cwd: opts.cwd, mcpServers: [] },
             60_000
           )
         )
-        if (res && !res.sessionId) res.sessionId = opts.resumeId
+        if (!loadedRes || typeof loadedRes !== 'object') throw new Error('empty load')
+        const sid = String(loadedRes.sessionId || opts.resumeId || '')
+        if (!sid) throw new Error('load missing session')
+        loaded = true
+        res = { ...loadedRes, sessionId: sid }
       } catch {
+        loaded = false
         res = null
       }
     }
-    const params =
-      opts.kind === 'grok'
-        ? { cwd: opts.cwd, mcpServers: [], _meta: { yoloMode: true, rules: RULES } }
-        : { cwd: opts.cwd, mcpServers: [] }
-    if (!res || !res.sessionId) res = asRecord(await pool.rpc.request('session/new', params, 90_000))
+    if (!loaded) {
+      const params =
+        opts.kind === 'grok'
+          ? { cwd: opts.cwd, mcpServers: [], _meta: { yoloMode: true, rules: RULES } }
+          : { cwd: opts.cwd, mcpServers: [] }
+      res = asRecord(await pool.rpc.request('session/new', params, 90_000))
+    }
+    if (!res) throw new Error(`${opts.kind} did not return a session`)
     const sessionId = String(res.sessionId || '')
     if (!sessionId) throw new Error(`${opts.kind} did not return a session`)
     const live = readLive(res)
