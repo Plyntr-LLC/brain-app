@@ -55,6 +55,28 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Grok and Cursor model/mode pickers follow the live session. ChatGPT/Codex picker does **not** yet (still falls through to `grok models`).
 - Slash catalog exists. Skills send `/name` into the warm session. Most builtins are still local UI, not ACP. That is Inbox, not done.
 
+## How Joe runs Inbox
+
+Say **next 3** (or **run brain inbox**). That is the whole start.
+
+1. Take **3 Inbox lines**, unless one line is a large slice (then that line is the whole slice).
+2. Build on `main` in this repo. `npm run typecheck`. Click-check Chat in the running app.
+3. **Review gate:** independent `grok -p` with **model grok-4.6** and **effort xhigh**. Last line must be `APPROVE` or `REJECT`. `APPROVE` only if it would ship unchanged. Max 2 fix cycles, then show Joe.
+4. On APPROVE, that slice is live (this repo’s `main`, app restarted). Check off Inbox. Rewrite Now.
+5. Stop. Joe says **next 3** again.
+
+Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with Chat bugs. Those are their own slices (large). Do not notarize or spend without Joe’s yes.
+
+**Large (one item = one slice):** all remaining slash ACP parity; signed Mac; Windows; Brain Bridge wizard; auto-install.
+
+**First slice (when Joe says next 3):**
+
+1. ChatGPT/Codex model list + effort from Codex, not Grok.
+2. Live context meter (percent or tokens).
+3. Persist chat tabs or `session/load` so quit is not amnesia.
+
+Slash ACP parity is the slice after that (large). Then packaging / wizard / auto-install, one at a time.
+
 ## Hard rules
 
 1. Stay on `main` in this repo. No feature branches here.
