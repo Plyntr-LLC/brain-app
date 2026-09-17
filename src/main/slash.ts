@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { resolveBin } from './ai-cli'
@@ -67,64 +67,7 @@ export async function listSlash(
   cwd: string,
   kind = 'grok'
 ): Promise<{ commands: SlashCmd[]; models: { id: string; label: string }[] }> {
-  const builtins: SlashCmd[] = [
-    { name: 'new', kind: 'builtin', description: 'New chat tab' },
-    { name: 'clear', kind: 'builtin', description: 'Clear this chat' },
-    { name: 'resume', kind: 'builtin', description: 'List recent Grok sessions' },
-    { name: 'dashboard', kind: 'builtin', description: 'Open Grok agent dashboard' },
-    { name: 'compact', kind: 'builtin', description: 'Trim this chat' },
-    { name: 'context', kind: 'builtin', description: 'Context window / what is loaded' },
-    { name: 'session-info', kind: 'builtin', description: 'Session details' },
-    { name: 'fork', kind: 'builtin', description: 'New tab from this chat' },
-    { name: 'rewind', kind: 'builtin', description: 'Undo last turn' },
-    { name: 'copy', kind: 'builtin', description: 'Copy last answer' },
-    { name: 'export', kind: 'builtin', description: 'Export this chat to a file' },
-    { name: 'quit', kind: 'builtin', description: 'Quit the app' },
-    { name: 'home', kind: 'builtin', description: 'Back to the welcome line' },
-    { name: 'delete', kind: 'builtin', description: 'Delete this chat' },
-    { name: 'rename', kind: 'builtin', description: 'Rename this tab' },
-    { name: 'model', kind: 'builtin', description: 'Pick the model' },
-    { name: 'effort', kind: 'builtin', description: 'low / medium / high / xhigh' },
-    { name: 'always-approve', kind: 'builtin', description: 'Skip tool prompts' },
-    { name: 'auto', kind: 'builtin', description: 'Auto-approve safe tools' },
-    { name: 'multiline', kind: 'builtin', description: 'Enter inserts a newline' },
-    { name: 'history', kind: 'builtin', description: 'This chat’s prompts' },
-    { name: 'plan', kind: 'builtin', description: 'Enter plan mode' },
-    { name: 'view-plan', kind: 'builtin', description: 'Show the current plan' },
-    { name: 'memory', kind: 'builtin', description: 'Browse Grok memory' },
-    { name: 'flush', kind: 'builtin', description: 'Flush session into memory' },
-    { name: 'dream', kind: 'builtin', description: 'Consolidate memory' },
-    { name: 'remember', kind: 'builtin', description: 'Save a note to memory' },
-    { name: 'hooks', kind: 'builtin', description: 'Loaded hooks' },
-    { name: 'plugins', kind: 'builtin', description: 'Installed plugins' },
-    { name: 'marketplace', kind: 'builtin', description: 'Plugin marketplace' },
-    { name: 'skills', kind: 'builtin', description: 'Installed skills' },
-    { name: 'imagine', kind: 'builtin', description: 'Generate an image' },
-    { name: 'imagine-video', kind: 'builtin', description: 'Generate a video' },
-    { name: 'loop', kind: 'builtin', description: 'Recurring prompt' },
-    { name: 'goal', kind: 'builtin', description: 'Set or manage a goal' },
-    { name: 'deep-research', kind: 'builtin', description: 'Background research' },
-    { name: 'workflow', kind: 'builtin', description: 'Run a workflow' },
-    { name: 'workflows', kind: 'builtin', description: 'List saved workflows' },
-    { name: 'theme', kind: 'builtin', description: 'Chat theme stays this app’s' },
-    { name: 'feedback', kind: 'builtin', description: 'Send feedback' },
-    { name: 'btw', kind: 'builtin', description: 'Side question, same chat' },
-    { name: 'mcps', kind: 'builtin', description: 'MCP servers' },
-    { name: 'doctor', kind: 'builtin', description: 'Grok doctor' },
-    { name: 'release-notes', kind: 'builtin', description: 'Grok changelog' },
-    { name: 'docs', kind: 'builtin', description: 'Grok user-guide docs' },
-    { name: 'tutorial', kind: 'builtin', description: 'How this chat works' },
-    { name: 'login', kind: 'builtin', description: 'Grok login' },
-    { name: 'logout', kind: 'builtin', description: 'Grok logout' },
-    { name: 'usage', kind: 'builtin', description: 'Account usage' },
-    { name: 'privacy', kind: 'builtin', description: 'Privacy / coding data' },
-    { name: 'settings', kind: 'builtin', description: 'This chat’s settings' },
-    { name: 'timestamps', kind: 'builtin', description: 'Toggle timestamps' },
-    { name: 'vim-mode', kind: 'builtin', description: 'Vim keys (terminal-only)' },
-    { name: 'minimal', kind: 'builtin', description: 'Compact layout' },
-    { name: 'fullscreen', kind: 'builtin', description: 'Roomy layout' },
-    { name: 'help', kind: 'builtin', description: 'List commands' }
-  ]
+  const builtins: SlashCmd[] = appBuiltins(kind)
   const grok = resolveBin('grok')
   let skills: SlashCmd[] = []
   let models: { id: string; label: string }[] = [
@@ -182,24 +125,123 @@ export async function listSlash(
   return { commands: [...builtins, ...extra], models }
 }
 
+function appBuiltins(kind: string): SlashCmd[] {
+  const common: SlashCmd[] = [
+    { name: 'new', kind: 'builtin', description: 'New chat tab' },
+    { name: 'clear', kind: 'builtin', description: 'New session in this tab' },
+    { name: 'compact', kind: 'builtin', description: 'Compact the live session' },
+    { name: 'context', kind: 'builtin', description: 'Live context window' },
+    { name: 'session-info', kind: 'builtin', description: 'Live session details' },
+    { name: 'fork', kind: 'builtin', description: 'Fork the live session into a new tab' },
+    { name: 'rewind', kind: 'builtin', description: 'Undo last turn on the live session' },
+    { name: 'copy', kind: 'builtin', description: 'Copy last answer' },
+    { name: 'export', kind: 'builtin', description: 'Save this chat to a file' },
+    { name: 'quit', kind: 'builtin', description: 'Quit the app' },
+    { name: 'delete', kind: 'builtin', description: 'Close this tab' },
+    { name: 'rename', kind: 'builtin', description: 'Rename this tab' },
+    { name: 'model', kind: 'builtin', description: 'Pick the model' },
+    { name: 'effort', kind: 'builtin', description: 'Reasoning effort' },
+    { name: 'history', kind: 'builtin', description: 'This chat’s prompts' },
+    { name: 'help', kind: 'builtin', description: 'List commands' },
+    { name: 'usage', kind: 'builtin', description: 'Account usage' }
+  ]
+  if (kind === 'grok') {
+    common.splice(2, 0, { name: 'resume', kind: 'builtin', description: 'Load a saved Grok session' })
+    common.push(
+      { name: 'login', kind: 'builtin', description: 'Grok login' },
+      { name: 'logout', kind: 'builtin', description: 'Grok logout' },
+      { name: 'doctor', kind: 'builtin', description: 'Grok doctor' }
+    )
+  }
+  return common
+}
+
 function encodeSessionDir(cwd: string): string {
   return encodeURIComponent(cwd)
 }
 
-function latestGrokSession(cwd: string): string | null {
+export type GrokSessionRow = { id: string; title: string; updated: string }
+
+export function listGrokSessions(cwd: string): GrokSessionRow[] {
   const dir = join(homedir(), '.grok', 'sessions', encodeSessionDir(cwd))
   try {
     const ids = readdirSync(dir).filter((n) => /^[0-9a-f-]{20,}$/i.test(n))
-    if (!ids.length) return null
     ids.sort((a, b) => statSync(join(dir, b)).mtimeMs - statSync(join(dir, a)).mtimeMs)
-    return ids[0]
+    return ids.slice(0, 24).map((id) => {
+      let title = id.slice(0, 8)
+      let updated = ''
+      try {
+        const sum = JSON.parse(readFileSync(join(dir, id, 'summary.json'), 'utf8')) as {
+          generated_title?: string
+          session_summary?: string
+          last_active_at?: string
+          updated_at?: string
+        }
+        title = String(sum.generated_title || sum.session_summary || title).slice(0, 80)
+        updated = String(sum.last_active_at || sum.updated_at || '')
+      } catch {
+        /* */
+      }
+      if (!updated) {
+        try {
+          updated = new Date(statSync(join(dir, id)).mtimeMs).toISOString()
+        } catch {
+          /* */
+        }
+      }
+      return { id, title, updated }
+    })
   } catch {
-    return null
+    return []
   }
 }
 
-function fmt(n: number): string {
-  return Math.round(n).toLocaleString('en-US')
+function textFromContent(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .map((c) => (c && typeof c === 'object' && 'text' in c ? String((c as { text?: string }).text || '') : ''))
+      .join('\n')
+  }
+  return ''
+}
+
+export function grokTranscript(cwd: string, id: string): { who: 'me' | 'brain'; text: string }[] {
+  const file = join(homedir(), '.grok', 'sessions', encodeSessionDir(cwd), id, 'chat_history.jsonl')
+  if (!existsSync(file)) return []
+  let raw = ''
+  try {
+    const st = statSync(file)
+    const size = Math.min(st.size, 700_000)
+    const fd = openSync(file, 'r')
+    const buf = Buffer.alloc(size)
+    readSync(fd, buf, 0, size, Math.max(0, st.size - size))
+    closeSync(fd)
+    raw = buf.toString('utf8')
+  } catch {
+    return []
+  }
+  const lines = raw.split('\n')
+  if (lines.length) lines[0] = lines[0].startsWith('{') ? lines[0] : ''
+  const out: { who: 'me' | 'brain'; text: string }[] = []
+  for (const line of lines) {
+    if (!line.trim()) continue
+    try {
+      const o = JSON.parse(line) as { type?: string; content?: unknown }
+      if (o.type === 'user') {
+        const blob = textFromContent(o.content)
+        const m = blob.match(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/)
+        const text = (m ? m[1] : blob).trim().slice(0, 4000)
+        if (text) out.push({ who: 'me', text })
+      } else if (o.type === 'assistant') {
+        const text = textFromContent(o.content).trim().slice(0, 8000)
+        if (text) out.push({ who: 'brain', text })
+      }
+    } catch {
+      /* skip a broken line */
+    }
+  }
+  return out.slice(-40)
 }
 
 function grokAccount(): { email?: string; name?: string } {

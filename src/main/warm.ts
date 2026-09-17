@@ -3,9 +3,11 @@ import type { StreamEvent } from './ai-cli'
 import {
   acpCancel,
   acpClose,
+  acpFork,
   acpKillAll,
   acpPrompt,
   acpReset,
+  acpResume,
   acpWarm,
   prewarmProcess,
   type LiveRun
@@ -92,4 +94,23 @@ export function killAllWarm(): void {
 
 export function prewarm(kind: AiKind, cwd: string): void {
   if (kind === 'grok' || kind === 'cursor') prewarmProcess(kind, cwd)
+}
+
+export async function resumeSession(opts: {
+  tabId: string
+  kind: AiKind
+  cwd: string
+  sessionId: string
+}): Promise<LiveRun> {
+  if (opts.kind === 'grok' || opts.kind === 'cursor') {
+    return acpResume({ kind: opts.kind, tabId: opts.tabId, cwd: opts.cwd, sessionId: opts.sessionId })
+  }
+  throw new Error('Resume from disk is Grok/Cursor ACP. This chat cannot load that session.')
+}
+
+export async function forkSession(opts: { tabId: string; kind: AiKind; cwd: string }): Promise<string> {
+  if (opts.kind === 'grok' || opts.kind === 'cursor') {
+    return acpFork({ kind: opts.kind, tabId: opts.tabId, cwd: opts.cwd })
+  }
+  throw new Error('This CLI has no session fork.')
 }

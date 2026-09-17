@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -34,6 +34,41 @@ function filePath(f: File): string {
 type Msg = { who: 'me' | 'brain' | 'think' | 'sys'; text: string; files?: Attach[] }
 type FileNode = { name: string; path: string; dir: boolean; kids?: FileNode[] }
 type Cap = { id: string; label: string }
+type SessionCmd = { name: string; description: string; hint?: string }
+
+const TUI_ONLY = new Set([
+  'theme',
+  'vim-mode',
+  'minimal',
+  'fullscreen',
+  'dashboard',
+  'timestamps',
+  'multiline',
+  'compact-mode',
+  'terminal-setup',
+  'terminal-check',
+  'home',
+  'welcome'
+])
+
+const SESSION_QUIET = new Set(['compact', 'rewind', 'undo', 'flush', 'dream'])
+
+const NEED_ARG = new Set([
+  'imagine',
+  'imagine-video',
+  'remember',
+  'btw',
+  'deep-research',
+  'goal',
+  'loop',
+  'plan',
+  'feedback',
+  'rename',
+  'title',
+  'model',
+  'effort',
+  'workflow'
+])
 type Tab = {
   id: string
   type: 'chat' | 'file'
@@ -271,7 +306,12 @@ function ChatPane({
   onCaps,
   onTranscript,
   onContext,
-  onApprove
+  onApprove,
+  onRename,
+  onResume,
+  onFork,
+  onAgentMode,
+  onDelete
 }: {
   id: string
   kind: AiKind
@@ -301,6 +341,11 @@ function ChatPane({
   onTranscript: (id: string, messages: Msg[]) => void
   onContext: (id: string, ctx: { used?: number; total?: number; percent?: number }) => void
   onApprove: (v: boolean) => void
+  onRename: (title: string) => void
+  onResume: (sessionId: string) => void
+  onFork: (messages: Msg[], sessionId?: string) => void
+  onAgentMode: (mode: string) => void
+  onDelete: () => void
 }) {
   const [messages, setMessages] = useState<Msg[]>(
     initialMessages && initialMessages.length ? initialMessages : [{ who: 'brain', text: greeting }]
@@ -316,6 +361,9 @@ function ChatPane({
   const [drops, setDrops] = useState<Attach[]>([])
   const [over, setOver] = useState(false)
   const [dropNote, setDropNote] = useState('')
+  const [sessionCmds, setSessionCmds] = useState<SessionCmd[]>([])
+  const [resumeRows, setResumeRows] = useState<{ id: string; title: string; updated: string }[] | null>(null)
+  const ctxRef = useRef<{ used?: number; total?: number; percent?: number }>({})
   const dropsRef = useRef<Attach[]>([])
   const pendingDrops = useRef(Promise.resolve())
   const thread = useRef<HTMLDivElement>(null)
@@ -351,7 +399,11 @@ function ChatPane({
           return next
         })
       }
+      if (ev.kind === 'commands' && ev.commands) {
+        setSessionCmds(ev.commands)
+      }
       if (ev.kind === 'context') {
+        ctxRef.current = { used: ev.used, total: ev.total, percent: ev.percent }
         onContext(id, { used: ev.used, total: ev.total, percent: ev.percent })
       }
       if (ev.kind === 'status' && ev.data === 'compacting') {
@@ -428,6 +480,7 @@ function ChatPane({
       .warm({ tabId: id, kind, cwd, model, effort, agentMode, resumeId })
       .then((r) => {
         if (r?.models?.length) setModels(r.models)
+        if (r?.commands?.length) setSessionCmds(r.commands)
         onCaps({
           model: r?.model,
           effort: r?.effort,
@@ -449,6 +502,26 @@ function ChatPane({
 
   const EFFORTS =
     kind === 'gpt' ? ['low', 'medium', 'high'] : kind === 'cursor' ? [] : ['low', 'medium', 'high', 'xhigh']
+  const menuCmds = useMemo(() => {
+    const seen = new Set<string>()
+    const out: { name: string; kind: 'builtin' | 'skill'; description: string }[] = []
+    for (const c of cmds) {
+      if (TUI_ONLY.has(c.name)) continue
+      seen.add(c.name)
+      out.push(c)
+    }
+    for (const c of sessionCmds) {
+      if (seen.has(c.name) || TUI_ONLY.has(c.name)) continue
+      seen.add(c.name)
+      out.push({ name: c.name, kind: 'builtin', description: c.description || 'Session command' })
+    }
+    return out
+  }, [cmds, sessionCmds])
+  const spaceNames = useMemo(() => {
+    const s = new Set(NEED_ARG)
+    for (const c of sessionCmds) if (c.hint) s.add(c.name)
+    return s
+  }, [sessionCmds])
   const slashOn = say.startsWith('/')
   const after = slashOn ? say.slice(1) : ''
   const space = after.indexOf(' ')
@@ -469,7 +542,7 @@ function ChatPane({
       insert: `/effort ${e}`
     }))
   } else if (slashOn) {
-    matches = cmds
+    matches = menuCmds
       .filter((c) => c.name.toLowerCase().startsWith(cmdTok) || c.name.toLowerCase().includes(cmdTok))
       .sort((a, b) => {
         const al = a.name.toLowerCase()
@@ -483,10 +556,19 @@ function ChatPane({
         name: c.name,
         kind: c.kind,
         description: c.description,
-        insert: ['model', 'effort', 'imagine', 'imagine-video', 'compact', 'rename', 'remember', 'loop', 'goal', 'deep-research', 'btw', 'feedback', 'copy', 'export', 'rewind', 'workflow', 'plan', 'title'].includes(c.name)
-            ? `/${c.name} `
-            : `/${c.name}`
+        insert: spaceNames.has(c.name) ? `/${c.name} ` : `/${c.name}`
       }))
+  }
+
+  async function loadResume(sessionId: string) {
+    const r = await window.brain.chat.resume({ tabId: id, kind, cwd, sessionId })
+    if (!r.ok) {
+      note(r.error || 'Could not load that session.')
+      return
+    }
+    const msgs = (r.messages || []).map((m) => ({ who: m.who, text: m.text })) as Msg[]
+    setMessages(msgs.length ? msgs : [{ who: 'sys', text: 'Session loaded. The model has the history.' }])
+    onResume(r.sessionId || sessionId)
   }
 
   function note(text: string) {
@@ -503,6 +585,10 @@ function ChatPane({
     const [cmd, ...rest] = t.slice(1).split(/\s+/)
     const name = (cmd || '').toLowerCase()
     const arg = rest.join(' ')
+    if (TUI_ONLY.has(name)) {
+      note(`/${name} is a Grok terminal setting. This chat does not have it.`)
+      return true
+    }
     if (name === 'new') {
       onNew()
       return true
@@ -514,11 +600,15 @@ function ChatPane({
       void window.brain.chat.reset({ tabId: id, kind, cwd, model, effort }).catch(() => {})
       return true
     }
-    if (name === 'help') {
-      popup('Commands', cmds.map((c) => `/${c.name}  ${c.description}`).join('\n'))
+    if (name === 'delete') {
+      onDelete()
       return true
     }
-    if (name === 'usage') {
+    if (name === 'help') {
+      popup('Commands', menuCmds.map((c) => `/${c.name}  ${c.description}`).join('\n'))
+      return true
+    }
+    if (name === 'usage' || name === 'cost') {
       void window.brain.slash.usage(cwd, kind).then((body) => popup('Usage', body))
       return true
     }
@@ -553,10 +643,9 @@ function ChatPane({
       note(`Effort is ${arg.toLowerCase()}.`)
       return true
     }
-    if (name === 'always-approve' || name === 'auto') {
-      const next = !alwaysApprove
-      onApprove(next)
-      note(next ? 'Always-approve is on for this chat.' : 'Always-approve is off.')
+    if (name === 'plan' && kind === 'cursor' && !arg) {
+      onAgentMode('plan')
+      note('Cursor mode is plan.')
       return true
     }
     if (name === 'compact') {
@@ -566,24 +655,59 @@ function ChatPane({
       return true
     }
     if (name === 'context') {
-      void window.brain.slash.context(cwd).then((body) => popup('Context', body))
+      const c = ctxRef.current
+      const pct = c.percent != null ? `${c.percent}%` : ''
+      const used = c.used ? `${Math.round(c.used / 1000)}k` : ''
+      const total = c.total ? `${Math.round(c.total / 1000)}k` : ''
+      popup(
+        'Context',
+        [`Folder: ${cwd}`, `CLI: ${kind}`, pct || used ? `Window: ${pct}${used && total ? `  ${used} / ${total}` : ''}` : 'Waiting on the live session.', `Session: ${resumeId || sessionId}`].join('\n')
+      )
       return true
     }
     if (name === 'session-info' || name === 'status' || name === 'info') {
+      const c = ctxRef.current
       popup(
         'Session',
         [
           `CLI: ${kind}`,
           `Model: ${model || 'default'}`,
           `Effort: ${effort || 'default'}`,
-          `Always-approve: ${alwaysApprove ? 'on' : 'off'}`,
+          `Mode: ${agentMode || 'default'}`,
+          `Session: ${resumeId || sessionId}`,
+          c.percent != null ? `Context: ${c.percent}%` : '',
           `Folder: ${cwd}`
-        ].join('\n')
+        ]
+          .filter(Boolean)
+          .join('\n')
       )
       return true
     }
     if (name === 'fork') {
-      onNew()
+      void (async () => {
+        try {
+          const r = await window.brain.chat.fork({ tabId: id, kind, cwd })
+          if (r.ok && r.sessionId) {
+            onFork(
+              [...messages, { who: 'sys', text: 'Forked the live session into this tab.' }],
+              r.sessionId
+            )
+            return
+          }
+          onFork([
+            ...messages,
+            {
+              who: 'sys',
+              text: r.error || 'This CLI has no session fork, so the model starts fresh in this tab.'
+            }
+          ])
+        } catch (e) {
+          onFork([
+            ...messages,
+            { who: 'sys', text: String((e as Error).message || e) }
+          ])
+        }
+      })()
       return true
     }
     if (name === 'rewind' || name === 'undo') {
@@ -593,7 +717,8 @@ function ChatPane({
         next.pop()
         return next.length ? next : [{ who: 'brain', text: greeting }]
       })
-      note('Undid the last turn.')
+      void sendQuiet('/rewind')
+      note('Rewind sent to the live session. Last turn removed on screen.')
       return true
     }
     if (name === 'copy') {
@@ -605,22 +730,13 @@ function ChatPane({
     }
     if (name === 'export') {
       const body = messages.map((m) => `## ${m.who}\n${m.text}`).join('\n\n')
-      const path = `${cwd}/chat-export.md`
-      void navigator.clipboard.writeText(body)
-      note(`Chat copied. Save it as ${arg || path} if you want a file.`)
+      void window.brain.files.saveText(arg || 'chat.md', body).then((path) => {
+        note(path ? `Saved ${path}` : 'Export cancelled.')
+      })
       return true
     }
     if (name === 'quit' || name === 'exit') {
       void window.brain.quit()
-      return true
-    }
-    if (name === 'home' || name === 'welcome') {
-      setMessages([{ who: 'brain', text: greeting }])
-      return true
-    }
-    if (name === 'delete') {
-      setMessages([{ who: 'brain', text: greeting }])
-      note('This chat was cleared.')
       return true
     }
     if (name === 'rename' || name === 'title') {
@@ -628,6 +744,7 @@ function ChatPane({
         setSay('/rename ')
         return true
       }
+      onRename(arg)
       note(`Tab title: ${arg}`)
       return true
     }
@@ -645,63 +762,33 @@ function ChatPane({
       popup('Skills', cmds.filter((c) => c.kind === 'skill').map((c) => `/${c.name}  ${c.description}`).join('\n') || '(none)')
       return true
     }
-    if (name === 'mcps' || name === 'hooks' || name === 'plugins' || name === 'marketplace' || name === 'workflows') {
-      void window.brain.slash.cli([name === 'mcps' ? 'mcp' : name === 'hooks' ? 'mcp' : name === 'plugins' ? 'plugin' : name], cwd).then((body) =>
-        popup(name, body)
-      )
-      return true
-    }
-    if (name === 'doctor' || name === 'terminal-setup' || name === 'terminal-check') {
-      void window.brain.slash.cli(['doctor'], cwd).then((body) => popup('Doctor', body))
-      return true
-    }
-    if (name === 'login') {
-      void window.brain.slash.cli(['login'], cwd).then((body) => popup('Login', body))
-      return true
-    }
-    if (name === 'logout') {
-      void window.brain.slash.cli(['logout'], cwd).then((body) => popup('Logout', body))
-      return true
-    }
-    if (name === 'docs' || name === 'howto' || name === 'guides') {
-      popup('Docs', 'Grok Build docs: ~/.grok/docs/user-guide/\nOnline: https://docs.x.ai/')
-      return true
-    }
-    if (name === 'release-notes' || name === 'changelog') {
-      void window.brain.slash.cli(['version'], cwd).then((body) => popup('Release', body))
-      return true
-    }
-    if (name === 'memory' || name === 'mem') {
-      void window.brain.slash.cli(['memory', 'list'], cwd).then((body) => popup('Memory', body))
-      return true
-    }
-    if (name === 'privacy' || name === 'settings' || name === 'config' || name === 'preferences') {
-      popup(
-        'Settings',
-        `Model ${model || 'default'}\nEffort ${effort || 'default'}\nAlways-approve ${alwaysApprove ? 'on' : 'off'}\nFolder ${cwd}`
-      )
-      return true
-    }
-    if (name === 'tutorial') {
-      popup('Tutorial', 'Type / for commands. Pick a model with /model. Skills like /accounts run against this brain folder. Stop cancels a run.')
-      return true
-    }
-    if (name === 'theme' || name === 'vim-mode' || name === 'minimal' || name === 'fullscreen' || name === 'dashboard' || name === 'timestamps' || name === 'multiline' || name === 'compact-mode') {
-      popup(name, 'This chat is the product UI. That command is a Grok TUI chrome setting, so it has no separate screen here.')
+    if (name === 'doctor' || name === 'login' || name === 'logout') {
+      if (kind !== 'grok') {
+        note(`/${name} is a Grok CLI command.`)
+        return true
+      }
+      void window.brain.slash.cli([name], cwd).then((body) => popup(name, body))
       return true
     }
     if (name === 'resume') {
-      void window.brain.slash.cli(['sessions', 'list'], cwd).then((body) => popup('Sessions', body))
-      return true
-    }
-    if (
-      ['imagine', 'imagine-video', 'plan', 'view-plan', 'deep-research', 'btw', 'remember', 'dream', 'flush', 'goal', 'loop', 'workflow', 'feedback', 'personas', 'config-agents', 'import-claude'].includes(name)
-    ) {
-      if (!arg && ['imagine', 'imagine-video', 'remember', 'btw', 'deep-research', 'goal', 'loop', 'plan', 'feedback'].includes(name)) {
-        setSay(`/${name} `)
+      if (kind !== 'grok') {
+        note('Resume from disk is for Grok chats.')
         return true
       }
-      return false
+      if (arg && /^[0-9a-f-]{20,}$/i.test(arg)) {
+        void loadResume(arg)
+        return true
+      }
+      void window.brain.slash.sessions(cwd).then((rows) => setResumeRows(rows))
+      return true
+    }
+    if (NEED_ARG.has(name) && !arg) {
+      setSay(`/${name} `)
+      return true
+    }
+    if (SESSION_QUIET.has(name)) {
+      void sendQuiet(arg ? `/${name} ${arg}` : `/${name}`)
+      return true
     }
     return false
   }
@@ -899,6 +986,38 @@ function ChatPane({
             </button>
           </div>
           <pre className="cmdbody">{panel.body}</pre>
+        </div>
+      )}
+      {resumeRows && (
+        <div className="cmdpanel">
+          <div className="invitehead">
+            <strong>Resume a Grok session</strong>
+            <button type="button" className="tabx" onClick={() => setResumeRows(null)} aria-label="Close">
+              ×
+            </button>
+          </div>
+          {resumeRows.length === 0 ? (
+            <pre className="cmdbody">No saved Grok sessions for this folder.</pre>
+          ) : (
+            <div className="resumelist">
+              {resumeRows.map((row) => (
+                <button
+                  type="button"
+                  className="resumerow"
+                  key={row.id}
+                  onClick={() => {
+                    setResumeRows(null)
+                    void loadResume(row.id)
+                  }}
+                >
+                  <strong>{row.title}</strong>
+                  <span>
+                    {row.updated ? new Date(row.updated).toLocaleString('en-US') : ''} · {row.id.slice(0, 8)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
       <div className="thread" ref={thread}>
@@ -1281,7 +1400,7 @@ export function TerminalWorkspace({
     setTabs((all) => all.map((t) => (t.id === active ? { ...t, mode } : t)))
   }
 
-  function addTab(kind: AiKind) {
+  function addTab(kind: AiKind, copied?: Msg[], resumeId?: string) {
     const id = nid()
     setTabs((t) => [
       ...t,
@@ -1292,9 +1411,11 @@ export function TerminalWorkspace({
         mode: 'chat',
         title: label(kind),
         sessionId: crypto.randomUUID(),
+        cliSessionId: resumeId,
         effort: kind === 'cursor' ? undefined : 'high'
       }
     ])
+    if (copied?.length) setTranscripts((m) => ({ ...m, [id]: copied }))
     setActive(id)
     setPicker(false)
   }
@@ -1514,6 +1635,13 @@ export function TerminalWorkspace({
                   onTranscript={(id, msgs) => setTranscripts((m) => ({ ...m, [id]: msgs }))}
                   onContext={(id, ctx) => setContextByTab((m) => ({ ...m, [id]: ctx }))}
                   onApprove={(v) => setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, alwaysApprove: v } : x)))}
+                  onRename={(title) => setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, title } : x)))}
+                  onResume={(sessionId) => {
+                    setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, cliSessionId: sessionId } : x)))
+                  }}
+                  onFork={(msgs, sessionId) => addTab(t.kind || 'grok', msgs, sessionId)}
+                  onAgentMode={(mode) => setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, agentMode: mode } : x)))}
+                  onDelete={() => closeTab(t.id)}
                 />
               ))}
           {tabs

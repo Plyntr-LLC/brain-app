@@ -462,6 +462,32 @@
   margin: 0.4rem 0 0;
   color: var(--ink);
 }
+.resumelist {
+  display: flex;
+  flex-direction: column;
+  max-height: 14rem;
+  overflow: auto;
+  margin-top: 0.4rem;
+}
+.resumerow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  padding: 0.4rem 0.2rem;
+  font-size: 0.82rem;
+  color: var(--ink);
+}
+.resumerow span {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 0.72rem;
+}
 .slashmenu {
   position: absolute;
   left: 1rem;

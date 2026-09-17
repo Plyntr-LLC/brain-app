@@ -84,6 +84,8 @@ const brain = {
         files: { path: string; name: string; mime: string }[]
         skipped: string[]
       }>,
+    saveText: (suggested: string, text: string) =>
+      ipcRenderer.invoke('files:saveText', suggested, text) as Promise<string | null>,
     pathFor: (file: File) => {
       try {
         return webUtils.getPathForFile(file as File) || ''
@@ -102,6 +104,8 @@ const brain = {
       }>,
     context: (cwd?: string) => ipcRenderer.invoke('slash:context', cwd) as Promise<string>,
     usage: (cwd?: string, kind?: string) => ipcRenderer.invoke('slash:usage', cwd, kind) as Promise<string>,
+    sessions: (cwd?: string) =>
+      ipcRenderer.invoke('slash:sessions', cwd) as Promise<{ id: string; title: string; updated: string }[]>,
     cli: (args: string[], cwd?: string) => ipcRenderer.invoke('slash:cli', args, cwd) as Promise<string>
   },
   chat: {
@@ -122,13 +126,14 @@ const brain = {
     onEvent: (
       cb: (ev: {
         tabId: string
-        kind: 'thought' | 'text' | 'file' | 'status' | 'context' | 'done' | 'error'
+        kind: 'thought' | 'text' | 'file' | 'status' | 'context' | 'commands' | 'done' | 'error'
         data?: string
         path?: string
         tool?: string
         used?: number
         total?: number
         percent?: number
+        commands?: { name: string; description: string; hint?: string }[]
       }) => void
     ) => {
       const handler = (_: unknown, ev: Parameters<typeof cb>[0]) => cb(ev)
@@ -138,6 +143,15 @@ const brain = {
       }
     },
     stop: (tabId: string) => ipcRenderer.invoke('chat:stop', tabId),
+    resume: (payload: { tabId: string; kind: AiKind; cwd?: string; sessionId: string }) =>
+      ipcRenderer.invoke('chat:resume', payload) as Promise<{
+        ok: boolean
+        error?: string
+        sessionId?: string
+        messages?: { who: 'me' | 'brain'; text: string }[]
+      }>,
+    fork: (payload: { tabId: string; kind: AiKind; cwd?: string }) =>
+      ipcRenderer.invoke('chat:fork', payload) as Promise<{ ok: boolean; error?: string; sessionId?: string }>,
     warm: (payload: {
       tabId: string
       kind: AiKind
@@ -157,6 +171,7 @@ const brain = {
         models?: { id: string; label: string }[]
         efforts?: { id: string; label: string }[]
         agentModes?: { id: string; label: string }[]
+        commands?: { name: string; description: string; hint?: string }[]
       }>,
     reset: (payload: {
       tabId: string

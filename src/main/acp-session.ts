@@ -1,5 +1,6 @@
+import { BrowserWindow } from 'electron'
 import type { AiKind } from '../shared/contracts'
-import type { StreamEvent } from './ai-cli'
+import type { SessionCmd, StreamEvent } from './ai-cli'
 import { binEnv, resolveBin } from './ai-cli'
 import { acpPromptParts, type Attach } from './attach'
 import { asRecord, asText, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
@@ -18,6 +19,7 @@ export type LiveRun = {
   models?: Cap[]
   efforts?: Cap[]
   agentModes?: Cap[]
+  commands?: SessionCmd[]
 }
 
 type Tab = {
@@ -29,6 +31,7 @@ type Tab = {
   models?: Cap[]
   efforts?: Cap[]
   agentModes?: Cap[]
+  commands?: SessionCmd[]
   contextTotal?: number
   promptId: number | null
   onEvent?: (ev: StreamEvent) => void
@@ -279,6 +282,26 @@ function eventsFromUpdate(update: Record<string, unknown>): StreamEvent[] {
   return []
 }
 
+function parseCommands(raw: unknown): SessionCmd[] {
+  if (!Array.isArray(raw)) return []
+  const out: SessionCmd[] = []
+  for (const row of raw) {
+    const r = asRecord(row)
+    const name = String(r.name || '').replace(/^\//, '')
+    if (!name) continue
+    const input = asRecord(r.input)
+    const hint = String(input.hint || r.inputHint || '')
+    out.push({ name, description: String(r.description || ''), hint: hint || undefined })
+  }
+  return out
+}
+
+function broadcast(tab: Tab, ev: StreamEvent): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send('chat:event', { tabId: tab.tabId, ...ev })
+  }
+}
+
 function handleNote(pool: Pool, msg: RpcMsg): void {
   const method = String(msg.method || '')
   if (method !== 'session/update' && !method.includes('session_notification')) return
@@ -290,6 +313,12 @@ function handleNote(pool: Pool, msg: RpcMsg): void {
   if (!tab) return
   const update = asRecord(params.update)
   const kind = String(update.sessionUpdate || '')
+  if (kind === 'available_commands_update') {
+    const commands = parseCommands(update.availableCommands || update.available_commands)
+    tab.commands = commands
+    broadcast(tab, { kind: 'commands', commands })
+    return
+  }
   if (kind === 'model_changed' || kind === 'config_option_update') {
     if (typeof update.model_id === 'string') tab.model = update.model_id
     if (typeof update.reasoning_effort === 'string') tab.effort = update.reasoning_effort
@@ -472,7 +501,8 @@ function snapshot(tab: Tab): LiveRun {
     contextTotal: tab.contextTotal,
     models: tab.models,
     efforts: tab.efforts,
-    agentModes: tab.agentModes
+    agentModes: tab.agentModes,
+    commands: tab.commands
   }
 }
 
@@ -485,6 +515,7 @@ function assignLive(tab: Tab, live: LiveRun): void {
   if (live.models) tab.models = live.models
   if (live.efforts) tab.efforts = live.efforts
   if (live.agentModes) tab.agentModes = live.agentModes
+  if (live.commands) tab.commands = live.commands
 }
 
 export async function acpWarm(opts: {
@@ -501,6 +532,26 @@ export async function acpWarm(opts: {
     tabPool.set(opts.tabId, poolKey(opts.kind, opts.cwd))
     const have = pool.tabs.get(opts.tabId)
     if (have) {
+      if (opts.resumeId && opts.resumeId !== have.sessionId) {
+        try {
+          const loadedRes = asRecord(
+            await pool.rpc.request(
+              'session/load',
+              { sessionId: opts.resumeId, cwd: opts.cwd, mcpServers: [] },
+              60_000
+            )
+          )
+          const sid = String(loadedRes.sessionId || opts.resumeId || '')
+          if (sid) {
+            pool.bySid.delete(have.sessionId)
+            have.sessionId = sid
+            pool.bySid.set(sid, opts.tabId)
+            assignLive(have, readLive(loadedRes))
+          }
+        } catch {
+          /* keep the current session */
+        }
+      }
       const live = await applyConfig(pool, have, opts.model, opts.effort, opts.agentMode)
       assignLive(have, live)
       return snapshot(have)
@@ -547,6 +598,7 @@ export async function acpWarm(opts: {
       efforts: live.efforts,
       agentModes: live.agentModes,
       contextTotal: live.contextTotal,
+      commands: live.commands,
       promptId: null,
       text: ''
     })
@@ -561,6 +613,53 @@ export async function acpWarm(opts: {
     }
     return snapshot(tab)
   })
+}
+
+export async function acpResume(opts: {
+  kind: 'grok' | 'cursor'
+  tabId: string
+  cwd: string
+  sessionId: string
+}): Promise<LiveRun> {
+  return withTabLock(opts.tabId, async () => {
+    const pool = await bootPool(opts.kind, opts.cwd)
+    tabPool.set(opts.tabId, poolKey(opts.kind, opts.cwd))
+    const loadedRes = asRecord(
+      await pool.rpc.request(
+        'session/load',
+        { sessionId: opts.sessionId, cwd: opts.cwd, mcpServers: [] },
+        60_000
+      )
+    )
+    const sid = String(loadedRes.sessionId || opts.sessionId || '')
+    if (!sid) throw new Error('Could not load that session.')
+    const have = pool.tabs.get(opts.tabId)
+    if (have) pool.bySid.delete(have.sessionId)
+    const live = readLive(loadedRes)
+    const tab: Tab = have || {
+      tabId: opts.tabId,
+      sessionId: sid,
+      promptId: null,
+      text: ''
+    }
+    tab.sessionId = sid
+    assignLive(tab, live)
+    pool.tabs.set(opts.tabId, tab)
+    pool.bySid.set(sid, opts.tabId)
+    return snapshot(tab)
+  })
+}
+
+export async function acpFork(opts: { kind: 'grok' | 'cursor'; tabId: string; cwd: string }): Promise<string> {
+  const pool = pools.get(poolKey(opts.kind, opts.cwd))
+  const tab = pool?.tabs.get(opts.tabId)
+  if (!pool || !tab) throw new Error('chat session is not ready')
+  const res = asRecord(
+    await pool.rpc.request('x.ai/session/fork', { sessionId: tab.sessionId }, 30_000)
+  )
+  const sid = String(res.sessionId || asRecord(res.session).sessionId || asRecord(res.session).id || '')
+  if (!sid) throw new Error('Fork did not return a session.')
+  return sid
 }
 
 export async function acpPrompt(opts: {

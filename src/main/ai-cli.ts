@@ -40,12 +40,15 @@ export function detect(): Record<AiKind, boolean> {
   }
 }
 
+export type SessionCmd = { name: string; description: string; hint?: string }
+
 export type StreamEvent =
   | { kind: 'thought'; data: string }
   | { kind: 'text'; data: string }
   | { kind: 'file'; path: string; tool?: string }
   | { kind: 'status'; data: string }
   | { kind: 'context'; used?: number; total?: number; percent?: number }
+  | { kind: 'commands'; commands: SessionCmd[] }
   | { kind: 'done' }
   | { kind: 'error'; data: string }
 

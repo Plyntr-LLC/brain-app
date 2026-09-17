@@ -8,8 +8,8 @@ import * as ai from './ai-cli'
 import { asAttachBuf, inspectAttach, stashBytes } from './attach'
 import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot } from './files'
 import { loadChats, saveChats, type SavedChats } from './persist'
-import { cancelWarm, closeWarm, promptWarm, resetWarm, warmSession } from './warm'
-import { contextBlurb, grokCli, listSlash, usageBlurb } from './slash'
+import { cancelWarm, closeWarm, forkSession, promptWarm, resetWarm, resumeSession, warmSession } from './warm'
+import { contextBlurb, grokCli, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
 import { getMemberToken, setMemberToken } from './session-token'
 
 type RecentFolder = { path: string; name: string; watching?: boolean }
@@ -289,6 +289,37 @@ export function registerStubIpc(): void {
     return true
   })
   ipcMain.handle('chat:stop', async (_e, tabId: string) => cancelWarm(tabId) || ai.stopPrompt(tabId))
+  ipcMain.handle(
+    'chat:resume',
+    async (_e, payload: { tabId: string; kind: AiKind; cwd?: string; sessionId: string }) => {
+      const watching = readWatching()
+      const cwd = payload.cwd && payload.cwd.length ? payload.cwd : watching.brainPath
+      if (!cwd) return { ok: false, error: 'No folder.' }
+      try {
+        const live = await resumeSession({
+          tabId: payload.tabId,
+          kind: payload.kind || 'grok',
+          cwd,
+          sessionId: payload.sessionId
+        })
+        const messages = grokTranscript(cwd, payload.sessionId)
+        return { ok: true, sessionId: live.sessionId || payload.sessionId, messages }
+      } catch (e) {
+        return { ok: false, error: String((e as Error).message || e) }
+      }
+    }
+  )
+  ipcMain.handle('chat:fork', async (_e, payload: { tabId: string; kind: AiKind; cwd?: string }) => {
+    const watching = readWatching()
+    const cwd = payload.cwd && payload.cwd.length ? payload.cwd : watching.brainPath
+    if (!cwd) return { ok: false, error: 'No folder.' }
+    try {
+      const sessionId = await forkSession({ tabId: payload.tabId, kind: payload.kind || 'grok', cwd })
+      return { ok: true, sessionId }
+    } catch (e) {
+      return { ok: false, error: String((e as Error).message || e) }
+    }
+  })
   ipcMain.handle('chat:loadState', async (_e, cwd?: string) => loadChats(cwd))
   ipcMain.handle('chat:saveState', async (_e, state: SavedChats) => {
     saveChats(state)
@@ -310,6 +341,22 @@ export function registerStubIpc(): void {
   ipcMain.handle('slash:context', async (_e, cwd?: string) => {
     const watching = readWatching()
     return contextBlurb(cwd || watching.brainPath || process.cwd())
+  })
+  ipcMain.handle('slash:sessions', async (_e, cwd?: string) => {
+    const watching = readWatching()
+    return listGrokSessions(cwd || watching.brainPath || process.cwd())
+  })
+  ipcMain.handle('files:saveText', async (e, suggested: string, text: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = {
+      title: 'Export chat',
+      defaultPath: String(suggested || 'chat.md'),
+      filters: [{ name: 'Markdown', extensions: ['md', 'txt'] }]
+    }
+    const r = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+    if (r.canceled || !r.filePath) return null
+    writeFileSync(r.filePath, String(text || ''))
+    return r.filePath
   })
   ipcMain.handle('slash:usage', async (_e, cwd?: string, kind?: string) => {
     const watching = readWatching()
