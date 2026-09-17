@@ -15,10 +15,14 @@ execFileSync('npx', ['electron-vite', 'build'], { stdio: 'inherit' })
 
 process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false'
 console.log('Building unsigned Windows installer. Authenticode waits for a Windows cert.')
-const r = spawnSync('npx', ['electron-builder', '--win', '--x64', '--publish', 'never'], {
-  stdio: 'inherit',
-  env: process.env
-})
+const r = spawnSync(
+  'npx',
+  ['electron-builder', '--win', '--x64', '--publish', 'never', '--config.npmRebuild=false'],
+  {
+    stdio: 'inherit',
+    env: process.env
+  }
+)
 if (r.status) process.exit(r.status)
 
 const exe = join(root, 'dist', 'Brain-0.1.0-win.exe')

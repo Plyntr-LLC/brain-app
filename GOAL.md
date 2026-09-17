@@ -90,7 +90,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Empty. Next Inbox items are large slices of their own: Windows, Brain Bridge wizard, auto-install. Wait for **next 3**.
+Empty. Next Inbox items are large slices of their own: Brain Bridge wizard, auto-install. Wait for **next 3**.
 
 ## Inbox
 
@@ -104,13 +104,13 @@ Bugs and product gaps. One line each. Date + what.
 - [x] 2026-09-17: Chat tabs die on quit. Persist `userData/chats.json` by cwd, flush on quit, `session/load` / `thread/resume`. Done: 2026-09-17. Evidence: `persist.ts`, `acp-session.ts` resumeId.
 - [x] 2026-09-17: Live context meter. Grok `_meta.totalTokens`, Codex `thread/tokenUsage/updated`. Done: 2026-09-17. Evidence: runmeta Context.
 - [x] 2026-09-17 Joe: **Signed Mac app** (electron-builder + Apple notarization) so a newbie downloads one file. Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `npm run pack:mac` → `dist/Brain-0.1.0-mac.dmg`. Signed **Developer ID Application: Plyntr LLC (DWYL4KK53B)**. Notarized Accepted `bdca8cd7-f323-4280-9612-a65a262fc157`, stapled.
-- [ ] 2026-09-17 Joe: **Windows app** with Windows paths for Agency Brain, CLI bins, and installers. Not a Mac build renamed.
+- [x] 2026-09-17 Joe: **Windows app** with Windows paths for Agency Brain, CLI bins, and installers. Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `agency-brain.ts` AppData paths, `pack:win` → `Brain-0.1.0-win.exe`. Unsigned. Download: GitHub Releases.
 - [ ] 2026-09-17 Joe: **Brain Bridge in this app.** Setup wizard (HQ + project brains, role permissions owner/scout/team) lands the person in this Chat with only what they are allowed. One walk, then they are in. Code today: `~/Projects/brain-bridge`, `docs/client-setup-wizard.html` in the agency brain.
 - [ ] 2026-09-17 Joe: **Auto-install for newbies.** If Homebrew, Grok/Claude/Cursor/Codex CLI, or Agency Brain is missing, the wizard downloads and installs it (with Joe/user consent on spend). Zero technical skill after “download this app.” Detect, explain in one line, install, then Chat.
 
 ## Next
 
-Empty until Inbox Now is drained. Optional terminal stays a toggle, not the product. GitHub remote for this repo when sharing the signed build.
+Empty until Inbox Now is drained. Optional terminal stays a toggle, not the product. GitHub: `Plyntr-LLC/brain-app` public, Releases for Mac dmg and Windows exe.
 
 ## Blocked
 
