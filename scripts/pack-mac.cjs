@@ -22,8 +22,8 @@ const ids = spawnSync('security', ['find-identity', '-v', '-p', 'codesigning'], 
 const match = (ids.stdout || '').match(/Developer ID Application: ([^"]+)/)
 const args = ['electron-builder', '--mac', '--publish', 'never']
 if (match) {
-  process.env.CSC_NAME = `Developer ID Application: ${match[1]}`
-  console.log(`Signing with ${process.env.CSC_NAME} (not notarizing).`)
+  process.env.CSC_NAME = match[1]
+  console.log(`Signing with Developer ID Application: ${match[1]} (not notarizing).`)
 } else {
   process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false'
   args.push('--config.mac.identity=null')
