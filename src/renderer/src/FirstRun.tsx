@@ -16,31 +16,33 @@ export function FirstRun() {
   const [detected, setDetected] = useState<Partial<Record<AiKind, boolean>>>({})
   const [showInvite, setShowInvite] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
+  const [needs, setNeeds] = useState<{ id: string; label: string; line: string; present: boolean }[]>([])
+  const [picked, setPicked] = useState<Record<string, boolean>>({})
+  const [busyId, setBusyId] = useState('')
+  const [installNote, setInstallNote] = useState('')
 
   useEffect(() => {
-    window.brain?.env().then((e) => {
-      const existing = e.existingBrain as { brainPath?: string | null; name?: string | null; email?: string | null; watching?: boolean } | undefined
-      const ready = Boolean(existing?.brainPath)
+    void (async () => {
+      const e = await window.brain.env()
+      const st = await window.brain.setup.status()
+      const existing = e.existingBrain
+      setNeeds(st.items)
+      setPicked(Object.fromEntries(st.items.filter((i) => !i.present).map((i) => [i.id, true])))
+      const d = await window.brain.ai.detect()
+      setDetected(d)
+      const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
       setS((prev) => ({
         ...prev,
         dryRun: e.dryRun,
         brainPath: existing?.brainPath || prev.brainPath,
         business: existing?.name || prev.business || 'this computer',
         email: existing?.email || prev.email,
-        abWatching: ready,
-        path: ready ? 'second' : prev.path,
-        screen: ready ? 'chat' : prev.screen,
-        ai: prev.ai || 'grok'
+        abWatching: st.watching,
+        path: st.watching ? 'second' : prev.path,
+        screen: st.ready ? 'chat' : 'needs',
+        ai: prev.ai || pick
       }))
-    }).catch(() => {})
-    window.brain?.ai.detect().then((d) => {
-      setDetected(d)
-      setS((prev) => {
-        if (prev.ai) return prev
-        const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.gpt ? 'gpt' : undefined
-        return pick ? { ...prev, ai: pick } : prev
-      })
-    }).catch(() => {})
+    })().catch(() => {})
   }, [])
 
   async function skipToExisting() {
@@ -168,6 +170,87 @@ export function FirstRun() {
                 })
               }}
             />
+          )}
+          {s.screen === 'needs' && (
+            <>
+              <p className="kicker">This computer</p>
+              <h1>Install what’s missing, then Chat.</h1>
+              <p>Nothing here spends money. Grok, Claude, Cursor, and ChatGPT still bill your own accounts when you sign in.</p>
+              {needs.map((n) => (
+                <label className="need-row" key={n.id}>
+                  <input
+                    type="checkbox"
+                    disabled={n.present || busyId !== ''}
+                    checked={n.present || Boolean(picked[n.id])}
+                    onChange={(e) => setPicked((p) => ({ ...p, [n.id]: e.target.checked }))}
+                  />
+                  <span>
+                    <strong>
+                      {n.label}
+                      {n.present ? ' · ready' : ''}
+                    </strong>
+                    <span className="muted"> {n.line}</span>
+                  </span>
+                </label>
+              ))}
+              {installNote ? <p className="note">{installNote}</p> : null}
+              {err && <p className="note">{err}</p>}
+              <div className="actions">
+                <button
+                  className="primary"
+                  type="button"
+                  disabled={busyId !== ''}
+                  onClick={async () => {
+                    setErr('')
+                    const ids = needs.filter((n) => !n.present && picked[n.id]).map((n) => n.id)
+                    for (const id of ids) {
+                      setBusyId(id)
+                      setInstallNote(`Installing ${id}…`)
+                      const r = await window.brain.setup.install(id)
+                      if (!r.ok) {
+                        setErr(r.detail || `Could not install ${id}.`)
+                        setBusyId('')
+                        return
+                      }
+                      setInstallNote(r.detail || `${id} done.`)
+                    }
+                    setBusyId('')
+                    const st = await window.brain.setup.status()
+                    setNeeds(st.items)
+                    const d = await window.brain.ai.detect()
+                    setDetected(d)
+                    const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
+                    if (st.ready) {
+                      go('chat', { abWatching: true, brainPath: s.brainPath, ai: s.ai || pick })
+                      return
+                    }
+                    if (st.watching && pick) {
+                      go('aipick', { abWatching: true, ai: pick })
+                      return
+                    }
+                    if (!st.watching) {
+                      setInstallNote('Agency Brain is not watching a folder yet. Open it, sign in, then Continue.')
+                    }
+                  }}
+                >
+                  {busyId ? `Installing ${busyId}…` : 'Install selected'}
+                </button>
+                <button
+                  className="ghost"
+                  type="button"
+                  disabled={busyId !== ''}
+                  onClick={async () => {
+                    const st = await window.brain.setup.status()
+                    setNeeds(st.items)
+                    if (st.ready) go('chat', { abWatching: true })
+                    else if (st.watching) go('aipick', { abWatching: true })
+                    else go('welcome')
+                  }}
+                >
+                  Recheck
+                </button>
+              </div>
+            </>
           )}
           {s.screen === 'welcome' && (
             <>

@@ -33,7 +33,15 @@ const brain = {
       ipcRenderer.invoke('setup:openAppInstall', slug, org),
     pollInstall: (slug: string) => ipcRenderer.invoke('setup:pollInstall', slug),
     ensureRepo: (slug: string) => ipcRenderer.invoke('setup:ensureRepo', slug),
-    applyFolder: (opts: unknown) => ipcRenderer.invoke('setup:applyFolder', opts)
+    applyFolder: (opts: unknown) => ipcRenderer.invoke('setup:applyFolder', opts),
+    status: () =>
+      ipcRenderer.invoke('setup:status') as Promise<{
+        ready: boolean
+        watching: boolean
+        items: { id: string; label: string; line: string; present: boolean }[]
+      }>,
+    install: (id: string) =>
+      ipcRenderer.invoke('setup:install', id) as Promise<{ ok: boolean; detail: string }>
   },
   ab: {
     detect: () => ipcRenderer.invoke('ab:detect'),

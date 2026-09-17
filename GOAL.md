@@ -56,6 +56,7 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Slash: ACP `available_commands_update` is the session catalog (TUI chrome filtered). Session commands send `/name` on the live session (`/compact` pattern). App jobs are real (`/rename`, `/export` save dialog, `/resume` session/load + transcript, `/fork` `x.ai/session/fork`, `/delete` closes the tab). Grok-only: resume/login/logout/doctor.
 - Drag/drop, paste (including screenshots), and Attach on Chat for images and docs. Grok/Cursor: ACP image + embedded resource. Claude: image + PDF document. Codex: localImage + inlined text docs. Pathless clipboard files stash under userData/drops. 20 MB cap.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
+- Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, the app opens a needs screen (one line each). Install selected uses official installers. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.
 - Mac one-file installer: `npm run pack:mac` writes `dist/Brain-0.1.0-mac.dmg` (arm64). Signed Developer ID Application: Plyntr LLC. Notarized 2026-09-18.
 
 ## How Joe runs Inbox
@@ -90,7 +91,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Empty. Next Inbox item is auto-install. Wait for **next 3**.
+Empty. Inbox is drained. Wait for **next 3** if new lines land.
 
 ## Inbox
 
@@ -106,7 +107,7 @@ Bugs and product gaps. One line each. Date + what.
 - [x] 2026-09-17 Joe: **Signed Mac app** (electron-builder + Apple notarization) so a newbie downloads one file. Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `npm run pack:mac` → `dist/Brain-0.1.0-mac.dmg`. Signed **Developer ID Application: Plyntr LLC (DWYL4KK53B)**. Notarized Accepted `bdca8cd7-f323-4280-9612-a65a262fc157`, stapled.
 - [x] 2026-09-17 Joe: **Windows app** with Windows paths for Agency Brain, CLI bins, and installers. Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `agency-brain.ts` AppData paths, `pack:win` → `Brain-0.1.0-win.exe`. Unsigned. Download: GitHub Releases.
 - [x] 2026-09-17 Joe: **Brain Bridge in this app.** Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `BridgeWizard.tsx`, welcome “Set up HQ and project brains”, role in titlebar, `userData/bridge.json`. Does not write Agency Brain config.json.
-- [ ] 2026-09-17 Joe: **Auto-install for newbies.** If Homebrew, Grok/Claude/Cursor/Codex CLI, or Agency Brain is missing, the wizard downloads and installs it (with Joe/user consent on spend). Zero technical skill after “download this app.” Detect, explain in one line, install, then Chat.
+- [x] 2026-09-17 Joe: **Auto-install for newbies.** Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `install.ts`, FirstRun `needs` screen. Detect Homebrew/Git/Agency Brain/CLIs, tick to install official scripts, then Chat when watching + a CLI. Does not write Agency Brain config.json.
 
 ## Next
 
