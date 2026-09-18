@@ -7,6 +7,8 @@ export type TeamPerson = {
   email: string
   role: 'owner' | 'scout' | 'team'
   brain: string
+  /** Company slug this person belongs to. Empty on older rows. */
+  client?: string
 }
 
 export type ClientBrain = {
@@ -60,7 +62,8 @@ export function saveTeam(people: TeamPerson[]): TeamPerson[] {
     name: String(p.name || '').trim(),
     email: String(p.email || '').trim().toLowerCase(),
     role: p.role === 'scout' || p.role === 'team' ? p.role : ('owner' as const),
-    brain: String(p.brain || 'hq')
+    brain: String(p.brain || 'hq'),
+    client: String(p.client || '').trim()
   }))
   writeJson('team.json', { people: clean })
   return clean

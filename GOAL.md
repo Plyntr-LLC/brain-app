@@ -53,7 +53,7 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Grok and Cursor model/mode pickers follow the live session. ChatGPT/Codex picker does **not** yet (still falls through to `grok models`).
 - Slash: every `/` either does a real in-app job or is sent to the live session as the canonical name (aliases rewritten). TUI commands are not blocked. Grok catalog is in the `/` menu.
 - Terminal is a separate tab (`+` → Terminal, or `/terminal`). It is a login shell, not Grok/Claude. Chat stays ACP.
-- Settings: Plyntr support (joe@plyntr.com) has Client brains (HQ + projects, copier prompt). Owners/scouts have Team roster. Team can read the roster. Stored in userData, not Agency Brain config.json.
+- Settings: Brains first (HQ + project brains), then People (who uses which brain). Plyntr can keep more than one company. Owners/scouts get both tabs. Team can read the people list. Stored in userData, not Agency Brain config.json. Adding a person does not email them. Adding a brain does not create GitHub.
 - Drag/drop, paste (including screenshots), and Attach on Chat for images and docs. Grok/Cursor: ACP image + embedded resource. Claude: image + PDF document. Codex: localImage + inlined text docs. Pathless clipboard files stash under userData/drops. 20 MB cap.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
 - Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, one setup screen lists them, pre-warns every permission dialog, then **Start setup** (one click) runs official installers in order and waits. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.
@@ -109,6 +109,7 @@ Bugs and product gaps. One line each. Date + what.
 - [x] 2026-09-17 Joe: **Brain Bridge in this app.** Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `BridgeWizard.tsx`, welcome “Set up HQ and project brains”, role in titlebar, `userData/bridge.json`. Does not write Agency Brain config.json.
 - [x] 2026-09-17 Joe: **Auto-install for newbies.** Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `install.ts`, FirstRun `needs` screen. Detect Homebrew/Git/Agency Brain/CLIs, tick to install official scripts, then Chat when watching + a CLI. Does not write Agency Brain config.json.
 - [x] 2026-09-18 Joe: **One seamless setup.** Downloads/installs automatic or 1 or 2 clicks. Pre-warn before any permission/approval dialog. Done: 2026-09-18. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `SetupNeeds.tsx`, `install.ts` warn/accept/wait, Bridge/GitHub Before we start boxes. Does not write Agency Brain config.json.
+- [x] 2026-09-18 Joe: **Settings is confusing.** Spell out what adding a person vs adding a brain means, where to add it, and that this Mac list does not email, create GitHub, or rewrite Agency Brain config. Done: 2026-09-18. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `SettingsPanel.tsx` Brains then People.
 
 ## Next
 

@@ -30,10 +30,17 @@ const brain = {
     setSuper: (on: boolean) => ipcRenderer.invoke('settings:setSuper', on),
     team: () =>
       ipcRenderer.invoke('settings:team') as Promise<
-        { name: string; email: string; role: 'owner' | 'scout' | 'team'; brain: string }[]
+        { name: string; email: string; role: 'owner' | 'scout' | 'team'; brain: string; client?: string }[]
       >,
-    saveTeam: (people: { name: string; email: string; role: 'owner' | 'scout' | 'team'; brain: string }[]) =>
-      ipcRenderer.invoke('settings:saveTeam', people),
+    saveTeam: (
+      people: {
+        name: string
+        email: string
+        role: 'owner' | 'scout' | 'team'
+        brain: string
+        client?: string
+      }[]
+    ) => ipcRenderer.invoke('settings:saveTeam', people),
     clients: () => ipcRenderer.invoke('settings:clients') as Promise<Record<string, unknown>[]>,
     saveClients: (clients: unknown[]) => ipcRenderer.invoke('settings:saveClients', clients)
   },

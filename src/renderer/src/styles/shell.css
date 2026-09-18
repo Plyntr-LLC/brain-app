@@ -25,7 +25,7 @@
   position: absolute;
   top: var(--titlebar);
   right: 1rem;
-  width: min(32rem, calc(100% - 2rem));
+  width: min(38rem, calc(100% - 2rem));
   max-height: calc(100% - var(--titlebar) - 1.5rem);
   overflow: auto;
   z-index: 20;
@@ -37,6 +37,20 @@
 .set-tabs { display: flex; gap: 0.35rem; margin: 0.4rem 0 0.75rem; }
 .set-tabs button { font-size: 0.78rem; font-weight: 700; }
 .set-tabs button.on { color: var(--orange-deep); }
+.set-how {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 0.7rem 0.8rem;
+  margin: 0 0 0.85rem;
+  font-size: 0.95rem;
+}
+.set-how ol { margin: 0.35rem 0 0.45rem; padding-left: 1.2rem; }
+.set-how li { margin: 0.25rem 0; }
+.set-h {
+  font-size: 0.95rem;
+  margin: 0.2rem 0 0.4rem;
+}
+.person-add { margin-top: 0.7rem; }
 .set-row {
   display: flex;
   justify-content: space-between;
