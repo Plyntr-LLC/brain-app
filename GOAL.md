@@ -115,6 +115,7 @@ Bugs and product gaps. One line each. Date + what.
 - [x] 2026-09-18 Joe: Send while busy kills the turn. Queue like the TUI. Add on unless the follow-up says stop. Done: 2026-09-18. Evidence: queue in `TerminalWorkspace.tsx`.
 - [x] 2026-09-18 Joe: While the reply is typing, let me scroll the message. Done: 2026-09-18. Evidence: pinBottom / Latest.
 - [x] 2026-09-18 Joe: Settings still confusing. Company, brain, and person are different. Always know which company I am adding to. Done: 2026-09-18. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `SettingsPanel.tsx` sticky You are working on, jobs 1–3.
+- [x] 2026-09-18 Joe: Chat must wait like Terminal. No 3-minute cutoff. Show working until the turn finishes or Stop. Setup must work for Grok, Claude, Cursor, and Codex (each CLI’s own login and session start). Done: 2026-09-18. Evidence: `line-rpc.ts` timeout 0 on session/prompt, per-CLI `loginCli`.
 
 ## Next
 

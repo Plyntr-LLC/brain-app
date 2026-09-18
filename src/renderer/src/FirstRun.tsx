@@ -14,7 +14,7 @@ export function FirstRun() {
   const [choice, setChoice] = useState<'new' | 'existing' | ''>('')
   const [org, setOrg] = useState('')
   const [showOrg, setShowOrg] = useState(false)
-  const [tick, setTick] = useState(0)
+
   const [err, setErr] = useState('')
   const [detected, setDetected] = useState<Partial<Record<AiKind, boolean>>>({})
   const [showInvite, setShowInvite] = useState(false)
@@ -61,15 +61,12 @@ export function FirstRun() {
   function go(screen: string, patch?: Partial<Session>) {
     setErr('')
     setS((prev) => ({ ...prev, screen, ...patch }))
-    if (screen === 'abapply' || screen === 'aiwork') setTick(0)
   }
 
   useEffect(() => {
-    if (s.screen !== 'aiwork') return
-    if (tick >= 4) return
-    const t = setTimeout(() => setTick((n) => n + 1), 450)
-    return () => clearTimeout(t)
-  }, [s.screen, tick])
+    if (s.screen !== 'aiwork' || !s.ai) return
+    void window.brain.ai.login(s.ai as AiKind).catch((e) => setErr(String((e as Error).message || e)))
+  }, [s.screen, s.ai])
 
   useEffect(() => {
     if (s.screen !== 'abapply') return
@@ -92,7 +89,8 @@ export function FirstRun() {
   }, [s.screen])
 
   useEffect(() => {
-    if (s.screen !== 'abapply' || s.abWatching) {
+    const waiting = s.screen === 'aiwork' || (s.screen === 'abapply' && !s.abWatching)
+    if (!waiting) {
       setWaitSec(0)
       return
     }
@@ -486,20 +484,39 @@ export function FirstRun() {
           {s.screen === 'aiwork' && (
             <>
               <p className="kicker">Working</p>
-              <h1>Opening {s.ai === 'gpt' ? 'Codex' : s.ai === 'grok' ? 'Grok' : 'Claude'} in this window.</h1>
-              <ul className="work-list">
-                {['Found the CLI on this computer', 'If a browser opens, sign in with your own account', 'Pointing it at the Agency Brain folder'].map((t, i) => (
-                  <li key={t} className={tick > i + 1 ? 'done' : ''}>{tick > i + 1 ? '✓' : '·'} {t}</li>
-                ))}
-              </ul>
+              <h1>
+                Opening{' '}
+                {s.ai === 'gpt' ? 'ChatGPT' : s.ai === 'cursor' ? 'Cursor' : s.ai === 'claude' ? 'Claude' : 'Grok'} in
+                this window.
+              </h1>
+              <div className="warn-box">
+                <h3>Before we start: you will need to allow access</h3>
+                <p>
+                  This AI uses its own sign-in. A browser or Terminal window may open. Sign in with your own account,
+                  then come back here.
+                </p>
+              </div>
+              <WorkPulse
+                label={`Starting ${s.ai === 'gpt' ? 'ChatGPT' : s.ai === 'cursor' ? 'Cursor' : s.ai === 'claude' ? 'Claude' : 'Grok'}`}
+                seconds={waitSec}
+              />
               <p className="tiny">{s.brainPath ? `Folder: ${s.brainPath}` : 'Using the folder Agency Brain is watching.'}</p>
+              {err ? <p className="note">{err}</p> : null}
               <div className="actions">
-                <button className="primary" type="button" disabled={tick < 4} onClick={async () => {
-                  try {
-                    await window.brain.ai.login(s.ai as AiKind)
-                    startChat()
-                  } catch (e) { setErr(String((e as Error).message || e)) }
-                }}>Open it</button>
+                <button
+                  className="primary"
+                  type="button"
+                  onClick={() => startChat()}
+                >
+                  I signed in. Open Chat
+                </button>
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={() => void window.brain.ai.login(s.ai as AiKind).catch((e) => setErr(String((e as Error).message || e)))}
+                >
+                  Open sign-in again
+                </button>
               </div>
             </>
           )}

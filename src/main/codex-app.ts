@@ -17,6 +17,7 @@ type Tab = {
   onEvent?: (ev: StreamEvent) => void
   waiting: { resolve: () => void } | null
   text: string
+  promptGen: number
 }
 
 type Pool = {
@@ -234,7 +235,7 @@ export async function codexWarm(opts: {
     if (opts.resumeId) {
       try {
         const resumed = asRecord(
-          await pool.rpc.request('thread/resume', { threadId: opts.resumeId }, 30_000)
+          await pool.rpc.request('thread/resume', { threadId: opts.resumeId }, 0)
         )
         thread = asRecord(resumed.thread)
         threadId = String(thread.id || resumed.threadId || opts.resumeId)
@@ -254,7 +255,7 @@ export async function codexWarm(opts: {
             developerInstructions: RULES,
             serviceName: 'brain-app'
           },
-          60_000
+          0
         )
       )
       thread = asRecord(res.thread)
@@ -271,6 +272,7 @@ export async function codexWarm(opts: {
       models: caps.models,
       efforts: caps.efforts,
       waiting: null,
+      promptGen: 0,
       text: ''
     })
     pool.byThread.set(threadId, opts.tabId)
@@ -292,6 +294,7 @@ export async function codexPrompt(opts: {
   const tab = pool?.tabs.get(opts.tabId)
   if (!pool || !tab) throw new Error('Codex session is not ready')
   if (tab.waiting) codexCancel(opts.tabId)
+  const gen = ++tab.promptGen
   tab.onEvent = opts.onEvent
   tab.text = ''
   const params: Record<string, unknown> = {
@@ -300,20 +303,14 @@ export async function codexPrompt(opts: {
   }
   if (opts.model) params.model = opts.model
   if (opts.effort) params.effort = opts.effort
-  await pool.rpc.request('turn/start', params, 20_000)
+  await pool.rpc.request('turn/start', params, 0)
   await new Promise<void>((resolve) => {
-    const t = setTimeout(() => {
-      codexCancel(opts.tabId)
-      resolve()
-    }, 180_000)
-    tab.waiting = {
-      resolve: () => {
-        clearTimeout(t)
-        resolve()
-      }
-    }
+    tab.waiting = { resolve }
   })
-  tab.onEvent = undefined
+  if (tab.promptGen === gen) {
+    tab.onEvent = undefined
+    tab.waiting = null
+  }
   opts.onEvent({ kind: 'done' })
   return tab.text.trim()
 }

@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { shell } from 'electron'
 import { DOWNLOAD_AB } from '../shared/contracts'
 import { detectApp, readWatching } from './agency-brain'
-import { binEnv, detect as detectAi } from './ai-cli'
+import { binEnv, detect as detectAi, resolveBin } from './ai-cli'
+import type { AiKind } from '../shared/contracts'
 
 export type NeedId = 'brew' | 'git' | 'ab' | 'grok' | 'claude' | 'cursor' | 'gpt'
 
@@ -178,6 +179,47 @@ const TOOL_IDS: NeedId[] = ['brew', 'git', 'ab', 'grok', 'claude', 'cursor', 'gp
 
 export function isNeedId(id: string): id is NeedId {
   return (TOOL_IDS as string[]).includes(id)
+}
+
+const LOGIN_ARGS: Record<AiKind, string[]> = {
+  grok: ['login'],
+  claude: ['auth', 'login'],
+  cursor: ['login'],
+  gpt: ['login']
+}
+
+function shQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`
+}
+
+/** Open this CLI’s own sign-in. Browser or Terminal may appear. */
+export async function loginCli(kind: AiKind): Promise<{ ok: boolean; detail: string }> {
+  const bin = resolveBin(kind)
+  if (!bin) return { ok: false, detail: `${kind} is not installed on this computer.` }
+  const args = LOGIN_ARGS[kind]
+  if (process.platform === 'darwin') {
+    const dir = mkdtempSync(join(tmpdir(), 'brain-login-'))
+    const file = join(dir, `login-${kind}.command`)
+    writeFileSync(
+      file,
+      [
+        '#!/bin/bash',
+        'set -e',
+        `echo "Sign in to ${kind}. A browser may open."`,
+        `${shQuote(bin)} ${args.map(shQuote).join(' ')}`,
+        'echo "Done. You can close this window."'
+      ].join('\n'),
+      { mode: 0o755 }
+    )
+    const opened = await shell.openPath(file)
+    return {
+      ok: !opened,
+      detail: opened || 'Sign-in opened. Finish it in the browser or Terminal, then continue.'
+    }
+  }
+  const argList = args.map((a) => JSON.stringify(a)).join(',')
+  await win(`Start-Process -FilePath ${JSON.stringify(bin)} -ArgumentList @(${argList})`)
+  return { ok: true, detail: 'Sign-in started. Finish it, then continue.' }
 }
 
 export async function installNeed(id: NeedId): Promise<InstallResult> {

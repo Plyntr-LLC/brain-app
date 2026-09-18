@@ -18,6 +18,7 @@ type Sess = {
   text: string
   dead: boolean
   n: number
+  promptGen: number
 }
 
 const sessions = new Map<string, Sess>()
@@ -150,9 +151,7 @@ async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string;
     '--permission-prompts',
     'none',
     '--append-system-prompt',
-    RULES,
-    '--max-turns',
-    '50'
+    RULES
   ]
   if (opts.model) args.push('--model', opts.model)
   if (opts.effort) args.push('--effort', opts.effort)
@@ -167,7 +166,8 @@ async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string;
     waiting: null,
     text: '',
     dead: false,
-    n: 0
+    n: 0,
+    promptGen: 0
   }
   attach(s)
   sessions.set(opts.tabId, s)
@@ -185,22 +185,17 @@ export async function claudePrompt(opts: {
   const s = sessions.get(opts.tabId)
   if (!s || s.dead) throw new Error('Claude session is not ready')
   if (s.waiting) claudeCancel(opts.tabId)
+  const gen = ++s.promptGen
   s.onEvent = opts.onEvent
   s.text = ''
   writeUser(s, opts.text, opts.attachments || [])
   await new Promise<void>((resolve) => {
-    const t = setTimeout(() => {
-      claudeCancel(opts.tabId)
-      resolve()
-    }, 180_000)
-    s.waiting = {
-      resolve: () => {
-        clearTimeout(t)
-        resolve()
-      }
-    }
+    s.waiting = { resolve }
   })
-  s.onEvent = undefined
+  if (s.promptGen === gen) {
+    s.waiting = null
+    s.onEvent = undefined
+  }
   opts.onEvent({ kind: 'done' })
   return s.text.trim()
 }

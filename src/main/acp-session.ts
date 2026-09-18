@@ -423,12 +423,12 @@ async function bootPoolNow(kind: 'grok' | 'cursor', cwd: string, key: string): P
     )
     const methods = Array.isArray(init.authMethods) ? init.authMethods : []
     const cached = methods.find((m) => asRecord(m).id === 'cached_token')
-    const methodId = asRecord(cached || (kind === 'grok' ? methods[0] : undefined)).id
-    if (kind === 'grok' && typeof methodId === 'string') {
+    const methodId = asRecord(cached || methods[0]).id
+    if (typeof methodId === 'string') {
       try {
-        await pool.rpc.request('authenticate', { methodId, _meta: { headless: true } }, 15_000)
+        await pool.rpc.request('authenticate', { methodId, _meta: { headless: true } }, 0)
       } catch {
-        /* already signed in */
+        /* already signed in, or this CLI signs in another way */
       }
     }
   })()
@@ -536,7 +536,7 @@ export async function acpWarm(opts: {
             await pool.rpc.request(
               'session/load',
               { sessionId: opts.resumeId, cwd: opts.cwd, mcpServers: [] },
-              60_000
+              0
             )
           )
           const sid = String(loadedRes.sessionId || opts.resumeId || '')
@@ -562,7 +562,7 @@ export async function acpWarm(opts: {
           await pool.rpc.request(
             'session/load',
             { sessionId: opts.resumeId, cwd: opts.cwd, mcpServers: [] },
-            60_000
+            0
           )
         )
         if (!loadedRes || typeof loadedRes !== 'object') throw new Error('empty load')
@@ -580,7 +580,7 @@ export async function acpWarm(opts: {
         opts.kind === 'grok'
           ? { cwd: opts.cwd, mcpServers: [], _meta: { yoloMode: true, rules: RULES } }
           : { cwd: opts.cwd, mcpServers: [] }
-      res = asRecord(await pool.rpc.request('session/new', params, 90_000))
+      res = asRecord(await pool.rpc.request('session/new', params, 0))
     }
     if (!res) throw new Error(`${opts.kind} did not return a session`)
     const sessionId = String(res.sessionId || '')
@@ -625,7 +625,7 @@ export async function acpResume(opts: {
       await pool.rpc.request(
         'session/load',
         { sessionId: opts.sessionId, cwd: opts.cwd, mcpServers: [] },
-        60_000
+        0
       )
     )
     const sid = String(loadedRes.sessionId || opts.sessionId || '')
@@ -675,9 +675,10 @@ export async function acpPrompt(opts: {
   const tab = pool?.tabs.get(opts.tabId)
   if (!pool || !tab) throw new Error('chat session is not ready')
   if (tab.promptId != null) acpCancel(opts.tabId)
+  const gen = Date.now()
   tab.onEvent = opts.onEvent
   tab.text = ''
-  tab.promptId = Date.now()
+  tab.promptId = gen
   if (/^\s*\/compact\b/i.test(opts.text)) opts.onEvent({ kind: 'status', data: 'compacting' })
   try {
     const prompt = acpPromptParts(opts.text, opts.attachments || [])
@@ -685,7 +686,7 @@ export async function acpPrompt(opts: {
       await pool.rpc.request(
         'session/prompt',
         { sessionId: tab.sessionId, prompt },
-        180_000
+        0
       )
     )
     const stop = String(result.stopReason || 'end_turn')
@@ -696,8 +697,10 @@ export async function acpPrompt(opts: {
     const msg = String((e as Error).message || e)
     if (!/timed out|cancelled|stopped/i.test(msg)) opts.onEvent({ kind: 'error', data: msg })
   } finally {
-    tab.onEvent = undefined
-    tab.promptId = null
+    if (tab.promptId === gen) {
+      tab.onEvent = undefined
+      tab.promptId = null
+    }
     opts.onEvent({ kind: 'done' })
   }
   return tab.text.trim()

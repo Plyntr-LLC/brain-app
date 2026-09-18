@@ -21,7 +21,10 @@ export function spawnBin(
 export class LineRpc {
   private buf = ''
   private nextId = 1
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; t: ReturnType<typeof setTimeout> }>()
+  private pending = new Map<
+    number,
+    { resolve: (v: unknown) => void; reject: (e: Error) => void; t: ReturnType<typeof setTimeout> | null }
+  >()
   dead = false
   stderr = ''
 
@@ -69,7 +72,7 @@ export class LineRpc {
     const p = this.pending.get(id)
     if (!p) return
     this.pending.delete(id)
-    clearTimeout(p.t)
+    if (p.t) clearTimeout(p.t)
     if (msg.error) p.reject(new Error(msg.error.message || 'rpc error'))
     else p.resolve(msg.result)
   }
@@ -87,16 +90,20 @@ export class LineRpc {
     }
   }
 
-  request(method: string, params: unknown, timeoutMs: number): Promise<unknown> {
+  /** timeoutMs <= 0 means wait until the agent replies, dies, or the user stops. */
+  request(method: string, params: unknown, timeoutMs = 0): Promise<unknown> {
     const id = this.nextId++
     const body: Record<string, unknown> = { id, method, params: params ?? {} }
     if (this.withJsonrpc) body.jsonrpc = '2.0'
     this.write(body)
     return new Promise((resolve, reject) => {
-      const t = setTimeout(() => {
-        this.pending.delete(id)
-        reject(new Error(`${method} timed out`))
-      }, timeoutMs)
+      const t =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              this.pending.delete(id)
+              reject(new Error(`${method} timed out`))
+            }, timeoutMs)
+          : null
       this.pending.set(id, { resolve, reject, t })
     })
   }
@@ -117,7 +124,7 @@ export class LineRpc {
     if (this.dead) return
     this.dead = true
     for (const p of this.pending.values()) {
-      clearTimeout(p.t)
+      if (p.t) clearTimeout(p.t)
       p.reject(err || new Error('agent process exited'))
     }
     this.pending.clear()

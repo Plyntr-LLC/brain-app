@@ -384,6 +384,7 @@ function ChatPane({
   )
   const [say, setSay] = useState('')
   const [busy, setBusy] = useState(false)
+  const [warming, setWarming] = useState(false)
   const [waitLabel, setWaitLabel] = useState('Working')
   const [waitSec, setWaitSec] = useState(0)
   const [cmds, setCmds] = useState<{ name: string; kind: 'builtin' | 'skill'; description: string }[]>([])
@@ -410,7 +411,7 @@ function ChatPane({
   const sendTextRef = useRef<(t: string, opts?: { cancel?: boolean; fromQueue?: boolean; files?: Attach[] }) => Promise<void>>(async () => {})
   const pinBottom = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
-  const skipDrain = useRef(false)
+  const skipDrain = useRef(0)
 
   function writeQueue(next: Queued[]) {
     queueRef.current = next
@@ -509,8 +510,8 @@ function ChatPane({
         if (ev.kind === 'error' && ev.data) {
           setMessages((m) => [...m, { who: 'brain', text: ev.data || '' }])
         }
-        if (skipDrain.current) {
-          skipDrain.current = false
+        if (skipDrain.current > 0) {
+          skipDrain.current -= 1
           return
         }
         const nxt = queueRef.current[0]
@@ -540,20 +541,22 @@ function ChatPane({
     setAtBottom(pinned)
   }
 
+  const live = busy || compacting || warming
+
   useEffect(() => {
-    if (!busy) {
+    if (!live) {
       setWaitSec(0)
       return
     }
     const t0 = Date.now()
     const t = setInterval(() => setWaitSec(Math.floor((Date.now() - t0) / 1000)), 1000)
     return () => clearInterval(t)
-  }, [busy])
+  }, [live])
 
   useEffect(() => {
-    onBusy(id, busy)
+    onBusy(id, live)
     return () => onBusy(id, false)
-  }, [id, busy])
+  }, [id, live])
 
   useEffect(() => {
     onTranscript(id, messages)
@@ -568,6 +571,8 @@ function ChatPane({
 
   useEffect(() => {
     if (!cwd) return
+    setWarming(true)
+    setWaitLabel(`Starting ${kind === 'gpt' ? 'ChatGPT' : kind === 'cursor' ? 'Cursor' : kind === 'claude' ? 'Claude' : 'Grok'}`)
     void window.brain.chat
       .warm({ tabId: id, kind, cwd, model, effort, agentMode, resumeId })
       .then((r) => {
@@ -583,7 +588,10 @@ function ChatPane({
           agentModes: r?.agentModes
         })
       })
-      .catch(() => {})
+      .catch((e) => {
+        setMessages((m) => [...m, { who: 'brain', text: String((e as Error).message || e) }])
+      })
+      .finally(() => setWarming(false))
   }, [id, kind, cwd, model, effort, agentMode, resumeId])
 
   useEffect(() => {
@@ -742,8 +750,10 @@ function ChatPane({
       return true
     }
     if (name === 'compact') {
-      compactingRef.current = true
-      setCompacting(true)
+      if (!busy) {
+        compactingRef.current = true
+        setCompacting(true)
+      }
       void sendQuiet(arg ? `/compact ${arg}` : '/compact')
       return true
     }
@@ -910,7 +920,7 @@ function ChatPane({
   }
 
   async function stop() {
-    skipDrain.current = true
+    skipDrain.current += 1
     await window.brain.chat.stop(id)
     setBusy(false)
   }
@@ -933,7 +943,6 @@ function ChatPane({
     const isSkill = cmds.some((c) => c.kind === 'skill' && c.name.toLowerCase() === skillName)
     if (runSlash(t) && !isSkill) return
     if (busy && wantsStop(line)) {
-      skipDrain.current = true
       await stop()
       if (justStop(line)) return
       await sendText(line)
@@ -957,16 +966,15 @@ function ChatPane({
     if (!item) return
     writeQueue(queueRef.current.filter((q) => q.id !== qid))
     if (wantsStop(item.text) && busy) {
-      skipDrain.current = true
       await stop()
-      if (!justStop(item.text)) await sendText(item.text, { files: item.files || [] })
+      if (!justStop(item.text)) await sendText(item.text, { fromQueue: true, files: item.files || [] })
       return
     }
     if (busy) {
       writeQueue([item, ...queueRef.current])
       return
     }
-    await sendText(item.text, { files: item.files || [] })
+    await sendText(item.text, { fromQueue: true, files: item.files || [] })
   }
 
   function editQueued(qid: string) {
@@ -1087,9 +1095,11 @@ function ChatPane({
       setAtBottom(true)
     }
     const attached = opts?.fromQueue ? opts.files || [] : opts?.files || dropsRef.current
-    dropsRef.current = []
-    setDrops([])
-    setDropNote('')
+    if (!opts?.fromQueue) {
+      dropsRef.current = []
+      setDrops([])
+      setDropNote('')
+    }
     const shown = attached.length ? `${t}${t ? '\n' : ''}${attached.map((a) => a.name).join(', ')}` : t
     setMessages((m) => [...m, { who: 'me', text: shown, files: attached, at: Date.now() }])
     try {
@@ -1208,7 +1218,7 @@ function ChatPane({
           ) : null
         )}
       </div>
-      {(busy || compacting) && (
+      {(busy || compacting || warming) && (
         <WorkPulse label={compacting ? 'Compacting' : waitLabel} seconds={waitSec} />
       )}
       {!atBottom ? (

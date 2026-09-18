@@ -173,12 +173,10 @@ export function promptStream(opts: {
           ...approve,
           ...verbatim,
           '--output-format',
-          'streaming-json',
-          '--max-turns',
-          '50'
+          'streaming-json'
         ]
       : opts.kind === 'claude'
-        ? ['-p', packed, '--output-format', 'text', '--max-turns', '4']
+        ? ['-p', packed, '--output-format', 'text']
         : opts.kind === 'cursor'
           ? [
               '-p',
@@ -205,9 +203,6 @@ export function promptStream(opts: {
     let buf = ''
     let text = ''
     let err = ''
-    const t = setTimeout(() => {
-      child.kill('SIGTERM')
-    }, 180_000)
 
     const handleLine = (line: string) => {
       if (opts.kind === 'grok') {
@@ -239,11 +234,9 @@ export function promptStream(opts: {
       err += String(d)
     })
     child.on('error', (e) => {
-      clearTimeout(t)
       reject(e)
     })
     child.on('close', (code, signal) => {
-      clearTimeout(t)
       if (opts.tabId) running.delete(opts.tabId)
       if (buf.trim()) handleLine(buf)
       opts.onEvent({ kind: 'done' })

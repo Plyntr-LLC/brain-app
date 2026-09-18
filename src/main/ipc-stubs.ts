@@ -4,7 +4,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { DOWNLOAD_AB, GITHUB_APP_INSTALL, GITHUB_NEW_ORG, type AiKind } from '../shared/contracts'
 import * as ads2ai from './ads2ai'
 import { detectApp, readWatching, writesAllowed } from './agency-brain'
-import { installNeed, isNeedId, listNeeds } from './install'
+import { installNeed, isNeedId, listNeeds, loginCli } from './install'
 import * as ai from './ai-cli'
 import { asAttachBuf, inspectAttach, stashBytes } from './attach'
 import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot } from './files'
@@ -173,11 +173,7 @@ export function registerStubIpc(): void {
   })
 
   ipcMain.handle('ai:detect', async () => ai.detect())
-  ipcMain.handle('ai:login', async (_e, which: AiKind) => {
-    const bin = ai.resolveBin(which)
-    if (!bin) throw new Error(`${which} is not installed`)
-    return { ok: true, which, bin, already: true }
-  })
+  ipcMain.handle('ai:login', async (_e, which: AiKind) => loginCli(which))
 
   ipcMain.handle('files:tree', async (_e, root?: string) => {
     const watching = readWatching()
