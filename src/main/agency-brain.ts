@@ -38,6 +38,23 @@ type SafeConfig = {
   name: string | null
   email: string | null
   watching: boolean
+  teamSlug: string | null
+  teamName: string | null
+}
+
+export function readTeamIdentity(brainPath: string | null): { slug: string; name: string } | null {
+  if (!brainPath) return null
+  const p = join(brainPath, '.team-config', 'roles.json')
+  if (!existsSync(p)) return null
+  try {
+    const j = JSON.parse(readFileSync(p, 'utf8')) as { team_slug?: string; team_name?: string }
+    const slug = String(j.team_slug || '').trim().toLowerCase()
+    const name = String(j.team_name || j.team_slug || '').trim()
+    if (!slug && !name) return null
+    return { slug: slug || name.toLowerCase(), name: name || slug }
+  } catch {
+    return null
+  }
 }
 
 export function detectApp(): { installed: boolean; path: string } {
@@ -50,7 +67,7 @@ export function readWatching(): SafeConfig {
   const installed = detectApp().installed
   const config = configPath()
   if (!existsSync(config)) {
-    return { installed, brainPath: null, name: null, email: null, watching: false }
+    return { installed, brainPath: null, name: null, email: null, watching: false, teamSlug: null, teamName: null }
   }
   try {
     const raw = JSON.parse(readFileSync(config, 'utf8')) as {
@@ -68,15 +85,19 @@ export function readWatching(): SafeConfig {
     } catch {
       watching = Boolean(raw.brainPath && existsSync(raw.brainPath))
     }
+    const brainPath = raw.brainPath && existsSync(raw.brainPath) ? raw.brainPath : null
+    const ident = readTeamIdentity(brainPath)
     return {
       installed,
-      brainPath: raw.brainPath && existsSync(raw.brainPath) ? raw.brainPath : null,
-      name: raw.brandName || raw.memberName || null,
+      brainPath,
+      name: ident?.name || raw.brandName || raw.memberName || null,
       email: raw.memberEmail || null,
-      watching
+      watching,
+      teamSlug: ident?.slug || null,
+      teamName: ident?.name || null
     }
   } catch {
-    return { installed, brainPath: null, name: null, email: null, watching: false }
+    return { installed, brainPath: null, name: null, email: null, watching: false, teamSlug: null, teamName: null }
   }
 }
 

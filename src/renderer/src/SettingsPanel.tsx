@@ -112,9 +112,12 @@ export function SettingsPanel({
   const [note, setNote] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [savedKeys, setSavedKeys] = useState<string[]>([])
-  const plyntr = superAdmin || email === 'joe@plyntr.com'
+  const [plyntrBrain, setPlyntrBrain] = useState(false)
+  const [brainName, setBrainName] = useState('')
+  const joe = email === 'joe@plyntr.com'
+  const plyntr = joe && superAdmin
   const teamSeat = role === 'team' || role === 'member'
-  const ownerish = plyntr || !teamSeat
+  const ownerish = joe || !teamSeat
 
   useEffect(() => {
     void (async () => {
@@ -123,9 +126,26 @@ export function SettingsPanel({
       setEmail(s.email)
       setWatching(s.watching)
       setBrainPath(s.brainPath)
+      setPlyntrBrain(Boolean(s.plyntrBrain))
+      setBrainName(String(s.brainName || ''))
       setPeople(await window.brain.settings.team())
-      const list = ((await window.brain.settings.clients()) as Record<string, unknown>[]).map(asClient)
+      let list = ((await window.brain.settings.clients()) as Record<string, unknown>[]).map(asClient)
+      const joeNow = String(s.email || '').toLowerCase() === 'joe@plyntr.com'
+      if (s.plyntrBrain && joeNow && !list.some((c) => c.slug === 'plyntr' || c.company.toLowerCase() === 'plyntr')) {
+        const row: Client = {
+          company: 'Plyntr',
+          slug: 'plyntr',
+          hqName: 'Plyntr HQ',
+          hqAddress: '',
+          projects: [],
+          setupLink: ''
+        }
+        list = [row, ...list]
+        await window.brain.settings.saveClients(list)
+      }
       setClients(list)
+      const plyntrAt = list.findIndex((c) => c.slug === 'plyntr' || c.company.toLowerCase() === 'plyntr')
+      if (s.plyntrBrain && plyntrAt >= 0) setCur(plyntrAt)
       setSavedKeys(list.map((c) => c.slug || slugify(c.company)).filter(Boolean))
       setLoaded(true)
     })()
@@ -236,7 +256,7 @@ export function SettingsPanel({
     )
   }
 
-  const seatLabel = plyntr ? 'Plyntr support' : teamSeat ? 'Team' : role === 'scout' ? 'Scout' : 'Owner'
+  const seatLabel = joe ? 'Superadmin' : teamSeat ? 'Team' : role === 'scout' ? 'Scout' : 'Owner'
 
   return (
     <div className="settings">
@@ -249,21 +269,34 @@ export function SettingsPanel({
       <p className="tiny">
         {email ? `${email} · ` : ''}
         {seatLabel}
-        {watching && brainPath ? ` · Chat is watching ${folderName(brainPath)}` : ' · Agency Brain is not watching a folder yet'}
       </p>
 
       {ownerish ? (
         <>
           <div className="set-now">
-            <p className="set-now-k">You are working on</p>
-            {clients.length === 0 ? (
+            <p className="set-now-k">{plyntrBrain ? 'You are in the Plyntr brain' : 'Chat'}</p>
+            <p>
+              {plyntrBrain
+                ? `This computer is on ${brainName || 'Plyntr'}${brainPath ? ` (${folderName(brainPath)})` : ''}.`
+                : watching && brainPath
+                  ? `Talks in the folder Agency Brain is watching: ${folderName(brainPath)}.`
+                  : 'Chat starts when Agency Brain is watching a folder.'}
+            </p>
+            {joe ? (
+            <p className="set-now-k" style={{ marginTop: '0.7rem' }}>
+              Companies you set up
+            </p>
+            ) : null}
+            {!joe ? (
+              <p className="tiny">The owner decides companies, brains, and people.</p>
+            ) : clients.length === 0 ? (
               <p>
-                No company selected. Use job 1 to add one. Brains and people you add later belong to that company.
+                Plyntr is this brain. Add another company only when you are setting up a client’s HQ and people.
               </p>
             ) : (
               <>
                 <label className="field" style={{ marginBottom: 0 }}>
-                  Company
+                  Company whose brains and people you are editing
                   <select value={String(cur)} onChange={(e) => setCur(Number(e.target.value))}>
                     {clients.map((c, i) => (
                       <option key={c.slug || `c-${i}`} value={i}>
@@ -273,7 +306,7 @@ export function SettingsPanel({
                   </select>
                 </label>
                 <p className="tiny" style={{ marginTop: '0.45rem', marginBottom: 0 }}>
-                  Brains and people below belong to <strong>{companyLabel}</strong>.
+                  Jobs 2 and 3 apply to <strong>{companyLabel}</strong> only.
                 </p>
               </>
             )}
@@ -542,7 +575,7 @@ export function SettingsPanel({
             </>
           ) : null}
 
-          {plyntr ? (
+          {joe ? (
             <label className="need-row" style={{ marginTop: '1rem' }}>
               <input
                 type="checkbox"
@@ -553,19 +586,23 @@ export function SettingsPanel({
                   void window.brain.settings.setSuper(on)
                 }}
               />
-              <span>Plyntr support. Lets this Mac keep more than one company.</span>
+              <span>You are Plyntr superadmin on this Mac. Lets you keep more than one company’s brains here. Team members never see this.</span>
             </label>
           ) : null}
         </>
       ) : (
         <>
-          <p>You use this brain as team. The owner or scout adds companies, brains, and people.</p>
-          {shownPeople.map((p) => (
-            <p className="tiny" key={p.email}>
-              {p.name} · {p.role}
-              {p.role === 'team' ? ` · ${p.brain}` : ' · HQ'}
+          <div className="set-now">
+            <p className="set-now-k">{plyntrBrain ? 'You are in the Plyntr brain' : 'Chat'}</p>
+            <p>
+              {plyntrBrain
+                ? `This computer is on ${brainName || 'Plyntr'}.`
+                : watching && brainPath
+                  ? `Folder: ${folderName(brainPath)}.`
+                  : 'Chat starts when Agency Brain is watching a folder.'}
             </p>
-          ))}
+          </div>
+          <p>You use this brain as team. The owner decides who is here.</p>
         </>
       )}
 

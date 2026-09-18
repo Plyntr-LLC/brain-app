@@ -87,8 +87,18 @@ export function registerStubIpc(): void {
     const watching = readWatching()
     const file = getSettings()
     const email = String(watching.email || '').toLowerCase()
-    const superAdmin = Boolean(file.superAdmin) || email === 'joe@plyntr.com'
-    return { superAdmin, email, watching: watching.watching, brainPath: watching.brainPath }
+    const joe = email === 'joe@plyntr.com'
+    const plyntrBrain = watching.teamSlug === 'plyntr'
+    const superAdmin = joe && file.superAdmin !== false
+    return {
+      superAdmin,
+      email,
+      watching: watching.watching,
+      brainPath: watching.brainPath,
+      brainName: watching.teamName || watching.name,
+      brainSlug: watching.teamSlug,
+      plyntrBrain
+    }
   })
   ipcMain.handle('settings:setSuper', (_e, on: boolean) => setSuperAdmin(Boolean(on)))
   ipcMain.handle('settings:team', () => loadTeam())

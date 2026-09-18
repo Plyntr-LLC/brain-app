@@ -26,6 +26,9 @@ const brain = {
         email: string
         watching: boolean
         brainPath: string | null
+        brainName: string | null
+        brainSlug: string | null
+        plyntrBrain: boolean
       }>,
     setSuper: (on: boolean) => ipcRenderer.invoke('settings:setSuper', on),
     team: () =>
