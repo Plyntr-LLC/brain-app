@@ -11,7 +11,7 @@ import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot } from '.
 import { loadChats, saveChats, type SavedChats } from './persist'
 import { cancelWarm, closeWarm, forkSession, promptWarm, resetWarm, resumeSession, warmSession } from './warm'
 import { contextBlurb, grokCli, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
-import { getMemberToken, setMemberToken } from './session-token'
+import { clearAccount, getAccount, getMemberToken, loadAccount, saveAccount } from './session-token'
 import {
   getSettings,
   loadClients,
@@ -53,6 +53,7 @@ export function dryRun(): boolean {
 }
 
 export function registerStubIpc(): void {
+  loadAccount()
   ipcMain.handle('env:get', () => {
     const watching = readWatching()
     return {
@@ -86,13 +87,16 @@ export function registerStubIpc(): void {
   ipcMain.handle('settings:get', () => {
     const watching = readWatching()
     const file = getSettings()
-    const email = String(watching.email || '').toLowerCase()
+    const acct = getAccount() || loadAccount()
+    const email = String(acct?.email || '').toLowerCase()
     const joe = email === 'joe@plyntr.com'
     const plyntrBrain = watching.teamSlug === 'plyntr'
     const superAdmin = joe && file.superAdmin !== false
     return {
       superAdmin,
       email,
+      name: acct?.name || '',
+      signedIn: Boolean(acct?.email),
       watching: watching.watching,
       brainPath: watching.brainPath,
       brainName: watching.teamName || watching.name,
@@ -109,8 +113,13 @@ export function registerStubIpc(): void {
   ipcMain.handle('auth:resolveCode', async (_e, raw: string) => {
     const code = String(raw || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase()
     const res = await ads2ai.resolveInvite(code)
-    setMemberToken(res.memberToken)
     const m = res.member || {}
+    const email = String(m.email || res.memberEmail || '').toLowerCase()
+    saveAccount({
+      email,
+      name: String(m.name || res.memberName || ''),
+      token: res.memberToken
+    })
     return {
       teamSlug: res.teamSlug,
       teamName: res.teamName || res.teamSlug,
@@ -127,9 +136,22 @@ export function registerStubIpc(): void {
   ipcMain.handle('auth:requestCode', async (_e, email: string) => ads2ai.requestCode(email))
   ipcMain.handle('auth:verify', async (_e, email: string, code: string) => {
     const res = await ads2ai.verifyCode(email, code)
-    setMemberToken(res.token)
+    saveAccount({
+      email: String(res.member.email || email).toLowerCase(),
+      name: res.member.name || '',
+      token: res.token
+    })
     const teams = (await ads2ai.myTeams(res.token)).teams || []
     return { ok: true, member: res.member, teams }
+  })
+  ipcMain.handle('auth:session', () => {
+    const acct = getAccount() || loadAccount()
+    if (!acct) return { signedIn: false, email: '', name: '' }
+    return { signedIn: true, email: acct.email, name: acct.name || '' }
+  })
+  ipcMain.handle('auth:logout', () => {
+    clearAccount()
+    return { ok: true }
   })
   ipcMain.handle('auth:myTeams', async () => ads2ai.myTeams(getMemberToken()))
 

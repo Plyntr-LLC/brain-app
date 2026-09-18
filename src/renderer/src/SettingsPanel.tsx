@@ -96,10 +96,12 @@ function roleLine(role: Person['role'], company: string): string {
 
 export function SettingsPanel({
   role,
-  onClose
+  onClose,
+  onLogout
 }: {
   role?: string
   onClose: () => void
+  onLogout?: () => void
 }) {
   const [superAdmin, setSuper] = useState(false)
   const [email, setEmail] = useState('')
@@ -267,9 +269,17 @@ export function SettingsPanel({
         </button>
       </div>
       <p className="tiny">
-        {email ? `${email} · ` : ''}
+        {email ? `Signed in as ${email} · ` : 'Not signed in · '}
         {seatLabel}
       </p>
+      {onLogout && email ? (
+        <p>
+          <button type="button" className="ghost" onClick={onLogout}>
+            Log out
+          </button>
+          <span className="tiny"> Chats, this brain folder, and Agency Brain stay on this computer.</span>
+        </p>
+      ) : null}
 
       {ownerish ? (
         <>

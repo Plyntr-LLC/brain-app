@@ -24,6 +24,8 @@ const brain = {
       ipcRenderer.invoke('settings:get') as Promise<{
         superAdmin: boolean
         email: string
+        name?: string
+        signedIn?: boolean
         watching: boolean
         brainPath: string | null
         brainName: string | null
@@ -51,6 +53,9 @@ const brain = {
     resolveCode: (code: string) => ipcRenderer.invoke('auth:resolveCode', code),
     requestCode: (email: string) => ipcRenderer.invoke('auth:requestCode', email),
     verify: (email: string, code: string) => ipcRenderer.invoke('auth:verify', email, code),
+    session: () =>
+      ipcRenderer.invoke('auth:session') as Promise<{ signedIn: boolean; email: string; name: string }>,
+    logout: () => ipcRenderer.invoke('auth:logout') as Promise<{ ok: boolean }>,
     myTeams: () => ipcRenderer.invoke('auth:myTeams')
   },
   setup: {

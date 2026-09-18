@@ -25,19 +25,25 @@ export function FirstRun() {
     void (async () => {
       const e = await window.brain.env()
       const st = await window.brain.setup.status()
+      const acct = await window.brain.auth.session()
       const existing = e.existingBrain
       const d = await window.brain.ai.detect()
       setDetected(d)
       const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
+      const email = acct.signedIn ? acct.email : existing?.email || ''
+      let screen = 'email'
+      if (acct.signedIn && st.ready) screen = 'chat'
+      else if (acct.signedIn && st.watching) screen = 'aipick'
+      else if (acct.signedIn) screen = 'needs'
       setS((prev) => ({
         ...prev,
         dryRun: e.dryRun,
         brainPath: existing?.brainPath || prev.brainPath,
         business: existing?.name || prev.business || 'this computer',
-        email: existing?.email || prev.email,
+        email,
         abWatching: st.watching,
         path: st.watching ? 'second' : prev.path,
-        screen: st.ready ? 'chat' : 'needs',
+        screen,
         ai: prev.ai || pick
       }))
     })().catch(() => {})
@@ -116,6 +122,12 @@ export function FirstRun() {
     go('chat')
   }
 
+  async function logOut() {
+    await window.brain.auth.logout()
+    setShowInvite(false)
+    go('email')
+  }
+
   return (
     <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${!railOpen && s.screen !== 'chat' ? 'rail-off' : ''}`}>
       <div className="titlebar">
@@ -129,6 +141,12 @@ export function FirstRun() {
         <span className={`sync-pill ${s.abWatching ? 'on' : ''}`}>
           {s.abWatching ? 'Agency Brain · watching this folder' : 'Folder not watching yet'}
         </span>
+        {s.email ? <span className="tiny" style={{ marginLeft: 'auto' }}>{s.email}</span> : null}
+        {s.screen === 'chat' || s.email ? (
+          <button type="button" className="ghost title-set" onClick={() => void logOut()}>
+            Log out
+          </button>
+        ) : null}
         <button type="button" className="ghost title-set" onClick={() => setShowInvite(true)}>
           Settings
         </button>
@@ -137,6 +155,7 @@ export function FirstRun() {
         <SettingsPanel
           role={s.role}
           onClose={() => setShowInvite(false)}
+          onLogout={() => void logOut()}
         />
       )}
       <div className="body">
@@ -288,7 +307,10 @@ export function FirstRun() {
             <>
               <p className="kicker">No code</p>
               <h1>Sign in with your email.</h1>
-              <p>Use this if you're creating a brain that doesn't have a setup code yet. Same membership Agency Brain already uses.</p>
+              <p>
+                Same membership Agency Brain uses. We email a short code. Logging out later does not delete chats, this
+                folder, or Agency Brain.
+              </p>
               <label className="field">
                 Your email
                 <input value={s.email} onChange={(e) => setS({ ...s, email: e.target.value })} placeholder="you@company.com" />
@@ -314,9 +336,19 @@ export function FirstRun() {
                 <button className="primary" type="button" onClick={async () => {
                   try {
                     const res = await window.brain.auth.verify(s.email, otp)
-                    const teams = res.teams || (await window.brain.auth.myTeams()).teams || []
-                    if (s.path === 'join') go('hello', { teams, member: res.member })
-                    else go('choice', { teams, member: res.member })
+                    const st = await window.brain.setup.status()
+                    const email = String(res.member?.email || s.email).toLowerCase()
+                    if (st.ready) {
+                      go('chat', { email, member: res.member, abWatching: true })
+                      return
+                    }
+                    if (st.watching) {
+                      go('aipick', { email, member: res.member, abWatching: true })
+                      return
+                    }
+                    const teams = res.teams || []
+                    if (s.path === 'join') go('hello', { email, teams, member: res.member })
+                    else go('choice', { email, teams, member: res.member })
                   } catch (e) { setErr(String((e as Error).message || e)) }
                 }}>Continue</button>
               </div>
