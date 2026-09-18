@@ -276,7 +276,7 @@ export function BridgeWizard({
         <>
           <p className="kicker">Create brains</p>
           <h1>Write the GitHub address for each brain.</h1>
-          <p>Create each brain in Agency Brain (I have a code). New GitHub organisation per brain. Then paste the org/repo here.</p>
+          <p>Create each brain in Agency Brain (I have a code). New GitHub organization per brain. Then paste the org/repo here.</p>
           <label className="field">
             HQ · {d.hqName || 'HQ'}
             <input
@@ -355,26 +355,25 @@ export function BridgeWizard({
         <>
           <p className="kicker">Make them sync</p>
           <h1>Connect each brain.</h1>
-          <p>
-            Open the setup link. For each brain, Connect, then <strong>Only select repositories</strong>, that one brain. Never All
-            repositories. Then Turn on.
-          </p>
-          {d.setupLink ? (
+          <div className="warn-box">
+            <h3>Before we start: you will need to allow access</h3>
             <p>
-              <a
-                href={d.setupLink}
-                onClick={(e) => {
-                  e.preventDefault()
-                  void window.brain.bridge.openUrl(d.setupLink)
-                }}
-              >
-                Open setup page
-              </a>
+              GitHub will ask which repositories this app can see. For each brain: Connect, then{' '}
+              <strong>Only select repositories</strong>, that one brain. Never All repositories. Then Turn on.
             </p>
-          ) : null}
+          </div>
           <p className="muted">HQ {d.hqAddress}. Projects: {d.projects.map((p) => p.address).join(', ')}.</p>
           <div className="actions">
-            <button className="primary" type="button" onClick={next}>
+            {d.setupLink ? (
+              <button
+                className="primary"
+                type="button"
+                onClick={() => void window.brain.bridge.openUrl(d.setupLink)}
+              >
+                Open GitHub
+              </button>
+            ) : null}
+            <button className={d.setupLink ? 'ghost' : 'primary'} type="button" onClick={next}>
               I connected them
             </button>
             <button className="linkish" type="button" onClick={back}>

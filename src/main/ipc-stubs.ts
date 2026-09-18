@@ -4,7 +4,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { DOWNLOAD_AB, GITHUB_APP_INSTALL, GITHUB_NEW_ORG, type AiKind } from '../shared/contracts'
 import * as ads2ai from './ads2ai'
 import { detectApp, readWatching, writesAllowed } from './agency-brain'
-import { installNeed, listNeeds, type NeedId } from './install'
+import { installNeed, isNeedId, listNeeds } from './install'
 import * as ai from './ai-cli'
 import { asAttachBuf, inspectAttach, stashBytes } from './attach'
 import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot } from './files'
@@ -167,7 +167,10 @@ export function registerStubIpc(): void {
   ipcMain.handle('ab:watching', async () => readWatching())
 
   ipcMain.handle('setup:status', async () => listNeeds())
-  ipcMain.handle('setup:install', async (_e, id: NeedId) => installNeed(id))
+  ipcMain.handle('setup:install', async (_e, id: string) => {
+    if (!isNeedId(id)) return { ok: false, detail: 'Unknown tool.', wait: 'none' }
+    return installNeed(id)
+  })
 
   ipcMain.handle('ai:detect', async () => ai.detect())
   ipcMain.handle('ai:login', async (_e, which: AiKind) => {

@@ -56,7 +56,7 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Settings: Plyntr support (joe@plyntr.com) has Client brains (HQ + projects, copier prompt). Owners/scouts have Team roster. Team can read the roster. Stored in userData, not Agency Brain config.json.
 - Drag/drop, paste (including screenshots), and Attach on Chat for images and docs. Grok/Cursor: ACP image + embedded resource. Claude: image + PDF document. Codex: localImage + inlined text docs. Pathless clipboard files stash under userData/drops. 20 MB cap.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
-- Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, the app opens a needs screen (one line each). Install selected uses official installers. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.
+- Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, one setup screen lists them, pre-warns every permission dialog, then **Start setup** (one click) runs official installers in order and waits. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.
 - Mac one-file installer: `npm run pack:mac` writes `dist/Brain-0.1.0-mac.dmg` (arm64). Signed Developer ID Application: Plyntr LLC. Notarized 2026-09-18.
 
 ## How Joe runs Inbox
@@ -108,6 +108,7 @@ Bugs and product gaps. One line each. Date + what.
 - [x] 2026-09-17 Joe: **Windows app** with Windows paths for Agency Brain, CLI bins, and installers. Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `agency-brain.ts` AppData paths, `pack:win` → `Brain-0.1.0-win.exe`. Unsigned. Download: GitHub Releases.
 - [x] 2026-09-17 Joe: **Brain Bridge in this app.** Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `BridgeWizard.tsx`, welcome “Set up HQ and project brains”, role in titlebar, `userData/bridge.json`. Does not write Agency Brain config.json.
 - [x] 2026-09-17 Joe: **Auto-install for newbies.** Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `install.ts`, FirstRun `needs` screen. Detect Homebrew/Git/Agency Brain/CLIs, tick to install official scripts, then Chat when watching + a CLI. Does not write Agency Brain config.json.
+- [x] 2026-09-18 Joe: **One seamless setup.** Downloads/installs automatic or 1 or 2 clicks. Pre-warn before any permission/approval dialog. Done: 2026-09-18. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `SetupNeeds.tsx`, `install.ts` warn/accept/wait, Bridge/GitHub Before we start boxes. Does not write Agency Brain config.json.
 
 ## Next
 

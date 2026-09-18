@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
-import { DOWNLOAD_AB, OWNER_NEEDS, STEPS, type AiKind, type PathKind, type Session } from '@shared/contracts'
+import { useEffect, useState } from 'react'
+import { OWNER_NEEDS, STEPS, type AiKind, type PathKind, type Session } from '@shared/contracts'
 import { blankSession, needsDone, remainingNeeds, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
 import { BridgeWizard, type BridgeDraft } from './BridgeWizard'
 import { SettingsPanel } from './SettingsPanel'
+import { SetupNeeds } from './SetupNeeds'
 
 export function FirstRun() {
   const [s, setS] = useState<Session>(() => blankSession('create', true))
@@ -17,18 +18,12 @@ export function FirstRun() {
   const [detected, setDetected] = useState<Partial<Record<AiKind, boolean>>>({})
   const [showInvite, setShowInvite] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
-  const [needs, setNeeds] = useState<{ id: string; label: string; line: string; present: boolean }[]>([])
-  const [picked, setPicked] = useState<Record<string, boolean>>({})
-  const [busyId, setBusyId] = useState('')
-  const [installNote, setInstallNote] = useState('')
 
   useEffect(() => {
     void (async () => {
       const e = await window.brain.env()
       const st = await window.brain.setup.status()
       const existing = e.existingBrain
-      setNeeds(st.items)
-      setPicked(Object.fromEntries(st.items.filter((i) => !i.present).map((i) => [i.id, true])))
       const d = await window.brain.ai.detect()
       setDetected(d)
       const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
@@ -68,40 +63,48 @@ export function FirstRun() {
   }
 
   useEffect(() => {
-    if (s.screen !== 'abapply' && s.screen !== 'aiwork') return
-    const max = s.screen === 'abapply' ? 6 : 4
-    if (tick >= max) {
-      if (s.screen === 'abapply') setS((p) => ({ ...p, abWatching: true }))
-      return
-    }
+    if (s.screen !== 'aiwork') return
+    if (tick >= 4) return
     const t = setTimeout(() => setTick((n) => n + 1), 450)
     return () => clearTimeout(t)
   }, [s.screen, tick])
+
+  useEffect(() => {
+    if (s.screen !== 'abapply') return
+    let stop = false
+    void window.brain.setup.install('ab').catch(() => {})
+    const loop = async () => {
+      while (!stop) {
+        const st = await window.brain.setup.status()
+        if (st.watching) {
+          setS((p) => ({ ...p, abWatching: true }))
+          return
+        }
+        await new Promise((r) => setTimeout(r, 1500))
+      }
+    }
+    void loop()
+    return () => {
+      stop = true
+    }
+  }, [s.screen])
+
+  async function afterMembership(patch?: Partial<Session>) {
+    const st = await window.brain.setup.status()
+    const d = await window.brain.ai.detect()
+    setDetected(d)
+    const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
+    const next = { ...patch, ai: patch?.ai || pick }
+    if (st.ready) go('chat', { ...next, abWatching: true })
+    else if (st.watching) go('aipick', { ...next, abWatching: true })
+    else go('needs', next)
+  }
 
   const title = s.business || 'Brain'
 
   function startChat() {
     go('chat')
   }
-
-  const abItems = useMemo(() => {
-    if (s.path !== 'create') {
-      return [
-        'Signing Agency Brain in with your email',
-        'Looking up the existing brain (will not create a new one)',
-        'Putting that folder on this computer',
-        'Sync is on. This window will not push git.'
-      ]
-    }
-    return [
-      'Installing Agency Brain in the background',
-      `Signing it in with ${s.email || 'your email'}`,
-      'Using the GitHub login you already did',
-      org ? `Using ${org}` : `Waiting on a GitHub organisation for ${s.business}`,
-      'Copying the Agency Brain template (not an empty folder)',
-      'Watching the folder. Skills and .team-config stay with Agency Brain.'
-    ]
-  }, [s, org])
 
   return (
     <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${!railOpen && s.screen !== 'chat' ? 'rail-off' : ''}`}>
@@ -194,85 +197,15 @@ export function FirstRun() {
             />
           )}
           {s.screen === 'needs' && (
-            <>
-              <p className="kicker">This computer</p>
-              <h1>Install what’s missing, then Chat.</h1>
-              <p>Nothing here spends money. Grok, Claude, Cursor, and ChatGPT still bill your own accounts when you sign in.</p>
-              {needs.map((n) => (
-                <label className="need-row" key={n.id}>
-                  <input
-                    type="checkbox"
-                    disabled={n.present || busyId !== ''}
-                    checked={n.present || Boolean(picked[n.id])}
-                    onChange={(e) => setPicked((p) => ({ ...p, [n.id]: e.target.checked }))}
-                  />
-                  <span>
-                    <strong>
-                      {n.label}
-                      {n.present ? ' · ready' : ''}
-                    </strong>
-                    <span className="muted"> {n.line}</span>
-                  </span>
-                </label>
-              ))}
-              {installNote ? <p className="note">{installNote}</p> : null}
-              {err && <p className="note">{err}</p>}
-              <div className="actions">
-                <button
-                  className="primary"
-                  type="button"
-                  disabled={busyId !== ''}
-                  onClick={async () => {
-                    setErr('')
-                    const ids = needs.filter((n) => !n.present && picked[n.id]).map((n) => n.id)
-                    for (const id of ids) {
-                      setBusyId(id)
-                      setInstallNote(`Installing ${id}…`)
-                      const r = await window.brain.setup.install(id)
-                      if (!r.ok) {
-                        setErr(r.detail || `Could not install ${id}.`)
-                        setBusyId('')
-                        return
-                      }
-                      setInstallNote(r.detail || `${id} done.`)
-                    }
-                    setBusyId('')
-                    const st = await window.brain.setup.status()
-                    setNeeds(st.items)
-                    const d = await window.brain.ai.detect()
-                    setDetected(d)
-                    const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
-                    if (st.ready) {
-                      go('chat', { abWatching: true, brainPath: s.brainPath, ai: s.ai || pick })
-                      return
-                    }
-                    if (st.watching && pick) {
-                      go('aipick', { abWatching: true, ai: pick })
-                      return
-                    }
-                    if (!st.watching) {
-                      setInstallNote('Agency Brain is not watching a folder yet. Open it, sign in, then Continue.')
-                    }
-                  }}
-                >
-                  {busyId ? `Installing ${busyId}…` : 'Install selected'}
-                </button>
-                <button
-                  className="ghost"
-                  type="button"
-                  disabled={busyId !== ''}
-                  onClick={async () => {
-                    const st = await window.brain.setup.status()
-                    setNeeds(st.items)
-                    if (st.ready) go('chat', { abWatching: true })
-                    else if (st.watching) go('aipick', { abWatching: true })
-                    else go('welcome')
-                  }}
-                >
-                  Recheck
-                </button>
-              </div>
-            </>
+            <SetupNeeds
+              onReady={({ ready, watching, ai }) => {
+                const pick = ai || s.ai
+                if (ready) go('chat', { abWatching: true, brainPath: s.brainPath, ai: pick })
+                else if (watching) go('aipick', { abWatching: true, ai: pick })
+              }}
+              onCode={() => go('welcome')}
+              onBridge={() => go('bridge')}
+            />
           )}
           {s.screen === 'welcome' && (
             <>
@@ -407,7 +340,7 @@ export function FirstRun() {
               <p>The setup code already knew you as {s.member?.name || s.email || 'you'}. Shared notes and an AI that already knows the shop. You talk to it here.</p>
               <span className="role-lock">Your role: {s.role || 'teammate'} · set by the owner</span>
               <p className="muted">Agency Brain will put the folder on this computer in the background. You don't need to download anything extra.</p>
-              <div className="actions"><button className="primary" type="button" onClick={() => go('abapply')}>Continue</button></div>
+              <div className="actions"><button className="primary" type="button" onClick={() => void afterMembership()}>Continue</button></div>
             </>
           )}
           {s.screen === 'name' && (
@@ -417,7 +350,7 @@ export function FirstRun() {
               <label className="field">Business name
                 <input value={s.business} onChange={(e) => setS({ ...s, business: e.target.value })} placeholder="Harold's Books" />
               </label>
-              <p className="tiny">This name is what we send to Agency Brain as the team name. GitHub still needs a real organisation (next).</p>
+              <p className="tiny">This name is what we send to Agency Brain as the team name. GitHub still needs a real organization (next).</p>
               <div className="actions">
                 <button className="primary" type="button" disabled={s.business.trim().length < 2} onClick={() => go('abget')}>Continue</button>
               </div>
@@ -427,31 +360,43 @@ export function FirstRun() {
             <>
               <p className="kicker">Owner and scout</p>
               <h1>Get Agency Brain on this computer.</h1>
-              <p>{s.business ? `This is ${s.business}` : 'This brain'}{s.email ? `, for ${s.email}` : ''}. Agency Brain keeps the shared folder in sync. We'll start that in the background so you stay in this window. If the installer needs you, use the download.</p>
-              <p className="tiny">We do not open Agency Brain's wizard in here. Your answers in this app are what it uses.</p>
+              <p>{s.business ? `This is ${s.business}` : 'This brain'}{s.email ? `, for ${s.email}` : ''}. Agency Brain keeps the shared folder in sync.</p>
+              <div className="warn-box">
+                <h3>Before we start: you will need to allow access</h3>
+                <p>
+                  Your browser will open the Agency Brain download. Put it in Applications (or run the Windows installer),
+                  then open it. macOS may say the app is from the internet: click Open. Sign in, then pick the shared folder.
+                </p>
+              </div>
               <div className="actions">
                 <button className="primary" type="button" onClick={async () => {
-                  await window.brain.ab.install().catch(() => {})
-                  if (s.path === 'second') go('abapply')
+                  await window.brain.setup.install('ab').catch(() => {})
+                  if (s.path === 'second') await afterMembership()
                   else go('github')
-                }}>Install in the background</button>
-                <a className="dl" href={DOWNLOAD_AB} target="_blank" rel="noreferrer">Download Agency Brain</a>
+                }}>Download Agency Brain</button>
               </div>
             </>
           )}
           {s.screen === 'github' && (
             <>
               <p className="kicker">Private place</p>
-              <h1>A GitHub organisation, then Continue.</h1>
-              <p>GitHub will not let the brain live on a personal account. Make a free organisation (or use one you already have), then we'll install the sharing app on it. That GitHub page is the one screen we don't own.</p>
-              <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
-                <button className="ghost" type="button" onClick={() => window.brain.setup.openCreateOrg()}>Create a free organisation</button>
+              <h1>A GitHub organization, then Continue.</h1>
+              <p>GitHub will not let the brain live on a personal account. Make a free organization (or use one you already have), then we'll install the sharing app on it. That GitHub page is the one screen we don't own.</p>
+              <div className="warn-box">
+                <h3>Before we start: you will need to allow access</h3>
+                <p>
+                  GitHub may ask you to sign in. When you install the sharing app, choose <strong>Only select repositories</strong>,
+                  then this brain. Never All repositories.
+                </p>
               </div>
-              <label className="field" style={{ marginTop: '1rem' }}>Organisation name
+              <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+                <button className="ghost" type="button" onClick={() => window.brain.setup.openCreateOrg()}>Create a free organization</button>
+              </div>
+              <label className="field" style={{ marginTop: '1rem' }}>Organization name
                 <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="harolds-books" />
               </label>
-              <p><button className="linkish" type="button" onClick={() => setShowOrg(!showOrg)}>{showOrg ? 'Hide' : 'I already have an organisation'}</button></p>
-              {showOrg && <p className="tiny">Type it above. We'll check it's an organisation, not a person.</p>}
+              <p><button className="linkish" type="button" onClick={() => setShowOrg(!showOrg)}>{showOrg ? 'Hide' : 'I already have an organization'}</button></p>
+              {showOrg && <p className="tiny">Type it above. We'll check it's an organization, not a person.</p>}
               {err && <p className="note">{err}</p>}
               <div className="actions">
                 <button className="ghost" type="button" onClick={() => void skipToExisting()}>
@@ -463,7 +408,7 @@ export function FirstRun() {
                     if (look && look.ok === false) { setErr(look.reason || 'GitHub did not accept that name'); return }
                     await window.brain.setup.createTeam(s.business)
                     await window.brain.setup.openAppInstall('new-team', org.trim())
-                    go('abapply', { orgLogin: org.trim() })
+                    await afterMembership({ orgLogin: org.trim() })
                   } catch (e) { setErr(String((e as Error).message || e)) }
                 }}>Continue with GitHub</button>
               </div>
@@ -471,24 +416,31 @@ export function FirstRun() {
           )}
           {s.screen === 'abapply' && (
             <>
-              <p className="kicker">In the background</p>
-              <h1>Getting the shared folder ready.</h1>
-              <div className="map">
-                <strong style={{ fontFamily: 'Schibsted Grotesk, sans-serif', fontSize: '0.78rem' }}>Mapped into Agency Brain. You do not open that app.</strong>
-                <br />Email: {s.email || '—'}
-                <br />Business: {s.business || '—'}
-                <br />GitHub org: {s.orgLogin || org || '—'}
-                <br />Path: {s.path === 'create' ? 'Create from template' : 'Join existing folder'}
-                {s.dryRun && <><br />dry-run: no config.json writes, no clone</>}
+              <p className="kicker">Shared folder</p>
+              <h1>Waiting for Agency Brain to watch a folder.</h1>
+              <div className="warn-box">
+                <h3>Before we start: you will need to allow access</h3>
+                <p>
+                  We opened Agency Brain. Sign in, pick the shared folder, and click Open if macOS says the app is from
+                  the internet. This window continues when that folder is watching. It will not mark watching on its own.
+                </p>
               </div>
-              <ul className="work-list">
-                {abItems.map((t, i) => (
-                  <li key={t} className={tick > i ? 'done' : ''}>{tick > i ? '✓' : '·'} {t}</li>
-                ))}
-              </ul>
-              <p className="tiny">Ready when Agency Brain is watching. {s.path !== 'join' && <>If install didn't start, <a href={DOWNLOAD_AB} target="_blank" rel="noreferrer">download Agency Brain</a>.</>}</p>
+              <p className="tiny">
+                {s.email ? `${s.email} · ` : ''}
+                {s.business || 'This brain'}
+                {s.orgLogin || org ? ` · ${s.orgLogin || org}` : ''}
+              </p>
               <div className="actions">
-                <button className="primary" type="button" disabled={!s.abWatching && tick < abItems.length} onClick={() => go('aipick', { abWatching: true })}>Continue</button>
+                <button className="primary" type="button" disabled={!s.abWatching} onClick={() => go('aipick', { abWatching: true })}>
+                  Continue
+                </button>
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={() => void afterMembership()}
+                >
+                  Recheck
+                </button>
               </div>
             </>
           )}
@@ -497,6 +449,13 @@ export function FirstRun() {
               <p className="kicker">Talking</p>
               <h1>Which AI should this use?</h1>
               <p>Pick who you start with. You can open the others later from + in the tab bar.</p>
+              <div className="warn-box">
+                <h3>Before we start: you will need to allow access</h3>
+                <p>
+                  The first time, that AI may open a browser so you can sign in with your own account. Accept that sign-in
+                  if it appears.
+                </p>
+              </div>
               <div className="ai-grid">
                 {([['claude', 'Claude', 'Claude Code'], ['grok', 'Grok', 'Grok CLI'], ['cursor', 'Cursor', 'cursor-agent'], ['gpt', 'ChatGPT', 'Codex CLI']] as const).map(([id, n, sub]) => (
                   <button type="button" key={id} className={`ai ${s.ai === id ? 'on' : ''}`} onClick={() => setS({ ...s, ai: id })} disabled={detected[id] === false}>
@@ -516,7 +475,7 @@ export function FirstRun() {
               <p className="kicker">Working</p>
               <h1>Opening {s.ai === 'gpt' ? 'Codex' : s.ai === 'grok' ? 'Grok' : 'Claude'} in this window.</h1>
               <ul className="work-list">
-                {['Found the CLI on this computer', "You're already signed in there", 'Pointing it at the Agency Brain folder'].map((t, i) => (
+                {['Found the CLI on this computer', 'If a browser opens, sign in with your own account', 'Pointing it at the Agency Brain folder'].map((t, i) => (
                   <li key={t} className={tick > i + 1 ? 'done' : ''}>{tick > i + 1 ? '✓' : '·'} {t}</li>
                 ))}
               </ul>

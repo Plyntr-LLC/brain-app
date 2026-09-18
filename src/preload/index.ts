@@ -56,10 +56,21 @@ const brain = {
       ipcRenderer.invoke('setup:status') as Promise<{
         ready: boolean
         watching: boolean
-        items: { id: string; label: string; line: string; present: boolean }[]
+        items: {
+          id: string
+          label: string
+          line: string
+          present: boolean
+          warn: string
+          accept: string
+        }[]
       }>,
     install: (id: string) =>
-      ipcRenderer.invoke('setup:install', id) as Promise<{ ok: boolean; detail: string }>
+      ipcRenderer.invoke('setup:install', id) as Promise<{
+        ok: boolean
+        detail: string
+        wait: 'none' | 'present' | 'watching'
+      }>
   },
   ab: {
     detect: () => ipcRenderer.invoke('ab:detect'),
