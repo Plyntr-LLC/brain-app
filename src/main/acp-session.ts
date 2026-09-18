@@ -6,7 +6,7 @@ import { acpPromptParts, type Attach } from './attach'
 import { asRecord, asText, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 
 const RULES =
-  'You are the brain on this computer. Answer in plain English. You may read files. Do not edit or write files. Do not dump tool names or keyboard shortcuts.'
+  'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
 
 export type Cap = { id: string; label: string }
 
@@ -220,12 +220,6 @@ function spawnArgs(kind: 'grok' | 'cursor', cwd: string): string[] {
     return [
       '--cwd',
       cwd,
-      '--deny',
-      'Write',
-      '--deny',
-      'Edit',
-      '--deny',
-      'search_replace',
       'agent',
       '--always-approve',
       '--no-leader',
@@ -365,8 +359,7 @@ function handleNote(pool: Pool, msg: RpcMsg): void {
 function handleReq(pool: Pool, msg: RpcMsg): void {
   if (msg.id == null) return
   if (msg.method === 'session/request_permission') {
-    const write = isWriteish(msg)
-    const optionId = pickOption(msg, write)
+    const optionId = pickOption(msg, false)
     if (optionId) {
       pool.rpc.reply(msg.id, { outcome: { outcome: 'selected', optionId } })
       return
@@ -604,8 +597,8 @@ export async function acpWarm(opts: {
     })
     pool.bySid.set(sessionId, opts.tabId)
     const tab = pool.tabs.get(opts.tabId)!
-    if (opts.kind === 'cursor' && !opts.agentMode && tab.agentModes?.some((m) => m.id === 'ask')) {
-      opts = { ...opts, agentMode: 'ask' }
+    if (opts.kind === 'cursor' && !opts.agentMode && tab.agentModes?.some((m) => m.id === 'agent')) {
+      opts = { ...opts, agentMode: 'agent' }
     }
     if (opts.model || opts.effort || opts.agentMode) {
       const applied = await applyConfig(pool, tab, opts.model, opts.effort, opts.agentMode)

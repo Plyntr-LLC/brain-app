@@ -5,7 +5,7 @@ import { codexInput, type Attach } from './attach'
 import { asRecord, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 
 const RULES =
-  'You are the brain on this computer. Answer in plain English. You may read files. Do not edit or write files. Do not dump tool names or keyboard shortcuts.'
+  'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
 
 type Tab = {
   tabId: string
@@ -247,7 +247,7 @@ export async function codexWarm(opts: {
             cwd: opts.cwd,
             model: opts.model || undefined,
             approvalPolicy: 'never',
-            sandbox: 'read-only',
+            sandbox: 'workspace-write',
             developerInstructions: RULES,
             serviceName: 'brain-app'
           },

@@ -27,9 +27,7 @@ Keep one warm process per CLI and a session per chat tab. Do not spawn `grok -p`
 
 Pickers (model, effort, mode, folder) must follow what that CLI actually advertises. Do not send Grok fields to Cursor.
 
-Default Chat effort is **high** (Joe’s TUI stays extra high). Cursor Chat defaults to **ask** so it does not edit unless they switch to agent.
-
-Writes stay blocked for Chat unless the user picks a mode that allows them (Grok `--deny Write/Edit`, Claude disallowed tools, Codex read-only sandbox, Cursor ask).
+Default Chat effort is **high** (Joe’s TUI stays extra high). Cursor Chat defaults to **agent** so it can edit. Chat may write files in the watched folder (Grok no `--deny Write`, Claude Write/Edit allowed, Codex `workspace-write`). Google Ads and outbound mail still need a clear yes.
 
 Each person uses their own CLI login. Never bake a Plyntr SuperGrok (or Cursor) account into the app.
 

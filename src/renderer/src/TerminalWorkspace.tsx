@@ -878,7 +878,7 @@ function ChatPane({
         alwaysApprove,
         history: [],
         system:
-          'You are the brain on this computer. Answer in plain English. You may read files. Do not edit or write files. Do not dump tool names or keyboard shortcuts.'
+          'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
       })
     } catch (e) {
       setBusy(false)
@@ -974,7 +974,7 @@ function ChatPane({
         history: [],
         attachments: attached.map(({ path, name, mime }) => ({ path, name, mime })),
         system:
-          'You are the brain on this computer. Answer in plain English. You may read files. Do not edit or write files. Do not dump tool names or keyboard shortcuts.'
+          'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
       })
     } catch (e) {
       setBusy(false)
@@ -1196,7 +1196,8 @@ export function TerminalWorkspace({
       mode: 'chat',
       title: label(setupKind),
       sessionId: crypto.randomUUID(),
-      effort: setupKind === 'cursor' ? undefined : 'high'
+      effort: setupKind === 'cursor' ? undefined : 'high',
+      agentMode: setupKind === 'cursor' ? 'agent' : undefined
     }
   }
   const [tabs, setTabs] = useState<Tab[]>([])
@@ -1453,7 +1454,8 @@ export function TerminalWorkspace({
         title: label(kind),
         sessionId: crypto.randomUUID(),
         cliSessionId: resumeId,
-        effort: kind === 'cursor' ? undefined : 'high'
+        effort: kind === 'cursor' ? undefined : 'high',
+        agentMode: kind === 'cursor' ? 'agent' : undefined
       }
     ])
     if (copied?.length) setTranscripts((m) => ({ ...m, [id]: copied }))

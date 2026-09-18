@@ -175,13 +175,7 @@ export function promptStream(opts: {
           '--output-format',
           'streaming-json',
           '--max-turns',
-          '8',
-          '--deny',
-          'Write',
-          '--deny',
-          'Edit',
-          '--deny',
-          'search_replace'
+          '50'
         ]
       : opts.kind === 'claude'
         ? ['-p', packed, '--output-format', 'text', '--max-turns', '4']
