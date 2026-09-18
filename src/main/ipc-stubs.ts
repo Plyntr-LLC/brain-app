@@ -3,7 +3,10 @@ import { basename, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { DOWNLOAD_AB, GITHUB_APP_INSTALL, GITHUB_NEW_ORG, type AiKind } from '../shared/contracts'
 import * as ads2ai from './ads2ai'
+import { homedir } from 'node:os'
 import { detectApp, readTeamMember, readTeamRoster, readWatching, writesAllowed } from './agency-brain'
+import { cloneBrain } from './clone'
+import { startBrainSync, stopBrainSync } from './brain-sync'
 import { installNeed, isNeedId, listNeeds, loginCli } from './install'
 import * as ai from './ai-cli'
 import { asAttachBuf, inspectAttach, stashBytes } from './attach'
@@ -140,7 +143,8 @@ export function registerStubIpc(): void {
     saveAccount({
       email: String(res.member.email || email).toLowerCase(),
       name: res.member.name || '',
-      token: res.token
+      token: res.token,
+      source: 'ads2ai'
     })
     const teams = (await ads2ai.myTeams(res.token)).teams || []
     return { ok: true, member: res.member, teams }
@@ -157,6 +161,7 @@ export function registerStubIpc(): void {
     }
   })
   ipcMain.handle('auth:logout', () => {
+    stopBrainSync()
     clearAccount()
     return { ok: true }
   })
@@ -191,6 +196,7 @@ export function registerStubIpc(): void {
       folder
     })
     saveRecent(folder)
+    startBrainSync(folder)
     return {
       ok: true,
       email: member.email,
@@ -229,12 +235,41 @@ export function registerStubIpc(): void {
     if (!writesAllowed()) return { skipped: true }
     return ads2ai.ensureBrainRepo(getMemberToken(), slug)
   })
-  ipcMain.handle('setup:applyFolder', async () => {
-    if (!writesAllowed()) {
-      const w = readWatching()
-      return { ok: true, skipped: true, brainPath: w.brainPath }
+  ipcMain.handle('setup:applyFolder', async (_e, opts?: { teamSlug?: string; dest?: string }) => {
+    const watching = readWatching()
+    if (watching.brainPath) {
+      startBrainSync(watching.brainPath)
+      return { ok: true, skipped: true, brainPath: watching.brainPath, reason: 'already-on-this-computer' }
     }
-    throw new Error('Clone into a new folder is not enabled on this machine yet')
+    const acct = getAccount() || loadAccount()
+    if (acct?.folder && existsSync(acct.folder)) {
+      startBrainSync(acct.folder)
+      return { ok: true, brainPath: acct.folder }
+    }
+    if (process.env.BRAIN_APP_DRY_RUN === '1') {
+      return { ok: true, skipped: true, reason: 'dry-run', brainPath: null }
+    }
+    const slug = String(opts?.teamSlug || '').trim()
+    if (!slug) throw new Error('No team to clone. Sign in first, or open the shared folder.')
+    const git = await ads2ai.gitToken(getMemberToken(), slug)
+    const rawUrl = String(git.cloneUrl || git.url || git.repoUrl || '')
+    if (!rawUrl) throw new Error('Could not get a clone address for that brain.')
+    const token = String(git.token || '')
+    const cloneUrl = token && rawUrl.startsWith('https://') && !rawUrl.includes('@')
+      ? rawUrl.replace(/^https:\/\//, `https://x-access-token:${token}@`)
+      : rawUrl
+    const dest = String(opts?.dest || '').trim() || join(homedir(), 'Projects', `${slug}-brain`)
+    const cloned = await cloneBrain({
+      cloneUrl,
+      dest,
+      email: acct?.email || '',
+      name: acct?.name || ''
+    })
+    if (!cloned.ok) throw new Error(cloned.detail || 'Clone failed.')
+    if (acct) saveAccount({ ...acct, folder: cloned.dest })
+    saveRecent(cloned.dest)
+    startBrainSync(cloned.dest)
+    return { ok: true, brainPath: cloned.dest, detail: cloned.detail }
   })
 
   ipcMain.handle('ab:detect', async () => detectApp())

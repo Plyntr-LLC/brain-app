@@ -106,6 +106,22 @@ export async function installStatus(teamSlug: string): Promise<{
   return r.json() as Promise<{ installed?: boolean; repoUrl?: string }>
 }
 
+export async function gitToken(
+  token: string,
+  teamSlug: string
+): Promise<{ cloneUrl?: string; token?: string; repoUrl?: string; url?: string }> {
+  const r = await fetch(`${API_BASE}/api/team-brain/git-token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ teamSlug })
+  })
+  if (!r.ok) {
+    const body = (await r.json().catch(() => ({}))) as { error?: string }
+    throw new Error(body.error || `Could not get a clone token (HTTP ${r.status})`)
+  }
+  return r.json() as Promise<{ cloneUrl?: string; token?: string; repoUrl?: string; url?: string }>
+}
+
 export async function ensureBrainRepo(token: string, teamSlug: string): Promise<unknown> {
   const r = await fetch(`${API_BASE}/api/team-brain/ensure-brain-repo`, {
     method: 'POST',

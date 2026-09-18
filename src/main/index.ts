@@ -1,6 +1,8 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
 import { readWatching } from './agency-brain'
+import { startBrainSync } from './brain-sync'
+import { loadAccount } from './session-token'
 import { registerStubIpc } from './ipc-stubs'
 import { killAllPtys, registerPtyIpc } from './pty'
 import { killAllWarm, prewarm } from './warm'
@@ -53,7 +55,12 @@ function createWindow(): void {
 app.whenReady().then(() => {
   createWindow()
   const watching = readWatching()
-  if (watching.brainPath) prewarm('grok', watching.brainPath)
+  const acct = loadAccount()
+  const folder = watching.brainPath || acct?.folder || ''
+  if (folder) {
+    startBrainSync(folder)
+    prewarm('grok', folder)
+  }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

@@ -118,6 +118,7 @@ Bugs and product gaps. One line each. Date + what.
 - [x] 2026-09-18 Joe: Chat must wait like Terminal. No 3-minute cutoff. Show working until the turn finishes or Stop. Setup must work for Grok, Claude, Cursor, and Codex (each CLI’s own login and session start). Done: 2026-09-18. Evidence: `line-rpc.ts` timeout 0 on session/prompt, per-CLI `loginCli`.
 - [x] 2026-09-18 Joe: Sign in with email (Agency Brain codes). Log out without erasing chats, brains, or Agency Brain files. Identity drives Settings/superadmin. Done: 2026-09-18. Evidence: `session-token.ts` account.json, Log out in title bar and Settings.
 - [x] 2026-09-18 Joe: Team login without Agency Brain / ads2ai. Email + shared folder + `.team-config/roles.json`. Done: 2026-09-18. Evidence: `auth:joinFolder`.
+- [x] 2026-09-18 Joe: Wizard handles Brain Sync for every seat: clone via git-token when ads2ai membership exists, folder pick for team roster, pull/push when Agency Brain is not watching. Never steal an existing watcher. Done: 2026-09-18. Evidence: `clone.ts`, `brain-sync.ts`, `setup:applyFolder`.
 
 ## Next
 

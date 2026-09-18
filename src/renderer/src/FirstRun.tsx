@@ -79,18 +79,14 @@ export function FirstRun() {
   useEffect(() => {
     if (s.screen !== 'abapply') return
     let stop = false
-    void window.brain.setup.install('ab').catch(() => {})
-    const loop = async () => {
-      while (!stop) {
-        const st = await window.brain.setup.status()
-        if (st.watching) {
-          setS((p) => ({ ...p, abWatching: true }))
-          return
-        }
-        await new Promise((r) => setTimeout(r, 1500))
-      }
-    }
-    void loop()
+    void (async () => {
+      const applied = await window.brain.setup.applyFolder(s.team?.slug ? { teamSlug: s.team.slug } : undefined).catch((e) => {
+        if (!stop) setErr(String((e as Error).message || e))
+        return null
+      })
+      if (stop || !applied?.brainPath) return
+      setS((p) => ({ ...p, brainPath: applied.brainPath || p.brainPath, abWatching: true }))
+    })()
     return () => {
       stop = true
     }
@@ -108,13 +104,20 @@ export function FirstRun() {
   }, [s.screen, s.abWatching])
 
   async function afterMembership(patch?: Partial<Session>) {
+    const slug = patch?.team?.slug || s.team?.slug
+    if (slug) await window.brain.setup.ensureRepo(slug).catch(() => {})
+    const applied = await window.brain.setup.applyFolder(slug ? { teamSlug: slug } : undefined).catch((e) => {
+      setErr(String((e as Error).message || e))
+      return null
+    })
+    const brainPath = applied?.brainPath || s.brainPath || patch?.brainPath
     const st = await window.brain.setup.status()
     const d = await window.brain.ai.detect()
     setDetected(d)
     const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
-    const next = { ...patch, ai: patch?.ai || pick }
-    if (st.ready) go('chat', { ...next, abWatching: true })
-    else if (st.watching) go('aipick', { ...next, abWatching: true })
+    const next = { ...patch, ai: patch?.ai || pick, brainPath }
+    if (st.ready || (brainPath && pick)) go('chat', { ...next, abWatching: st.watching })
+    else if (st.watching || brainPath) go('aipick', { ...next, abWatching: st.watching })
     else go('needs', next)
   }
 
@@ -402,7 +405,7 @@ export function FirstRun() {
               <h1>This is {s.business}'s brain.</h1>
               <p>The setup code already knew you as {s.member?.name || s.email || 'you'}. Shared notes and an AI that already knows the shop. You talk to it here.</p>
               <span className="role-lock">Your role: {s.role || 'teammate'} · set by the owner</span>
-              <p className="muted">Agency Brain will put the folder on this computer in the background. You don't need to download anything extra.</p>
+              <p className="muted">Next we put the shared folder on this computer and connect your AI. You stay in this window.</p>
               <div className="actions"><button className="primary" type="button" onClick={() => void afterMembership()}>Continue</button></div>
             </>
           )}
@@ -480,12 +483,12 @@ export function FirstRun() {
           {s.screen === 'abapply' && (
             <>
               <p className="kicker">Shared folder</p>
-              <h1>Waiting for Agency Brain to watch a folder.</h1>
+              <h1>Putting the shared folder on this computer.</h1>
               <div className="warn-box">
-                <h3>Before we start: you will need to allow access</h3>
+                <h3>Before we start: you may need to allow access</h3>
                 <p>
-                  We opened Agency Brain. Sign in, pick the shared folder, and click Open if macOS says the app is from
-                  the internet. This window continues when that folder is watching. It will not mark watching on its own.
+                  We clone the team brain with the same GitHub access Agency Brain Sync uses. Git may ask for a
+                  password or a browser sign-in. This does not erase other folders.
                 </p>
               </div>
               <p className="tiny">
@@ -493,17 +496,14 @@ export function FirstRun() {
                 {s.business || 'This brain'}
                 {s.orgLogin || org ? ` · ${s.orgLogin || org}` : ''}
               </p>
-              {!s.abWatching ? <WorkPulse label="Waiting for Agency Brain to watch a folder" seconds={waitSec} /> : null}
+              {!s.brainPath ? <WorkPulse label="Getting the shared folder" seconds={waitSec} /> : null}
               <div className="actions">
-                <button className="primary" type="button" disabled={!s.abWatching} onClick={() => go('aipick', { abWatching: true })}>
-                  Continue
-                </button>
                 <button
-                  className="ghost"
+                  className="primary"
                   type="button"
                   onClick={() => void afterMembership()}
                 >
-                  Recheck
+                  {s.brainPath ? 'Continue' : 'Get the folder'}
                 </button>
               </div>
             </>
