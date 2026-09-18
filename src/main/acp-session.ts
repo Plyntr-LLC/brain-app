@@ -282,28 +282,13 @@ function eventsFromUpdate(update: Record<string, unknown>): StreamEvent[] {
   return []
 }
 
-const TUI_CMD = new Set([
-  'theme',
-  'vim-mode',
-  'minimal',
-  'fullscreen',
-  'dashboard',
-  'timestamps',
-  'multiline',
-  'compact-mode',
-  'terminal-setup',
-  'terminal-check',
-  'home',
-  'welcome'
-])
-
 function parseCommands(raw: unknown): SessionCmd[] {
   if (!Array.isArray(raw)) return []
   const out: SessionCmd[] = []
   for (const row of raw) {
     const r = asRecord(row)
     const name = String(r.name || '').replace(/^\//, '')
-    if (!name || TUI_CMD.has(name)) continue
+    if (!name) continue
     const input = asRecord(r.input)
     const hint = String(input.hint || r.inputHint || '')
     out.push({ name, description: String(r.description || ''), hint: hint || undefined })

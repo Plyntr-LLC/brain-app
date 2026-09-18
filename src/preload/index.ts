@@ -55,11 +55,12 @@ const brain = {
   pty: {
     create: (opts: {
       id: string
-      kind: AiKind
+      kind?: AiKind
       cwd: string
       cols: number
       rows: number
       sessionId?: string
+      shell?: boolean
     }) => ipcRenderer.invoke('pty:create', opts),
     write: (id: string, data: string) => ipcRenderer.invoke('pty:write', id, data),
     resize: (id: string, cols: number, rows: number) => ipcRenderer.invoke('pty:resize', id, cols, rows),

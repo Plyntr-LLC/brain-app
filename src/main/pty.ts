@@ -3,8 +3,7 @@ import { homedir } from 'node:os'
 import { delimiter } from 'node:path'
 import pty from 'node-pty'
 import type { IPty } from 'node-pty'
-import type { AiKind } from '../shared/contracts'
-import { extraPath, resolveBin } from './ai-cli'
+import { extraPath } from './ai-cli'
 
 type Sess = { proc: IPty; sender: WebContents }
 
@@ -23,40 +22,60 @@ function env(): Record<string, string> {
 export function registerPtyIpc(): void {
   ipcMain.handle(
     'pty:create',
-    (e, opts: { id: string; kind: AiKind; cwd: string; cols: number; rows: number; sessionId?: string }) => {
+    (e, opts: { id: string; cwd: string; cols: number; rows: number; shell?: boolean }) => {
       const existing = sessions.get(opts.id)
-      if (existing) return { ok: true, reused: true }
-      const bin = resolveBin(opts.kind)
-      if (!bin) throw new Error(`${opts.kind} is not installed`)
+      if (existing) {
+        existing.sender = e.sender
+        try {
+          existing.proc.resize(Math.max(20, opts.cols || 80), Math.max(8, opts.rows || 24))
+          return { ok: true, reused: true }
+        } catch {
+          sessions.delete(opts.id)
+          try {
+            existing.proc.kill()
+          } catch {
+            /* */
+          }
+        }
+      }
+      if (!opts.shell) throw new Error('Terminal tabs are a shell, not an AI CLI.')
+      const bin =
+        process.platform === 'win32'
+          ? process.env.COMSPEC || 'powershell.exe'
+          : process.env.SHELL || '/bin/zsh'
+      const args = process.platform === 'win32' ? [] : ['-l']
       let proc: IPty
       try {
-        proc = pty.spawn(bin, spawnArgs(opts.kind, opts.cwd || homedir(), opts.sessionId), {
+        proc = pty.spawn(bin, args, {
           name: 'xterm-256color',
-          cols: Math.max(40, opts.cols || 80),
-          rows: Math.max(12, opts.rows || 24),
+          cols: Math.max(20, opts.cols || 80),
+          rows: Math.max(8, opts.rows || 24),
           cwd: opts.cwd || homedir(),
           env: env()
         })
       } catch (err) {
-        throw new Error(`Could not start ${opts.kind}: ${String((err as Error).message || err)}`)
+        throw new Error(`Could not start the terminal: ${String((err as Error).message || err)}`)
       }
-      const sender = e.sender
+      sessions.set(opts.id, { proc, sender: e.sender })
       proc.onData((data) => {
+        const live = sessions.get(opts.id)
+        if (!live || live.proc !== proc) return
         try {
-          if (!sender.isDestroyed()) sender.send('pty:data', { id: opts.id, data })
+          if (!live.sender.isDestroyed()) live.sender.send('pty:data', { id: opts.id, data })
         } catch {
           /* renderer gone */
         }
       })
       proc.onExit(({ exitCode }) => {
+        const live = sessions.get(opts.id)
+        if (live && live.proc !== proc) return
         sessions.delete(opts.id)
         try {
-          if (!sender.isDestroyed()) sender.send('pty:exit', { id: opts.id, exitCode })
+          if (live && !live.sender.isDestroyed()) live.sender.send('pty:exit', { id: opts.id, exitCode })
         } catch {
           /* renderer gone */
         }
       })
-      sessions.set(opts.id, { proc, sender })
       return { ok: true, bin }
     }
   )
@@ -67,7 +86,7 @@ export function registerPtyIpc(): void {
     try {
       s.proc.write(data)
     } catch {
-      /* EPIPE: grok already exited */
+      /* EPIPE: shell already exited */
     }
   })
 
@@ -84,25 +103,18 @@ export function registerPtyIpc(): void {
   ipcMain.handle('pty:kill', (_e, id: string) => {
     const s = sessions.get(id)
     if (!s) return
+    sessions.delete(id)
     try {
       s.proc.kill()
     } catch {
       /* already gone */
     }
-    sessions.delete(id)
+    try {
+      if (!s.sender.isDestroyed()) s.sender.send('pty:exit', { id, exitCode: 0 })
+    } catch {
+      /* */
+    }
   })
-}
-
-function spawnArgs(kind: AiKind, cwd: string, sessionId?: string): string[] {
-  if (kind === 'grok') {
-    const a = ['--no-alt-screen']
-    if (sessionId) a.unshift('--resume', sessionId)
-    return a
-  }
-  if (kind === 'cursor') return ['--trust', '--workspace', cwd]
-  if (kind === 'claude') return []
-  if (kind === 'gpt') return []
-  return []
 }
 
 export function killAllPtys(): void {

@@ -5,7 +5,7 @@ import { app } from 'electron'
 export type SavedMsg = { who: 'me' | 'brain' | 'think' | 'sys'; text: string }
 export type SavedTab = {
   id: string
-  type: 'chat' | 'file'
+  type: 'chat' | 'file' | 'term'
   title: string
   kind?: string
   mode?: 'chat' | 'term'

@@ -32,27 +32,38 @@ function filePath(f: File): string {
     return ''
   }
 }
-type Msg = { who: 'me' | 'brain' | 'think' | 'sys'; text: string; files?: Attach[] }
+type Msg = { who: 'me' | 'brain' | 'think' | 'sys'; text: string; files?: Attach[]; at?: number }
 type FileNode = { name: string; path: string; dir: boolean; kids?: FileNode[] }
 type Cap = { id: string; label: string }
 type SessionCmd = { name: string; description: string; hint?: string }
 
-const TUI_ONLY = new Set([
-  'theme',
-  'vim-mode',
-  'minimal',
-  'fullscreen',
-  'dashboard',
-  'timestamps',
-  'multiline',
-  'compact-mode',
-  'terminal-setup',
-  'terminal-check',
-  'home',
-  'welcome'
-])
+const SESSION_QUIET = new Set(['compact', 'rewind', 'undo', 'flush', 'dream', 'context', 'session-info'])
 
-const SESSION_QUIET = new Set(['compact', 'rewind', 'undo', 'flush', 'dream'])
+const SLASH_ALIAS: Record<string, string> = {
+  undo: 'rewind',
+  exit: 'quit',
+  welcome: 'home',
+  m: 'model',
+  auto: 'always-approve',
+  status: 'session-info',
+  info: 'session-info',
+  mem: 'memory',
+  howto: 'docs',
+  guides: 'docs',
+  changelog: 'release-notes',
+  'agents-dashboard': 'dashboard',
+  agents: 'config-agents',
+  cost: 'usage'
+}
+
+function slashLine(raw: string): string {
+  const t = raw.trim()
+  if (!t.startsWith('/')) return t
+  const [cmd, ...rest] = t.slice(1).split(/\s+/)
+  const name = SLASH_ALIAS[(cmd || '').toLowerCase()] || (cmd || '').toLowerCase()
+  const arg = rest.join(' ')
+  return arg ? `/${name} ${arg}` : `/${name}`
+}
 
 const APP_ONLY = new Set([
   'new',
@@ -71,15 +82,12 @@ const APP_ONLY = new Set([
   'rename',
   'title',
   'history',
-  'context',
-  'session-info',
-  'status',
-  'info',
   'resume',
   'fork',
   'login',
   'logout',
-  'doctor'
+  'doctor',
+  'terminal'
 ])
 
 const NEED_ARG = new Set([
@@ -100,7 +108,7 @@ const NEED_ARG = new Set([
 ])
 type Tab = {
   id: string
-  type: 'chat' | 'file'
+  type: 'chat' | 'file' | 'term'
   title: string
   kind?: AiKind
   mode?: Mode
@@ -189,19 +197,7 @@ function rel(root: string, abs: string): string {
   return abs.split('/').pop() || abs
 }
 
-function TermPane({
-  id,
-  kind,
-  cwd,
-  sessionId,
-  active
-}: {
-  id: string
-  kind: AiKind
-  cwd: string
-  sessionId: string
-  active: boolean
-}) {
+function TermPane({ id, cwd, active }: { id: string; cwd: string; active: boolean }) {
   const host = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -234,7 +230,7 @@ function TermPane({
     termRef.current = term
     fitRef.current = fit
     let live = true
-    void window.brain.pty.create({ id, kind, cwd, cols: term.cols, rows: term.rows, sessionId })
+    void window.brain.pty.create({ id, cwd, cols: term.cols, rows: term.rows, shell: true })
     const offData = window.brain.pty.onData((ev) => {
       if (live && ev.id === id) {
         term.write(ev.data)
@@ -244,12 +240,6 @@ function TermPane({
     const offExit = window.brain.pty.onExit((ev) => {
       if (live && ev.id === id) term.write(`\r\n[session ended ${ev.exitCode}]\r\n`)
     })
-    const onEcho = (e: Event) => {
-      const d = (e as CustomEvent<{ id: string; text: string }>).detail
-      if (!live || d.id !== id) return
-      term.write(`\r\n\x1b[38;5;208mYou:\x1b[0m ${d.text}\r\n`)
-    }
-    window.addEventListener('brain-echo', onEcho)
     const sub = term.onData((data) => {
       if (live) void window.brain.pty.write(id, data)
     })
@@ -268,7 +258,6 @@ function TermPane({
       live = false
       offData()
       offExit()
-      window.removeEventListener('brain-echo', onEcho)
       sub.dispose()
       window.removeEventListener('resize', onResize)
       ro.disconnect()
@@ -276,7 +265,7 @@ function TermPane({
       term.dispose()
       termRef.current = null
     }
-  }, [id, kind, cwd, sessionId])
+  }, [id, cwd])
 
   useEffect(() => {
     if (!active) return
@@ -340,7 +329,8 @@ function ChatPane({
   onResume,
   onFork,
   onAgentMode,
-  onDelete
+  onDelete,
+  onOpenTerm
 }: {
   id: string
   kind: AiKind
@@ -375,6 +365,7 @@ function ChatPane({
   onFork: (messages: Msg[], sessionId?: string) => void
   onAgentMode: (mode: string) => void
   onDelete: () => void
+  onOpenTerm: () => void
 }) {
   const [messages, setMessages] = useState<Msg[]>(
     initialMessages && initialMessages.length ? initialMessages : [{ who: 'brain', text: greeting }]
@@ -388,6 +379,8 @@ function ChatPane({
   const [compacting, setCompacting] = useState(false)
   const compactingRef = useRef(false)
   const [drops, setDrops] = useState<Attach[]>([])
+  const [enterSends, setEnterSends] = useState(true)
+  const [showTimes, setShowTimes] = useState(false)
   const [over, setOver] = useState(false)
   const [dropNote, setDropNote] = useState('')
   const [sessionCmds, setSessionCmds] = useState<SessionCmd[]>([])
@@ -535,12 +528,11 @@ function ChatPane({
     const seen = new Set<string>()
     const out: { name: string; kind: 'builtin' | 'skill'; description: string }[] = []
     for (const c of cmds) {
-      if (TUI_ONLY.has(c.name)) continue
       seen.add(c.name)
       out.push(c)
     }
     for (const c of sessionCmds) {
-      if (seen.has(c.name) || TUI_ONLY.has(c.name)) continue
+      if (seen.has(c.name)) continue
       seen.add(c.name)
       out.push({ name: c.name, kind: 'builtin', description: c.description || 'Session command' })
     }
@@ -612,12 +604,8 @@ function ChatPane({
     const t = raw.trim()
     if (!t.startsWith('/')) return false
     const [cmd, ...rest] = t.slice(1).split(/\s+/)
-    const name = (cmd || '').toLowerCase()
+    const name = SLASH_ALIAS[(cmd || '').toLowerCase()] || (cmd || '').toLowerCase()
     const arg = rest.join(' ')
-    if (TUI_ONLY.has(name)) {
-      note(`/${name} is a Grok terminal setting. This chat does not have it.`)
-      return true
-    }
     if (name === 'new') {
       onNew()
       return true
@@ -643,7 +631,7 @@ function ChatPane({
     }
     if (name === 'model' || name === 'm') {
       if (!arg) {
-        setSay('/model ')
+        popup('Pick a model', models.slice(0, 20).map((m) => `${m.id}\n  ${m.label}`).join('\n') || 'No models yet.')
         return true
       }
       const q = arg.trim().toLowerCase()
@@ -664,12 +652,18 @@ function ChatPane({
       return true
     }
     if (name === 'effort') {
+      if (!EFFORTS.length) return false
       if (!arg) {
-        setSay('/effort ')
+        popup('Pick effort', EFFORTS.join('\n'))
         return true
       }
-      onEffort(arg.toLowerCase())
-      note(`Effort is ${arg.toLowerCase()}.`)
+      const want = arg.toLowerCase()
+      if (!EFFORTS.includes(want)) {
+        popup('Pick effort', EFFORTS.join('\n'))
+        return true
+      }
+      onEffort(want)
+      note(`Effort is ${want}.`)
       return true
     }
     if (name === 'plan' && kind === 'cursor' && !arg) {
@@ -683,33 +677,38 @@ function ChatPane({
       void sendQuiet(arg ? `/compact ${arg}` : '/compact')
       return true
     }
-    if (name === 'context') {
-      const c = ctxRef.current
-      const pct = c.percent != null ? `${c.percent}%` : ''
-      const used = c.used ? `${Math.round(c.used / 1000)}k` : ''
-      const total = c.total ? `${Math.round(c.total / 1000)}k` : ''
-      popup(
-        'Context',
-        [`Folder: ${cwd}`, `CLI: ${kind}`, pct || used ? `Window: ${pct}${used && total ? `  ${used} / ${total}` : ''}` : 'Waiting on the live session.', `Session: ${resumeId || sessionId}`].join('\n')
-      )
+    if (name === 'home') {
+      setMessages([{ who: 'brain', text: greeting }])
+      filesRef.current = []
+      onFiles(id, [])
+      void window.brain.chat.reset({ tabId: id, kind, cwd, model, effort }).catch(() => {})
       return true
     }
-    if (name === 'session-info' || name === 'status' || name === 'info') {
-      const c = ctxRef.current
-      popup(
-        'Session',
-        [
-          `CLI: ${kind}`,
-          `Model: ${model || 'default'}`,
-          `Effort: ${effort || 'default'}`,
-          `Mode: ${agentMode || 'default'}`,
-          `Session: ${resumeId || sessionId}`,
-          c.percent != null ? `Context: ${c.percent}%` : '',
-          `Folder: ${cwd}`
-        ]
-          .filter(Boolean)
-          .join('\n')
-      )
+    if (name === 'terminal') {
+      onOpenTerm()
+      return true
+    }
+    if (name === 'edit-prompt') {
+      const last = [...messages].reverse().find((m) => m.who === 'me')
+      if (last) setSay(last.text)
+      else note('No prompt to edit yet.')
+      return true
+    }
+    if (name === 'multiline') {
+      setEnterSends((v) => {
+        note(v ? 'Enter inserts a newline. Shift+Enter sends.' : 'Enter sends.')
+        return !v
+      })
+      return true
+    }
+    if (name === 'always-approve') {
+      const next = !alwaysApprove
+      onApprove(next)
+      note(next ? 'Always-approve is on for this chat.' : 'Always-approve is off.')
+      return true
+    }
+    if (name === 'timestamps') {
+      setShowTimes((v) => !v)
       return true
     }
     if (name === 'fork') {
@@ -769,10 +768,7 @@ function ChatPane({
       return true
     }
     if (name === 'rename' || name === 'title') {
-      if (!arg) {
-        setSay('/rename ')
-        return true
-      }
+      if (!arg) return false
       onRename(arg)
       note(`Tab title: ${arg}`)
       return true
@@ -787,23 +783,15 @@ function ChatPane({
       )
       return true
     }
-    if (name === 'skills') {
-      popup('Skills', cmds.filter((c) => c.kind === 'skill').map((c) => `/${c.name}  ${c.description}`).join('\n') || '(none)')
-      return true
-    }
     if (name === 'doctor' || name === 'login' || name === 'logout') {
-      if (kind !== 'grok') {
-        note(`/${name} is a Grok CLI command.`)
+      if (kind === 'grok') {
+        void window.brain.slash.cli([name], cwd).then((body) => popup(name, body))
         return true
       }
-      void window.brain.slash.cli([name], cwd).then((body) => popup(name, body))
-      return true
+      return false
     }
     if (name === 'resume') {
-      if (kind !== 'grok') {
-        note('Resume from disk is for Grok chats.')
-        return true
-      }
+      if (kind !== 'grok') return false
       if (arg && /^[0-9a-f-]{20,}$/i.test(arg)) {
         void loadResume(arg)
         return true
@@ -813,19 +801,11 @@ function ChatPane({
     }
     const sessionHit = sessionCmds.find((c) => c.name === name)
     if (sessionHit && !APP_ONLY.has(name)) {
-      if (sessionHit.hint && !arg) {
-        setSay(`/${name} `)
-        return true
-      }
       if (SESSION_QUIET.has(name)) {
         void sendQuiet(arg ? `/${name} ${arg}` : `/${name}`)
         return true
       }
       return false
-    }
-    if (NEED_ARG.has(name) && !arg) {
-      setSay(`/${name} `)
-      return true
     }
     if (SESSION_QUIET.has(name)) {
       void sendQuiet(arg ? `/${name} ${arg}` : `/${name}`)
@@ -874,10 +854,11 @@ function ChatPane({
       return
     }
     setSay('')
-    const skillName = t.slice(1).split(/\s/)[0].toLowerCase()
+    const line = t.startsWith('/') ? slashLine(t) : t
+    const skillName = line.slice(1).split(/\s/)[0].toLowerCase()
     const isSkill = cmds.some((c) => c.kind === 'skill' && c.name.toLowerCase() === skillName)
     if (runSlash(t) && !isSkill) return
-    await sendText(t)
+    await sendText(line)
   }
 
   async function sendQuiet(t: string) {
@@ -978,7 +959,7 @@ function ChatPane({
     setDrops([])
     setDropNote('')
     const shown = attached.length ? `${t}${t ? '\n' : ''}${attached.map((a) => a.name).join(', ')}` : t
-    setMessages((m) => [...m, { who: 'me', text: shown, files: attached }])
+    setMessages((m) => [...m, { who: 'me', text: shown, files: attached, at: Date.now() }])
     try {
       await window.brain.chat.send({
         tabId: id,
@@ -1082,6 +1063,9 @@ function ChatPane({
                   )}
                 </div>
               ) : null}
+              {showTimes && m.at ? (
+                <div className="when">{new Date(m.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</div>
+              ) : null}
             </div>
           ) : null
         )}
@@ -1150,7 +1134,15 @@ function ChatPane({
               setSay('')
               return
             }
-            if (e.key === 'Enter') void send()
+            if (e.key === 'Enter') {
+              if (enterSends && !e.shiftKey) {
+                e.preventDefault()
+                void send()
+              } else if (!enterSends && e.shiftKey) {
+                e.preventDefault()
+                void send()
+              }
+            }
           }}
           placeholder={busy ? 'Working — type to interrupt, or Stop' : 'Message, drop a file, or / for commands'}
         />
@@ -1441,6 +1433,14 @@ export function TerminalWorkspace({
     setTabs((all) => all.map((t) => (t.id === active ? { ...t, mode } : t)))
   }
 
+  function addTerm() {
+    const id = nid()
+    const n = tabs.filter((t) => t.type === 'term').length + 1
+    setTabs((t) => [...t, { id, type: 'term', title: n === 1 ? 'Terminal' : `Terminal ${n}` }])
+    setActive(id)
+    setPicker(false)
+  }
+
   function addTab(kind: AiKind, copied?: Msg[], resumeId?: string) {
     const id = nid()
     setTabs((t) => [
@@ -1599,7 +1599,7 @@ export function TerminalWorkspace({
       </div>
       {picker && (
         <div className="picker">
-          <span className="tiny">New chat. Pick who runs it, or keep typing / in the box.</span>
+          <span className="tiny">New chat, or a terminal in this window. Terminal is a shell, not the AI.</span>
           {KINDS.map((k) => (
             <div key={k.id} className="picker-row">
               <button type="button" className="ghost" disabled={detected[k.id] === false} onClick={() => addTab(k.id)}>
@@ -1608,6 +1608,11 @@ export function TerminalWorkspace({
               {detected[k.id] === false && <span className="tiny">not installed</span>}
             </div>
           ))}
+          <div className="picker-row">
+            <button type="button" className="ghost" onClick={() => addTerm()}>
+              Terminal
+            </button>
+          </div>
         </div>
       )}
       <div className="chatrow">
@@ -1683,8 +1688,16 @@ export function TerminalWorkspace({
                   onFork={(msgs, sessionId) => addTab(t.kind || 'grok', msgs, sessionId)}
                   onAgentMode={(mode) => setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, agentMode: mode } : x)))}
                   onDelete={() => closeTab(t.id)}
+                  onOpenTerm={() => addTerm()}
                 />
               ))}
+          {tabs
+            .filter((t) => t.type === 'term')
+            .map((t) => (
+              <div key={t.id} className={`termwrap ${t.id === active ? 'on' : ''}`}>
+                <TermPane id={t.id} cwd={cwd} active={t.id === active} />
+              </div>
+            ))}
           {tabs
             .filter((t) => t.type === 'file' && t.id === active)
             .map((t) => (

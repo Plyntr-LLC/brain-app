@@ -139,14 +139,54 @@ function appBuiltins(kind: string): SlashCmd[] {
     { name: 'effort', kind: 'builtin', description: 'Reasoning effort' },
     { name: 'history', kind: 'builtin', description: 'This chat’s prompts' },
     { name: 'help', kind: 'builtin', description: 'List commands' },
-    { name: 'usage', kind: 'builtin', description: 'Account usage' }
+    { name: 'usage', kind: 'builtin', description: 'Account usage' },
+    { name: 'terminal', kind: 'builtin', description: 'Open a terminal tab' }
   ]
   if (kind === 'grok') {
     common.splice(2, 0, { name: 'resume', kind: 'builtin', description: 'Load a saved Grok session' })
     common.push(
       { name: 'login', kind: 'builtin', description: 'Grok login' },
       { name: 'logout', kind: 'builtin', description: 'Grok logout' },
-      { name: 'doctor', kind: 'builtin', description: 'Grok doctor' }
+      { name: 'doctor', kind: 'builtin', description: 'Grok doctor' },
+      { name: 'plan', kind: 'builtin', description: 'Enter plan mode' },
+      { name: 'view-plan', kind: 'builtin', description: 'Show the current plan' },
+      { name: 'memory', kind: 'builtin', description: 'Browse Grok memory' },
+      { name: 'flush', kind: 'builtin', description: 'Flush session into memory' },
+      { name: 'dream', kind: 'builtin', description: 'Consolidate memory' },
+      { name: 'remember', kind: 'builtin', description: 'Save a note to memory' },
+      { name: 'hooks', kind: 'builtin', description: 'Loaded hooks' },
+      { name: 'plugins', kind: 'builtin', description: 'Installed plugins' },
+      { name: 'marketplace', kind: 'builtin', description: 'Plugin marketplace' },
+      { name: 'skills', kind: 'builtin', description: 'Installed skills' },
+      { name: 'imagine', kind: 'builtin', description: 'Generate an image' },
+      { name: 'imagine-video', kind: 'builtin', description: 'Generate a video' },
+      { name: 'loop', kind: 'builtin', description: 'Recurring prompt' },
+      { name: 'goal', kind: 'builtin', description: 'Set or manage a goal' },
+      { name: 'deep-research', kind: 'builtin', description: 'Background research' },
+      { name: 'workflow', kind: 'builtin', description: 'Run a workflow' },
+      { name: 'workflows', kind: 'builtin', description: 'List saved workflows' },
+      { name: 'theme', kind: 'builtin', description: 'Theme' },
+      { name: 'feedback', kind: 'builtin', description: 'Send feedback' },
+      { name: 'btw', kind: 'builtin', description: 'Side question, same chat' },
+      { name: 'mcps', kind: 'builtin', description: 'MCP servers' },
+      { name: 'release-notes', kind: 'builtin', description: 'Grok changelog' },
+      { name: 'docs', kind: 'builtin', description: 'Grok docs' },
+      { name: 'tutorial', kind: 'builtin', description: 'How this chat works' },
+      { name: 'import-claude', kind: 'builtin', description: 'Import Claude config' },
+      { name: 'config-agents', kind: 'builtin', description: 'Agent definitions' },
+      { name: 'personas', kind: 'builtin', description: 'Personas' },
+      { name: 'privacy', kind: 'builtin', description: 'Privacy' },
+      { name: 'settings', kind: 'builtin', description: 'Settings' },
+      { name: 'timestamps', kind: 'builtin', description: 'Toggle timestamps' },
+      { name: 'multiline', kind: 'builtin', description: 'Enter inserts a newline' },
+      { name: 'vim-mode', kind: 'builtin', description: 'Vim keys' },
+      { name: 'minimal', kind: 'builtin', description: 'Compact layout' },
+      { name: 'fullscreen', kind: 'builtin', description: 'Roomy layout' },
+      { name: 'dashboard', kind: 'builtin', description: 'Session dashboard' },
+      { name: 'home', kind: 'builtin', description: 'Back to the welcome line' },
+      { name: 'always-approve', kind: 'builtin', description: 'Skip tool prompts' },
+      { name: 'edit-prompt', kind: 'builtin', description: 'Edit the last prompt' },
+      { name: 'compact-mode', kind: 'builtin', description: 'Denser bubbles' }
     )
   }
   return common

@@ -53,7 +53,8 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Right sidebar: In use files, live Model / Effort / Mode / Folder. Folder switch is local to this window (recents in this app’s userData). It does not change Mike’s watched path.
 - `/compact` goes to the live session. Auto-compact shows a wheel + “Compacting…” then a short note. Transcript on screen stays.
 - Grok and Cursor model/mode pickers follow the live session. ChatGPT/Codex picker does **not** yet (still falls through to `grok models`).
-- Slash: ACP `available_commands_update` is the session catalog (TUI chrome filtered). Session commands send `/name` on the live session (`/compact` pattern). App jobs are real (`/rename`, `/export` save dialog, `/resume` session/load + transcript, `/fork` `x.ai/session/fork`, `/delete` closes the tab). Grok-only: resume/login/logout/doctor.
+- Slash: every `/` either does a real in-app job or is sent to the live session as the canonical name (aliases rewritten). TUI commands are not blocked. Grok catalog is in the `/` menu.
+- Terminal is a separate tab (`+` → Terminal, or `/terminal`). It is a login shell, not Grok/Claude. Chat stays ACP.
 - Drag/drop, paste (including screenshots), and Attach on Chat for images and docs. Grok/Cursor: ACP image + embedded resource. Claude: image + PDF document. Codex: localImage + inlined text docs. Pathless clipboard files stash under userData/drops. 20 MB cap.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
 - Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, the app opens a needs screen (one line each). Install selected uses official installers. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.

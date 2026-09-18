@@ -326,6 +326,12 @@
   background: var(--card);
 }
 .bubble.think { color: var(--muted); font-size: 0.9rem; max-width: 40rem; }
+.when {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 0.25rem;
+}
 .think-label { font-family: "Schibsted Grotesk", sans-serif; font-size: 0.72rem; font-weight: 600; margin-bottom: 0.25rem; color: var(--orange-deep); }
 .looking { list-style: none; padding: 0; margin: 0; }
 .looking li { font-size: 0.8rem; padding: 0.3rem 0; border-bottom: 1px solid var(--line); color: var(--muted); }
@@ -711,14 +717,20 @@ button.runmeta-v:hover { color: var(--orange-deep); }
   min-height: 0;
   background: #1a1612;
 }
+.termwrap {
+  position: absolute;
+  inset: 0;
+  display: none;
+  background: #1a1612;
+  z-index: 3;
+}
+.termwrap.on { display: block; }
 .termhost {
   position: absolute;
   inset: 0;
-  visibility: hidden;
+  visibility: visible;
   padding: 6px;
-  z-index: 1;
 }
-.termhost.on { visibility: visible; }
 .chatpane { z-index: 2; }
 .files {
   background: var(--paper);
