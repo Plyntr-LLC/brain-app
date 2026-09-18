@@ -159,8 +159,16 @@ function prettyModel(id?: string, kind?: AiKind, models?: Cap[]): string {
     .replace(/^gpt-/i, 'GPT-')
 }
 
+function normalizeEffort(id?: string): string | undefined {
+  if (!id) return undefined
+  const k = id.toLowerCase().replace(/_/g, '-').replace(/\s+/g, '-')
+  if (k === 'extra-high' || k === 'x-high' || k === 'extra') return 'xhigh'
+  return k
+}
+
 function prettyEffort(id?: string): string {
-  if (!id) return 'Default'
+  const k = normalizeEffort(id)
+  if (!k) return 'Default'
   const map: Record<string, string> = {
     minimal: 'Minimal',
     low: 'Low',
@@ -169,7 +177,7 @@ function prettyEffort(id?: string): string {
     xhigh: 'Extra high',
     max: 'Max'
   }
-  return map[id.toLowerCase()] || id
+  return map[k] || k
 }
 
 function fallbackEfforts(kind?: AiKind): Cap[] {
@@ -1378,7 +1386,7 @@ export function TerminalWorkspace({
       mode: 'chat',
       title: label(setupKind),
       sessionId: crypto.randomUUID(),
-      effort: setupKind === 'cursor' ? undefined : 'high',
+      effort: undefined,
       agentMode: setupKind === 'cursor' ? 'agent' : undefined
     }
   }
@@ -1436,7 +1444,12 @@ export function TerminalWorkspace({
           messages?: Record<string, Msg[]>
         } | null
         if (saved?.cwd === wanted && Array.isArray(saved.tabs) && saved.tabs.length) {
-          setTabs(saved.tabs)
+          setTabs(
+            saved.tabs.map((t) => ({
+              ...t,
+              effort: t.kind === 'cursor' || t.effort === 'high' ? undefined : t.effort
+            }))
+          )
           setActive(saved.active || saved.tabs[0].id)
           setLastChatId(saved.tabs.find((t) => t.type === 'chat')?.id || saved.tabs[0].id)
           if (saved.messages) setTranscripts(saved.messages)
@@ -1635,7 +1648,7 @@ export function TerminalWorkspace({
         title: label(kind),
         sessionId: crypto.randomUUID(),
         cliSessionId: resumeId,
-        effort: kind === 'cursor' ? undefined : 'high',
+        effort: undefined,
         agentMode: kind === 'cursor' ? 'agent' : undefined
       }
     ])
@@ -1777,7 +1790,7 @@ export function TerminalWorkspace({
             +
           </button>
         </div>
-        <button type="button" className="edgebtn" onClick={() => setFilesOpen(!filesOpen)} title={filesOpen ? 'Hide used files' : 'Show used files'}>
+        <button type="button" className="edgebtn" onClick={() => setFilesOpen(!filesOpen)} title={filesOpen ? 'Hide right sidebar' : 'Show right sidebar'}>
           {filesOpen ? '›' : '‹'}
         </button>
       </div>
@@ -1851,7 +1864,10 @@ export function TerminalWorkspace({
                           ? {
                               ...x,
                               model: c.model || x.model,
-                              effort: c.efforts && c.efforts.length === 0 ? undefined : c.effort ?? x.effort,
+                              effort:
+                                c.efforts && c.efforts.length === 0
+                                  ? undefined
+                                  : normalizeEffort(c.effort) || x.effort,
                               agentMode: c.agentMode || x.agentMode,
                               cliSessionId: c.sessionId || x.cliSessionId,
                               models: c.models ?? x.models,
@@ -1934,7 +1950,7 @@ export function TerminalWorkspace({
                     <button
                       type="button"
                       key={e.id}
-                      className={e.id === chatTab?.effort ? 'on' : ''}
+                      className={normalizeEffort(e.id) === normalizeEffort(chatTab?.effort) ? 'on' : ''}
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => setChatEffort(e.id)}
                     >

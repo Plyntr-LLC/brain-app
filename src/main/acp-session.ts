@@ -158,7 +158,10 @@ function readLive(res: Record<string, unknown>): LiveRun {
       if (more.length) models = more
     }
     if (id === 'reasoning_effort' || id === 'effort') {
-      if (v) effort = v
+      if (v) {
+        const k = v.toLowerCase().replace(/_/g, '-').replace(/\s+/g, '-')
+        effort = k === 'extra-high' || k === 'x-high' ? 'xhigh' : v
+      }
       const more = capsFromOptions(r.options)
       if (more.length) {
         efforts = more.map((c) => ({
@@ -395,11 +398,7 @@ async function bootPoolNow(kind: 'grok' | 'cursor', cwd: string, key: string): P
   if (again && !again.rpc.dead) return again
   const bin = resolveBin(kind)
   if (!bin) throw new Error(`${kind} is not installed on this computer`)
-  const env = { ...binEnv() }
-  if (kind === 'grok') {
-    env.GROK_CONFIG = JSON.stringify({ models: { default_reasoning_effort: 'high' } })
-  }
-  const proc = spawnBin(bin, spawnArgs(kind, cwd), cwd, env)
+  const proc = spawnBin(bin, spawnArgs(kind, cwd), cwd, binEnv())
   const pool: Pool = {
     kind,
     cwd,

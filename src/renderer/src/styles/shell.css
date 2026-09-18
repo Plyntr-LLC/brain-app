@@ -661,10 +661,13 @@
 }
 .workspace.rail-off .chatrow { grid-template-columns: 0 1fr minmax(140px, 22%); }
 .workspace.rail-off .explorer { overflow: hidden; padding: 0; border: 0; }
-.workspace.files-off .chatrow { grid-template-columns: 220px 1fr 8.6rem; }
-.workspace.rail-off.files-off .chatrow { grid-template-columns: 0 1fr 8.6rem; }
-.workspace.files-off .refs h2,
-.workspace.files-off .looking-log { display: none; }
+.workspace.files-off .chatrow { grid-template-columns: 220px minmax(0, 1fr) 0; }
+.workspace.rail-off.files-off .chatrow { grid-template-columns: 0 minmax(0, 1fr) 0; }
+.workspace.files-off .refs {
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+}
 .explorer {
   display: flex;
   flex-direction: column;
