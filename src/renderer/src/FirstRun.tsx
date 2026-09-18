@@ -31,14 +31,16 @@ export function FirstRun() {
       setDetected(d)
       const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
       const email = acct.signedIn ? acct.email : existing?.email || ''
+      const folder = existing?.brainPath || acct.folder || ''
       let screen = 'email'
-      if (acct.signedIn && st.ready) screen = 'chat'
-      else if (acct.signedIn && st.watching) screen = 'aipick'
+      if (acct.signedIn && (st.ready || (folder && pick))) screen = 'chat'
+      else if (acct.signedIn && (st.watching || folder)) screen = 'aipick'
       else if (acct.signedIn) screen = 'needs'
       setS((prev) => ({
         ...prev,
         dryRun: e.dryRun,
-        brainPath: existing?.brainPath || prev.brainPath,
+        brainPath: folder || prev.brainPath,
+        role: acct.role || prev.role,
         business: existing?.name || prev.business || 'this computer',
         email,
         abWatching: st.watching,
@@ -308,8 +310,8 @@ export function FirstRun() {
               <p className="kicker">No code</p>
               <h1>Sign in with your email.</h1>
               <p>
-                Same membership Agency Brain uses. We email a short code. Logging out later does not delete chats, this
-                folder, or Agency Brain.
+                Owners who use Agency Brain can get a code by email. Teammates who only use this app: type the same email
+                the owner put on the team list, then open the shared folder.
               </p>
               <label className="field">
                 Your email
@@ -318,9 +320,28 @@ export function FirstRun() {
               {err && <p className="note">{err}</p>}
               <div className="actions">
                 <button className="primary" type="button" disabled={!s.email.includes('@')} onClick={async () => {
+                  try {
+                    const res = await window.brain.auth.joinFolder(s.email)
+                    const d = await window.brain.ai.detect()
+                    const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
+                    const teamLike = res.role === 'team' || res.role === 'member'
+                    go(pick ? 'chat' : 'aipick', {
+                      email: res.email,
+                      role: res.role,
+                      brainPath: res.brainPath,
+                      business: res.teamName,
+                      path: teamLike ? 'join' : 'second',
+                      member: { email: res.email, name: res.name },
+                      abWatching: false
+                    })
+                  } catch (e) {
+                    setErr(String((e as Error).message || e))
+                  }
+                }}>Open the shared folder</button>
+                <button className="ghost" type="button" disabled={!s.email.includes('@')} onClick={async () => {
                   try { await window.brain.auth.requestCode(s.email) } catch (e) { setErr(String((e as Error).message || e)); return }
                   go('otp')
-                }}>Email me a sign-in code</button>
+                }}>Email me an Agency Brain code</button>
                 <button className="linkish" type="button" onClick={() => go('welcome')}>I have a setup code</button>
               </div>
             </>

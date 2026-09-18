@@ -42,19 +42,50 @@ type SafeConfig = {
   teamName: string | null
 }
 
-export function readTeamIdentity(brainPath: string | null): { slug: string; name: string } | null {
+export type TeamMember = { email: string; name: string; role: string; slug?: string }
+
+export function readTeamRoster(brainPath: string | null): {
+  slug: string
+  name: string
+  members: TeamMember[]
+} | null {
   if (!brainPath) return null
   const p = join(brainPath, '.team-config', 'roles.json')
   if (!existsSync(p)) return null
   try {
-    const j = JSON.parse(readFileSync(p, 'utf8')) as { team_slug?: string; team_name?: string }
+    const j = JSON.parse(readFileSync(p, 'utf8')) as {
+      team_slug?: string
+      team_name?: string
+      members?: { email?: string; name?: string; role?: string; slug?: string }[]
+    }
     const slug = String(j.team_slug || '').trim().toLowerCase()
     const name = String(j.team_name || j.team_slug || '').trim()
-    if (!slug && !name) return null
-    return { slug: slug || name.toLowerCase(), name: name || slug }
+    const members = (Array.isArray(j.members) ? j.members : [])
+      .map((m) => ({
+        email: String(m.email || '').trim().toLowerCase(),
+        name: String(m.name || '').trim(),
+        role: String(m.role || 'team').trim().toLowerCase(),
+        slug: String(m.slug || '').trim()
+      }))
+      .filter((m) => m.email.includes('@'))
+    if (!slug && !name && !members.length) return null
+    return { slug: slug || name.toLowerCase(), name: name || slug, members }
   } catch {
     return null
   }
+}
+
+export function readTeamMember(brainPath: string | null, email: string): TeamMember | null {
+  const roster = readTeamRoster(brainPath)
+  const want = String(email || '').trim().toLowerCase()
+  if (!roster || !want) return null
+  return roster.members.find((m) => m.email === want) || null
+}
+
+export function readTeamIdentity(brainPath: string | null): { slug: string; name: string } | null {
+  const roster = readTeamRoster(brainPath)
+  if (!roster) return null
+  return { slug: roster.slug, name: roster.name }
 }
 
 export function detectApp(): { installed: boolean; path: string } {

@@ -6,6 +6,9 @@ export type Account = {
   email: string
   name?: string
   token: string
+  role?: string
+  source?: 'ads2ai' | 'team-file'
+  folder?: string
 }
 
 let memberToken: string | null = null
@@ -25,7 +28,17 @@ function persist(next: Account | null): void {
   }
   account = next
   memberToken = next.token
-  writeFileSync(p, JSON.stringify({ email: next.email, name: next.name || '', token: next.token }))
+  writeFileSync(
+    p,
+    JSON.stringify({
+      email: next.email,
+      name: next.name || '',
+      token: next.token,
+      role: next.role || '',
+      source: next.source || 'ads2ai',
+      folder: next.folder || ''
+    })
+  )
   try {
     chmodSync(p, 0o600)
   } catch {
@@ -40,7 +53,14 @@ export function loadAccount(): Account | null {
     const email = String(raw.email || '').trim().toLowerCase()
     const token = String(raw.token || '')
     if (!email || !token) return null
-    account = { email, name: String(raw.name || ''), token }
+    account = {
+      email,
+      name: String(raw.name || ''),
+      token,
+      role: String(raw.role || ''),
+      source: raw.source === 'team-file' ? 'team-file' : 'ads2ai',
+      folder: String(raw.folder || '')
+    }
     memberToken = token
     return account
   } catch {
@@ -52,7 +72,10 @@ export function saveAccount(next: Account): Account {
   persist({
     email: String(next.email || '').trim().toLowerCase(),
     name: String(next.name || ''),
-    token: String(next.token || '')
+    token: String(next.token || ''),
+    role: String(next.role || ''),
+    source: next.source === 'team-file' ? 'team-file' : 'ads2ai',
+    folder: String(next.folder || '')
   })
   return account as Account
 }
@@ -70,6 +93,9 @@ export function setMemberToken(token: string | null): void {
 export function getMemberToken(): string {
   if (!memberToken) loadAccount()
   if (!memberToken) throw new Error('Sign in first')
+  if (memberToken.startsWith('local:')) {
+    throw new Error('This sign-in is the shared folder, not Agency Brain membership.')
+  }
   return memberToken
 }
 

@@ -25,6 +25,7 @@ const brain = {
         superAdmin: boolean
         email: string
         name?: string
+        role?: string
         signedIn?: boolean
         watching: boolean
         brainPath: string | null
@@ -54,8 +55,24 @@ const brain = {
     requestCode: (email: string) => ipcRenderer.invoke('auth:requestCode', email),
     verify: (email: string, code: string) => ipcRenderer.invoke('auth:verify', email, code),
     session: () =>
-      ipcRenderer.invoke('auth:session') as Promise<{ signedIn: boolean; email: string; name: string }>,
+      ipcRenderer.invoke('auth:session') as Promise<{
+        signedIn: boolean
+        email: string
+        name: string
+        role?: string
+        folder?: string
+      }>,
     logout: () => ipcRenderer.invoke('auth:logout') as Promise<{ ok: boolean }>,
+    joinFolder: (email: string, folder?: string) =>
+      ipcRenderer.invoke('auth:joinFolder', email, folder) as Promise<{
+        ok: boolean
+        email: string
+        name: string
+        role: string
+        brainPath: string
+        teamName: string
+        teamSlug: string
+      }>,
     myTeams: () => ipcRenderer.invoke('auth:myTeams')
   },
   setup: {

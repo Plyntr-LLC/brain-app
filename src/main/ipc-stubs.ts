@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { DOWNLOAD_AB, GITHUB_APP_INSTALL, GITHUB_NEW_ORG, type AiKind } from '../shared/contracts'
 import * as ads2ai from './ads2ai'
-import { detectApp, readWatching, writesAllowed } from './agency-brain'
+import { detectApp, readTeamMember, readTeamRoster, readWatching, writesAllowed } from './agency-brain'
 import { installNeed, isNeedId, listNeeds, loginCli } from './install'
 import * as ai from './ai-cli'
 import { asAttachBuf, inspectAttach, stashBytes } from './attach'
@@ -91,11 +91,12 @@ export function registerStubIpc(): void {
     const email = String(acct?.email || '').toLowerCase()
     const joe = email === 'joe@plyntr.com'
     const plyntrBrain = watching.teamSlug === 'plyntr'
-    const superAdmin = joe && file.superAdmin !== false
+    const superAdmin = joe && acct?.source !== 'team-file' && file.superAdmin !== false
     return {
       superAdmin,
       email,
       name: acct?.name || '',
+      role: acct?.role || '',
       signedIn: Boolean(acct?.email),
       watching: watching.watching,
       brainPath: watching.brainPath,
@@ -146,12 +147,59 @@ export function registerStubIpc(): void {
   })
   ipcMain.handle('auth:session', () => {
     const acct = getAccount() || loadAccount()
-    if (!acct) return { signedIn: false, email: '', name: '' }
-    return { signedIn: true, email: acct.email, name: acct.name || '' }
+    if (!acct) return { signedIn: false, email: '', name: '', role: '', folder: '' }
+    return {
+      signedIn: true,
+      email: acct.email,
+      name: acct.name || '',
+      role: acct.role || '',
+      folder: acct.folder || ''
+    }
   })
   ipcMain.handle('auth:logout', () => {
     clearAccount()
     return { ok: true }
+  })
+  ipcMain.handle('auth:joinFolder', async (_e, emailRaw: string, folderRaw?: string) => {
+    const email = String(emailRaw || '').trim().toLowerCase()
+    if (!email.includes('@')) throw new Error('Type your work email first.')
+    let folder = String(folderRaw || '').trim()
+    if (!folder) {
+      const watching = readWatching()
+      folder = watching.brainPath || ''
+    }
+    if (!folder) {
+      const pick = await dialog.showOpenDialog({
+        title: 'Choose the shared brain folder',
+        properties: ['openDirectory']
+      })
+      if (pick.canceled || !pick.filePaths[0]) throw new Error('Pick the shared folder the owner gave you.')
+      folder = pick.filePaths[0]
+    }
+    const roster = readTeamRoster(folder)
+    if (!roster) throw new Error('That folder is not a team brain (no .team-config/roles.json).')
+    const member = readTeamMember(folder, email)
+    if (!member) {
+      throw new Error(`${email} is not on the ${roster.name} team list. Ask the owner to add you in .team-config/roles.json.`)
+    }
+    saveAccount({
+      email: member.email,
+      name: member.name,
+      token: `local:${member.email}`,
+      role: member.role,
+      source: 'team-file',
+      folder
+    })
+    saveRecent(folder)
+    return {
+      ok: true,
+      email: member.email,
+      name: member.name,
+      role: member.role,
+      brainPath: folder,
+      teamName: roster.name,
+      teamSlug: roster.slug
+    }
   })
   ipcMain.handle('auth:myTeams', async () => ads2ai.myTeams(getMemberToken()))
 
