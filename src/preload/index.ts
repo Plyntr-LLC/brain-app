@@ -19,6 +19,24 @@ const brain = {
     save: (data: unknown) => ipcRenderer.invoke('bridge:save', data) as Promise<{ ok: boolean }>,
     openUrl: (url: string) => ipcRenderer.invoke('bridge:openUrl', url) as Promise<{ ok: boolean }>
   },
+  settings: {
+    get: () =>
+      ipcRenderer.invoke('settings:get') as Promise<{
+        superAdmin: boolean
+        email: string
+        watching: boolean
+        brainPath: string | null
+      }>,
+    setSuper: (on: boolean) => ipcRenderer.invoke('settings:setSuper', on),
+    team: () =>
+      ipcRenderer.invoke('settings:team') as Promise<
+        { name: string; email: string; role: 'owner' | 'scout' | 'team'; brain: string }[]
+      >,
+    saveTeam: (people: { name: string; email: string; role: 'owner' | 'scout' | 'team'; brain: string }[]) =>
+      ipcRenderer.invoke('settings:saveTeam', people),
+    clients: () => ipcRenderer.invoke('settings:clients') as Promise<Record<string, unknown>[]>,
+    saveClients: (clients: unknown[]) => ipcRenderer.invoke('settings:saveClients', clients)
+  },
   auth: {
     resolveCode: (code: string) => ipcRenderer.invoke('auth:resolveCode', code),
     requestCode: (email: string) => ipcRenderer.invoke('auth:requestCode', email),

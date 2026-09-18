@@ -12,6 +12,16 @@ import { loadChats, saveChats, type SavedChats } from './persist'
 import { cancelWarm, closeWarm, forkSession, promptWarm, resetWarm, resumeSession, warmSession } from './warm'
 import { contextBlurb, grokCli, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
 import { getMemberToken, setMemberToken } from './session-token'
+import {
+  getSettings,
+  loadClients,
+  loadTeam,
+  saveClients,
+  saveTeam,
+  setSuperAdmin,
+  type ClientBrain,
+  type TeamPerson
+} from './settings-store'
 
 type RecentFolder = { path: string; name: string; watching?: boolean }
 
@@ -73,6 +83,18 @@ export function registerStubIpc(): void {
     shell.openExternal(url)
     return { ok: true }
   })
+  ipcMain.handle('settings:get', () => {
+    const watching = readWatching()
+    const file = getSettings()
+    const email = String(watching.email || '').toLowerCase()
+    const superAdmin = Boolean(file.superAdmin) || email === 'joe@plyntr.com'
+    return { superAdmin, email, watching: watching.watching, brainPath: watching.brainPath }
+  })
+  ipcMain.handle('settings:setSuper', (_e, on: boolean) => setSuperAdmin(Boolean(on)))
+  ipcMain.handle('settings:team', () => loadTeam())
+  ipcMain.handle('settings:saveTeam', (_e, people: TeamPerson[]) => saveTeam(people))
+  ipcMain.handle('settings:clients', () => loadClients())
+  ipcMain.handle('settings:saveClients', (_e, clients: ClientBrain[]) => saveClients(clients))
 
   ipcMain.handle('auth:resolveCode', async (_e, raw: string) => {
     const code = String(raw || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase()

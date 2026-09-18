@@ -43,7 +43,7 @@ function blank(): BridgeDraft {
   }
 }
 
-function copierPrompt(d: BridgeDraft): string {
+export function copierPrompt(d: BridgeDraft): string {
   const slug = d.slug || slugify(d.company)
   const lines = [
     'Please set up Brain Bridge mappings on the Plyntr Railway service (project plyntr-brain-bridge) and give me the setup link.',

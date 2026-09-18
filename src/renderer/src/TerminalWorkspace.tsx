@@ -1205,8 +1205,7 @@ export function TerminalWorkspace({
   const [filesByTab, setFilesByTab] = useState<Record<string, FileHit[]>>({})
   const [filesOpen, setFilesOpen] = useState(true)
   const [picker, setPicker] = useState(false)
-  const [people, setPeople] = useState<{ n: string; e: string; r: string }[]>([])
-  const [invite, setInvite] = useState({ n: '', e: '', r: 'Teammate' })
+
   const [detected, setDetected] = useState<Partial<Record<AiKind, boolean>>>({})
   const [kids, setKids] = useState<Record<string, FileNode[]>>({})
   const [openDirs, setOpenDirs] = useState<Record<string, boolean>>({})
@@ -1634,7 +1633,7 @@ export function TerminalWorkspace({
           {s.path !== 'join' && (
             <div className="invite-dock">
               <button className="primary rail-btn" type="button" onClick={() => setShowInvite(true)}>
-                Invite
+                Settings
               </button>
             </div>
           )}
@@ -1834,41 +1833,7 @@ export function TerminalWorkspace({
           </div>
         </aside>
       </div>
-      {showInvite && s.path !== 'join' && (
-        <div className="invitebox">
-          <div className="invitehead">
-            <strong>Invite someone</strong>
-            <button type="button" className="tabx" onClick={() => setShowInvite(false)} aria-label="Close invite">
-              ×
-            </button>
-          </div>
-          {people.map((p) => (
-            <p className="tiny" key={p.e}>
-              {p.n} · {p.e} · {p.r}
-            </p>
-          ))}
-          <div className="inviterow">
-            <input placeholder="Name" value={invite.n} onChange={(e) => setInvite({ ...invite, n: e.target.value })} />
-            <input placeholder="Email" value={invite.e} onChange={(e) => setInvite({ ...invite, e: e.target.value })} />
-            <select value={invite.r} onChange={(e) => setInvite({ ...invite, r: e.target.value })}>
-              <option>Teammate</option>
-              <option>Scout</option>
-              <option>Owner</option>
-            </select>
-            <button
-              className="ghost"
-              type="button"
-              onClick={() => {
-                if (!invite.n || !invite.e) return
-                setPeople([...people, invite])
-                setInvite({ n: '', e: '', r: 'Teammate' })
-              }}
-            >
-              Invite
-            </button>
-          </div>
-        </div>
-      )}
+
     </div>
   )
 }

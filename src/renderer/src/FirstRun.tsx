@@ -3,6 +3,7 @@ import { DOWNLOAD_AB, OWNER_NEEDS, STEPS, type AiKind, type PathKind, type Sessi
 import { blankSession, needsDone, remainingNeeds, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
 import { BridgeWizard, type BridgeDraft } from './BridgeWizard'
+import { SettingsPanel } from './SettingsPanel'
 
 export function FirstRun() {
   const [s, setS] = useState<Session>(() => blankSession('create', true))
@@ -115,7 +116,16 @@ export function FirstRun() {
         <span className={`sync-pill ${s.abWatching ? 'on' : ''}`}>
           {s.abWatching ? 'Agency Brain · watching this folder' : 'Folder not watching yet'}
         </span>
+        <button type="button" className="ghost title-set" onClick={() => setShowInvite(true)}>
+          Settings
+        </button>
       </div>
+      {showInvite && (
+        <SettingsPanel
+          role={s.role}
+          onClose={() => setShowInvite(false)}
+        />
+      )}
       <div className="body">
         <aside className="rail">
           <h2>Where you are</h2>
@@ -162,6 +172,18 @@ export function FirstRun() {
               onDone={(draft: BridgeDraft) => {
                 const role = draft.role
                 const teamLike = role === 'team'
+                void window.brain.settings.clients().then((list) => {
+                  const row = {
+                    company: draft.company,
+                    slug: draft.slug,
+                    hqName: draft.hqName,
+                    hqAddress: draft.hqAddress,
+                    projects: draft.projects,
+                    setupLink: draft.setupLink
+                  }
+                  const rest = (list as { slug?: string }[]).filter((c) => c.slug !== draft.slug)
+                  return window.brain.settings.saveClients([...rest, row])
+                })
                 go(teamLike ? 'chat' : s.abWatching ? 'chat' : 'aipick', {
                   role,
                   brainKind: draft.brainKind,
