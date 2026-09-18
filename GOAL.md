@@ -53,10 +53,11 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Grok and Cursor model/mode pickers follow the live session. ChatGPT/Codex picker does **not** yet (still falls through to `grok models`).
 - Slash: every `/` either does a real in-app job or is sent to the live session as the canonical name (aliases rewritten). TUI commands are not blocked. Grok catalog is in the `/` menu.
 - Terminal is a separate tab (`+` → Terminal, or `/terminal`). It is a login shell, not Grok/Claude. Chat stays ACP.
-- Settings: Brains first (HQ + project brains), then People (who uses which brain). Plyntr can keep more than one company. Owners/scouts get both tabs. Team can read the people list. Stored in userData, not Agency Brain config.json. Adding a person does not email them. Adding a brain does not create GitHub.
+- Settings: one company at the top (You are working on this company). Then job 1 company, job 2 brains for that company, job 3 people at that company. Buttons name the company. Stored in userData, not Agency Brain config.json.
 - Drag/drop, paste (including screenshots), and Attach on Chat for images and docs. Grok/Cursor: ACP image + embedded resource. Claude: image + PDF document. Codex: localImage + inlined text docs. Pathless clipboard files stash under userData/drops. 20 MB cap.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
 - Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, one setup screen lists them, pre-warns every permission dialog, then **Start setup** (one click) runs official installers in order and waits. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.
+- Long runs show a live Working strip (wheel, phase, elapsed time) plus a pulse on the chat tab. Tools update the phase. Setup polls use the same strip. The thread does not sit on a frozen Thinking label.
 - Mac one-file installer: `npm run pack:mac` writes `dist/Brain-0.1.0-mac.dmg` (arm64). Signed Developer ID Application: Plyntr LLC. Notarized 2026-09-18.
 
 ## How Joe runs Inbox
@@ -110,6 +111,10 @@ Bugs and product gaps. One line each. Date + what.
 - [x] 2026-09-17 Joe: **Auto-install for newbies.** Done: 2026-09-18. Grok 4.6 xhigh APPROVE. Evidence: `install.ts`, FirstRun `needs` screen. Detect Homebrew/Git/Agency Brain/CLIs, tick to install official scripts, then Chat when watching + a CLI. Does not write Agency Brain config.json.
 - [x] 2026-09-18 Joe: **One seamless setup.** Downloads/installs automatic or 1 or 2 clicks. Pre-warn before any permission/approval dialog. Done: 2026-09-18. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `SetupNeeds.tsx`, `install.ts` warn/accept/wait, Bridge/GitHub Before we start boxes. Does not write Agency Brain config.json.
 - [x] 2026-09-18 Joe: **Settings is confusing.** Spell out what adding a person vs adding a brain means, where to add it, and that this Mac list does not email, create GitHub, or rewrite Agency Brain config. Done: 2026-09-18. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `SettingsPanel.tsx` Brains then People.
+- [x] 2026-09-18 Joe: Long runs stay on Thinking and the rest of the app looks dead. Show waiting/working. Done: 2026-09-18. Evidence: `WorkPulse.tsx`.
+- [x] 2026-09-18 Joe: Send while busy kills the turn. Queue like the TUI. Add on unless the follow-up says stop. Done: 2026-09-18. Evidence: queue in `TerminalWorkspace.tsx`.
+- [x] 2026-09-18 Joe: While the reply is typing, let me scroll the message. Done: 2026-09-18. Evidence: pinBottom / Latest.
+- [x] 2026-09-18 Joe: Settings still confusing. Company, brain, and person are different. Always know which company I am adding to. Done: 2026-09-18. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `SettingsPanel.tsx` sticky You are working on, jobs 1–3.
 
 ## Next
 

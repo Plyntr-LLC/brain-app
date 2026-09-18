@@ -75,7 +75,10 @@ function handleNote(pool: Pool, msg: RpcMsg): void {
     return
   }
   if (msg.method === 'item/started' || msg.method === 'item/completed') {
-    for (const ev of fileHits(params, String(asRecord(params.item).type || 'tool'))) tab.onEvent(ev)
+    const item = asRecord(params.item)
+    const title = String(item.type || item.name || 'Working')
+    if (msg.method === 'item/started') tab.onEvent({ kind: 'status', data: 'work:' + title.slice(0, 80) })
+    for (const ev of fileHits(params, title)) tab.onEvent(ev)
     return
   }
   if (msg.method === 'thread/tokenUsage/updated' || msg.method === 'turn/completed') {

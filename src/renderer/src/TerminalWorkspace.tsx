@@ -5,6 +5,7 @@ import '@xterm/xterm/css/xterm.css'
 import type { AiKind, Session } from '@shared/contracts'
 import { mdToHtml, tidy, type FileHit } from './ptyChat'
 import { WorldClocks } from './WorldClocks'
+import { WorkPulse } from './WorkPulse'
 
 type Mode = 'chat' | 'term'
 type Attach = { path: string; name: string; mime: string; preview?: string }
@@ -33,6 +34,15 @@ function filePath(f: File): string {
   }
 }
 type Msg = { who: 'me' | 'brain' | 'think' | 'sys'; text: string; files?: Attach[]; at?: number }
+type Queued = { id: string; text: string; files?: Attach[] }
+
+function wantsStop(text: string): boolean {
+  return /^\s*(please\s+)?(just\s+)?(stop|cancel|abort|never mind|nevermind|halt)\b/i.test(text)
+}
+
+function justStop(text: string): boolean {
+  return /^\s*(please\s+)?(just\s+)?(stop|cancel|abort|never mind|nevermind|halt)\s*[.!]?\s*$/i.test(text)
+}
 type FileNode = { name: string; path: string; dir: boolean; kids?: FileNode[] }
 type Cap = { id: string; label: string }
 type SessionCmd = { name: string; description: string; hint?: string }
@@ -330,7 +340,8 @@ function ChatPane({
   onFork,
   onAgentMode,
   onDelete,
-  onOpenTerm
+  onOpenTerm,
+  onBusy
 }: {
   id: string
   kind: AiKind
@@ -366,12 +377,15 @@ function ChatPane({
   onAgentMode: (mode: string) => void
   onDelete: () => void
   onOpenTerm: () => void
+  onBusy: (id: string, busy: boolean) => void
 }) {
   const [messages, setMessages] = useState<Msg[]>(
     initialMessages && initialMessages.length ? initialMessages : [{ who: 'brain', text: greeting }]
   )
   const [say, setSay] = useState('')
   const [busy, setBusy] = useState(false)
+  const [waitLabel, setWaitLabel] = useState('Working')
+  const [waitSec, setWaitSec] = useState(0)
   const [cmds, setCmds] = useState<{ name: string; kind: 'builtin' | 'skill'; description: string }[]>([])
   const [models, setModels] = useState<{ id: string; label: string }[]>([])
   const [hi, setHi] = useState(0)
@@ -391,11 +405,23 @@ function ChatPane({
   const thread = useRef<HTMLDivElement>(null)
   const filesRef = useRef<FileHit[]>([])
   const turn = useRef({ think: false, answer: false })
+  const [queue, setQueue] = useState<Queued[]>([])
+  const queueRef = useRef<Queued[]>([])
+  const sendTextRef = useRef<(t: string, opts?: { cancel?: boolean; fromQueue?: boolean; files?: Attach[] }) => Promise<void>>(async () => {})
+  const pinBottom = useRef(true)
+  const [atBottom, setAtBottom] = useState(true)
+  const skipDrain = useRef(false)
+
+  function writeQueue(next: Queued[]) {
+    queueRef.current = next
+    setQueue(next)
+  }
 
   useEffect(() => {
     const off = window.brain.chat.onEvent((ev) => {
       if (ev.tabId !== id) return
       if (ev.kind === 'thought' && ev.data) {
+        setWaitLabel('Thinking')
         const bit = ev.data
         setMessages((msgs) => {
           const next = [...msgs]
@@ -409,6 +435,7 @@ function ChatPane({
         })
       }
       if (ev.kind === 'text' && ev.data) {
+        setWaitLabel('Writing')
         const bit = ev.data
         setMessages((msgs) => {
           const next = [...msgs]
@@ -431,10 +458,12 @@ function ChatPane({
       if (ev.kind === 'status' && ev.data === 'compacting') {
         compactingRef.current = true
         setCompacting(true)
+        setWaitLabel('Compacting')
       }
       if (ev.kind === 'status' && ev.data === 'compacted') {
         compactingRef.current = false
         setCompacting(false)
+        setWaitLabel('Working')
         setMessages((m) => {
           if (m.some((x) => x.who === 'sys' && x.text.startsWith('Older turns were summarized'))) return m
           return [
@@ -446,15 +475,21 @@ function ChatPane({
           ]
         })
       }
+      if (ev.kind === 'status' && ev.data && ev.data.startsWith('work:')) {
+        const label = ev.data.slice(5).trim()
+        if (label) setWaitLabel(label)
+      }
       if (ev.kind === 'file' && ev.path) {
         const hit = { path: ev.path, tool: ev.tool, live: true }
+        const base = ev.path.replace(/\\/g, '/').split('/').filter(Boolean).pop() || ev.path
+        setWaitLabel(ev.tool ? `${ev.tool} · ${base}` : `Reading ${base}`)
         if (!filesRef.current.some((f) => f.path === hit.path)) {
           filesRef.current = [...filesRef.current, hit]
           onFiles(id, filesRef.current)
         }
       }
       if (ev.kind === 'done' || ev.kind === 'error') {
-        setBusy(false)
+        setWaitLabel('Working')
         if (compactingRef.current && ev.kind === 'done') {
           setMessages((m) => {
             if (m.some((x) => x.who === 'sys' && x.text.startsWith('Older turns were summarized'))) return m
@@ -474,6 +509,17 @@ function ChatPane({
         if (ev.kind === 'error' && ev.data) {
           setMessages((m) => [...m, { who: 'brain', text: ev.data || '' }])
         }
+        if (skipDrain.current) {
+          skipDrain.current = false
+          return
+        }
+        const nxt = queueRef.current[0]
+        if (ev.kind === 'done' && nxt) {
+          writeQueue(queueRef.current.slice(1))
+          void sendTextRef.current(nxt.text, { fromQueue: true, files: nxt.files })
+          return
+        }
+        setBusy(false)
       }
     })
     return () => {
@@ -482,8 +528,32 @@ function ChatPane({
   }, [id, greeting, onFiles])
 
   useEffect(() => {
+    if (!pinBottom.current) return
     thread.current?.scrollTo(0, thread.current.scrollHeight)
   }, [messages, busy])
+
+  function onThreadScroll() {
+    const el = thread.current
+    if (!el) return
+    const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    pinBottom.current = pinned
+    setAtBottom(pinned)
+  }
+
+  useEffect(() => {
+    if (!busy) {
+      setWaitSec(0)
+      return
+    }
+    const t0 = Date.now()
+    const t = setInterval(() => setWaitSec(Math.floor((Date.now() - t0) / 1000)), 1000)
+    return () => clearInterval(t)
+  }, [busy])
+
+  useEffect(() => {
+    onBusy(id, busy)
+    return () => onBusy(id, false)
+  }, [id, busy])
 
   useEffect(() => {
     onTranscript(id, messages)
@@ -840,6 +910,7 @@ function ChatPane({
   }
 
   async function stop() {
+    skipDrain.current = true
     await window.brain.chat.stop(id)
     setBusy(false)
   }
@@ -847,7 +918,10 @@ function ChatPane({
   async function send() {
     await pendingDrops.current
     const t = say.trim()
-    if (!t && !dropsRef.current.length) return
+    if (!t && !dropsRef.current.length) {
+      if (queueRef.current[0]) void sendNow(queueRef.current[0].id)
+      return
+    }
     const onlyCmd = slashOn && !/\s/.test(t.trim())
     if (onlyCmd && matches.length && matches[hi]) {
       applyPick(matches[hi])
@@ -858,12 +932,61 @@ function ChatPane({
     const skillName = line.slice(1).split(/\s/)[0].toLowerCase()
     const isSkill = cmds.some((c) => c.kind === 'skill' && c.name.toLowerCase() === skillName)
     if (runSlash(t) && !isSkill) return
+    if (busy && wantsStop(line)) {
+      skipDrain.current = true
+      await stop()
+      if (justStop(line)) return
+      await sendText(line)
+      return
+    }
+    if (busy) {
+      const attached = dropsRef.current
+      dropsRef.current = []
+      setDrops([])
+      writeQueue([
+        ...queueRef.current,
+        { id: crypto.randomUUID(), text: line, files: attached.length ? attached : undefined }
+      ])
+      return
+    }
     await sendText(line)
   }
 
+  async function sendNow(qid: string) {
+    const item = queueRef.current.find((q) => q.id === qid)
+    if (!item) return
+    writeQueue(queueRef.current.filter((q) => q.id !== qid))
+    if (wantsStop(item.text) && busy) {
+      skipDrain.current = true
+      await stop()
+      if (!justStop(item.text)) await sendText(item.text, { files: item.files || [] })
+      return
+    }
+    if (busy) {
+      writeQueue([item, ...queueRef.current])
+      return
+    }
+    await sendText(item.text, { files: item.files || [] })
+  }
+
+  function editQueued(qid: string) {
+    const item = queueRef.current.find((q) => q.id === qid)
+    if (!item) return
+    writeQueue(queueRef.current.filter((q) => q.id !== qid))
+    setSay(item.text)
+    if (item.files?.length) {
+      dropsRef.current = item.files
+      setDrops(item.files)
+    }
+  }
+
   async function sendQuiet(t: string) {
-    if (busy) await stop()
+    if (busy) {
+      writeQueue([...queueRef.current, { id: crypto.randomUUID(), text: t }])
+      return
+    }
     setBusy(true)
+    setWaitLabel('Working')
     turn.current = { think: false, answer: false }
     try {
       await window.brain.chat.send({
@@ -947,14 +1070,23 @@ function ChatPane({
     setDropNote(got.skipped.length ? got.skipped.join('. ') : '')
   }
 
-  async function sendText(t: string) {
+  async function sendText(t: string, opts?: { cancel?: boolean; fromQueue?: boolean; files?: Attach[] }) {
     await pendingDrops.current
-    if (busy) await stop()
+    if (opts?.cancel && busy) await stop()
+    if (busy && !opts?.fromQueue && !opts?.cancel) {
+      writeQueue([...queueRef.current, { id: crypto.randomUUID(), text: t, files: opts?.files }])
+      return
+    }
     filesRef.current = []
     onFiles(id, [])
     setBusy(true)
+    setWaitLabel('Working')
     turn.current = { think: false, answer: false }
-    const attached = dropsRef.current
+    if (!opts?.fromQueue) {
+      pinBottom.current = true
+      setAtBottom(true)
+    }
+    const attached = opts?.fromQueue ? opts.files || [] : opts?.files || dropsRef.current
     dropsRef.current = []
     setDrops([])
     setDropNote('')
@@ -981,6 +1113,7 @@ function ChatPane({
       setMessages((m) => [...m, { who: 'brain', text: String((e as Error).message || e) }])
     }
   }
+  sendTextRef.current = sendText
 
   return (
     <div
@@ -1042,14 +1175,19 @@ function ChatPane({
           )}
         </div>
       )}
-      <div className="thread" ref={thread}>
+      <div className="thread" ref={thread} onScroll={onThreadScroll}>
         {messages.map((m, i) =>
           m.text || m.who === 'me' ? (
             <div
               className={`bubble ${m.who === 'me' ? 'me' : ''} ${m.who === 'think' ? 'think' : ''} ${m.who === 'brain' ? 'md' : ''}`}
               key={i}
             >
-              {m.who === 'think' && <div className="think-label">Thinking</div>}
+              {m.who === 'think' && (
+                <div className={`think-label ${busy && messages[messages.length - 1] === m ? 'live' : ''}`}>
+                  Thinking
+                  {busy && messages[messages.length - 1] === m ? <span className="dots" /> : null}
+                </div>
+              )}
               {m.who === 'sys' && <div className="think-label">Command</div>}
               {m.who === 'brain' ? (
                 <div className="mdbody" dangerouslySetInnerHTML={{ __html: mdToHtml(m.text) }} />
@@ -1070,17 +1208,39 @@ function ChatPane({
           ) : null
         )}
       </div>
-      {compacting && (
-        <div className="worknote" aria-live="polite">
-          <span className="wheel" aria-hidden="true" />
-          <span>
-            Compacting
-            <span className="dots" />
-          </span>
-        </div>
+      {(busy || compacting) && (
+        <WorkPulse label={compacting ? 'Compacting' : waitLabel} seconds={waitSec} />
       )}
+      {!atBottom ? (
+        <button type="button" className="jump-latest" onClick={() => {
+          pinBottom.current = true
+          setAtBottom(true)
+          thread.current?.scrollTo(0, thread.current.scrollHeight)
+        }}>
+          Latest
+        </button>
+      ) : null}
       {over && <div className="dropveil">Drop images or docs here</div>}
       <div className="composer">
+        {queue.length > 0 ? (
+          <div className="followq">
+            <p className="tiny">Queued. Runs after this turn. Say stop if you want it to halt first.</p>
+            {queue.map((q) => (
+              <div className="followq-row" key={q.id}>
+                <span>{q.text}</span>
+                <button type="button" className="linkish" onClick={() => void sendNow(q.id)}>
+                  Send now
+                </button>
+                <button type="button" className="linkish" onClick={() => editQueued(q.id)}>
+                  Edit
+                </button>
+                <button type="button" className="linkish" onClick={() => writeQueue(queueRef.current.filter((x) => x.id !== q.id))}>
+                  Delete
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {matches.length > 0 && (
           <div className="slashmenu">
             {matches.map((c, i) => (
@@ -1144,15 +1304,26 @@ function ChatPane({
               }
             }
           }}
-          placeholder={busy ? 'Working — type to interrupt, or Stop' : 'Message, drop a file, or / for commands'}
+          placeholder={
+            busy
+              ? queue.length
+                ? 'Enter queues. Empty Enter sends the next one.'
+                : 'Working. Enter queues a follow-up.'
+              : 'Message, drop a file, or / for commands'
+          }
         />
         <button className="ghost" type="button" onClick={() => void pickAttach()} title="Attach">
           Attach
         </button>
         {busy ? (
-          <button className="ghost" type="button" onClick={() => void stop()}>
-            Stop
-          </button>
+          <>
+            <button className="primary" type="button" onClick={() => void send()}>
+              {say.trim() || drops.length ? 'Queue' : queue.length ? 'Send now' : 'Queue'}
+            </button>
+            <button className="ghost" type="button" onClick={() => void stop()}>
+              Stop
+            </button>
+          </>
         ) : (
           <button className="primary" type="button" onClick={() => void send()}>
             Send
@@ -1188,6 +1359,7 @@ export function TerminalWorkspace({
   const [pick, setPick] = useState<null | 'model' | 'effort' | 'folder' | 'agentMode'>(null)
   const [models, setModels] = useState<{ id: string; label: string }[]>([])
   const [recents, setRecents] = useState<{ path: string; name: string; watching?: boolean }[]>([])
+  const [busyTabs, setBusyTabs] = useState<Record<string, boolean>>({})
   function freshTab(): Tab {
     return {
       id: nid(),
@@ -1557,7 +1729,7 @@ export function TerminalWorkspace({
         </button>
         <div className="tablist">
           {tabs.map((t) => (
-            <div key={t.id} className={`tab ${t.id === active ? 'on' : ''}`}>
+            <div key={t.id} className={`tab ${t.id === active ? 'on' : ''} ${busyTabs[t.id] ? 'working' : ''}`}>
               {editId === t.id ? (
                 <input
                   className="tabrename"
@@ -1580,6 +1752,7 @@ export function TerminalWorkspace({
                     setEditTitle(t.title)
                   }}
                 >
+                  {busyTabs[t.id] ? <span className="wheel tab-wheel" aria-hidden="true" /> : null}
                   {t.title}
                 </button>
               )}
@@ -1690,6 +1863,7 @@ export function TerminalWorkspace({
                   onAgentMode={(mode) => setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, agentMode: mode } : x)))}
                   onDelete={() => closeTab(t.id)}
                   onOpenTerm={() => addTerm()}
+                  onBusy={(id, on) => setBusyTabs((m) => (m[id] === on ? m : { ...m, [id]: on }))}
                 />
               ))}
           {tabs

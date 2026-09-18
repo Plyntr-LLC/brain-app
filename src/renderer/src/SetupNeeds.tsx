@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AiKind } from '@shared/contracts'
+import { WorkPulse } from './WorkPulse'
 
 type ToolNeed = {
   id: string
@@ -47,6 +48,7 @@ export function SetupNeeds({
   const [banner, setBanner] = useState('')
   const [note, setNote] = useState('')
   const [err, setErr] = useState('')
+  const [waitSec, setWaitSec] = useState(0)
   const stop = useRef(false)
   const skipWait = useRef(false)
 
@@ -57,6 +59,16 @@ export function SetupNeeds({
       stop.current = true
     }
   }, [])
+
+  useEffect(() => {
+    if (phase !== 'run') {
+      setWaitSec(0)
+      return
+    }
+    const t0 = Date.now()
+    const t = setInterval(() => setWaitSec(Math.floor((Date.now() - t0) / 1000)), 1000)
+    return () => clearInterval(t)
+  }, [phase])
 
   async function refresh(): Promise<Status> {
     const st = await window.brain.setup.status()
@@ -194,6 +206,7 @@ export function SetupNeeds({
         still bill your own accounts when you sign in.
       </p>
       {banner ? <p className="note">{banner}</p> : null}
+      {running ? <WorkPulse label={busyLabel ? `Installing ${busyLabel}` : 'Setting up'} seconds={waitSec} /> : null}
       {!running && loaded && (warns.length > 0 || cliMissing) ? (
         <div className="warn-box">
           <h3>Before we start: you will need to allow access</h3>

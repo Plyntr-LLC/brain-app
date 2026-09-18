@@ -53,7 +53,9 @@ function handleClaude(s: Sess, line: string): void {
       const b = asRecord(block)
       const bt = String(b.type || '')
       if (bt === 'tool_use' && s.onEvent) {
-        for (const ev of fileHits(b.input, String(b.name || 'tool'))) s.onEvent(ev)
+        const name = String(b.name || 'Working')
+        s.onEvent({ kind: 'status', data: 'work:' + name.slice(0, 80) })
+        for (const ev of fileHits(b.input, name)) s.onEvent(ev)
       }
       if (!s.onEvent) continue
       if (bt === 'thinking' && asText(b)) s.onEvent({ kind: 'thought', data: asText(b) })

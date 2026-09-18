@@ -37,15 +37,27 @@
 .set-tabs { display: flex; gap: 0.35rem; margin: 0.4rem 0 0.75rem; }
 .set-tabs button { font-size: 0.78rem; font-weight: 700; }
 .set-tabs button.on { color: var(--orange-deep); }
-.set-how {
-  background: var(--paper);
-  border: 1px solid var(--line);
-  padding: 0.7rem 0.8rem;
-  margin: 0 0 0.85rem;
-  font-size: 0.95rem;
+.set-now {
+  position: sticky;
+  top: -0.85rem;
+  z-index: 3;
+  background: var(--warn-bg);
+  border: 1px solid #ead9b8;
+  padding: 0.75rem 0.85rem;
+  margin: 0 0 0.9rem;
 }
-.set-how ol { margin: 0.35rem 0 0.45rem; padding-left: 1.2rem; }
-.set-how li { margin: 0.25rem 0; }
+.set-now-k {
+  font-family: "Schibsted Grotesk", sans-serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--warn);
+  margin: 0 0 0.35rem;
+}
+.set-block {
+  border-top: 1px solid var(--line);
+  padding: 0.9rem 0 0.3rem;
+  margin: 0 0 0.4rem;
+}
 .set-h {
   font-size: 0.95rem;
   margin: 0.2rem 0 0.4rem;
@@ -254,10 +266,31 @@
 .bubble.me { align-self: flex-end; background: #fff; border-color: #cfc4b6; }
 .composer {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto auto auto;
   gap: 0.45rem;
   border-top: 1px solid var(--line);
   padding-top: 0.75rem;
+}
+.followq {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.35rem 0 0.15rem;
+}
+.followq-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 0.45rem;
+  align-items: start;
+  font-size: 0.9rem;
+}
+.followq-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jump-latest {
+  flex-shrink: 0;
+  align-self: center;
+  margin: 0.2rem 0 0.35rem;
+  font-size: 0.78rem;
 }
 .attachrow {
   grid-column: 1 / -1;
@@ -476,21 +509,24 @@
   align-items: center;
   gap: 0.5rem;
   flex-shrink: 0;
-  padding: 0.4rem 1.1rem 0.2rem;
+  padding: 0.45rem 1.1rem;
   font-family: "Schibsted Grotesk", sans-serif;
   font-size: 0.84rem;
   font-weight: 600;
-  color: var(--muted);
+  color: var(--ink);
+  background: var(--warn-bg);
+  border-top: 1px solid #ead9b8;
 }
-.worknote .wheel {
+.wheel {
   width: 0.82rem;
   height: 0.82rem;
   border: 2px solid var(--line);
   border-top-color: var(--orange);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
+  display: inline-block;
 }
-.worknote .dots::after {
+.dots::after {
   content: '';
   animation: dots 1.2s steps(4, end) infinite;
 }
@@ -600,6 +636,18 @@
   color: var(--ink);
   cursor: pointer;
   padding: 0.45rem 0.7rem;
+}
+.tabname {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.tab.working .tabname { color: var(--orange-deep); }
+.tab-wheel {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-width: 1.5px;
+  flex-shrink: 0;
 }
 .tabx { padding: 0.45rem 0.4rem; color: var(--muted); }
 .tabadd { color: var(--orange-deep); }

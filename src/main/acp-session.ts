@@ -271,7 +271,12 @@ function eventsFromUpdate(update: Record<string, unknown>): StreamEvent[] {
     return t ? [{ kind: 'text', data: t }] : []
   }
   if (kind === 'tool_call' || kind === 'tool_call_update') {
-    return fileHits(update, String(update.title || update.kind || ''))
+    const title = String(update.title || '').trim()
+    const hits = fileHits(update, title || String(update.kind || ''))
+    if (kind === 'tool_call' && title) {
+      return [{ kind: 'status', data: 'work:' + title.slice(0, 80) }, ...hits]
+    }
+    return hits
   }
   return []
 }
@@ -672,6 +677,7 @@ export async function acpPrompt(opts: {
   if (tab.promptId != null) acpCancel(opts.tabId)
   tab.onEvent = opts.onEvent
   tab.text = ''
+  tab.promptId = Date.now()
   if (/^\s*\/compact\b/i.test(opts.text)) opts.onEvent({ kind: 'status', data: 'compacting' })
   try {
     const prompt = acpPromptParts(opts.text, opts.attachments || [])

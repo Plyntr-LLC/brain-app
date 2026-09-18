@@ -5,6 +5,7 @@ import { TerminalWorkspace } from './TerminalWorkspace'
 import { BridgeWizard, type BridgeDraft } from './BridgeWizard'
 import { SettingsPanel } from './SettingsPanel'
 import { SetupNeeds } from './SetupNeeds'
+import { WorkPulse } from './WorkPulse'
 
 export function FirstRun() {
   const [s, setS] = useState<Session>(() => blankSession('create', true))
@@ -18,6 +19,7 @@ export function FirstRun() {
   const [detected, setDetected] = useState<Partial<Record<AiKind, boolean>>>({})
   const [showInvite, setShowInvite] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
+  const [waitSec, setWaitSec] = useState(0)
 
   useEffect(() => {
     void (async () => {
@@ -88,6 +90,16 @@ export function FirstRun() {
       stop = true
     }
   }, [s.screen])
+
+  useEffect(() => {
+    if (s.screen !== 'abapply' || s.abWatching) {
+      setWaitSec(0)
+      return
+    }
+    const t0 = Date.now()
+    const t = setInterval(() => setWaitSec(Math.floor((Date.now() - t0) / 1000)), 1000)
+    return () => clearInterval(t)
+  }, [s.screen, s.abWatching])
 
   async function afterMembership(patch?: Partial<Session>) {
     const st = await window.brain.setup.status()
@@ -430,6 +442,7 @@ export function FirstRun() {
                 {s.business || 'This brain'}
                 {s.orgLogin || org ? ` · ${s.orgLogin || org}` : ''}
               </p>
+              {!s.abWatching ? <WorkPulse label="Waiting for Agency Brain to watch a folder" seconds={waitSec} /> : null}
               <div className="actions">
                 <button className="primary" type="button" disabled={!s.abWatching} onClick={() => go('aipick', { abWatching: true })}>
                   Continue
