@@ -36,7 +36,14 @@ const brain = {
     setSuper: (on: boolean) => ipcRenderer.invoke('settings:setSuper', on),
     team: () =>
       ipcRenderer.invoke('settings:team') as Promise<
-        { name: string; email: string; role: 'owner' | 'scout' | 'team'; brain: string; client?: string }[]
+        {
+          name: string
+          email: string
+          role: 'owner' | 'scout' | 'team'
+          brain: string
+          client?: string
+          brains?: string[]
+        }[]
       >,
     saveTeam: (
       people: {
@@ -45,8 +52,23 @@ const brain = {
         role: 'owner' | 'scout' | 'team'
         brain: string
         client?: string
+        brains?: string[]
       }[]
     ) => ipcRenderer.invoke('settings:saveTeam', people),
+    projects: () =>
+      ipcRenderer.invoke('settings:projects') as Promise<{ id: string; name: string }[]>,
+    addTeammate: (person: {
+      name: string
+      email: string
+      role: 'owner' | 'scout' | 'team'
+      brain?: string
+      client?: string
+      brains?: string[]
+    }) =>
+      ipcRenderer.invoke('settings:addTeammate', person) as Promise<{
+        people: unknown[]
+        roster: { ok: boolean; detail: string }
+      }>,
     clients: () => ipcRenderer.invoke('settings:clients') as Promise<Record<string, unknown>[]>,
     saveClients: (clients: unknown[]) => ipcRenderer.invoke('settings:saveClients', clients)
   },

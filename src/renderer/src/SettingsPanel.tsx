@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { copierPrompt, type BridgeDraft } from './BridgeWizard'
+
 
 type Person = {
   name: string
@@ -7,6 +7,7 @@ type Person = {
   role: 'owner' | 'scout' | 'team'
   brain: string
   client?: string
+  brains?: string[]
 }
 type Client = {
   company: string
@@ -67,20 +68,6 @@ function asClient(raw: Record<string, unknown>): Client {
   }
 }
 
-function draftFrom(c: Client): BridgeDraft {
-  return {
-    company: c.company,
-    slug: c.slug,
-    hqName: c.hqName,
-    hqAddress: c.hqAddress,
-    role: 'owner',
-    brainKind: 'hq',
-    projects: c.projects.length ? c.projects : [{ id: 'project-1', name: '', people: '', address: '' }],
-    setupLink: c.setupLink,
-    creating: true
-  }
-}
-
 function folderName(path: string | null): string {
   if (!path) return ''
   const parts = path.replace(/\\/g, '/').split('/').filter(Boolean)
@@ -108,7 +95,8 @@ export function SettingsPanel({
   const [watching, setWatching] = useState(false)
   const [brainPath, setBrainPath] = useState<string | null>(null)
   const [people, setPeople] = useState<Person[]>([])
-  const [draft, setDraft] = useState<Person>({ name: '', email: '', role: 'team', brain: '' })
+  const [draft, setDraft] = useState<Person>({ name: '', email: '', role: 'team', brain: '', brains: [] })
+  const [liveProjects, setLiveProjects] = useState<{ id: string; name: string }[]>([])
   const [clients, setClients] = useState<Client[]>([])
   const [cur, setCur] = useState(0)
   const [note, setNote] = useState('')
@@ -149,6 +137,8 @@ export function SettingsPanel({
       const plyntrAt = list.findIndex((c) => c.slug === 'plyntr' || c.company.toLowerCase() === 'plyntr')
       if (s.plyntrBrain && plyntrAt >= 0) setCur(plyntrAt)
       setSavedKeys(list.map((c) => c.slug || slugify(c.company)).filter(Boolean))
+      const projects = await window.brain.settings.projects().catch(() => [])
+      setLiveProjects(projects)
       setLoaded(true)
     })()
   }, [])
@@ -157,17 +147,11 @@ export function SettingsPanel({
   const companyName = client?.company.trim() || ''
   const companyLabel = companyName || 'this new company'
   const companyKey = (client?.slug || slugify(companyName)).trim()
-  const namedProjects = (client?.projects || []).filter((p) => p.name.trim())
   const shownPeople = people.filter((p) => {
     if (!client) return false
     if (!p.client) return cur === 0
     return p.client === companyKey
   })
-
-  useEffect(() => {
-    const first = namedProjects[0]?.id || ''
-    setDraft((d) => ({ ...d, brain: namedProjects.some((p) => p.id === d.brain) ? d.brain : first }))
-  }, [cur, client?.slug, namedProjects.map((p) => p.id).join('|')])
 
   async function persistTeam(next: Person[]) {
     const saved = (await window.brain.settings.saveTeam(next)) as Person[]
@@ -213,35 +197,6 @@ export function SettingsPanel({
       hqName: client.hqName.trim() || `${client.company.trim()} HQ`
     }
     await persistClients(next, `Company saved: ${next[cur].company}. Next: add brains for that company.`)
-  }
-
-  async function saveBrains() {
-    if (!client?.company.trim()) {
-      setNote('Save the company name first.')
-      return
-    }
-    const next = clients.slice()
-    next[cur] = {
-      ...client,
-      slug: client.slug.trim() || slugify(client.company),
-      hqName: client.hqName.trim() || `${client.company.trim()} HQ`
-    }
-    await persistClients(next, `Brains saved for ${next[cur].company}. Next: add people to that company.`)
-  }
-
-  function addProjectBrain() {
-    if (!client) return
-    const used = new Set(client.projects.map((x) => x.id))
-    let n = client.projects.length + 1
-    let id = `project-${n}`
-    while (used.has(id)) {
-      n += 1
-      id = `project-${n}`
-    }
-    patchClient({
-      projects: [...client.projects, { id, name: '', people: '', address: '' }]
-    })
-    setNote(`Adding a project brain under ${companyLabel}.`)
   }
 
   if (!loaded) {
@@ -377,95 +332,27 @@ export function SettingsPanel({
           {client ? (
             <>
               <section className="set-block">
-                <p className="kicker">Job 2 of 3 · Brains for {companyLabel}</p>
-                <h3 className="set-h">Folders this company uses</h3>
+                <p className="kicker">Job 2 of 3 · Projects on this brain</p>
+                <h3 className="set-h">What you can assign</h3>
                 <p>
-                  HQ is the main brain for owners and scouts at {companyLabel}. A project brain is an extra folder for
-                  one group at {companyLabel}, so they do not see HQ or the other groups. Create each repo in Agency
-                  Brain, then paste org/repo here.
+                  These are the project folders already on this brain (under projects/). Pick from this list when you
+                  add a teammate. This app does not ask you to invent new project brains here.
                 </p>
-                <label className="field">
-                  HQ brain name
-                  <input
-                    value={client.hqName}
-                    onChange={(e) => patchClient({ hqName: e.target.value })}
-                    placeholder={`${companyName || 'Acme'} HQ`}
-                  />
-                </label>
-                <label className="field">
-                  HQ GitHub (org/repo)
-                  <input
-                    value={client.hqAddress}
-                    onChange={(e) => patchClient({ hqAddress: e.target.value })}
-                    placeholder="acme-hq/acme-hq-brain"
-                  />
-                </label>
-                {client.projects.map((p, i) => (
-                  <div className="bridge-project" key={p.id}>
-                    <p className="tiny">
-                      Project brain {i + 1} at {companyLabel}
-                    </p>
-                    <label className="field">
-                      Project brain name
-                      <input
-                        value={p.name}
-                        onChange={(e) => {
-                          const projects = client.projects.slice()
-                          projects[i] = { ...p, name: e.target.value }
-                          patchClient({ projects })
-                        }}
-                        placeholder="Bible translation"
-                      />
-                    </label>
-                    <label className="field">
-                      GitHub (org/repo)
-                      <input
-                        value={p.address}
-                        onChange={(e) => {
-                          const projects = client.projects.slice()
-                          projects[i] = { ...p, address: e.target.value }
-                          patchClient({ projects })
-                        }}
-                        placeholder="acme-bible/acme-bible-brain"
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      className="linkish"
-                      onClick={() => patchClient({ projects: client.projects.filter((_, j) => j !== i) })}
-                    >
-                      Remove this project brain from {companyLabel}
-                    </button>
-                  </div>
-                ))}
-                <div className="actions" style={{ marginTop: '0.5rem', paddingTop: 0 }}>
-                  <button className="ghost" type="button" onClick={addProjectBrain}>
-                    Add a project brain to {companyLabel}
-                  </button>
-                  <button className="primary" type="button" onClick={() => void saveBrains()}>
-                    Save brains for {companyLabel}
-                  </button>
-                </div>
-                <p className="tiny" style={{ marginTop: '0.8rem' }}>
-                  To copy files between HQ and project brains, copy the copier prompt, paste it into Grok in the
-                  brain-bridge folder, then paste the setup link it gives you.
-                </p>
-                <label className="field">
-                  Setup link for {companyLabel}
-                  <input
-                    value={client.setupLink}
-                    onChange={(e) => patchClient({ setupLink: e.target.value })}
-                    placeholder="https://…/setup?token=…"
-                  />
-                </label>
-                <button
-                  className="ghost"
-                  type="button"
-                  disabled={!companyName}
-                  onClick={() => void navigator.clipboard.writeText(copierPrompt(draftFrom(client)))}
-                >
-                  Copy copier prompt for {companyLabel}
-                </button>
+                {liveProjects.length === 0 ? (
+                  <p className="tiny">No project folders yet in projects/. Add folders there on HQ, then reopen Settings.</p>
+                ) : (
+                  <ul className="setup-list">
+                    {liveProjects.map((p) => (
+                      <li key={p.id} className="got">
+                        <span>○</span>
+                        <span>
+                          <strong>{p.name}</strong>
+                          <span className="muted"> {p.id}</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </section>
 
               <section className="set-block">
@@ -482,8 +369,11 @@ export function SettingsPanel({
                   <p className="tiny">No one listed at {companyLabel} yet.</p>
                 ) : null}
                 {shownPeople.map((p) => {
-                  const proj = namedProjects.find((x) => x.id === p.brain)
-                  const seat = p.role === 'team' ? proj?.name || p.brain : `${companyLabel} HQ`
+                  const ids = p.brains?.length ? p.brains : p.brain && p.brain !== 'hq' ? [p.brain] : []
+                  const names = ids
+                    .map((id) => liveProjects.find((x) => x.id === id)?.name || id)
+                    .join(', ')
+                  const seat = p.role === 'team' ? names || 'no project yet' : `${companyLabel} HQ`
                   return (
                     <div className="set-row" key={`${p.client || ''}:${p.email}`}>
                       <span>
@@ -537,45 +427,60 @@ export function SettingsPanel({
                   </label>
                   <p className="tiny">{roleLine(draft.role, companyLabel)}</p>
                   {draft.role === 'team' ? (
-                    namedProjects.length ? (
-                      <label className="field">
-                        Which {companyLabel} project brain
-                        <select value={draft.brain} onChange={(e) => setDraft({ ...draft, brain: e.target.value })}>
-                          {namedProjects.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                    liveProjects.length ? (
+                      <div className="field">
+                        Projects on their login
+                        {liveProjects.map((p) => {
+                          const on = (draft.brains || []).includes(p.id)
+                          return (
+                            <label className="need-row" key={p.id}>
+                              <input
+                                type="checkbox"
+                                checked={on}
+                                onChange={() => {
+                                  const cur = new Set(draft.brains || [])
+                                  if (on) cur.delete(p.id)
+                                  else cur.add(p.id)
+                                  setDraft({ ...draft, brains: [...cur], brain: [...cur][0] || '' })
+                                }}
+                              />
+                              <span>{p.name}</span>
+                            </label>
+                          )
+                        })}
+                      </div>
                     ) : (
-                      <p className="note">
-                        Add a named project brain in job 2 for {companyLabel} before you add a team person.
-                      </p>
+                      <p className="note">This brain has no project folders yet, so a team person has nothing to assign.</p>
                     )
                   ) : (
-                    <p className="tiny">They use {companyLabel} HQ.</p>
+                    <p className="tiny">They use {companyLabel} HQ (every project).</p>
                   )}
                   <button
                     className="primary"
                     type="button"
                     disabled={
                       !companyName ||
-                      !savedKeys.includes(companyKey) ||
                       !draft.name.trim() ||
                       !draft.email.includes('@') ||
-                      (draft.role === 'team' && !namedProjects.length)
+                      (draft.role === 'team' && !(draft.brains || []).length)
                     }
-                    onClick={() => {
-                      const row: Person = {
-                        ...draft,
+                    onClick={async () => {
+                      const brains = draft.role === 'team' ? draft.brains || [] : []
+                      const res = await window.brain.settings.addTeammate({
+                        name: draft.name.trim(),
                         email: draft.email.trim().toLowerCase(),
-                        brain: draft.role === 'team' ? draft.brain || namedProjects[0]?.id || '' : 'hq',
-                        client: companyKey
-                      }
-                      const rest = people.filter((p) => !(p.email === row.email && (p.client || '') === companyKey))
-                      void persistTeam([...rest, row])
-                      setDraft({ name: '', email: '', role: 'team', brain: namedProjects[0]?.id || '' })
+                        role: draft.role,
+                        brain: brains[0] || 'hq',
+                        client: companyKey,
+                        brains
+                      })
+                      setPeople(res.people as Person[])
+                      setNote(
+                        res.roster.ok
+                          ? `${draft.name} can sign in with that email. Sync will use the projects you ticked.`
+                          : res.roster.detail
+                      )
+                      setDraft({ name: '', email: '', role: 'team', brain: '', brains: [] })
                     }}
                   >
                     Add this person to {companyLabel}

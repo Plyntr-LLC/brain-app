@@ -9,6 +9,7 @@ export type TeamPerson = {
   brain: string
   /** Company slug this person belongs to. Empty on older rows. */
   client?: string
+  brains?: string[]
 }
 
 export type ClientBrain = {
@@ -63,7 +64,8 @@ export function saveTeam(people: TeamPerson[]): TeamPerson[] {
     email: String(p.email || '').trim().toLowerCase(),
     role: p.role === 'scout' || p.role === 'team' ? p.role : ('owner' as const),
     brain: String(p.brain || 'hq'),
-    client: String(p.client || '').trim()
+    client: String(p.client || '').trim(),
+    brains: Array.isArray(p.brains) ? p.brains.map((b) => String(b || '').trim()).filter(Boolean) : []
   }))
   writeJson('team.json', { people: clean })
   return clean

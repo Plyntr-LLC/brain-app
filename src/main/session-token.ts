@@ -9,6 +9,7 @@ export type Account = {
   role?: string
   source?: 'ads2ai' | 'team-file'
   folder?: string
+  brains?: string[]
 }
 
 let memberToken: string | null = null
@@ -36,7 +37,8 @@ function persist(next: Account | null): void {
       token: next.token,
       role: next.role || '',
       source: next.source || 'ads2ai',
-      folder: next.folder || ''
+      folder: next.folder || '',
+      brains: next.brains || []
     })
   )
   try {
@@ -59,7 +61,8 @@ export function loadAccount(): Account | null {
       token,
       role: String(raw.role || ''),
       source: raw.source === 'team-file' ? 'team-file' : 'ads2ai',
-      folder: String(raw.folder || '')
+      folder: String(raw.folder || ''),
+      brains: Array.isArray(raw.brains) ? raw.brains.map((b) => String(b || '').trim()).filter(Boolean) : []
     }
     memberToken = token
     return account
@@ -75,7 +78,8 @@ export function saveAccount(next: Account): Account {
     token: String(next.token || ''),
     role: String(next.role || ''),
     source: next.source === 'team-file' ? 'team-file' : 'ads2ai',
-    folder: String(next.folder || '')
+    folder: String(next.folder || ''),
+    brains: Array.isArray(next.brains) ? next.brains.map((b) => String(b || '').trim()).filter(Boolean) : []
   })
   return account as Account
 }

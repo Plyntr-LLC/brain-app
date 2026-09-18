@@ -4,7 +4,15 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { DOWNLOAD_AB, GITHUB_APP_INSTALL, GITHUB_NEW_ORG, type AiKind } from '../shared/contracts'
 import * as ads2ai from './ads2ai'
 import { homedir } from 'node:os'
-import { detectApp, readTeamMember, readTeamRoster, readWatching, writesAllowed } from './agency-brain'
+import {
+  detectApp,
+  listProjectFolders,
+  readTeamMember,
+  readTeamRoster,
+  readWatching,
+  upsertTeamMember,
+  writesAllowed
+} from './agency-brain'
 import { cloneBrain } from './clone'
 import { startBrainSync, stopBrainSync } from './brain-sync'
 import { installNeed, isNeedId, listNeeds, loginCli } from './install'
@@ -113,6 +121,41 @@ export function registerStubIpc(): void {
   ipcMain.handle('settings:saveTeam', (_e, people: TeamPerson[]) => saveTeam(people))
   ipcMain.handle('settings:clients', () => loadClients())
   ipcMain.handle('settings:saveClients', (_e, clients: ClientBrain[]) => saveClients(clients))
+  ipcMain.handle('settings:projects', (_e, folder?: string) => {
+    const watching = readWatching()
+    const acct = getAccount()
+    return listProjectFolders(folder || watching.brainPath || acct?.folder || null)
+  })
+  ipcMain.handle('settings:addTeammate', (_e, person: TeamPerson) => {
+    const watching = readWatching()
+    const acct = getAccount()
+    const folder = watching.brainPath || acct?.folder || null
+    const email = String(person.email || '').trim().toLowerCase()
+    const brains = Array.isArray(person.brains)
+      ? person.brains.map((b) => String(b || '').trim()).filter(Boolean)
+      : person.brain && person.brain !== 'hq'
+        ? [person.brain]
+        : []
+    const row: TeamPerson = {
+      name: String(person.name || '').trim(),
+      email,
+      role: person.role === 'scout' || person.role === 'team' ? person.role : 'owner',
+      brain: brains[0] || 'hq',
+      client: String(person.client || '').trim(),
+      brains
+    }
+    const people = loadTeam()
+    const rest = people.filter((p) => !(p.email === email && (p.client || '') === (row.client || '')))
+    const saved = saveTeam([...rest, row])
+    const wrote = upsertTeamMember(folder, {
+      email,
+      name: row.name,
+      role: row.role,
+      brains
+    })
+    if (folder) startBrainSync(folder)
+    return { people: saved, roster: wrote }
+  })
 
   ipcMain.handle('auth:resolveCode', async (_e, raw: string) => {
     const code = String(raw || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase()
@@ -193,7 +236,8 @@ export function registerStubIpc(): void {
       token: `local:${member.email}`,
       role: member.role,
       source: 'team-file',
-      folder
+      folder,
+      brains: member.brains || []
     })
     saveRecent(folder)
     startBrainSync(folder)
