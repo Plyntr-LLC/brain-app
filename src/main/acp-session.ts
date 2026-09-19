@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron'
 import type { AiKind } from '../shared/contracts'
 import type { SessionCmd, StreamEvent } from './ai-cli'
 import { binEnv, resolveBin } from './ai-cli'
+import { loginCli } from './install'
 import { acpPromptParts, type Attach } from './attach'
 import { asRecord, asText, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 
@@ -378,6 +379,37 @@ function handleReq(pool: Pool, msg: RpcMsg): void {
   pool.rpc.reply(msg.id, {})
 }
 
+async function acpAuthenticate(rpc: LineRpc, methods: unknown[], kind: 'grok' | 'cursor'): Promise<void> {
+  const ids = methods
+    .map((m) => String(asRecord(m).id || ''))
+    .filter(Boolean)
+  const order: string[] = []
+  if (ids.includes('cached_token')) order.push('cached_token')
+  for (const id of ids) if (!order.includes(id)) order.push(id)
+  let last = ''
+  for (const methodId of order) {
+    try {
+      await rpc.request('authenticate', { methodId }, 0)
+      return
+    } catch (e) {
+      last = String((e as Error).message || e)
+    }
+  }
+  if (kind === 'grok') {
+    await loginCli('grok').catch(() => {})
+    try {
+      await rpc.request('authenticate', { methodId: 'cached_token' }, 0)
+      return
+    } catch (e) {
+      last = String((e as Error).message || e)
+    }
+    throw new Error(
+      'Grok Chat needs you to sign in. Terminal can be signed in while Chat is not. Finish grok login in the window that opened, then send again.'
+    )
+  }
+  if (last && /auth/i.test(last)) throw new Error(last)
+}
+
 async function bootPool(kind: 'grok' | 'cursor', cwd: string): Promise<Pool> {
   const key = poolKey(kind, cwd)
   const existing = pools.get(key)
@@ -421,22 +453,24 @@ async function bootPoolNow(kind: 'grok' | 'cursor', cwd: string, key: string): P
       )
     )
     const methods = Array.isArray(init.authMethods) ? init.authMethods : []
-    const cached = methods.find((m) => asRecord(m).id === 'cached_token')
-    const methodId = asRecord(cached || methods[0]).id
-    if (typeof methodId === 'string') {
-      try {
-        await pool.rpc.request('authenticate', { methodId, _meta: { headless: true } }, 0)
-      } catch {
-        /* already signed in, or this CLI signs in another way */
-      }
-    }
+    await acpAuthenticate(pool.rpc, methods, kind)
   })()
   proc.on('exit', () => {
     if (pools.get(key) === pool) pools.delete(key)
     for (const tabId of pool.tabs.keys()) tabPool.delete(tabId)
   })
   pools.set(key, pool)
-  await pool.boot
+  try {
+    await pool.boot
+  } catch (e) {
+    pools.delete(key)
+    try {
+      pool.rpc.proc.kill()
+    } catch {
+      /* gone */
+    }
+    throw e
+  }
   return pool
 }
 
@@ -579,7 +613,19 @@ export async function acpWarm(opts: {
         opts.kind === 'grok'
           ? { cwd: opts.cwd, mcpServers: [], _meta: { yoloMode: true, rules: RULES } }
           : { cwd: opts.cwd, mcpServers: [] }
-      res = asRecord(await pool.rpc.request('session/new', params, 0))
+      try {
+        res = asRecord(await pool.rpc.request('session/new', params, 0))
+      } catch (e) {
+        const msg = String((e as Error).message || e)
+        if (!/auth/i.test(msg)) throw e
+        if (opts.kind === 'grok') {
+          await loginCli('grok').catch(() => {})
+          throw new Error(
+            'Grok Chat needs you to sign in. Finish grok login in the window that opened, then send again.'
+          )
+        }
+        throw new Error(msg)
+      }
     }
     if (!res) throw new Error(`${opts.kind} did not return a session`)
     const sessionId = String(res.sessionId || '')
