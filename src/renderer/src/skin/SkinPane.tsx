@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { queueSpec, specFromStreamEvent, userMessageSpec } from '../../../shared/skin/from-events'
+import { specFromStreamEvent, userMessageSpec } from '../../../shared/skin/from-events'
 import type { SkinSpec } from '../../../shared/skin/spec'
 import type { AiKind } from '@shared/contracts'
 import { cleanThink, stripAnsi, type FileHit } from '../ptyChat'
@@ -36,7 +36,6 @@ export function SkinPane({
   busy,
   waitLabel,
   waitSec,
-  queue,
   permission,
   threadRef,
   onScroll,
@@ -54,7 +53,6 @@ export function SkinPane({
   busy: boolean
   waitLabel: string
   waitSec: number
-  queue: { text: string }[]
   permission: {
     title?: string
     path?: string
@@ -115,8 +113,6 @@ export function SkinPane({
       specs.push({ spec: s })
     }
   }
-  const q = queueSpec(queue)
-  if (q) specs.push({ spec: q })
   specs.forEach((row, i) => {
     row.spec.id = 'row-' + i + '-' + row.spec.component
   })

@@ -1387,7 +1387,6 @@ function ChatPane({
         busy={busy || compacting || warming}
         waitLabel={compacting ? 'Compacting' : waitLabel}
         waitSec={waitSec}
-        queue={queue}
         permission={permission}
         threadRef={thread}
         onScroll={onThreadScroll}
