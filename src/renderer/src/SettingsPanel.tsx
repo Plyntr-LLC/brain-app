@@ -9,63 +9,16 @@ type Person = {
   client?: string
   brains?: string[]
 }
-type Client = {
-  company: string
-  slug: string
-  hqName: string
-  hqAddress: string
-  projects: { id: string; name: string; people: string; address: string }[]
-  setupLink: string
-}
 
-function slugify(s: string): string {
-  return (
-    String(s || '')
-      .toLowerCase()
-      .trim()
-      .replace(/[''`]/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 32) || 'client'
-  )
-}
-
-function blankClient(): Client {
-  return {
-    company: '',
-    slug: '',
-    hqName: '',
-    hqAddress: '',
-    projects: [],
-    setupLink: ''
-  }
-}
-
-function asClient(raw: Record<string, unknown>): Client {
-  const rawProjects = Array.isArray(raw.projects) ? raw.projects : []
-  const used = new Set<string>()
-  const projects = rawProjects
-    .filter((p) => p && typeof p === 'object')
-    .map((p, i) => {
-      const row = p as Record<string, unknown>
-      let id = String(row.id || '').trim() || `project-${i + 1}`
-      while (used.has(id)) id = `${id}-2`
-      used.add(id)
-      return {
-        id,
-        name: String(row.name || ''),
-        people: String(row.people || ''),
-        address: String(row.address || '')
-      }
-    })
-  return {
-    company: String(raw.company || ''),
-    slug: String(raw.slug || ''),
-    hqName: String(raw.hqName || ''),
-    hqAddress: String(raw.hqAddress || ''),
-    projects,
-    setupLink: String(raw.setupLink || '')
-  }
+type HqStatus = {
+  signedIn: boolean
+  email: string
+  kind: string
+  hq_repo: string
+  brain_label: string
+  projects: { slug: string; path: string }[]
+  seats: { seat_id: string; email: string; name: string; status: string; roots: string[]; kind: string }[]
+  businesses: { id: string; name: string; hq_repo: string; owners: { email: string; name: string; role: string }[] }[]
 }
 
 function prettyName(raw: string): string {
@@ -91,25 +44,20 @@ export function SettingsPanel({
   const [people, setPeople] = useState<Person[]>([])
   const [draft, setDraft] = useState<Person>({ name: '', email: '', role: 'team', brain: '', brains: [] })
   const [liveProjects, setLiveProjects] = useState<{ id: string; name: string }[]>([])
-  const [clients, setClients] = useState<Client[]>([])
-  const [cur, setCur] = useState(0)
   const [note, setNote] = useState('')
   const [loaded, setLoaded] = useState(false)
-  const [moreBrains, setMoreBrains] = useState(false)
   const [appVer, setAppVer] = useState('')
   const [upd, setUpd] = useState('')
   const [skinCap, setSkinCap] = useState(false)
-  const [hq, setHq] = useState<{
-    signedIn: boolean
-    email: string
-    hq_repo: string
-    brain_label: string
-    projects: { slug: string; path: string }[]
-    seats: { seat_id: string; email: string; name: string; status: string; roots: string[]; kind: string }[]
-  } | null>(null)
+  const [hq, setHq] = useState<HqStatus | null>(null)
   const [hqCode, setHqCode] = useState('')
   const [hqRepo, setHqRepo] = useState('')
   const [hqBusy, setHqBusy] = useState(false)
+  const [bizName, setBizName] = useState('')
+  const [bizEmail, setBizEmail] = useState('')
+  const [bizOwnerName, setBizOwnerName] = useState('')
+  const [bizRole, setBizRole] = useState<'owner' | 'scout'>('owner')
+  const [bizBusy, setBizBusy] = useState(false)
   const [captures, setCaptures] = useState<
     {
       fingerprint: string
@@ -135,7 +83,6 @@ export function SettingsPanel({
       const roster = await window.brain.settings.roster().catch(() => [])
       const local = roster.length ? roster : await window.brain.settings.team()
       setPeople(local)
-      setClients(((await window.brain.settings.clients()) as Record<string, unknown>[]).map(asClient))
       setLiveProjects(await window.brain.settings.projects().catch(() => []))
       const bridge = await window.brain.hqSync.ownerStatus().catch(() => null)
       if (bridge) {
@@ -162,17 +109,6 @@ export function SettingsPanel({
       else if (ev.status === 'error') setUpd(ev.detail || 'Could not check for an update.')
     })
   }, [])
-
-  const client = clients[cur]
-
-  async function persistClients(next: Client[], msg?: string) {
-    const keep = next.filter((c) => c.company.trim())
-    const raw = await window.brain.settings.saveClients(keep)
-    const saved = Array.isArray(raw) ? raw.map((row) => asClient(row as Record<string, unknown>)) : keep
-    setClients(saved)
-    if (cur >= saved.length) setCur(Math.max(0, saved.length - 1))
-    setNote(msg || 'Saved.')
-  }
 
   if (!loaded) {
     return (
@@ -297,6 +233,10 @@ export function SettingsPanel({
                   </button>
                 </div>
               </>
+            ) : hq.kind === 'platform' ? (
+              <p className="tiny">
+                This is the platform login. Company owners connect GitHub after they get the login email.
+              </p>
             ) : (
               <>
                 <label className="field">
@@ -557,58 +497,76 @@ export function SettingsPanel({
       {joe && superAdmin ? (
         <section className="set-block">
           <p className="kicker">Superadmin</p>
-          <h3 className="set-h">Other brains</h3>
-          <p>Only you see this. Add a company or another brain here. Everyone else only sees the brain they are in.</p>
-          {!moreBrains ? (
-            <button className="ghost" type="button" onClick={() => setMoreBrains(true)}>
-              Add another brain
-            </button>
+          <h3 className="set-h">Add a company</h3>
+          <p>Only you see this. Adding a company emails that person a login. They connect GitHub themselves.</p>
+          {!hq?.signedIn ? (
+            <p className="tiny">Sign in for project sync above with joe@plyntr.com first.</p>
+          ) : hq.kind !== 'platform' && !(hq.businesses || []).length ? (
+            <p className="tiny">This login cannot add companies. Sign in with joe@plyntr.com.</p>
           ) : (
             <>
-              {clients.map((c, i) => (
-                <p className="tiny" key={c.slug || i}>
-                  {c.company || 'Untitled'}
+              {(hq.businesses || []).map((b) => (
+                <p className="tiny" key={b.id}>
+                  {b.name}
+                  {b.owners?.[0]?.email ? ` · ${b.owners[0].email}` : ''}
+                  {b.hq_repo ? ` · ${b.hq_repo}` : ''}
                 </p>
               ))}
               <label className="field">
                 Company name
+                <input value={bizName} onChange={(e) => setBizName(e.target.value)} placeholder="Acme" />
+              </label>
+              <label className="field">
+                First owner name
                 <input
-                  value={client?.company || ''}
-                  onChange={(e) => {
-                    const next = clients.slice()
-                    const row = next[cur] || blankClient()
-                    next[cur] = { ...row, company: e.target.value }
-                    setClients(next)
-                  }}
-                  placeholder="Acme"
+                  value={bizOwnerName}
+                  onChange={(e) => setBizOwnerName(e.target.value)}
+                  placeholder="Pat"
                 />
+              </label>
+              <label className="field">
+                First owner email
+                <input
+                  value={bizEmail}
+                  onChange={(e) => setBizEmail(e.target.value)}
+                  placeholder="pat@acme.org"
+                />
+              </label>
+              <label className="field">
+                Role
+                <select value={bizRole} onChange={(e) => setBizRole(e.target.value === 'scout' ? 'scout' : 'owner')}>
+                  <option value="owner">owner</option>
+                  <option value="scout">scout</option>
+                </select>
               </label>
               <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
                 <button
                   className="primary"
                   type="button"
-                  onClick={() => {
-                    const row = clients[cur] || blankClient()
-                    if (!row.company.trim()) {
-                      setNote('Type a company name.')
-                      return
+                  disabled={bizBusy || !bizName.trim() || !bizEmail.includes('@')}
+                  onClick={async () => {
+                    try {
+                      setBizBusy(true)
+                      const res = await window.brain.hqSync.addCompany({
+                        name: bizName,
+                        email: bizEmail,
+                        owner_name: bizOwnerName,
+                        role: bizRole
+                      })
+                      setNote(res.detail)
+                      setBizName('')
+                      setBizEmail('')
+                      setBizOwnerName('')
+                      setBizRole('owner')
+                      setHq(await window.brain.hqSync.ownerStatus())
+                    } catch (e) {
+                      setNote(String((e as Error).message || e))
+                    } finally {
+                      setBizBusy(false)
                     }
-                    const next = clients.slice()
-                    next[cur] = { ...row, slug: row.slug.trim() || slugify(row.company) }
-                    void persistClients(next, `Saved ${row.company}.`)
                   }}
                 >
-                  Save
-                </button>
-                <button
-                  className="ghost"
-                  type="button"
-                  onClick={() => {
-                    setClients([...clients, blankClient()])
-                    setCur(clients.length)
-                  }}
-                >
-                  New company
+                  {bizBusy ? 'Sending login…' : 'Add company and send login'}
                 </button>
               </div>
             </>

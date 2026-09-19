@@ -5,6 +5,9 @@ import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { app } from 'electron'
 import { parseGithubHqRepo } from './github-repo'
+import { getAccount, loadAccount } from './session-token'
+import { getSettings } from './settings-store'
+import { isJoeSuperAdmin } from './super-admin'
 
 export const HQ_SYNC_ORIGIN = 'https://brain-sync.joe-84a.workers.dev'
 
@@ -92,7 +95,14 @@ function ownerPath(): string {
   return join(app.getPath('userData'), 'hq-owner.json')
 }
 
-export type OwnerSession = { email: string; token: string; hq_repo?: string }
+export type OwnerSession = { email: string; token: string; hq_repo?: string; kind?: string }
+
+export type PlatformBusiness = {
+  id: string
+  name: string
+  hq_repo: string
+  owners: { email: string; name: string; role: string }[]
+}
 
 export function loadOwnerSession(): OwnerSession | null {
   try {
@@ -100,7 +110,7 @@ export function loadOwnerSession(): OwnerSession | null {
     const email = String(raw.email || '').trim().toLowerCase()
     const token = String(raw.token || '')
     if (!email || !token) return null
-    return { email, token, hq_repo: String(raw.hq_repo || '') }
+    return { email, token, hq_repo: String(raw.hq_repo || ''), kind: String(raw.kind || '') }
   } catch {
     return null
   }
@@ -372,19 +382,21 @@ export async function ownerLogin(opts: { email: string; code: string }): Promise
   if (seat.kind === 'client-project') {
     throw new Error('That email is a project person. They sign in on the first screen, not in Settings.')
   }
-  saveOwnerSession({ email, token, hq_repo: String(seat.hq_repo || '') })
+  const kind = String(seat.kind || 'owner')
+  saveOwnerSession({ email, token, hq_repo: String(seat.hq_repo || ''), kind })
   return {
     ok: true,
     email,
-    kind: String(seat.kind || 'owner'),
+    kind,
     hq_repo: String(seat.hq_repo || ''),
     brain_label: String(seat.brain_label || '')
   }
 }
 
-export async function ownerStatus(): Promise<{
+function emptyOwnerStatus(): {
   signedIn: boolean
   email: string
+  kind: string
   hq_repo: string
   brain_label: string
   projects: { slug: string; path: string }[]
@@ -396,16 +408,56 @@ export async function ownerStatus(): Promise<{
     roots: string[]
     kind: string
   }[]
+  businesses: PlatformBusiness[]
+} {
+  return {
+    signedIn: false,
+    email: '',
+    kind: '',
+    hq_repo: '',
+    brain_label: '',
+    projects: [],
+    seats: [],
+    businesses: []
+  }
+}
+
+export async function ownerStatus(): Promise<{
+  signedIn: boolean
+  email: string
+  kind: string
+  hq_repo: string
+  brain_label: string
+  projects: { slug: string; path: string }[]
+  seats: {
+    seat_id: string
+    email: string
+    name: string
+    status: string
+    roots: string[]
+    kind: string
+  }[]
+  businesses: PlatformBusiness[]
 }> {
   const session = loadOwnerSession()
-  if (!session) {
-    return { signedIn: false, email: '', hq_repo: '', brain_label: '', projects: [], seats: [] }
-  }
+  if (!session) return emptyOwnerStatus()
   const api = await ownerApi(session.token)
+  const plat = await api.json('/platform/status')
+  const businesses = plat.ok && Array.isArray(plat.body.businesses) ? (plat.body.businesses as PlatformBusiness[]) : []
   const st = await api.json('/owner/status')
+  if (plat.ok && !st.ok) {
+    if (session.kind !== 'platform') saveOwnerSession({ ...session, kind: 'platform' })
+    return {
+      ...emptyOwnerStatus(),
+      signedIn: true,
+      email: session.email,
+      kind: 'platform',
+      businesses
+    }
+  }
   if (!st.ok) {
     saveOwnerSession(null)
-    return { signedIn: false, email: '', hq_repo: '', brain_label: '', projects: [], seats: [] }
+    return emptyOwnerStatus()
   }
   const projects = await api.json('/owner/projects')
   const seats = await api.json('/owner/seats')
@@ -425,8 +477,10 @@ export async function ownerStatus(): Promise<{
   return {
     signedIn: true,
     email: session.email,
+    kind: String(session.kind || 'owner'),
     hq_repo: hq,
     brain_label: String(st.body.brain_label || ''),
+    businesses,
     projects: Array.isArray(projects.body.projects)
       ? (projects.body.projects as { slug: string; path: string }[])
       : Array.isArray(st.body.projects)
@@ -441,6 +495,43 @@ export async function ownerStatus(): Promise<{
       roots: p.roots || (p.projects || []).map((slug) => `projects/${slug}/`)
     }))
   }
+}
+
+function assertJoeSuper(): void {
+  if (!isJoeSuperAdmin(getAccount() || loadAccount(), getSettings())) {
+    throw new Error('Only the superadmin can add a company.')
+  }
+}
+
+export async function addCompany(opts: {
+  name: string
+  email: string
+  owner_name: string
+  role?: string
+}): Promise<{ ok: true; business: PlatformBusiness; detail: string }> {
+  assertJoeSuper()
+  const session = loadOwnerSession()
+  if (!session) {
+    throw new Error('Sign in for project sync first. Use joe@plyntr.com and the code from your email.')
+  }
+  const api = await ownerApi(session.token)
+  const res = await api.json('/platform/businesses', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      name: String(opts.name || '').trim(),
+      email: String(opts.email || '')
+        .trim()
+        .toLowerCase(),
+      owner_name: String(opts.owner_name || '').trim(),
+      role: opts.role === 'scout' ? 'scout' : 'owner'
+    })
+  })
+  if (!res.ok) {
+    throw new Error(String((res.body && (res.body.detail || res.body.error)) || 'Could not add that company.'))
+  }
+  const business = (res.body.business || {}) as PlatformBusiness
+  return { ok: true, business, detail: 'Login email sent.' }
 }
 
 export function hqRepoFromFolder(folder: string): string {

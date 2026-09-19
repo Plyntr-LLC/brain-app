@@ -17,6 +17,7 @@ import {
 import { cloneBrain } from './clone'
 import { startBrainSync, stopBrainSync } from './brain-sync'
 import {
+  addCompany,
   addProjectSeat,
   existingProjectSeat,
   isHqMiniFolder,
@@ -29,6 +30,7 @@ import {
   requestHqCode,
   revokeProjectSeat
 } from './hq-sync'
+import { isJoeSuperAdmin } from './super-admin'
 import { classifyLogin, type LoginVia } from './login-route'
 import { installNeed, isNeedId, listNeeds, loginCli } from './install'
 import * as ai from './ai-cli'
@@ -123,14 +125,13 @@ export function registerStubIpc(): void {
     const file = getSettings()
     const acct = getAccount() || loadAccount()
     const email = String(acct?.email || '').toLowerCase()
-    const joe = email === 'joe@plyntr.com'
     const folder = watching.brainPath || acct?.folder || null
     const roster = readTeamRoster(folder)
     const member = readTeamMember(folder, email)
     const displayName = String(acct?.name || member?.name || '').trim() || (email ? email.split('@')[0] : '')
     const brainName = String(roster?.name || watching.teamName || watching.name || '').trim()
     const plyntrBrain = (roster?.slug || watching.teamSlug) === 'plyntr'
-    const superAdmin = joe && acct?.source !== 'team-file' && acct?.source !== 'hq-sync' && file.superAdmin !== false
+    const superAdmin = isJoeSuperAdmin(acct, file)
     const hqMini = acct?.source === 'hq-sync' || isHqMiniFolder(acct?.folder)
     return {
       superAdmin,
@@ -398,6 +399,13 @@ export function registerStubIpc(): void {
     })
   )
   ipcMain.handle('hqSync:revoke', (_e, seatId: string) => revokeProjectSeat(seatId))
+  ipcMain.handle(
+    'hqSync:addCompany',
+    (
+      _e,
+      opts: { name: string; email: string; owner_name: string; role?: string }
+    ) => addCompany(opts)
+  )
 
   ipcMain.handle('setup:createTeam', async (_e, name: string) => {
     if (!writesAllowed()) {

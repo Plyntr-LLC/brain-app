@@ -170,10 +170,18 @@ const brain = {
       ipcRenderer.invoke('hqSync:ownerStatus') as Promise<{
         signedIn: boolean
         email: string
+        kind: string
         hq_repo: string
         brain_label: string
         projects: { slug: string; path: string }[]
         seats: { seat_id: string; email: string; name: string; status: string; roots: string[]; kind: string }[]
+        businesses: { id: string; name: string; hq_repo: string; owners: { email: string; name: string; role: string }[] }[]
+      }>,
+    addCompany: (opts: { name: string; email: string; owner_name: string; role?: string }) =>
+      ipcRenderer.invoke('hqSync:addCompany', opts) as Promise<{
+        ok: true
+        business: { id: string; name: string; hq_repo: string; owners: { email: string; name: string; role: string }[] }
+        detail: string
       }>,
     watchedRepo: () => ipcRenderer.invoke('hqSync:watchedRepo') as Promise<string>,
     bind: (hqRepo: string) =>
