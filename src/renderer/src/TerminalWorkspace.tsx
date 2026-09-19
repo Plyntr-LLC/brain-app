@@ -56,6 +56,16 @@ function wantsStop(text: string): boolean {
 function justStop(text: string): boolean {
   return /^\s*(please\s+)?(just\s+)?(stop|cancel|abort|never mind|nevermind|halt)\s*[.!]?\s*$/i.test(text)
 }
+
+function liveUsageNote(ctx: { used?: number; total?: number; percent?: number }): string {
+  if (ctx.percent == null && ctx.used == null) return ''
+  const n = (v: number) => v.toLocaleString('en-US')
+  const bits = ['This chat']
+  if (ctx.percent != null) bits.push(`Context: ${ctx.percent}%`)
+  if (ctx.used != null && ctx.total != null) bits.push(`${n(ctx.used)} / ${n(ctx.total)} tokens`)
+  else if (ctx.used != null) bits.push(`${n(ctx.used)} tokens`)
+  return bits.join('\n')
+}
 type FileNode = { name: string; path: string; dir: boolean; kids?: FileNode[] }
 type Cap = { id: string; label: string }
 type SessionCmd = { name: string; description: string; hint?: string }
@@ -858,11 +868,12 @@ function ChatPane({
       return true
     }
     if (name === 'usage' || name === 'cost') {
-      if (kind === 'grok' || kind === 'cursor') {
-        void sendQuiet('/usage')
-        return true
-      }
-      void window.brain.slash.usage(cwd, kind).then((body) => popup('Usage', body))
+      popup('Usage', 'Loading…')
+      const live = liveUsageNote(ctxRef.current)
+      void window.brain.slash
+        .usage(cwd, kind, cliSid)
+        .then((body) => popup('Usage', [body, live].filter(Boolean).join('\n\n') || '(no output)'))
+        .catch((e: unknown) => popup('Usage', String((e as Error).message || e)))
       return true
     }
     if (name === 'model' || name === 'm') {

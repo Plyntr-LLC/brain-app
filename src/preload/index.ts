@@ -229,7 +229,8 @@ const brain = {
         models: { id: string; label: string }[]
       }>,
     context: (cwd?: string) => ipcRenderer.invoke('slash:context', cwd) as Promise<string>,
-    usage: (cwd?: string, kind?: string) => ipcRenderer.invoke('slash:usage', cwd, kind) as Promise<string>,
+    usage: (cwd?: string, kind?: string, sessionId?: string) =>
+      ipcRenderer.invoke('slash:usage', cwd, kind, sessionId) as Promise<string>,
     sessions: (cwd?: string) =>
       ipcRenderer.invoke('slash:sessions', cwd) as Promise<{ id: string; title: string; updated: string }[]>,
     cli: (args: string[], cwd?: string) => ipcRenderer.invoke('slash:cli', args, cwd) as Promise<string>

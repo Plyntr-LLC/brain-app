@@ -599,9 +599,9 @@ export function registerStubIpc(): void {
     writeFileSync(r.filePath, String(text || ''))
     return r.filePath
   })
-  ipcMain.handle('slash:usage', async (_e, cwd?: string, kind?: string) => {
+  ipcMain.handle('slash:usage', async (_e, cwd?: string, kind?: string, sessionId?: string) => {
     const watching = readWatching()
-    return usageBlurb(cwd || watching.brainPath || process.cwd(), kind || 'grok')
+    return usageBlurb(cwd || watching.brainPath || process.cwd(), kind || 'grok', sessionId)
   })
   ipcMain.handle('slash:cli', async (_e, args: string[], cwd?: string) => {
     const watching = readWatching()

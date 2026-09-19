@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { binEnv, resolveBin } from './ai-cli'
 import { listCodexCaps } from './codex-app'
+import { grokLeaderSocket } from './grok-args'
 
 export type SlashCmd = { name: string; kind: 'builtin' | 'skill'; description: string }
 
@@ -139,7 +140,7 @@ function appBuiltins(kind: string): SlashCmd[] {
     { name: 'effort', kind: 'builtin', description: 'Reasoning effort' },
     { name: 'history', kind: 'builtin', description: 'This chat’s prompts' },
     { name: 'help', kind: 'builtin', description: 'List commands' },
-    { name: 'usage', kind: 'builtin', description: 'Account usage' },
+    { name: 'usage', kind: 'builtin', description: 'Plan spend and this session' },
     { name: 'terminal', kind: 'builtin', description: 'Open a terminal tab' }
   ]
   if (kind === 'grok') {
@@ -292,27 +293,205 @@ function grokAccount(): { email?: string; name?: string } {
   }
 }
 
-export async function usageBlurb(cwd: string, kind = 'grok'): Promise<string> {
-  if (kind === 'cursor') {
-    const cursor = resolveBin('cursor')
-    if (!cursor) return 'Cursor CLI is not installed.'
+function cursorStateDb(): string {
+  if (process.platform === 'win32') {
+    return join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'Cursor', 'User', 'globalStorage', 'state.vscdb')
+  }
+  if (process.platform === 'darwin') {
+    return join(homedir(), 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb')
+  }
+  return join(homedir(), '.config', 'Cursor', 'User', 'globalStorage', 'state.vscdb')
+}
+
+function runSplit(bin: string, args: string[]): Promise<{ out: string; err: string; code: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let out = ''
+    let err = ''
+    child.stdout.on('data', (d) => {
+      out += String(d)
+    })
+    child.stderr.on('data', (d) => {
+      err += String(d)
+    })
+    child.on('error', reject)
+    child.on('close', (code) => resolve({ out, err, code: code ?? 1 }))
+  })
+}
+
+function unwrapSqliteText(raw: string): string | null {
+  const t = raw.trim()
+  if (!t) return null
+  if (t.startsWith('"')) {
     try {
-      const raw = await run(cursor, ['about', '--format', 'json'], cwd)
-      const o = JSON.parse(raw.slice(raw.indexOf('{'))) as {
-        userEmail?: string
-        subscriptionTier?: string
-        model?: string
-        cliVersion?: string
+      const v = JSON.parse(t)
+      return typeof v === 'string' && v ? v : null
+    } catch {
+      return t
+    }
+  }
+  return t
+}
+
+function tokLooksSafe(tok: string): boolean {
+  if (tok.length < 40 || tok.includes('\n') || /error/i.test(tok)) return false
+  return /^[\w.-]+$/.test(tok)
+}
+
+async function cursorAccessToken(): Promise<string | null> {
+  const db = cursorStateDb()
+  if (!existsSync(db)) return null
+  const sql = "SELECT value FROM ItemTable WHERE key='cursorAuth/accessToken' LIMIT 1;"
+  try {
+    const sqlite = process.platform === 'win32' ? 'sqlite3' : '/usr/bin/sqlite3'
+    const r = await runSplit(sqlite, ['-readonly', db, sql])
+    const tok = unwrapSqliteText(r.out)
+    if (tok && tokLooksSafe(tok)) return tok
+  } catch {
+    /* */
+  }
+  try {
+    const py = process.platform === 'win32' ? 'python' : '/usr/bin/python3'
+    const r = await runSplit(py, [
+      '-c',
+      'import sqlite3,sys\ncon=sqlite3.connect(sys.argv[1])\nrow=con.execute("SELECT value FROM ItemTable WHERE key=?",("cursorAuth/accessToken",)).fetchone()\nv="" if not row or row[0] is None else row[0]\nsys.stdout.write(v.decode() if isinstance(v,bytes) else str(v))',
+      db
+    ])
+    const tok = unwrapSqliteText(r.out)
+    return tok && tokLooksSafe(tok) ? tok : null
+  } catch {
+    return null
+  }
+}
+
+function usdFromCents(cents: number): string {
+  return `$${(Number(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function dayFromMs(raw: unknown): string {
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return ''
+  return new Date(n).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+async function cursorApiJson(path: string, token: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`https://api2.cursor.sh${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Connect-Protocol-Version': '1'
+    },
+    body: '{}',
+    signal: AbortSignal.timeout(12_000)
+  })
+  if (!res.ok) throw new Error(`Cursor usage ${res.status}`)
+  const o = (await res.json()) as Record<string, unknown>
+  return o && typeof o === 'object' ? o : {}
+}
+
+function formatCursorPlan(period: Record<string, unknown>, plan: Record<string, unknown>, agg: Record<string, unknown>): string {
+  const planInfo = (plan.planInfo || {}) as Record<string, unknown>
+  const usage = (period.planUsage || {}) as Record<string, unknown>
+  const start = dayFromMs(period.billingCycleStart)
+  const end = dayFromMs(period.billingCycleEnd)
+  const lines = ['This billing cycle']
+  if (start && end) lines.push(`${start} – ${end}`)
+  const name = String(planInfo.planName || '')
+  const price = String(planInfo.price || '')
+  if (name || price) lines.push([name, price].filter(Boolean).join(' · '))
+  if (usage.limit != null) lines.push(`Included: ${usdFromCents(Number(usage.limit))}`)
+  if (usage.totalSpend != null) lines.push(`Used: ${usdFromCents(Number(usage.totalSpend))}`)
+  if (usage.includedSpend != null || usage.bonusSpend != null) {
+    const parts = []
+    if (usage.includedSpend != null) parts.push(`included ${usdFromCents(Number(usage.includedSpend))}`)
+    if (usage.bonusSpend != null && Number(usage.bonusSpend) > 0) parts.push(`bonus ${usdFromCents(Number(usage.bonusSpend))}`)
+    if (parts.length) lines.push(`  (${parts.join(' + ')})`)
+  }
+  const auto = String(period.autoModelSelectedDisplayMessage || '').trim()
+  const named = String(period.namedModelSelectedDisplayMessage || '').trim()
+  const msg = String(period.displayMessage || '').trim()
+  if (auto) lines.push(auto)
+  if (named) lines.push(named)
+  if (msg) lines.push(msg)
+  const rows = Array.isArray(agg.aggregations) ? (agg.aggregations as Record<string, unknown>[]) : []
+  const top = rows
+    .map((r) => ({
+      model: String(r.modelIntent || '').trim(),
+      cents: Number(r.totalCents || 0)
+    }))
+    .filter((r) => r.model && r.cents > 0)
+    .sort((a, b) => b.cents - a.cents)
+    .slice(0, 6)
+  if (top.length) {
+    lines.push('', 'By model')
+    for (const r of top) lines.push(`${r.model}  ${usdFromCents(r.cents)}`)
+  }
+  lines.push('', 'Open: https://cursor.com/dashboard?tab=usage')
+  return lines.join('\n')
+}
+
+async function cursorAboutBlurb(cwd: string): Promise<string> {
+  const cursor = resolveBin('cursor')
+  if (!cursor) return ''
+  try {
+    const raw = await run(cursor, ['about', '--format', 'json'], cwd)
+    const o = JSON.parse(raw.slice(raw.indexOf('{'))) as {
+      userEmail?: string
+      subscriptionTier?: string
+      model?: string
+      cliVersion?: string
+    }
+    return [
+      'Account',
+      o.userEmail ? `Email: ${o.userEmail}` : '',
+      o.subscriptionTier ? `Plan: ${o.subscriptionTier}` : '',
+      o.model ? `Default model: ${o.model}` : '',
+      o.cliVersion ? `CLI: ${o.cliVersion}` : ''
+    ]
+      .filter(Boolean)
+      .join('\n')
+  } catch {
+    return ''
+  }
+}
+
+async function cursorPlanBlurb(): Promise<string> {
+  const token = await cursorAccessToken()
+  if (!token) {
+    return 'Could not read Cursor usage from this Mac (sign in to the Cursor app once).'
+  }
+  try {
+    const [period, plan, agg] = await Promise.all([
+      cursorApiJson('/aiserver.v1.DashboardService/GetCurrentPeriodUsage', token),
+      cursorApiJson('/aiserver.v1.DashboardService/GetPlanInfo', token),
+      cursorApiJson('/aiserver.v1.DashboardService/GetAggregatedUsageEvents', token)
+    ])
+    return formatCursorPlan(period, plan, agg)
+  } catch (e) {
+    return `Could not read Cursor plan spend.\n${String((e as Error).message || e)}`
+  }
+}
+
+export async function usageBlurb(cwd: string, kind = 'grok', sessionId?: string): Promise<string> {
+  if (kind === 'cursor') {
+    const [plan, about] = await Promise.all([cursorPlanBlurb(), cursorAboutBlurb(cwd)])
+    return [plan, about].filter(Boolean).join('\n\n') || 'Cursor CLI is not installed.'
+  }
+  if (kind === 'grok') {
+    const grok = resolveBin('grok')
+    const sid = String(sessionId || '').trim()
+    if (grok && sid && /^[0-9a-f-]{20,}$/i.test(sid)) {
+      try {
+        const args = ['usage', sid]
+        const sock = grokLeaderSocket()
+        if (existsSync(sock)) args.push('--leader-socket', sock)
+        const raw = await run(grok, args, cwd)
+        const pretty = formatGrokUsage(raw)
+        if (pretty) return pretty
+      } catch (e) {
+        return `Could not read Grok usage.\n${String((e as Error).message || e)}`
       }
-      return [
-        'Cursor account',
-        `Email: ${o.userEmail || ''}`,
-        `Plan: ${o.subscriptionTier || ''}`,
-        `Default model: ${o.model || ''}`,
-        `CLI: ${o.cliVersion || ''}`
-      ].join('\n')
-    } catch (e) {
-      return `Could not read Cursor account.\n${String((e as Error).message || e)}`
     }
   }
   const acct = grokAccount()
@@ -326,6 +505,46 @@ export async function usageBlurb(cwd: string, kind = 'grok'): Promise<string> {
     '',
     `This folder: ${cwd}`
   ].join('\n')
+}
+
+function formatGrokUsage(raw: string): string | null {
+  const text = String(raw || '').trim()
+  if (!text) return null
+  try {
+    const o = JSON.parse(text.slice(text.indexOf('{'))) as {
+      session?: {
+        inputTokens?: number
+        outputTokens?: number
+        cachedReadTokens?: number
+        reasoningTokens?: number
+        totalTokens?: number
+        modelCalls?: number
+        costUsdTicks?: number
+        turnCount?: number
+        primaryModelId?: string
+      }
+    }
+    const s = o.session
+    if (!s) return text.slice(0, 8000)
+    const n = (v?: number) => (v == null ? '' : v.toLocaleString('en-US'))
+    const cost = s.costUsdTicks != null ? `$${(Number(s.costUsdTicks) / 1_000_000_000).toFixed(2)}` : ''
+    return [
+      'This session',
+      s.primaryModelId ? `Model: ${s.primaryModelId}` : '',
+      s.turnCount != null ? `Turns: ${s.turnCount}` : '',
+      s.inputTokens != null ? `Input tokens: ${n(s.inputTokens)}` : '',
+      s.outputTokens != null ? `Output tokens: ${n(s.outputTokens)}` : '',
+      s.cachedReadTokens != null ? `Cached tokens: ${n(s.cachedReadTokens)}` : '',
+      s.reasoningTokens != null ? `Reasoning tokens: ${n(s.reasoningTokens)}` : '',
+      s.totalTokens != null ? `Total tokens: ${n(s.totalTokens)}` : '',
+      s.modelCalls != null ? `Model calls: ${s.modelCalls}` : '',
+      cost ? `Est. cost: ${cost}` : ''
+    ]
+      .filter(Boolean)
+      .join('\n')
+  } catch {
+    return text.slice(0, 8000)
+  }
 }
 
 export async function grokCli(cwd: string, args: string[]): Promise<string> {

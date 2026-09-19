@@ -93,11 +93,13 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Jeen day-one and `/usage` drained. Pack when Joe says pack.
+`/usage` popup is live. Do not pack until Joe says pack.
 
 ## Inbox
 
 Bugs and product gaps. One line each. Date + what.
+
+- [x] 2026-09-19 Joe: `/usage` popup shows real plan/session usage, not Loading and not Cursor `about`. Grok `grok usage` for this session. Cursor plan spend from this Mac’s Cursor login. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `slash.usage` → `cursorPlanBlurb` + `grok usage`; cmdpanel; no ACP `/usage`.
 
 - [x] 2026-09-19 Joe: `/usage` (and `/cost`) goes to the live CLI session, like `/compact`. Grok and Cursor send `/usage` on the warm session. Other CLIs keep the account blurb. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `sendQuiet('/usage')` for grok/cursor.
 
