@@ -100,7 +100,7 @@ HQ sync leftovers, one at a time: grok-4.6 xhigh APPROVE, then live. Do not pack
 Bugs and product gaps. One line each. Date + what.
 
 - [x] 2026-09-19 Joe: While a turn is working, Queue works, but Send now and empty Enter do nothing. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `sendNow` stops the live turn then `sendText({ fromQueue: true, cancel: true })`.
-- [ ] 2026-09-19 Joe: Invite mail and the /install page send people to Brain.app, not the old Brain Bridge zip.
+- [x] 2026-09-19 Joe: Invite mail and the /install page send people to Brain.app, not the old Brain Bridge zip. Done: 2026-09-19. Grok 4.6 xhigh APPROVE (cycle 2). Worker deployed. Evidence: `inviteMail` Download Brain; `installPage` → brain-app releases/latest.
 - [ ] 2026-09-19 Joe: Connect HQ from the watched folder. Open the Brain Bridge GitHub App if needed, wait until GitHub is done, then bind. First-run waits the same way for Agency Brain Sync.
 - [ ] 2026-09-19 Joe: Add a company lives in Settings (platform API), not only the Worker website.
 - [ ] 2026-09-19 Joe: Drop the leftover Railway Brain Bridge wizard. Welcome does not send people to the copier prompt.
