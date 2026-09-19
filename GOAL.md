@@ -92,13 +92,13 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Shipping Brain 0.1.3: packaged app crashed on launch (`electron-updater` CJS named import). Then swap `/Applications/Brain.app`.
+Empty. Inbox is drained. Wait for **next 3** if new lines land. Skin catalog is next when Joe says so.
 
 ## Inbox
 
 Bugs and product gaps. One line each. Date + what.
 
-- [ ] 2026-09-19 Joe: 0.1.2 will not open. Main-process `Named export 'autoUpdater' not found`. Packing 0.1.3.
+- [x] 2026-09-19 Joe: 0.1.2 will not open. Main-process `Named export 'autoUpdater' not found`. Done: 2026-09-19. Evidence: v0.1.3 signed+notarized, GitHub latest, `/Applications/Brain.app` swapped and launched. Direct: https://github.com/Plyntr-LLC/brain-app/releases/latest/download/Brain-0.1.3-mac.dmg
 
 - [x] 2026-09-19 Joe: Brain.app Chat send `Invalid params` (Cursor tab, composer-2.5 / Medium). Done: 2026-09-19. Evidence: v0.1.2 signed+notarized, GitHub release, `/Applications/Brain.app` swapped. Direct: https://github.com/Plyntr-LLC/brain-app/releases/latest/download/Brain-0.1.2-mac.dmg
 
