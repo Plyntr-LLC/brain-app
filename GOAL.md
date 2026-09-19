@@ -93,7 +93,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-`/usage` popup is live. Do not pack until Joe says pack.
+Pack 0.1.5. Joe said pack and swap this Mac.
 
 ## Inbox
 
