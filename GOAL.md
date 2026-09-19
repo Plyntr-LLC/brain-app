@@ -93,7 +93,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Empty until Joe says next 3.
+Pack 0.1.7 so Superadmin Add a company shows the form on this Mac.
 
 ## Inbox
 
