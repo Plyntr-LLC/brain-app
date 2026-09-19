@@ -20,6 +20,7 @@ export function FirstRun() {
   const [showInvite, setShowInvite] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
   const [waitSec, setWaitSec] = useState(0)
+  const [updatedLine, setUpdatedLine] = useState('')
 
   useEffect(() => {
     void (async () => {
@@ -36,6 +37,9 @@ export function FirstRun() {
       if (acct.signedIn && (st.ready || (folder && pick))) screen = 'chat'
       else if (acct.signedIn && (st.watching || folder)) screen = 'aipick'
       else if (acct.signedIn) screen = 'needs'
+      if (e.justUpdated) {
+        setUpdatedLine(`Updated to ${e.justUpdated.to}. Your chats are where you left them.`)
+      }
       setS((prev) => ({
         ...prev,
         dryRun: e.dryRun,
@@ -134,7 +138,7 @@ export function FirstRun() {
   }
 
   return (
-    <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${!railOpen && s.screen !== 'chat' ? 'rail-off' : ''}`}>
+    <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${!railOpen && s.screen !== 'chat' ? 'rail-off' : ''} ${updatedLine ? 'has-update' : ''}`}>
       <div className="titlebar">
         <span>{title}</span>
         {s.role ? (
@@ -156,6 +160,14 @@ export function FirstRun() {
           Settings
         </button>
       </div>
+      {updatedLine ? (
+        <div className="update-note">
+          <span>{updatedLine}</span>
+          <button type="button" className="linkish" onClick={() => setUpdatedLine('')}>
+            Ok
+          </button>
+        </div>
+      ) : null}
       {showInvite && (
         <SettingsPanel
           role={s.role}

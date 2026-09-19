@@ -1,7 +1,36 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import electronUpdater from 'electron-updater'
 
 const { autoUpdater } = electronUpdater
+
+export type JustUpdated = { from: string; to: string } | null
+
+let launchNotice: JustUpdated = null
+
+function seenFile(): string {
+  return join(app.getPath('userData'), 'last-version.json')
+}
+
+/** userData (chats.json) stays across electron-updater installs. */
+export function recordLaunchVersion(): JustUpdated {
+  const to = app.getVersion()
+  let from = ''
+  try {
+    from = String((JSON.parse(readFileSync(seenFile(), 'utf8')) as { version?: string }).version || '')
+  } catch {
+    from = ''
+  }
+  mkdirSync(app.getPath('userData'), { recursive: true })
+  writeFileSync(seenFile(), JSON.stringify({ version: to }))
+  launchNotice = from && from !== to ? { from, to } : null
+  return launchNotice
+}
+
+export function justUpdated(): JustUpdated {
+  return launchNotice
+}
 
 function send(status: string, detail = ''): void {
   for (const w of BrowserWindow.getAllWindows()) {

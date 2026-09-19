@@ -138,7 +138,7 @@ export function SettingsPanel({
       if (ev.status === 'checking') setUpd('Checking for an update…')
       else if (ev.status === 'available') setUpd(`Update ${ev.detail} is downloading.`)
       else if (ev.status === 'none') setUpd('You already have the latest Brain.')
-      else if (ev.status === 'downloaded') setUpd(`Update ${ev.detail} is ready. Restart to install.`)
+      else if (ev.status === 'downloaded') setUpd(`Update ${ev.detail} is ready. Restart to install. Your chats stay.`)
       else if (ev.status === 'error') setUpd(ev.detail || 'Could not check for an update.')
     })
   }, [])

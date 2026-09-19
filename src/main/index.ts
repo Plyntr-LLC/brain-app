@@ -6,7 +6,7 @@ import { loadAccount } from './session-token'
 import { registerStubIpc } from './ipc-stubs'
 import { killAllPtys, registerPtyIpc } from './pty'
 import { killAllWarm, prewarm } from './warm'
-import { registerUpdateIpc, startAutoUpdate } from './update'
+import { registerUpdateIpc, startAutoUpdate, recordLaunchVersion } from './update'
 import { registerSkinIpc } from './skin/ipc'
 
 registerStubIpc()
@@ -57,6 +57,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  recordLaunchVersion()
   createWindow()
   try {
     startAutoUpdate()

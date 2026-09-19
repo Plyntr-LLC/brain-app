@@ -24,6 +24,7 @@ const brain = {
         email: string | null
         watching: boolean
       }
+      justUpdated: { from: string; to: string } | null
     }>,
   bridge: {
     load: () => ipcRenderer.invoke('bridge:load') as Promise<Record<string, unknown> | null>,

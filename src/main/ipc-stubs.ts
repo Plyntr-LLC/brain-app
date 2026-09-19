@@ -23,6 +23,7 @@ import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot } from '.
 import { loadChats, saveChats, type SavedChats } from './persist'
 import { cancelWarm, closeWarm, forkSession, promptWarm, resetWarm, resumeSession, warmSession } from './warm'
 import { captureEvent, skinHint } from './skin/capture'
+import { justUpdated } from './update'
 import { contextBlurb, grokCli, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
 import { clearAccount, getAccount, getMemberToken, loadAccount, saveAccount } from './session-token'
 import {
@@ -72,7 +73,8 @@ export function registerStubIpc(): void {
     return {
       dryRun: dryRun(),
       chatLive: true,
-      existingBrain: watching
+      existingBrain: watching,
+      justUpdated: justUpdated()
     }
   })
 
