@@ -93,7 +93,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Empty. HQ sync leftovers are live on `main`. Do not pack until Joe says pack.
+Pack 0.1.6. Joe said pack and swap this Mac.
 
 ## Inbox
 
