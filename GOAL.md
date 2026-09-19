@@ -92,13 +92,13 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Shipping Brain 0.1.2: Chat send `Invalid params` fix, GitHub release for auto-update, swap `/Applications/Brain.app`. Skin catalog waits until this is in the running app.
+Empty. Inbox is drained. Wait for **next 3** if new lines land. Skin catalog is next when Joe says so.
 
 ## Inbox
 
 Bugs and product gaps. One line each. Date + what.
 
-- [ ] 2026-09-19 Joe: Brain.app Chat send `Invalid params` (Cursor tab, composer-2.5 / Medium). Not Cursor the IDE. Bare model id is invalid on cursor-agent ACP (`composer-2.5[fast=true]` is). Packing 0.1.2.
+- [x] 2026-09-19 Joe: Brain.app Chat send `Invalid params` (Cursor tab, composer-2.5 / Medium). Done: 2026-09-19. Evidence: v0.1.2 signed+notarized, GitHub release, `/Applications/Brain.app` swapped. Direct: https://github.com/Plyntr-LLC/brain-app/releases/latest/download/Brain-0.1.2-mac.dmg
 
 - [x] 2026-09-17 Joe: Cursor send `Invalid params` from Grok `reasoning_effort`. Caps-driven Cursor pickers. Joe: Cursor chat works. Done: 2026-09-17.
 - [x] 2026-09-17 Joe: ChatGPT/Codex model picker lists Grok’s two models. Effort from Codex `model/list` (`reasoningEffort`). Picker no longer falls back to Grok models. Done: 2026-09-17. Evidence: `slash.ts` gpt branch, `codex-app.ts` `listCodexCaps`. Joe should click-check the ChatGPT Model list.
