@@ -92,7 +92,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Empty. Inbox is drained. Wait for **next 3** if new lines land. Skin is opt-in in Chat (not the default). Pack only if Joe says yes.
+Shipping Brain 0.1.4 so Skin is in the installed app. Chat stays the default.
 
 ## Inbox
 
