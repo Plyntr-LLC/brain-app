@@ -117,23 +117,6 @@ export function SetupNeeds({
       if (stop.current) return
       if (!ok) throw new Error(`${item.label} is still missing. Finish that installer, then Start setup again.`)
     }
-    if (item.id === 'ab') {
-      const st = await refresh()
-      const abOn = Boolean(st.items.find((i) => i.id === 'ab')?.present)
-      if (abOn && !st.watching) {
-        if (r.wait !== 'watching') {
-          const open = await window.brain.setup.install('ab')
-          setNote(open.detail)
-        }
-        setBanner('In Agency Brain: sign in, then pick the shared folder. Allow access if macOS or Windows asks.')
-        const ok = await pollUntil(
-          (s) => s.watching,
-          'Waiting for Agency Brain to watch a folder. Sign in and pick the folder in that app.'
-        )
-        if (stop.current) return
-        if (!ok) throw new Error('Agency Brain is not watching a folder yet. Sign in there, pick the folder, then Start setup again.')
-      }
-    }
   }
 
   async function start() {
@@ -147,7 +130,7 @@ export function SetupNeeds({
         return
       }
       const missing = first.items.filter((i) => !i.present)
-      const required = new Set(['brew', 'git', 'ab'])
+      const required = new Set(['brew', 'git'])
       for (const item of missing) {
         if (stop.current) {
           setPhase('review')
@@ -163,12 +146,7 @@ export function SetupNeeds({
           setNote(String((e as Error).message || e))
         }
       }
-      let st = await refresh()
-      if (!st.watching) {
-        const ab = st.items.find((i) => i.id === 'ab')
-        if (ab) await runOne(ab)
-        st = await refresh()
-      }
+      const st = await refresh()
       setBusyId('')
       setBusyLabel('')
       setBanner('')

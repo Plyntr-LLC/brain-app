@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { shell } from 'electron'
 import { DOWNLOAD_AB } from '../shared/contracts'
 import { detectApp, readWatching } from './agency-brain'
+import { loadAccount } from './session-token'
 import { binEnv, detect as detectAi, resolveBin } from './ai-cli'
 import type { AiKind } from '../shared/contracts'
 
@@ -53,8 +54,8 @@ function gitPresent(): boolean {
 
 export function listNeeds(): { ready: boolean; watching: boolean; items: NeedItem[] } {
   const ai = detectAi()
-  const ab = detectApp()
-  const watching = Boolean(readWatching().brainPath)
+  const watchingInfo = readWatching()
+  const watching = Boolean(watchingInfo.brainPath)
   const win32 = process.platform === 'win32'
   const cliWin =
     win32
@@ -67,7 +68,7 @@ export function listNeeds(): { ready: boolean; watching: boolean; items: NeedIte
   items.push({
     id: 'git',
     label: 'Git',
-    line: win32 ? 'Agency Brain needs Git to sync. We install it with winget.' : 'Usually already on a Mac. If not, Apple’s tools installer opens.',
+    line: win32 ? 'This app needs Git to sync the shared folder. We install it with winget.' : 'Usually already on a Mac. If not, Apple’s tools installer opens.',
     present: gitPresent(),
     warn: win32
       ? 'Windows may ask to allow the Git installer. Click Yes.'
@@ -84,18 +85,6 @@ export function listNeeds(): { ready: boolean; watching: boolean; items: NeedIte
       accept: 'Type your Mac password in Terminal, then press Return.'
     })
   }
-  items.push({
-    id: 'ab',
-    label: 'Agency Brain',
-    line: 'Watches the shared folder and keeps git in sync. Official download.',
-    present: ab.installed,
-    warn: win32
-      ? 'Your browser will open the Agency Brain download. Run the installer, open Agency Brain, sign in, and pick the shared folder.'
-      : 'Your browser will open the Agency Brain download. Put the app in Applications, then open it. macOS may say the app is from the internet: click Open. Sign in, then pick the shared folder so it can watch.',
-    accept: win32
-      ? 'Run the Agency Brain installer, then sign in and pick the folder.'
-      : 'Open Agency Brain if macOS asks, then sign in and pick the folder.'
-  })
   items.push({
     id: 'grok',
     label: 'Grok CLI',
@@ -129,7 +118,8 @@ export function listNeeds(): { ready: boolean; watching: boolean; items: NeedIte
     accept: cliWin.accept
   })
   const hasCli = ai.grok || ai.claude || ai.cursor || ai.gpt
-  return { ready: watching && hasCli, watching, items }
+  const folder = Boolean(watchingInfo.brainPath) || Boolean(loadAccount()?.folder)
+  return { ready: folder && hasCli, watching, items }
 }
 
 function run(cmd: string, args: string[], timeoutMs = 8 * 60_000): Promise<{ code: number; out: string }> {
