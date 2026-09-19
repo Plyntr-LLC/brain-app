@@ -1,9 +1,12 @@
-import { BrowserWindow } from 'electron'
+import { app, BrowserWindow } from 'electron'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 import type { AiKind } from '../shared/contracts'
 import type { SessionCmd, StreamEvent } from './ai-cli'
 import { binEnv, resolveBin } from './ai-cli'
 import { loginCli } from './install'
 import { acpPromptParts, type Attach } from './attach'
+import { underRoot } from './files'
 import { asRecord, asText, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 
 const RULES =
@@ -21,6 +24,7 @@ export type LiveRun = {
   efforts?: Cap[]
   agentModes?: Cap[]
   commands?: SessionCmd[]
+  configIds?: string[]
 }
 
 type Tab = {
@@ -33,6 +37,7 @@ type Tab = {
   efforts?: Cap[]
   agentModes?: Cap[]
   commands?: SessionCmd[]
+  configIds?: string[]
   contextTotal?: number
   promptId: number | null
   onEvent?: (ev: StreamEvent) => void
@@ -120,25 +125,36 @@ function resolveModelId(wanted: string | undefined, models?: Cap[]): string | un
   return hit?.id || wanted
 }
 
-function effortsForModel(modelId?: string, listed?: Cap[]): Cap[] {
-  if (listed?.length) return listed
-  if (!modelId) return []
-  const p = parseBracket(modelId)
+/** Only an id the live session actually advertised. Bare labels like composer-2.5 are invalid. */
+function advertisedModel(wanted: string | undefined, models?: Cap[]): string | undefined {
+  if (!wanted) return undefined
+  if (!models?.length) return undefined
+  const resolved = resolveModelId(wanted, models)
+  return models.some((m) => m.id === resolved) ? resolved : undefined
+}
+
+function effortsForModel(modelId?: string, listed?: Cap[], hasEffortOption?: boolean): Cap[] {
+  const p = modelId ? parseBracket(modelId) : {}
   if (p.effort) {
-    return [
-      { id: 'low', label: 'Low' },
-      { id: 'medium', label: 'Medium' },
-      { id: 'high', label: 'High' },
-      { id: 'xhigh', label: 'Extra high' }
-    ]
+    return listed?.length
+      ? listed
+      : [
+          { id: 'low', label: 'Low' },
+          { id: 'medium', label: 'Medium' },
+          { id: 'high', label: 'High' },
+          { id: 'xhigh', label: 'Extra high' }
+        ]
   }
   if (p.reasoning) {
-    return [
-      { id: 'low', label: 'Low' },
-      { id: 'medium', label: 'Medium' },
-      { id: 'high', label: 'High' }
-    ]
+    return listed?.length
+      ? listed
+      : [
+          { id: 'low', label: 'Low' },
+          { id: 'medium', label: 'Medium' },
+          { id: 'high', label: 'High' }
+        ]
   }
+  if (hasEffortOption && listed?.length) return listed
   return []
 }
 
@@ -148,10 +164,12 @@ function readLive(res: Record<string, unknown>): LiveRun {
   let effort: string | undefined
   let models: Cap[] = capsFromOptions(modelsBlock.availableModels)
   let efforts: Cap[] = []
+  const configIds: string[] = []
   const opts = Array.isArray(res.configOptions) ? res.configOptions : []
   for (const o of opts) {
     const r = asRecord(o)
     const id = String(r.id || r.configId || '')
+    if (id) configIds.push(id)
     const v = optionValue(r)
     if (id === 'model') {
       if (v) model = v
@@ -178,7 +196,9 @@ function readLive(res: Record<string, unknown>): LiveRun {
   if (!effort && typeof meta.reasoningEffort === 'string') effort = meta.reasoningEffort
   const params = model ? parseBracket(model) : {}
   if (!effort) effort = params.effort || params.reasoning
-  if (!efforts.length) efforts = effortsForModel(model)
+  const hasEffortOption = configIds.includes('effort') || configIds.includes('reasoning_effort')
+  if (!efforts.length) efforts = effortsForModel(model, undefined, hasEffortOption)
+  else efforts = effortsForModel(model, efforts, hasEffortOption)
   const modesBlock = asRecord(res.modes)
   const agentModes = capsFromOptions(modesBlock.availableModes)
   const agentMode = typeof modesBlock.currentModeId === 'string' ? modesBlock.currentModeId : undefined
@@ -191,15 +211,15 @@ function readLive(res: Record<string, unknown>): LiveRun {
     agentMode,
     contextTotal,
     models: models.length ? models : undefined,
-    efforts: efforts.length ? efforts : undefined,
-    agentModes: agentModes.length ? agentModes : undefined
+    efforts,
+    agentModes: agentModes.length ? agentModes : undefined,
+    configIds: configIds.length ? configIds : undefined
   }
 }
 
 async function setOption(rpc: LineRpc, sessionId: string, configId: string, value: string): Promise<Record<string, unknown>> {
   const attempts: Array<() => Promise<unknown>> = [
-    () => rpc.request('session/set_config_option', { sessionId, configId, value }, 10_000),
-    () => rpc.request('session/set_config_option', { sessionId, configId, value: { value } }, 10_000)
+    () => rpc.request('session/set_config_option', { sessionId, configId, value }, 10_000)
   ]
   if (configId === 'model') {
     attempts.push(() => rpc.request('session/set_model', { sessionId, modelId: value }, 10_000))
@@ -376,7 +396,49 @@ function handleReq(pool: Pool, msg: RpcMsg): void {
     pool.rpc.reply(msg.id, { outcome: { outcome: 'cancelled' } })
     return
   }
-  pool.rpc.reply(msg.id, {})
+  if (msg.method === 'fs/read_text_file') {
+    const p = asRecord(msg.params)
+    const abs = String(p.path || '')
+    if (!abs || !underRoot(pool.cwd, abs) || !existsSync(abs)) {
+      pool.rpc.error(msg.id, -32603, 'That file is not in this folder.')
+      return
+    }
+    try {
+      let text = readFileSync(abs, 'utf8')
+      const line = Number(p.line || 0)
+      const limit = Number(p.limit || 0)
+      if (line > 0 || limit > 0) {
+        const lines = text.split('\n')
+        const start = Math.max(0, (line || 1) - 1)
+        text = lines.slice(start, limit ? start + limit : undefined).join('\n')
+      }
+      pool.rpc.reply(msg.id, { content: text })
+    } catch (e) {
+      pool.rpc.error(msg.id, -32603, String((e as Error).message || e))
+    }
+    return
+  }
+  if (msg.method === 'fs/write_text_file') {
+    const p = asRecord(msg.params)
+    const abs = String(p.path || '')
+    if (!abs || !underRoot(pool.cwd, abs)) {
+      pool.rpc.error(msg.id, -32603, 'That file is not in this folder.')
+      return
+    }
+    try {
+      mkdirSync(dirname(abs), { recursive: true })
+      writeFileSync(abs, String(p.content ?? ''), 'utf8')
+      pool.rpc.reply(msg.id, {})
+    } catch (e) {
+      pool.rpc.error(msg.id, -32603, String((e as Error).message || e))
+    }
+    return
+  }
+  if (msg.method === 'elicitation/create') {
+    pool.rpc.reply(msg.id, { action: 'cancel' })
+    return
+  }
+  pool.rpc.error(msg.id, -32601, 'Method not found')
 }
 
 async function acpAuthenticate(rpc: LineRpc, methods: unknown[], kind: 'grok' | 'cursor'): Promise<void> {
@@ -406,6 +468,15 @@ async function acpAuthenticate(rpc: LineRpc, methods: unknown[], kind: 'grok' | 
     throw new Error(
       'Grok Chat needs you to sign in. Terminal can be signed in while Chat is not. Finish grok login in the window that opened, then send again.'
     )
+  }
+  if (kind === 'cursor') {
+    if (last && /sign in|not logged|login required|auth_required/i.test(last)) {
+      await loginCli('cursor').catch(() => {})
+      throw new Error(
+        'Cursor Chat needs you to sign in. Finish cursor-agent login in the window that opened, then send again.'
+      )
+    }
+    return
   }
   if (last && /auth/i.test(last)) throw new Error(last)
 }
@@ -446,8 +517,11 @@ async function bootPoolNow(kind: 'grok' | 'cursor', cwd: string, key: string): P
         'initialize',
         {
           protocolVersion: 1,
-          clientInfo: { name: 'brain-app', title: 'Brain', version: '0.1.0' },
-          clientCapabilities: {}
+          clientInfo: { name: 'Brain', version: app.getVersion() },
+          clientCapabilities: {
+            fs: { readTextFile: true, writeTextFile: true },
+            ...(kind === 'cursor' ? { _meta: { parameterizedModelPicker: true } } : {})
+          }
         },
         20_000
       )
@@ -487,16 +561,23 @@ async function applyConfig(
     agentMode: tab.agentMode,
     models: tab.models,
     efforts: tab.efforts,
-    agentModes: tab.agentModes
+    agentModes: tab.agentModes,
+    configIds: tab.configIds
   }
-  let modelId = resolveModelId(model, tab.models) || tab.model
-  if (pool.kind === 'cursor' && modelId && effort) modelId = withCursorEffort(modelId, effort)
+  const configIds = new Set(tab.configIds || [])
+  let modelId = advertisedModel(model, tab.models) || (!model ? tab.model : undefined)
+  if (pool.kind === 'cursor' && modelId && effort && (/effort=/.test(modelId) || /reasoning=/.test(modelId))) {
+    modelId = withCursorEffort(modelId, effort)
+    if (tab.models?.length && !tab.models.some((m) => m.id === modelId)) modelId = advertisedModel(model, tab.models)
+  }
   if (modelId && modelId !== tab.model) {
     try {
       const res = await setOption(pool.rpc, tab.sessionId, 'model', modelId)
-      live = { ...live, ...readLive(res), model: readLive(res).model || modelId }
+      const next = readLive(res)
+      live = { ...live, ...next, model: next.model || modelId }
+      if (next.configIds) next.configIds.forEach((id) => configIds.add(id))
     } catch {
-      live.model = modelId
+      live.model = tab.model
     }
   }
   if (pool.kind !== 'cursor' && effort && effort !== tab.effort) {
@@ -507,19 +588,34 @@ async function applyConfig(
     } catch {
       live.effort = effort
     }
-  } else if (effort) {
+  } else if (pool.kind === 'cursor' && effort && effort !== tab.effort && configIds.has('effort')) {
+    try {
+      const res = await setOption(pool.rpc, tab.sessionId, 'effort', effort)
+      const next = readLive(res)
+      live = { ...live, ...next, effort: next.effort || effort }
+    } catch {
+      live.effort = tab.effort
+    }
+  } else if (effort && (live.efforts?.length || configIds.has('effort') || configIds.has('reasoning_effort'))) {
     live.effort = effort
-    live.efforts = effortsForModel(live.model, tab.efforts)
   }
   if (agentMode && agentMode !== tab.agentMode) {
-    try {
-      await pool.rpc.request('session/set_mode', { sessionId: tab.sessionId, modeId: agentMode }, 10_000)
-      live.agentMode = agentMode
-    } catch {
-      /* mode may not exist */
+    const allowed = tab.agentModes?.some((m) => m.id === agentMode)
+    if (allowed || !tab.agentModes?.length) {
+      try {
+        await pool.rpc.request('session/set_mode', { sessionId: tab.sessionId, modeId: agentMode }, 10_000)
+        live.agentMode = agentMode
+      } catch {
+        /* mode may not exist */
+      }
     }
   }
-  if (live.model) live.efforts = effortsForModel(live.model, live.efforts)
+  live.efforts = effortsForModel(
+    live.model,
+    live.efforts,
+    configIds.has('effort') || configIds.has('reasoning_effort')
+  )
+  if (!live.efforts.length) live.effort = undefined
   return live
 }
 
@@ -531,15 +627,16 @@ function snapshot(tab: Tab): LiveRun {
     sessionId: tab.sessionId,
     contextTotal: tab.contextTotal,
     models: tab.models,
-    efforts: tab.efforts,
+    efforts: tab.efforts || [],
     agentModes: tab.agentModes,
-    commands: tab.commands
+    commands: tab.commands,
+    configIds: tab.configIds
   }
 }
 
 function assignLive(tab: Tab, live: LiveRun): void {
   if (live.model) tab.model = live.model
-  if (live.effort) tab.effort = live.effort
+  if ('effort' in live) tab.effort = live.effort
   if (live.agentMode) tab.agentMode = live.agentMode
   if (live.sessionId) tab.sessionId = live.sessionId
   if (live.contextTotal) tab.contextTotal = live.contextTotal
@@ -547,6 +644,7 @@ function assignLive(tab: Tab, live: LiveRun): void {
   if (live.efforts) tab.efforts = live.efforts
   if (live.agentModes) tab.agentModes = live.agentModes
   if (live.commands) tab.commands = live.commands
+  if (live.configIds) tab.configIds = live.configIds
 }
 
 export async function acpWarm(opts: {
@@ -712,19 +810,53 @@ export async function acpPrompt(opts: {
   text: string
   model?: string
   effort?: string
+  agentMode?: string
   attachments?: Attach[]
   onEvent: (ev: StreamEvent) => void
 }): Promise<string> {
-  await acpWarm(opts)
+  return acpPromptOnce(opts, false)
+}
+
+async function acpPromptOnce(
+  opts: {
+    kind: 'grok' | 'cursor'
+    tabId: string
+    cwd: string
+    text: string
+    model?: string
+    effort?: string
+    agentMode?: string
+    attachments?: Attach[]
+    onEvent: (ev: StreamEvent) => void
+  },
+  retried: boolean
+): Promise<string> {
+  try {
+    await acpWarm(opts)
+  } catch (e) {
+    const msg = String((e as Error).message || e)
+    if (!retried && /invalid params|invalid model/i.test(msg)) {
+      acpClose(opts.tabId)
+      return acpPromptOnce({ ...opts, model: undefined, effort: undefined }, true)
+    }
+    opts.onEvent({ kind: 'error', data: msg })
+    opts.onEvent({ kind: 'done' })
+    return ''
+  }
   const pool = pools.get(poolKey(opts.kind, opts.cwd))
   const tab = pool?.tabs.get(opts.tabId)
-  if (!pool || !tab) throw new Error('chat session is not ready')
+  if (!pool || !tab) {
+    opts.onEvent({ kind: 'error', data: 'chat session is not ready' })
+    opts.onEvent({ kind: 'done' })
+    return ''
+  }
   if (tab.promptId != null) acpCancel(opts.tabId)
   const gen = Date.now()
   tab.onEvent = opts.onEvent
   tab.text = ''
   tab.promptId = gen
   if (/^\s*\/compact\b/i.test(opts.text)) opts.onEvent({ kind: 'status', data: 'compacting' })
+  let retry = false
   try {
     const prompt = acpPromptParts(opts.text, opts.attachments || [])
     const result = asRecord(
@@ -740,13 +872,18 @@ export async function acpPrompt(opts: {
     }
   } catch (e) {
     const msg = String((e as Error).message || e)
-    if (!/timed out|cancelled|stopped/i.test(msg)) opts.onEvent({ kind: 'error', data: msg })
+    if (!retried && /invalid params|invalid model/i.test(msg)) retry = true
+    else if (!/timed out|cancelled|stopped/i.test(msg)) opts.onEvent({ kind: 'error', data: msg })
   } finally {
     if (tab.promptId === gen) {
       tab.onEvent = undefined
       tab.promptId = null
     }
-    opts.onEvent({ kind: 'done' })
+    if (!retry) opts.onEvent({ kind: 'done' })
+  }
+  if (retry) {
+    acpClose(opts.tabId)
+    return acpPromptOnce({ ...opts, model: undefined, effort: undefined }, true)
   }
   return tab.text.trim()
 }

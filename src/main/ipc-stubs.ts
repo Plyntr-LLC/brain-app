@@ -437,18 +437,25 @@ export function registerStubIpc(): void {
         wc.send('chat:event', { tabId: payload.tabId, ...ev })
       }
       const kind = payload.kind || 'grok'
-      const reply = await promptWarm({
-        kind,
-        tabId: payload.tabId,
-        cwd,
-        text: payload.text,
-        model: payload.model,
-        effort: payload.effort,
-        agentMode: payload.agentMode,
-        attachments: payload.attachments,
-        onEvent
-      })
-      return { reply }
+      try {
+        const reply = await promptWarm({
+          kind,
+          tabId: payload.tabId,
+          cwd,
+          text: payload.text,
+          model: payload.model,
+          effort: payload.effort,
+          agentMode: payload.agentMode,
+          attachments: payload.attachments,
+          onEvent
+        })
+        return { reply }
+      } catch (err) {
+        const msg = String((err as Error).message || err)
+        onEvent({ kind: 'error', data: msg })
+        onEvent({ kind: 'done' })
+        return { reply: '' }
+      }
     }
   )
   ipcMain.handle(

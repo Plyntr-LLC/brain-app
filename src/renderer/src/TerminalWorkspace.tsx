@@ -1867,7 +1867,7 @@ export function TerminalWorkspace({
                               effort:
                                 c.efforts && c.efforts.length === 0
                                   ? undefined
-                                  : normalizeEffort(c.effort) || x.effort,
+                                  : normalizeEffort(c.effort) || (c.efforts?.length ? x.effort : undefined),
                               agentMode: c.agentMode || x.agentMode,
                               cliSessionId: c.sessionId || x.cliSessionId,
                               models: c.models ?? x.models,

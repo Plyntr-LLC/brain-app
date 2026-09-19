@@ -6,7 +6,18 @@ export type RpcMsg = {
   method?: string
   params?: unknown
   result?: unknown
-  error?: { code?: number; message?: string }
+  error?: { code?: number; message?: string; data?: unknown }
+}
+
+export function rpcErrorMessage(err: { message?: string; data?: unknown }): string {
+  const data = err.data
+  let extra = ''
+  if (typeof data === 'string') extra = data
+  else if (data && typeof data === 'object') {
+    const rec = data as { message?: unknown; details?: unknown }
+    extra = String(rec.message || rec.details || '')
+  }
+  return [err.message, extra].filter(Boolean).join(': ')
 }
 
 export function spawnBin(
@@ -73,7 +84,7 @@ export class LineRpc {
     if (!p) return
     this.pending.delete(id)
     if (p.t) clearTimeout(p.t)
-    if (msg.error) p.reject(new Error(msg.error.message || 'rpc error'))
+    if (msg.error) p.reject(new Error(rpcErrorMessage(msg.error) || 'rpc error'))
     else p.resolve(msg.result)
   }
 
@@ -116,6 +127,12 @@ export class LineRpc {
 
   reply(id: number | string, result: unknown): void {
     const body: Record<string, unknown> = { id, result }
+    if (this.withJsonrpc) body.jsonrpc = '2.0'
+    this.write(body)
+  }
+
+  error(id: number | string, code: number, message: string): void {
+    const body: Record<string, unknown> = { id, error: { code, message } }
     if (this.withJsonrpc) body.jsonrpc = '2.0'
     this.write(body)
   }
