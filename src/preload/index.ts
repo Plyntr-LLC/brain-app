@@ -251,7 +251,7 @@ const brain = {
     onEvent: (
       cb: (ev: {
         tabId: string
-        kind: 'thought' | 'text' | 'file' | 'status' | 'context' | 'commands' | 'done' | 'error' | 'permission' | 'plan'
+        kind: string
         data?: string
         path?: string
         tool?: string
@@ -263,6 +263,8 @@ const brain = {
         options?: { id: string; label: string }[]
         requestId?: string
         steps?: { title: string; status?: string }[]
+        fingerprint?: string
+        skinLabel?: string | null
       }) => void
     ) => {
       const handler = (_: unknown, ev: Parameters<typeof cb>[0]) => cb(ev)

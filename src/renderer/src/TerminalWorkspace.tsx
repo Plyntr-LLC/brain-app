@@ -38,11 +38,13 @@ function filePath(f: File): string {
   }
 }
 type Msg = {
-  who: 'me' | 'brain' | 'think' | 'sys' | 'plan' | 'err'
+  who: 'me' | 'brain' | 'think' | 'sys' | 'plan' | 'err' | 'raw'
   text: string
   files?: Attach[]
   at?: number
   steps?: { title: string; status?: string }[]
+  rawKind?: string
+  skinLabel?: string | null
 }
 type Queued = { id: string; text: string; files?: Attach[] }
 
@@ -586,6 +588,29 @@ function ChatPane({
           return
         }
         setBusy(false)
+      }
+      const known = new Set([
+        'thought',
+        'text',
+        'file',
+        'status',
+        'context',
+        'commands',
+        'done',
+        'error',
+        'permission',
+        'plan'
+      ])
+      if (ev.kind && !known.has(ev.kind) && ev.skinLabel !== 'ignore') {
+        setMessages((m) => [
+          ...m,
+          {
+            who: 'raw',
+            text: ev.data || ev.kind,
+            rawKind: ev.kind,
+            skinLabel: ev.skinLabel
+          }
+        ])
       }
     })
     return () => {
@@ -1433,6 +1458,10 @@ function ChatPane({
                 </li>
               ))}
             </ol>
+          ) : m.who === 'raw' && m.text && m.skinLabel !== 'ignore' ? (
+            <div className="bubble" key={i}>
+              {m.text}
+            </div>
           ) : m.who === 'err' && m.text ? (
             <SkinCard
               key={i}

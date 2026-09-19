@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { specFromStreamEvent, userMessageSpec } from '../../../shared/skin/from-events'
+import { isSkinComponent } from '../../../shared/skin/catalog'
 import type { SkinSpec } from '../../../shared/skin/spec'
 import type { AiKind } from '@shared/contracts'
 import { cleanThink, stripAnsi, type FileHit } from '../ptyChat'
@@ -7,7 +8,7 @@ import { SkinCard } from './Registry'
 import { SkinTerm } from './SkinTerm'
 import type { RefObject, UIEventHandler } from 'react'
 
-type Msg = { who: string; text: string; steps?: { title: string; status?: string }[] }
+type Msg = { who: string; text: string; steps?: { title: string; status?: string }[]; rawKind?: string; skinLabel?: string | null }
 
 function protocolJunk(text: string): boolean {
   const t = text.trim()
@@ -76,6 +77,22 @@ export function SkinPane({
       if (s) specs.push({ spec: s })
     } else if (m.who === 'err' && m.text) {
       const s = specFromStreamEvent({ kind: 'error', data: m.text })
+      if (s) specs.push({ spec: s })
+    } else if (m.who === 'raw') {
+      if (m.skinLabel === 'ignore') return
+      const ev = { kind: m.rawKind || 'unknown', data: m.text }
+      let s = specFromStreamEvent(ev)
+      if (m.skinLabel && isSkinComponent(m.skinLabel) && m.skinLabel !== 'RawFallback') {
+        s = s
+          ? { ...s, component: m.skinLabel, props: { ...s.props, text: m.text || s.props.data } }
+          : {
+              id: 'raw-' + i,
+              component: m.skinLabel,
+              props: { text: m.text },
+              actions: [],
+              source: m.rawKind || 'raw'
+            }
+      }
       if (s) specs.push({ spec: s })
     } else if (m.who === 'think') {
       const text = cleanThink(m.text || '')

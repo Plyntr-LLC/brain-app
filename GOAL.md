@@ -93,7 +93,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Skin catalog leftovers: one item, grok-4.6 xhigh APPROVE, then live, then the next. Do not pack/notarize.
+Inbox catalog leftovers drained. Empty until Joe says next 3. Do not pack/notarize.
 
 ## Inbox
 
@@ -105,8 +105,8 @@ Bugs and product gaps. One line each. Date + what.
 - [x] 2026-09-19 Joe: Skin ContextMeter is catalog-only. Context events already hit the sidebar. Show the meter on the Skin face too. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: Skin caption `ContextMeter`.
 - [x] 2026-09-19 Joe: Chat permission is missing Always in this folder. Skin has it. Same three buttons, wired. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: Chat `alwaysAllowInFolder`.
 - [x] 2026-09-19 Joe: PermissionAsk ignores CLI option ids. Buttons should be the CLI options (`selectOption` → decide). Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: Registry `p.options`, Chat option map, `selectOption`.
-- [ ] 2026-09-19 Joe: Settings Skin capture Label does not change paint. Labelled fingerprints choose that catalog row.
-- [ ] 2026-09-19 Joe: First-run rail/Invite/needs are leftover. Chat already hides the rail in CSS. Do not render them on chat. Invite is Settings.
+- [x] 2026-09-19 Joe: Settings Skin capture Label does not change paint. Labelled fingerprints choose that catalog row. Done: 2026-09-19. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: unmapped `sessionUpdate` → `who: 'raw'` + `skinLabel`; `labelCapture` cache; SkinPane catalog override.
+- [x] 2026-09-19 Joe: First-run rail/Invite/needs are leftover. Chat already hides the rail in CSS. Do not render them on chat. Invite is Settings. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: FirstRun aside only when `screen !== 'chat'`.
 
 - [x] 2026-09-19 Joe: Skin is the default. Readable markdown. Isolated Grok leader + `/clear` session id + sys notes. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `SkinPane`, `grok-leader.ts`, `resetCli`.
 - [x] 2026-09-19 Joe: Skin is full terminal (CLI TUI in Brain chrome), not catalog cards. Composer injects into that PTY. Chat stays ACP. Open raw / folder shell is gone. Done: 2026-09-19. Then Joe: that dropped the skin. Catalog is the face again; Show terminal peels to the CLI PTY. Evidence: `SkinPane` overlay + `SkinTerm`.

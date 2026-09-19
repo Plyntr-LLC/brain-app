@@ -9,7 +9,7 @@ import { acpPromptParts, type Attach } from './attach'
 import { underRoot } from './files'
 import { grokAcpArgs, ensureGrokLeader, killGrokLeader } from './grok-leader'
 import { asRecord, asText, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
-import { captureEvent } from './skin/capture'
+import { captureEvent, skinHint } from './skin/capture'
 
 const RULES =
   'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
@@ -330,8 +330,12 @@ function parseCommands(raw: unknown): SessionCmd[] {
 }
 
 function broadcast(tab: Tab, ev: StreamEvent): void {
+  const key = tabPool.get(tab.tabId)
+  const pool = key ? pools.get(key) : undefined
+  const hint = pool ? skinHint({ cli: pool.kind, ev }) : { fingerprint: '', label: null as string | null }
+  const payload = { tabId: tab.tabId, ...ev, fingerprint: hint.fingerprint, skinLabel: hint.label }
   for (const w of BrowserWindow.getAllWindows()) {
-    if (!w.isDestroyed()) w.webContents.send('chat:event', { tabId: tab.tabId, ...ev })
+    if (!w.isDestroyed()) w.webContents.send('chat:event', payload)
   }
 }
 
@@ -391,11 +395,13 @@ function handleNote(pool: Pool, msg: RpcMsg): void {
   if (!tab.onEvent) return
   const mapped = eventsFromUpdate(update)
   if (!mapped.length && kind && kind !== 'model_changed' && kind !== 'config_option_update') {
+    const ev = { kind, data: String(update.title || update.status || '') } as StreamEvent
     captureEvent({
       cli: pool.kind,
       sessionId: tab.sessionId,
-      ev: { kind, data: String(update.title || update.status || '') }
+      ev
     })
+    tab.onEvent(ev)
   }
   for (const ev of mapped) {
     if (ev.kind === 'text') tab.text += ev.data

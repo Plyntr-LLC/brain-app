@@ -25,6 +25,37 @@ export type SkinCapture = {
 type CaptureFile = { capture?: boolean }
 
 const seen = new Map<string, Set<string>>()
+let labelCache: Record<string, string> | null = null
+
+function labeledFingerprints(): Record<string, string> {
+  if (labelCache) return labelCache
+  const out: Record<string, string> = {}
+  for (const c of listCaptures(500)) {
+    if (c.label) out[c.fingerprint] = c.label
+  }
+  labelCache = out
+  return out
+}
+
+function propsHintOf(ev: SkinInEvent): Record<string, unknown> {
+  const propsHint: Record<string, unknown> = {}
+  if (ev.title) propsHint.title = redact(String(ev.title))
+  if (ev.path) propsHint.path = redact(String(ev.path))
+  if (ev.tool) propsHint.tool = String(ev.tool)
+  if (ev.options) propsHint.options = ev.options.map((o) => o.label)
+  return propsHint
+}
+
+export function skinHint(opts: { cli: string; ev: SkinInEvent }): {
+  fingerprint: string
+  label: string | null
+  catalogId: SkinComponentId | null
+} {
+  const kind = String(opts.ev.kind || '')
+  const catalogId = catalogIdForEvent(opts.ev)
+  const fingerprint = fingerprintOf({ cli: opts.cli, kind, propsHint: propsHintOf(opts.ev), catalogId })
+  return { fingerprint, label: labeledFingerprints()[fingerprint] || null, catalogId }
+}
 
 function dir(): string {
   const p = join(app.getPath('userData'), 'skin-captures')
@@ -96,13 +127,10 @@ export function captureEvent(opts: {
   if (!captureOn()) return null
   const kind = String(opts.ev.kind || '')
   if (!kind || skipKind(kind)) return null
-  const catalogId = catalogIdForEvent(opts.ev)
-  const propsHint: Record<string, unknown> = {}
-  if (opts.ev.title) propsHint.title = redact(String(opts.ev.title))
-  if (opts.ev.path) propsHint.path = redact(String(opts.ev.path))
-  if (opts.ev.tool) propsHint.tool = String(opts.ev.tool)
-  if (opts.ev.options) propsHint.options = opts.ev.options.map((o) => o.label)
-  const fp = fingerprintOf({ cli: opts.cli, kind, propsHint, catalogId })
+  const hint = skinHint({ cli: opts.cli, ev: opts.ev })
+  const fp = hint.fingerprint
+  const catalogId = hint.catalogId
+  const propsHint = propsHintOf(opts.ev)
   const sessionId = opts.sessionId || ''
   const key = sessionId || 'none'
   let bag = seen.get(key)
@@ -124,7 +152,7 @@ export function captureEvent(opts: {
     matched: Boolean(catalogId),
     grid: redact(opts.grid || ''),
     propsHint,
-    label: null
+    label: hint.label
   }
   try {
     appendFileSync(dayFile(), JSON.stringify(row) + '\n')
@@ -197,6 +225,9 @@ export function labelCapture(fingerprint: string, label: string): boolean {
       return line
     })
     if (changed) writeFileSync(path, next.join('\n'))
+  }
+  if (hit) {
+    labeledFingerprints()[fingerprint] = label
   }
   return hit
 }
