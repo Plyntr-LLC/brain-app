@@ -513,7 +513,7 @@ export function FirstRun() {
                 <h3>What happens where</h3>
                 <ol>
                   <li>This app: your email, the brain folder, Git, and your AI.</li>
-                  <li>GitHub (opens in a Brain window, not Chrome): create a free organization if you need one, then install the sharing app. Choose Only select repositories.</li>
+                  <li>GitHub (opens in your browser, so a passkey works): create a free organization if you need one, then install the sharing app. Choose Only select repositories.</li>
                   <li>Skip Agency Brain’s own wizard. Do not enter the code or create the organization there too.</li>
                 </ol>
               </div>
@@ -529,9 +529,9 @@ export function FirstRun() {
             <>
               <p className="kicker">Private place</p>
               <h1>A GitHub organization, then Continue.</h1>
-              <p>GitHub will open in a Brain window. Sign in there. Create a free organization if you need one, then we install the sharing app. Stay in this app. Do not also do this in Agency Brain.</p>
+              <p>GitHub will open in your browser. Sign in there (a passkey works). Create a free organization if you need one, then we install the sharing app. Come back here when GitHub is done. Do not also do this in Agency Brain.</p>
               <div className="warn-box">
-                <h3>In the GitHub window</h3>
+                <h3>In the GitHub page</h3>
                 <p>
                   Choose <strong>Only select repositories</strong>, then this brain. Never All repositories.
                 </p>
@@ -568,7 +568,7 @@ export function FirstRun() {
                       return
                     }
                     await window.brain.setup.openAppInstall(slug, org.trim())
-                    setErr('Waiting for GitHub. Stay in that window until it finishes.')
+                    setErr('Waiting for GitHub. Finish in your browser, then come back here.')
                     const until = Date.now() + 120000
                     let installed = false
                     while (Date.now() < until) {

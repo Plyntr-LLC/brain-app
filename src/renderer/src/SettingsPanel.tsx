@@ -361,7 +361,7 @@ export function SettingsPanel({
                   onClick={async () => {
                     try {
                       setHqBusy(true)
-                      setNote('Waiting for GitHub. Authorize Brain Bridge on that one repo if a window opens.')
+                      setNote('Waiting for GitHub. Authorize Brain Bridge on that one repo if your browser opens.')
                       const res = await window.brain.hqSync.bind(hqRepo)
                       setNote(res.detail)
                       const st = await window.brain.hqSync.ownerStatus()
