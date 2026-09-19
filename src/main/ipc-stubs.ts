@@ -16,6 +16,20 @@ import {
 } from './agency-brain'
 import { cloneBrain } from './clone'
 import { startBrainSync, stopBrainSync } from './brain-sync'
+import {
+  addProjectSeat,
+  existingProjectSeat,
+  isHqMiniFolder,
+  joinProject,
+  openExistingSeat,
+  hqRepoFromFolder,
+  ownerBindUntilReady,
+  ownerLogin,
+  ownerStatus,
+  requestHqCode,
+  revokeProjectSeat
+} from './hq-sync'
+import { classifyLogin, type LoginVia } from './login-route'
 import { installNeed, isNeedId, listNeeds, loginCli } from './install'
 import * as ai from './ai-cli'
 import { asAttachBuf, inspectAttach, stashBytes } from './attach'
@@ -68,13 +82,17 @@ export function dryRun(): boolean {
 
 export function registerStubIpc(): void {
   loadAccount()
-  ipcMain.handle('env:get', () => {
+  ipcMain.handle('env:get', async () => {
     const watching = readWatching()
+    const seat = await existingProjectSeat().catch(() => null)
     return {
       dryRun: dryRun(),
       chatLive: true,
       existingBrain: watching,
-      justUpdated: justUpdated()
+      justUpdated: justUpdated(),
+      projectSeat: seat
+        ? { folder: seat.folder, label: seat.label, lastSync: seat.lastSync }
+        : null
     }
   })
 
@@ -112,18 +130,20 @@ export function registerStubIpc(): void {
     const displayName = String(acct?.name || member?.name || '').trim() || (email ? email.split('@')[0] : '')
     const brainName = String(roster?.name || watching.teamName || watching.name || '').trim()
     const plyntrBrain = (roster?.slug || watching.teamSlug) === 'plyntr'
-    const superAdmin = joe && acct?.source !== 'team-file' && file.superAdmin !== false
+    const superAdmin = joe && acct?.source !== 'team-file' && acct?.source !== 'hq-sync' && file.superAdmin !== false
+    const hqMini = acct?.source === 'hq-sync' || isHqMiniFolder(acct?.folder)
     return {
       superAdmin,
       email,
       name: displayName,
       role: String(acct?.role || member?.role || ''),
       signedIn: Boolean(acct?.email),
-      watching: watching.watching,
-      brainPath: folder,
+      watching: hqMini ? true : watching.watching,
+      brainPath: hqMini ? acct?.folder || folder : folder,
       brainName: brainName || (folder ? folder.split(/[/\\]/).filter(Boolean).pop() : '') || '',
       brainSlug: roster?.slug || watching.teamSlug,
-      plyntrBrain
+      plyntrBrain,
+      source: acct?.source || ''
     }
   })
   ipcMain.handle('settings:setSuper', (_e, on: boolean) => setSuperAdmin(Boolean(on)))
@@ -149,7 +169,7 @@ export function registerStubIpc(): void {
     const acct = getAccount()
     return listProjectFolders(folder || watching.brainPath || acct?.folder || null)
   })
-  ipcMain.handle('settings:addTeammate', (_e, person: TeamPerson) => {
+  ipcMain.handle('settings:addTeammate', async (_e, person: TeamPerson) => {
     const watching = readWatching()
     const acct = getAccount()
     const folder = watching.brainPath || acct?.folder || null
@@ -167,6 +187,10 @@ export function registerStubIpc(): void {
       client: String(person.client || '').trim(),
       brains
     }
+    if (row.role === 'project') {
+      const added = await addProjectSeat({ name: row.name, email, roots: brains })
+      return { people: loadTeam(), roster: { ok: added.ok, detail: added.detail } }
+    }
     const people = loadTeam()
     const rest = people.filter((p) => !(p.email === email && (p.client || '') === (row.client || '')))
     const saved = saveTeam([...rest, row])
@@ -176,7 +200,7 @@ export function registerStubIpc(): void {
       role: row.role,
       brains
     })
-    if (folder) startBrainSync(folder)
+    if (folder && !isHqMiniFolder(folder)) startBrainSync(folder)
     return { people: saved, roster: wrote }
   })
 
@@ -203,27 +227,85 @@ export function registerStubIpc(): void {
     }
   })
 
-  ipcMain.handle('auth:requestCode', async (_e, email: string) => ads2ai.requestCode(email))
-  ipcMain.handle('auth:verify', async (_e, email: string, code: string) => {
-    const res = await ads2ai.verifyCode(email, code)
-    saveAccount({
-      email: String(res.member.email || email).toLowerCase(),
-      name: res.member.name || '',
-      token: res.token,
-      source: 'ads2ai'
-    })
-    const teams = (await ads2ai.myTeams(res.token)).teams || []
-    return { ok: true, member: res.member, teams }
+  ipcMain.handle('auth:requestCode', async (_e, email: string) => {
+    const key = String(email || '').trim().toLowerCase()
+    const kind = await classifyLogin(key)
+    if (kind === 'hq-sync') {
+      await requestHqCode(key)
+      return { ok: true, via: 'hq-sync' as LoginVia }
+    }
+    try {
+      await ads2ai.requestCode(key)
+      return { ok: true, via: 'ads2ai' as LoginVia }
+    } catch (err) {
+      if (kind === 'ads2ai') throw err
+      await requestHqCode(key)
+      return { ok: true, via: 'hq-sync' as LoginVia }
+    }
+  })
+  ipcMain.handle('auth:verify', async (_e, email: string, code: string, viaRaw?: LoginVia) => {
+    const key = String(email || '').trim().toLowerCase()
+    const classified = await classifyLogin(key)
+    const via = viaRaw || (classified === 'unknown' ? null : classified)
+
+    async function asProject() {
+      const joined = await joinProject({ email: key, code })
+      saveAccount({
+        email: joined.email,
+        name: joined.name,
+        token: `local:${joined.email}`,
+        role: 'project',
+        source: 'hq-sync',
+        folder: joined.brainPath,
+        brains: joined.roots
+      })
+      saveRecent(joined.brainPath)
+      return {
+        ok: true,
+        via: 'hq-sync' as const,
+        member: { email: joined.email, name: joined.name, role: 'project' },
+        teams: [] as { slug: string; name: string; role: string; kind?: string }[],
+        brainPath: joined.brainPath,
+        teamName: joined.teamName,
+        role: 'project' as const
+      }
+    }
+
+    async function asAgency() {
+      const res = await ads2ai.verifyCode(key, code)
+      saveAccount({
+        email: String(res.member.email || key).toLowerCase(),
+        name: res.member.name || '',
+        token: res.token,
+        source: 'ads2ai'
+      })
+      const teams = (await ads2ai.myTeams(res.token)).teams || []
+      return { ok: true, via: 'ads2ai' as const, member: res.member, teams, role: '' }
+    }
+
+    if (via === 'hq-sync') {
+      try {
+        return await asProject()
+      } catch {
+        return asAgency()
+      }
+    }
+    try {
+      return await asAgency()
+    } catch {
+      return asProject()
+    }
   })
   ipcMain.handle('auth:session', () => {
     const acct = getAccount() || loadAccount()
-    if (!acct) return { signedIn: false, email: '', name: '', role: '', folder: '' }
+    if (!acct) return { signedIn: false, email: '', name: '', role: '', folder: '', source: '' }
     return {
       signedIn: true,
       email: acct.email,
       name: acct.name || '',
       role: acct.role || '',
-      folder: acct.folder || ''
+      folder: acct.folder || '',
+      source: acct.source || ''
     }
   })
   ipcMain.handle('auth:logout', () => {
@@ -263,7 +345,7 @@ export function registerStubIpc(): void {
       brains: member.brains || []
     })
     saveRecent(folder)
-    startBrainSync(folder)
+    if (!isHqMiniFolder(folder)) startBrainSync(folder)
     return {
       ok: true,
       email: member.email,
@@ -275,6 +357,47 @@ export function registerStubIpc(): void {
     }
   })
   ipcMain.handle('auth:myTeams', async () => ads2ai.myTeams(getMemberToken()))
+  ipcMain.handle('hqSync:requestCode', (_e, email: string) => requestHqCode(email))
+  ipcMain.handle('hqSync:join', async (_e, opts: { email: string; code: string; folder?: string }) => {
+    const joined = await joinProject(opts)
+    saveAccount({
+      email: joined.email,
+      name: joined.name,
+      token: `local:${joined.email}`,
+      role: 'project',
+      source: 'hq-sync',
+      folder: joined.brainPath,
+      brains: joined.roots
+    })
+    saveRecent(joined.brainPath)
+    return joined
+  })
+  ipcMain.handle('hqSync:openExisting', async () => {
+    const joined = await openExistingSeat()
+    saveAccount({
+      email: joined.email,
+      name: joined.name,
+      token: `local:${joined.email}`,
+      role: 'project',
+      source: 'hq-sync',
+      folder: joined.brainPath,
+      brains: joined.roots
+    })
+    saveRecent(joined.brainPath)
+    return joined
+  })
+  ipcMain.handle('hqSync:ownerRequestCode', (_e, email: string) => requestHqCode(email))
+  ipcMain.handle('hqSync:ownerLogin', (_e, opts: { email: string; code: string }) => ownerLogin(opts))
+  ipcMain.handle('hqSync:ownerStatus', () => ownerStatus())
+  ipcMain.handle('hqSync:watchedRepo', () => hqRepoFromFolder(readWatching().brainPath || ''))
+  ipcMain.handle('hqSync:bind', (_e, hqRepo: string) =>
+    ownerBindUntilReady(hqRepo, {
+      openInstall: (url) => {
+        openInApp(url, 'Authorize Brain Bridge')
+      }
+    })
+  )
+  ipcMain.handle('hqSync:revoke', (_e, seatId: string) => revokeProjectSeat(seatId))
 
   ipcMain.handle('setup:createTeam', async (_e, name: string) => {
     if (!writesAllowed()) {
@@ -289,10 +412,7 @@ export function registerStubIpc(): void {
     openInApp(url, 'Install Agency Brain Sync')
     return { ok: true, url }
   })
-  ipcMain.handle('setup:pollInstall', async (_e, slug: string) => {
-    if (!writesAllowed()) return { skipped: true, installed: false }
-    return ads2ai.installStatus(slug)
-  })
+  ipcMain.handle('setup:pollInstall', (_e, slug: string) => ads2ai.installStatus(slug))
   ipcMain.handle('setup:ensureRepo', async (_e, slug: string) => {
     if (!writesAllowed()) return { skipped: true }
     return ads2ai.ensureBrainRepo(getMemberToken(), slug)

@@ -25,6 +25,7 @@ const brain = {
         watching: boolean
       }
       justUpdated: { from: string; to: string } | null
+      projectSeat: { folder: string; label: string; lastSync: string } | null
     }>,
   bridge: {
     load: () => ipcRenderer.invoke('bridge:load') as Promise<Record<string, unknown> | null>,
@@ -44,6 +45,7 @@ const brain = {
         brainName: string | null
         brainSlug: string | null
         plyntrBrain: boolean
+        source?: string
       }>,
     setSuper: (on: boolean) => ipcRenderer.invoke('settings:setSuper', on),
     roster: () =>
@@ -96,8 +98,18 @@ const brain = {
   },
   auth: {
     resolveCode: (code: string) => ipcRenderer.invoke('auth:resolveCode', code),
-    requestCode: (email: string) => ipcRenderer.invoke('auth:requestCode', email),
-    verify: (email: string, code: string) => ipcRenderer.invoke('auth:verify', email, code),
+    requestCode: (email: string) =>
+      ipcRenderer.invoke('auth:requestCode', email) as Promise<{ ok: boolean; via: 'ads2ai' | 'hq-sync' }>,
+    verify: (email: string, code: string, via?: 'ads2ai' | 'hq-sync') =>
+      ipcRenderer.invoke('auth:verify', email, code, via) as Promise<{
+        ok: boolean
+        via: 'ads2ai' | 'hq-sync'
+        member: { email: string; name?: string; role?: string }
+        teams: { slug: string; name: string; role: string; kind?: string }[]
+        brainPath?: string
+        teamName?: string
+        role?: string
+      }>,
     session: () =>
       ipcRenderer.invoke('auth:session') as Promise<{
         signedIn: boolean
@@ -105,6 +117,7 @@ const brain = {
         name: string
         role?: string
         folder?: string
+        source?: string
       }>,
     logout: () => ipcRenderer.invoke('auth:logout') as Promise<{ ok: boolean }>,
     joinFolder: (email: string, folder?: string) =>
@@ -118,6 +131,61 @@ const brain = {
         teamSlug: string
       }>,
     myTeams: () => ipcRenderer.invoke('auth:myTeams')
+  },
+  hqSync: {
+    requestCode: (email: string) => ipcRenderer.invoke('hqSync:requestCode', email) as Promise<{ ok: boolean }>,
+    join: (opts: { email: string; code: string; folder?: string }) =>
+      ipcRenderer.invoke('hqSync:join', opts) as Promise<{
+        ok: boolean
+        email: string
+        name: string
+        role: string
+        brainPath: string
+        teamName: string
+        teamSlug: string
+        roots: string[]
+      }>,
+    openExisting: () =>
+      ipcRenderer.invoke('hqSync:openExisting') as Promise<{
+        ok: boolean
+        email: string
+        name: string
+        role: string
+        brainPath: string
+        teamName: string
+        teamSlug: string
+        roots: string[]
+      }>,
+    ownerRequestCode: (email: string) =>
+      ipcRenderer.invoke('hqSync:ownerRequestCode', email) as Promise<{ ok: boolean }>,
+    ownerLogin: (opts: { email: string; code: string }) =>
+      ipcRenderer.invoke('hqSync:ownerLogin', opts) as Promise<{
+        ok: boolean
+        email: string
+        kind: string
+        hq_repo: string
+        brain_label: string
+      }>,
+    ownerStatus: () =>
+      ipcRenderer.invoke('hqSync:ownerStatus') as Promise<{
+        signedIn: boolean
+        email: string
+        hq_repo: string
+        brain_label: string
+        projects: { slug: string; path: string }[]
+        seats: { seat_id: string; email: string; name: string; status: string; roots: string[]; kind: string }[]
+      }>,
+    watchedRepo: () => ipcRenderer.invoke('hqSync:watchedRepo') as Promise<string>,
+    bind: (hqRepo: string) =>
+      ipcRenderer.invoke('hqSync:bind', hqRepo) as Promise<{
+        ok: boolean
+        hq_repo?: string
+        install_url?: string
+        detail: string
+        projects?: string[]
+      }>,
+    revoke: (seatId: string) =>
+      ipcRenderer.invoke('hqSync:revoke', seatId) as Promise<{ ok: boolean; detail: string }>
   },
   setup: {
     createTeam: (name: string) => ipcRenderer.invoke('setup:createTeam', name),

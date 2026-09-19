@@ -7,7 +7,7 @@ export type Account = {
   name?: string
   token: string
   role?: string
-  source?: 'ads2ai' | 'team-file'
+  source?: 'ads2ai' | 'team-file' | 'hq-sync'
   folder?: string
   brains?: string[]
 }
@@ -60,7 +60,7 @@ export function loadAccount(): Account | null {
       name: String(raw.name || ''),
       token,
       role: String(raw.role || ''),
-      source: raw.source === 'team-file' ? 'team-file' : 'ads2ai',
+      source: raw.source === 'team-file' ? 'team-file' : raw.source === 'hq-sync' ? 'hq-sync' : 'ads2ai',
       folder: String(raw.folder || ''),
       brains: Array.isArray(raw.brains) ? raw.brains.map((b) => String(b || '').trim()).filter(Boolean) : []
     }
@@ -77,7 +77,7 @@ export function saveAccount(next: Account): Account {
     name: String(next.name || ''),
     token: String(next.token || ''),
     role: String(next.role || ''),
-    source: next.source === 'team-file' ? 'team-file' : 'ads2ai',
+    source: next.source === 'team-file' ? 'team-file' : next.source === 'hq-sync' ? 'hq-sync' : 'ads2ai',
     folder: String(next.folder || ''),
     brains: Array.isArray(next.brains) ? next.brains.map((b) => String(b || '').trim()).filter(Boolean) : []
   })
@@ -97,7 +97,7 @@ export function setMemberToken(token: string | null): void {
 export function getMemberToken(): string {
   if (!memberToken) loadAccount()
   if (!memberToken) throw new Error('Sign in first')
-  if (memberToken.startsWith('local:')) {
+  if (memberToken.startsWith('local:') || account?.source === 'hq-sync') {
     throw new Error('This sign-in is the shared folder, not Agency Brain membership.')
   }
   return memberToken

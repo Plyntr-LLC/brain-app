@@ -21,6 +21,8 @@ export function FirstRun() {
   const [railOpen, setRailOpen] = useState(true)
   const [waitSec, setWaitSec] = useState(0)
   const [updatedLine, setUpdatedLine] = useState('')
+  const [projectSeat, setProjectSeat] = useState<{ folder: string; label: string } | null>(null)
+  const [loginVia, setLoginVia] = useState<'ads2ai' | 'hq-sync' | ''>('')
 
   useEffect(() => {
     void (async () => {
@@ -32,7 +34,9 @@ export function FirstRun() {
       setDetected(d)
       const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
       const email = acct.signedIn ? acct.email : existing?.email || ''
-      const folder = existing?.brainPath || acct.folder || ''
+      const hqMini = acct.source === 'hq-sync'
+      const folder = hqMini ? acct.folder || e.projectSeat?.folder || '' : existing?.brainPath || acct.folder || ''
+      setProjectSeat(e.projectSeat ? { folder: e.projectSeat.folder, label: e.projectSeat.label } : null)
       let screen = 'email'
       if (acct.signedIn && (st.ready || (folder && pick))) screen = 'chat'
       else if (acct.signedIn && (st.watching || folder)) screen = 'aipick'
@@ -148,6 +152,28 @@ export function FirstRun() {
     go('email')
   }
 
+  async function afterProject(res: {
+    email: string
+    name: string
+    brainPath: string
+    teamName: string
+    roots?: string[]
+  }) {
+    const d = await window.brain.ai.detect()
+    setDetected(d)
+    const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
+    go(pick ? 'chat' : 'aipick', {
+      email: res.email,
+      role: 'project',
+      brainKind: 'project',
+      brainPath: res.brainPath,
+      business: res.teamName,
+      path: 'join',
+      member: { email: res.email, name: res.name },
+      abWatching: true
+    })
+  }
+
   return (
     <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${!railOpen && s.screen !== 'chat' ? 'rail-off' : ''} ${updatedLine ? 'has-update' : ''}`}>
       <div className="titlebar">
@@ -159,7 +185,13 @@ export function FirstRun() {
           </span>
         ) : null}
         <span className={`sync-pill ${s.abWatching ? 'on' : ''}`}>
-          {s.abWatching ? 'Agency Brain · watching this folder' : 'Folder not watching yet'}
+          {s.role === 'project' || s.brainKind === 'project'
+            ? s.abWatching
+              ? 'Project folders syncing'
+              : 'Project folder not syncing yet'
+            : s.abWatching
+              ? 'Agency Brain · watching this folder'
+              : 'Folder not watching yet'}
         </span>
         {s.email ? <span className="tiny" style={{ marginLeft: 'auto' }}>{s.email}</span> : null}
         {s.screen === 'chat' || s.email ? (
@@ -322,11 +354,11 @@ export function FirstRun() {
           )}
           {s.screen === 'email' && (
             <>
-              <p className="kicker">No code</p>
+              <p className="kicker">Sign in</p>
               <h1>Sign in with your email.</h1>
               <p>
-                This window is the whole setup. Teammates: type the email on the team list, then open the shared folder.
-                Owners: email code or setup code, then GitHub opens in a Brain window if a new brain needs an organization.
+                Owners, scouts, and agency team get an Agency Brain code. Project only people get a code from this
+                app. You do not pick which. Type the email you were invited with.
               </p>
               <label className="field">
                 Your email
@@ -334,30 +366,52 @@ export function FirstRun() {
               </label>
               {err && <p className="note">{err}</p>}
               <div className="actions">
-                <button className="primary" type="button" disabled={!s.email.includes('@')} onClick={async () => {
-                  try {
-                    const res = await window.brain.auth.joinFolder(s.email)
-                    const d = await window.brain.ai.detect()
-                    const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
-                    const teamLike = res.role === 'team' || res.role === 'member' || res.role === 'project'
-                    go(pick ? 'chat' : 'aipick', {
-                      email: res.email,
-                      role: res.role,
-                      brainPath: res.brainPath,
-                      business: res.teamName,
-                      path: teamLike ? 'join' : 'second',
-                      member: { email: res.email, name: res.name },
-                      abWatching: false
-                    })
-                  } catch (e) {
-                    setErr(String((e as Error).message || e))
-                  }
-                }}>Open the shared folder</button>
-                <button className="ghost" type="button" disabled={!s.email.includes('@')} onClick={async () => {
-                  try { await window.brain.auth.requestCode(s.email) } catch (e) { setErr(String((e as Error).message || e)); return }
-                  go('otp')
-                }}>Email me an Agency Brain code</button>
-                <button className="linkish" type="button" onClick={() => go('welcome')}>I have a setup code</button>
+                <button
+                  className="primary"
+                  type="button"
+                  disabled={!s.email.includes('@')}
+                  onClick={async () => {
+                    try {
+                      const sent = await window.brain.auth.requestCode(s.email)
+                      setLoginVia(sent.via)
+                      go('otp')
+                    } catch (e) {
+                      setErr(String((e as Error).message || e))
+                    }
+                  }}
+                >
+                  Email me a code
+                </button>
+                <button
+                  className="ghost"
+                  type="button"
+                  disabled={!s.email.includes('@')}
+                  onClick={() => go('otp')}
+                >
+                  I already have a code
+                </button>
+                <button className="linkish" type="button" onClick={() => go('welcome')}>
+                  I have a setup code
+                </button>
+                <button className="ghost" type="button" onClick={() => void skipToExisting()}>
+                  This computer already has a brain — skip to chat
+                </button>
+                {projectSeat ? (
+                  <button
+                    className="linkish"
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const res = await window.brain.hqSync.openExisting()
+                        await afterProject(res)
+                      } catch (e) {
+                        setErr(String((e as Error).message || e))
+                      }
+                    }}
+                  >
+                    Open {projectSeat.label} already on this computer
+                  </button>
+                ) : null}
               </div>
             </>
           )}
@@ -366,27 +420,71 @@ export function FirstRun() {
               <p className="kicker">Check your email</p>
               <h1>Enter the sign-in code we sent.</h1>
               <p className="muted">{s.email}</p>
-              <label className="field">Code<input value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="184 392" /></label>
+              <label className="field">
+                Code
+                <input value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="184 392" />
+              </label>
               {err && <p className="note">{err}</p>}
               <div className="actions">
-                <button className="primary" type="button" onClick={async () => {
-                  try {
-                    const res = await window.brain.auth.verify(s.email, otp)
-                    const st = await window.brain.setup.status()
-                    const email = String(res.member?.email || s.email).toLowerCase()
-                    if (st.ready) {
-                      go('chat', { email, member: res.member, abWatching: true })
-                      return
+                <button
+                  className="primary"
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const res = await window.brain.auth.verify(
+                        s.email,
+                        otp,
+                        loginVia || undefined
+                      )
+                      if (res.via === 'hq-sync') {
+                        await afterProject({
+                          email: res.member.email,
+                          name: res.member.name || res.member.email,
+                          brainPath: res.brainPath || '',
+                          teamName: res.teamName || 'Brain'
+                        })
+                        return
+                      }
+                      const st = await window.brain.setup.status()
+                      const email = String(res.member?.email || s.email).toLowerCase()
+                      if (st.ready) {
+                        go('chat', { email, member: res.member, abWatching: true })
+                        return
+                      }
+                      if (st.watching) {
+                        go('aipick', { email, member: res.member, abWatching: true })
+                        return
+                      }
+                      const teams = res.teams || []
+                      const role = String(res.member?.role || '').toLowerCase()
+                      const teamLike = role === 'team' || role === 'member'
+                      if (s.path === 'join' || teamLike) go('hello', { email, teams, member: res.member, role: role || 'team' })
+                      else go('choice', { email, teams, member: res.member })
+                    } catch (e) {
+                      setErr(String((e as Error).message || e))
                     }
-                    if (st.watching) {
-                      go('aipick', { email, member: res.member, abWatching: true })
-                      return
+                  }}
+                >
+                  Continue
+                </button>
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const sent = await window.brain.auth.requestCode(s.email)
+                      setLoginVia(sent.via)
+                      setErr('Check that inbox for a six-digit code. It lasts ten minutes.')
+                    } catch (e) {
+                      setErr(String((e as Error).message || e))
                     }
-                    const teams = res.teams || []
-                    if (s.path === 'join') go('hello', { email, teams, member: res.member })
-                    else go('choice', { email, teams, member: res.member })
-                  } catch (e) { setErr(String((e as Error).message || e)) }
-                }}>Continue</button>
+                  }}
+                >
+                  Email me a new code
+                </button>
+                <button className="linkish" type="button" onClick={() => go('email')}>
+                  Back
+                </button>
               </div>
             </>
           )}
@@ -481,10 +579,40 @@ export function FirstRun() {
                 </button>
                 <button className="primary" type="button" disabled={org.trim().length < 2} onClick={async () => {
                   try {
+                    setErr('')
                     const look = await window.brain.setup.lookupOrg(org.trim())
                     if (look && look.ok === false) { setErr(look.reason || 'GitHub did not accept that name'); return }
-                    await window.brain.setup.createTeam(s.business)
-                    await window.brain.setup.openAppInstall('new-team', org.trim())
+                    const created = (await window.brain.setup.createTeam(s.business)) as {
+                      skipped?: boolean
+                      team?: { slug?: string }
+                    }
+                    if (created?.skipped) {
+                      await afterMembership({ orgLogin: org.trim() })
+                      return
+                    }
+                    const slug = String(created?.team?.slug || '').trim()
+                    if (!slug) {
+                      setErr('Could not make the team.')
+                      return
+                    }
+                    await window.brain.setup.openAppInstall(slug, org.trim())
+                    setErr('Waiting for GitHub. Stay in that window until it finishes.')
+                    const until = Date.now() + 120000
+                    let installed = false
+                    while (Date.now() < until) {
+                      const st = (await window.brain.setup.pollInstall(slug).catch(() => null)) as {
+                        installed?: boolean
+                      } | null
+                      if (st?.installed) {
+                        installed = true
+                        break
+                      }
+                      await new Promise((r) => setTimeout(r, 2000))
+                    }
+                    if (!installed) {
+                      setErr('GitHub is not on that organization yet. Authorize Agency Brain Sync, then Continue with GitHub again.')
+                      return
+                    }
                     await afterMembership({ orgLogin: org.trim() })
                   } catch (e) { setErr(String((e as Error).message || e)) }
                 }}>Continue with GitHub</button>

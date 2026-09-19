@@ -99,6 +99,17 @@ export function SettingsPanel({
   const [appVer, setAppVer] = useState('')
   const [upd, setUpd] = useState('')
   const [skinCap, setSkinCap] = useState(false)
+  const [hq, setHq] = useState<{
+    signedIn: boolean
+    email: string
+    hq_repo: string
+    brain_label: string
+    projects: { slug: string; path: string }[]
+    seats: { seat_id: string; email: string; name: string; status: string; roots: string[]; kind: string }[]
+  } | null>(null)
+  const [hqCode, setHqCode] = useState('')
+  const [hqRepo, setHqRepo] = useState('')
+  const [hqBusy, setHqBusy] = useState(false)
   const [captures, setCaptures] = useState<
     {
       fingerprint: string
@@ -126,6 +137,15 @@ export function SettingsPanel({
       setPeople(local)
       setClients(((await window.brain.settings.clients()) as Record<string, unknown>[]).map(asClient))
       setLiveProjects(await window.brain.settings.projects().catch(() => []))
+      const bridge = await window.brain.hqSync.ownerStatus().catch(() => null)
+      if (bridge) {
+        setHq(bridge)
+        const watched = await window.brain.hqSync.watchedRepo().catch(() => '')
+        setHqRepo(bridge.hq_repo || watched || '')
+        if (bridge.projects.length) {
+          setLiveProjects(bridge.projects.map((p) => ({ id: p.slug, name: prettyName(p.slug) })))
+        }
+      }
       setAppVer(await window.brain.version().catch(() => ''))
       const skin = await window.brain.skin.get().catch(() => ({ capture: false, joe: false, components: [] }))
       if (skin.joe) {
@@ -222,9 +242,131 @@ export function SettingsPanel({
           <p className="kicker">People in {here}</p>
           <h3 className="set-h">Add users</h3>
           <p>
-            Agency team is on this brain. Project only is limited to the projects you tick. Owners and scouts see all of{' '}
-            {here}.
+            Agency team is on this whole brain. Project only never clones HQ. This app copies only the folders you tick,
+            keeps them in sync in the background, and deletes those folders if you remove access.
           </p>
+          <div className="set-block" style={{ padding: 0 }}>
+            <p className="tiny">
+              {hq?.signedIn
+                ? `Project sync signed in as ${hq.email}${hq.hq_repo ? ` · ${hq.hq_repo}` : ''}.`
+                : 'To add Project only people, sign in for project sync with a code to your owner email.'}
+            </p>
+            {!hq?.signedIn ? (
+              <>
+                <label className="field">
+                  Project-sync code
+                  <input value={hqCode} onChange={(e) => setHqCode(e.target.value)} placeholder="184 392" />
+                </label>
+                <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+                  <button
+                    className="ghost"
+                    type="button"
+                    disabled={!email.includes('@')}
+                    onClick={async () => {
+                      try {
+                        await window.brain.hqSync.ownerRequestCode(email)
+                        setNote('Check that inbox for a six-digit code. It lasts ten minutes.')
+                      } catch (e) {
+                        setNote(String((e as Error).message || e))
+                      }
+                    }}
+                  >
+                    Email me a project-sync code
+                  </button>
+                  <button
+                    className="primary"
+                    type="button"
+                    disabled={hqCode.replace(/\s/g, '').length < 4}
+                    onClick={async () => {
+                      try {
+                        await window.brain.hqSync.ownerLogin({ email, code: hqCode })
+                        const st = await window.brain.hqSync.ownerStatus()
+                        setHq(st)
+                        const watched = await window.brain.hqSync.watchedRepo().catch(() => '')
+                        setHqRepo(st.hq_repo || watched || '')
+                        if (st.projects.length) {
+                          setLiveProjects(st.projects.map((p) => ({ id: p.slug, name: prettyName(p.slug) })))
+                        }
+                        setNote('Project sync is on. Add Project only people below.')
+                      } catch (e) {
+                        setNote(String((e as Error).message || e))
+                      }
+                    }}
+                  >
+                    Sign in
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label className="field">
+                  HQ GitHub repo
+                  <input
+                    value={hqRepo}
+                    onChange={(e) => setHqRepo(e.target.value)}
+                    placeholder="acme-org/acme-hq-brain"
+                  />
+                </label>
+                <button
+                  className="ghost"
+                  type="button"
+                  disabled={!hqRepo.includes('/') || hqBusy}
+                  onClick={async () => {
+                    try {
+                      setHqBusy(true)
+                      setNote('Waiting for GitHub. Authorize Brain Bridge on that one repo if a window opens.')
+                      const res = await window.brain.hqSync.bind(hqRepo)
+                      setNote(res.detail)
+                      const st = await window.brain.hqSync.ownerStatus()
+                      setHq(st)
+                      if (st.hq_repo) setHqRepo(st.hq_repo)
+                      if (st.projects.length) {
+                        setLiveProjects(st.projects.map((p) => ({ id: p.slug, name: prettyName(p.slug) })))
+                      }
+                    } catch (e) {
+                      setNote(String((e as Error).message || e))
+                    } finally {
+                      setHqBusy(false)
+                    }
+                  }}
+                >
+                  {hqBusy ? 'Waiting for GitHub…' : 'Connect this HQ'}
+                </button>
+                {(hq.seats || [])
+                  .filter((p) => p.kind !== 'owner')
+                  .map((p) => (
+                    <div className="set-row" key={p.seat_id}>
+                      <span>
+                        {p.name} · {p.email}
+                        <span className="tiny">
+                          {' '}
+                          · Project only
+                          {p.roots?.length ? ` · ${p.roots.map((r) => prettyName(r.replace(/^projects\/|\/$/g, ''))).join(', ')}` : ''}
+                          {p.status !== 'active' ? ` · ${p.status}` : ''}
+                        </span>
+                      </span>
+                      {p.status === 'active' ? (
+                        <button
+                          type="button"
+                          className="linkish"
+                          onClick={async () => {
+                            try {
+                              const res = await window.brain.hqSync.revoke(p.seat_id)
+                              setNote(res.detail)
+                              setHq(await window.brain.hqSync.ownerStatus())
+                            } catch (e) {
+                              setNote(String((e as Error).message || e))
+                            }
+                          }}
+                        >
+                          Remove access
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+              </>
+            )}
+          </div>
           {people.map((p) => {
             const ids = p.brains?.length ? p.brains : p.brain && p.brain !== 'hq' ? [p.brain] : []
             const names = ids.map((id) => liveProjects.find((x) => x.id === id)?.name || prettyName(id)).join(', ')
@@ -310,7 +452,7 @@ export function SettingsPanel({
               disabled={
                 !draft.name.trim() ||
                 !draft.email.includes('@') ||
-                (draft.role === 'project' && !(draft.brains || []).length)
+                (draft.role === 'project' && (!(draft.brains || []).length || !hq?.signedIn))
               }
               onClick={async () => {
                 const brains = draft.role === 'project' ? draft.brains || [] : []
@@ -323,7 +465,11 @@ export function SettingsPanel({
                 })
                 const roster = await window.brain.settings.roster().catch(() => [])
                 setPeople(roster.length ? roster : (res.people as Person[]))
-                setNote(res.roster.ok ? `${draft.name} can sign in with that email.` : res.roster.detail)
+                setNote(res.roster.ok ? res.roster.detail || `${draft.name} can sign in with that email.` : res.roster.detail)
+                if (draft.role === 'project') {
+                  const st = await window.brain.hqSync.ownerStatus().catch(() => null)
+                  if (st) setHq(st)
+                }
                 setDraft({ name: '', email: '', role: 'team', brain: '', brains: [] })
               }}
             >

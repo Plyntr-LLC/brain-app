@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
 import { readWatching } from './agency-brain'
 import { startBrainSync } from './brain-sync'
+import { ensureHqSyncAgent, isHqMiniFolder } from './hq-sync'
 import { loadAccount } from './session-token'
 import { registerStubIpc } from './ipc-stubs'
 import { killAllPtys, registerPtyIpc } from './pty'
@@ -66,8 +67,12 @@ app.whenReady().then(() => {
   }
   const watching = readWatching()
   const acct = loadAccount()
-  const folder = watching.brainPath || acct?.folder || ''
-  if (folder) {
+  const hqFolder = acct?.source === 'hq-sync' ? acct.folder || '' : ''
+  const folder = hqFolder || watching.brainPath || acct?.folder || ''
+  if (hqFolder || isHqMiniFolder(folder)) {
+    void ensureHqSyncAgent()
+    if (folder) prewarm('grok', folder)
+  } else if (folder) {
     startBrainSync(folder)
     prewarm('grok', folder)
   }

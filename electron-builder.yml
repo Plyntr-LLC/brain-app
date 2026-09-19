@@ -10,6 +10,9 @@ files:
 asar: true
 asarUnpack:
   - node_modules/node-pty/**/*
+extraResources:
+  - from: vendor/brain-sync
+    to: hq-sync
 mac:
   category: public.app-category.productivity
   target:
