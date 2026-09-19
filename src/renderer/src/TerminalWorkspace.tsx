@@ -6,6 +6,7 @@ import type { AiKind, Session } from '@shared/contracts'
 import { mdToHtml, tidy, type FileHit } from './ptyChat'
 import { WorldClocks } from './WorldClocks'
 import { WorkPulse } from './WorkPulse'
+import { SkinPane } from './skin/SkinPane'
 
 type Mode = 'chat' | 'term'
 type Attach = { path: string; name: string; mime: string; preview?: string }
@@ -416,6 +417,14 @@ function ChatPane({
   const turn = useRef({ think: false, answer: false })
   const [queue, setQueue] = useState<Queued[]>([])
   const queueRef = useRef<Queued[]>([])
+  const [skinOn, setSkinOn] = useState(false)
+  const [rawOpen, setRawOpen] = useState(false)
+  const [permission, setPermission] = useState<{
+    title?: string
+    path?: string
+    options?: { id: string; label: string }[]
+    requestId?: string
+  } | null>(null)
   const sendTextRef = useRef<(t: string, opts?: { cancel?: boolean; fromQueue?: boolean; files?: Attach[] }) => Promise<void>>(async () => {})
   const pinBottom = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
@@ -488,6 +497,14 @@ function ChatPane({
         const label = ev.data.slice(5).trim()
         if (label) setWaitLabel(label)
       }
+      if (ev.kind === 'permission') {
+        setPermission({
+          title: ev.title,
+          path: ev.path,
+          options: ev.options,
+          requestId: ev.requestId
+        })
+      }
       if (ev.kind === 'file' && ev.path) {
         const hit = { path: ev.path, tool: ev.tool, live: true }
         const base = ev.path.replace(/\\/g, '/').split('/').filter(Boolean).pop() || ev.path
@@ -518,6 +535,7 @@ function ChatPane({
         if (ev.kind === 'error' && ev.data) {
           setMessages((m) => [...m, { who: 'brain', text: ev.data || '' }])
         }
+        if (ev.kind === 'done') setPermission(null)
         if (skipDrain.current > 0) {
           skipDrain.current -= 1
           return
@@ -1193,6 +1211,76 @@ function ChatPane({
           )}
         </div>
       )}
+      <div className="skin-switch">
+        <button type="button" className={!skinOn ? 'on' : ''} onClick={() => setSkinOn(false)}>
+          Chat
+        </button>
+        <button type="button" className={skinOn ? 'on' : ''} onClick={() => setSkinOn(true)}>
+          Skin
+        </button>
+      </div>
+      {permission && !skinOn ? (
+        <div className="skin-perm">
+          <p className="skin-perm-title">{permission.title || 'Allow this?'}</p>
+          {permission.path ? <p className="tiny">{permission.path}</p> : null}
+          <div className="skin-perm-actions">
+            <button
+              type="button"
+              className="primary"
+              onClick={() => {
+                void window.brain.skin.decide(id, 'allowOnce')
+                setPermission(null)
+              }}
+            >
+              Allow
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                void window.brain.skin.decide(id, 'skip')
+                setPermission(null)
+              }}
+            >
+              Skip
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {skinOn ? (
+        <SkinPane
+          tabId={id}
+          cwd={cwd}
+          kind={kind}
+          messages={messages}
+          busy={busy || compacting || warming}
+          waitLabel={compacting ? 'Compacting' : waitLabel}
+          waitSec={waitSec}
+          queue={queue}
+          permission={permission}
+          rawOpen={rawOpen}
+          onRaw={setRawOpen}
+          onAction={(actionId, spec) => {
+            if (actionId === 'allowOnce' || actionId === 'skip' || actionId === 'alwaysAllowInFolder') {
+              void window.brain.skin.decide(id, actionId)
+              setPermission(null)
+              return
+            }
+            if (actionId === 'stop') {
+              void window.brain.chat.stop(id)
+              return
+            }
+            if (actionId === 'login') {
+              void window.brain.ai.login(kind)
+              return
+            }
+            if (actionId === 'runSlash') {
+              const name = String(spec.props.name || '')
+              if (name) void sendTextRef.current('/' + name)
+            }
+          }}
+        />
+      ) : (
       <div className="thread" ref={thread} onScroll={onThreadScroll}>
         {messages.map((m, i) =>
           m.text || m.who === 'me' ? (
@@ -1226,7 +1314,8 @@ function ChatPane({
           ) : null
         )}
       </div>
-      {(busy || compacting || warming) && (
+      )}
+      {(busy || compacting || warming) && !skinOn && (
         <WorkPulse label={compacting ? 'Compacting' : waitLabel} seconds={waitSec} />
       )}
       {!atBottom ? (

@@ -12,5 +12,6 @@
     "types": ["node"],
     "outDir": "out"
   },
-  "include": ["electron.vite.config.ts", "src/main/**/*.ts", "src/preload/**/*.ts", "src/shared/**/*.ts"]
+  "include": ["electron.vite.config.ts", "src/main/**/*.ts", "src/preload/**/*.ts", "src/shared/**/*.ts"],
+  "exclude": ["src/main/skin/from-events.test.ts"]
 }

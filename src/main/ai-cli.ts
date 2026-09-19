@@ -83,6 +83,14 @@ export type StreamEvent =
   | { kind: 'commands'; commands: SessionCmd[] }
   | { kind: 'done' }
   | { kind: 'error'; data: string }
+  | {
+      kind: 'permission'
+      title?: string
+      path?: string
+      options?: { id: string; label: string }[]
+      requestId?: string
+    }
+  | { kind: 'plan'; steps?: { title: string; status?: string }[] }
 
 function packPrompt(
   system: string,

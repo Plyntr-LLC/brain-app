@@ -25,6 +25,7 @@ export type WarmOpts = {
   effort?: string
   agentMode?: string
   resumeId?: string
+  alwaysApprove?: boolean
 }
 
 export async function warmSession(opts: WarmOpts): Promise<LiveRun> {

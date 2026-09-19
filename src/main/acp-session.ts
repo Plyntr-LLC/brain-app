@@ -8,6 +8,7 @@ import { loginCli } from './install'
 import { acpPromptParts, type Attach } from './attach'
 import { underRoot } from './files'
 import { asRecord, asText, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
+import { captureEvent } from './skin/capture'
 
 const RULES =
   'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
@@ -42,6 +43,9 @@ type Tab = {
   promptId: number | null
   onEvent?: (ev: StreamEvent) => void
   text: string
+  alwaysApprove?: boolean
+  permId?: number | string
+  permOptions?: { id: string; label: string }[]
 }
 
 type Pool = {
@@ -302,6 +306,17 @@ function eventsFromUpdate(update: Record<string, unknown>): StreamEvent[] {
     }
     return hits
   }
+  if (kind === 'plan') {
+    const entries = Array.isArray(update.entries) ? update.entries : Array.isArray(update.plan) ? update.plan : []
+    const steps = entries
+      .map((row) => {
+        const r = asRecord(row)
+        const title = String(r.title || r.content || r.text || '')
+        return title ? { title, status: String(r.status || '') } : null
+      })
+      .filter((s): s is { title: string; status: string } => Boolean(s))
+    return steps.length ? [{ kind: 'plan', steps }] : []
+  }
   return []
 }
 
@@ -379,8 +394,17 @@ function handleNote(pool: Pool, msg: RpcMsg): void {
     tab.onEvent({ kind: 'context', used: used || undefined, total: total || undefined, percent })
   }
   if (!tab.onEvent) return
-  for (const ev of eventsFromUpdate(update)) {
+  const mapped = eventsFromUpdate(update)
+  if (!mapped.length && kind && kind !== 'model_changed' && kind !== 'config_option_update') {
+    captureEvent({
+      cli: pool.kind,
+      sessionId: tab.sessionId,
+      ev: { kind, data: String(update.title || update.status || '') }
+    })
+  }
+  for (const ev of mapped) {
     if (ev.kind === 'text') tab.text += ev.data
+    captureEvent({ cli: pool.kind, sessionId: tab.sessionId, ev })
     tab.onEvent(ev)
   }
 }
@@ -388,12 +412,40 @@ function handleNote(pool: Pool, msg: RpcMsg): void {
 function handleReq(pool: Pool, msg: RpcMsg): void {
   if (msg.id == null) return
   if (msg.method === 'session/request_permission') {
-    const optionId = pickOption(msg, false)
-    if (optionId) {
-      pool.rpc.reply(msg.id, { outcome: { outcome: 'selected', optionId } })
+    const p = asRecord(msg.params)
+    const sid = String(p.sessionId || '')
+    const tabId = pool.bySid.get(sid)
+    const tab = tabId ? pool.tabs.get(tabId) : undefined
+    const auto = !tab || tab.alwaysApprove !== false
+    if (auto) {
+      const optionId = pickOption(msg, false)
+      if (optionId) {
+        pool.rpc.reply(msg.id, { outcome: { outcome: 'selected', optionId } })
+        return
+      }
+      pool.rpc.reply(msg.id, { outcome: { outcome: 'cancelled' } })
       return
     }
-    pool.rpc.reply(msg.id, { outcome: { outcome: 'cancelled' } })
+    const rawOpts = Array.isArray(p.options) ? p.options : []
+    const options = rawOpts
+      .map((o) => {
+        const r = asRecord(o)
+        const id = String(r.optionId || r.kind || '')
+        const label = String(r.name || r.label || r.kind || id)
+        return id ? { id, label } : null
+      })
+      .filter((o): o is { id: string; label: string } => Boolean(o))
+    tab.permId = msg.id
+    tab.permOptions = options
+    const tool = asRecord(p.toolCall)
+    const title = String(p.title || tool.title || 'Allow this?')
+    const path = String(
+      asRecord(tool.rawInput).target_file || asRecord(tool.rawInput).path || tool.path || ''
+    )
+    const ev: StreamEvent = { kind: 'permission', title, path, options, requestId: String(msg.id) }
+    captureEvent({ cli: pool.kind, sessionId: tab.sessionId, ev, transport: 'acp' })
+    if (tab.onEvent) tab.onEvent(ev)
+    else broadcast(tab, ev)
     return
   }
   if (msg.method === 'fs/read_text_file') {
@@ -811,6 +863,7 @@ export async function acpPrompt(opts: {
   model?: string
   effort?: string
   agentMode?: string
+  alwaysApprove?: boolean
   attachments?: Attach[]
   onEvent: (ev: StreamEvent) => void
 }): Promise<string> {
@@ -826,6 +879,7 @@ async function acpPromptOnce(
     model?: string
     effort?: string
     agentMode?: string
+    alwaysApprove?: boolean
     attachments?: Attach[]
     onEvent: (ev: StreamEvent) => void
   },
@@ -850,6 +904,7 @@ async function acpPromptOnce(
     opts.onEvent({ kind: 'done' })
     return ''
   }
+  tab.alwaysApprove = opts.alwaysApprove !== false
   if (tab.promptId != null) acpCancel(opts.tabId)
   const gen = Date.now()
   tab.onEvent = opts.onEvent
@@ -886,6 +941,34 @@ async function acpPromptOnce(
     return acpPromptOnce({ ...opts, model: undefined, effort: undefined }, true)
   }
   return tab.text.trim()
+}
+
+export function acpDecidePermission(tabId: string, optionId: string): boolean {
+  const key = tabPool.get(tabId)
+  const pool = key ? pools.get(key) : undefined
+  const tab = pool?.tabs.get(tabId)
+  if (!pool || !tab || tab.permId == null) return false
+  let pick = optionId
+  if (optionId === 'skip') {
+    const hit = (tab.permOptions || []).find((o) => /reject|skip|cancel/i.test(o.id + o.label))
+    pick = hit?.id || optionId
+  }
+  if (optionId === 'allowOnce') {
+    const hit = (tab.permOptions || []).find((o) => /allow_once|allow once/i.test(o.id + o.label))
+    pick = hit?.id || 'allow_once'
+  }
+  if (optionId === 'alwaysAllowInFolder') {
+    const hit = (tab.permOptions || []).find((o) => /allow_always|always/i.test(o.id + o.label))
+    pick = hit?.id || 'allow_always'
+  }
+  try {
+    pool.rpc.reply(tab.permId, { outcome: { outcome: 'selected', optionId: pick } })
+  } catch {
+    return false
+  }
+  tab.permId = undefined
+  tab.permOptions = undefined
+  return true
 }
 
 export function acpCancel(tabId: string): boolean {

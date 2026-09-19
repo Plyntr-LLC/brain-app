@@ -251,7 +251,7 @@ const brain = {
     onEvent: (
       cb: (ev: {
         tabId: string
-        kind: 'thought' | 'text' | 'file' | 'status' | 'context' | 'commands' | 'done' | 'error'
+        kind: 'thought' | 'text' | 'file' | 'status' | 'context' | 'commands' | 'done' | 'error' | 'permission' | 'plan'
         data?: string
         path?: string
         tool?: string
@@ -259,6 +259,10 @@ const brain = {
         total?: number
         percent?: number
         commands?: { name: string; description: string; hint?: string }[]
+        title?: string
+        options?: { id: string; label: string }[]
+        requestId?: string
+        steps?: { title: string; status?: string }[]
       }) => void
     ) => {
       const handler = (_: unknown, ev: Parameters<typeof cb>[0]) => cb(ev)
@@ -328,6 +332,29 @@ const brain = {
     }) => ipcRenderer.sendSync('chat:saveStateSync', state) as boolean,
     flushDone: () => ipcRenderer.send('app:flush-done'),
     needs: () => ipcRenderer.invoke('chat:needs')
+  },
+  skin: {
+    get: () =>
+      ipcRenderer.invoke('skin:get') as Promise<{ capture: boolean; joe: boolean; components: string[] }>,
+    toggle: (on: boolean) => ipcRenderer.invoke('skin:toggle', on) as Promise<{ ok: boolean; capture: boolean }>,
+    list: () =>
+      ipcRenderer.invoke('skin:list') as Promise<
+        {
+          id: string
+          at: string
+          cli: string
+          eventKind: string
+          fingerprint: string
+          catalogId: string | null
+          matched: boolean
+          label: string | null
+          propsHint: Record<string, unknown>
+        }[]
+      >,
+    label: (fingerprint: string, label: string) =>
+      ipcRenderer.invoke('skin:label', fingerprint, label) as Promise<{ ok: boolean }>,
+    decide: (tabId: string, optionId: string) =>
+      ipcRenderer.invoke('skin:decide', { tabId, optionId }) as Promise<{ ok: boolean }>
   }
 }
 

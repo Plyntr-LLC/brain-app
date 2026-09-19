@@ -22,6 +22,7 @@ import { asAttachBuf, inspectAttach, stashBytes } from './attach'
 import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot } from './files'
 import { loadChats, saveChats, type SavedChats } from './persist'
 import { cancelWarm, closeWarm, forkSession, promptWarm, resetWarm, resumeSession, warmSession } from './warm'
+import { captureEvent } from './skin/capture'
 import { contextBlurb, grokCli, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
 import { clearAccount, getAccount, getMemberToken, loadAccount, saveAccount } from './session-token'
 import {
@@ -434,6 +435,13 @@ export function registerStubIpc(): void {
       if (!cwd) throw new Error('No brain folder on this computer to talk against')
       const wc = e.sender
       const onEvent = (ev: ai.StreamEvent) => {
+        captureEvent({
+          cli: payload.kind || 'grok',
+          sessionId: payload.sessionId || payload.tabId,
+          ev,
+          transport:
+            payload.kind === 'claude' ? 'stream-json' : payload.kind === 'gpt' ? 'app-server' : 'acp'
+        })
         wc.send('chat:event', { tabId: payload.tabId, ...ev })
       }
       const kind = payload.kind || 'grok'
@@ -446,6 +454,7 @@ export function registerStubIpc(): void {
           model: payload.model,
           effort: payload.effort,
           agentMode: payload.agentMode,
+          alwaysApprove: payload.alwaysApprove,
           attachments: payload.attachments,
           onEvent
         })

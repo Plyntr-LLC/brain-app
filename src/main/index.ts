@@ -7,10 +7,12 @@ import { registerStubIpc } from './ipc-stubs'
 import { killAllPtys, registerPtyIpc } from './pty'
 import { killAllWarm, prewarm } from './warm'
 import { registerUpdateIpc, startAutoUpdate } from './update'
+import { registerSkinIpc } from './skin/ipc'
 
 registerStubIpc()
 registerPtyIpc()
 registerUpdateIpc()
+registerSkinIpc()
 
 process.on('uncaughtException', (err) => {
   const msg = String((err as NodeJS.ErrnoException).message || err)

@@ -98,6 +98,18 @@ export function SettingsPanel({
   const [moreBrains, setMoreBrains] = useState(false)
   const [appVer, setAppVer] = useState('')
   const [upd, setUpd] = useState('')
+  const [skinCap, setSkinCap] = useState(false)
+  const [captures, setCaptures] = useState<
+    {
+      fingerprint: string
+      at: string
+      cli: string
+      eventKind: string
+      catalogId: string | null
+      matched: boolean
+      label: string | null
+    }[]
+  >([])
   const joe = email === 'joe@plyntr.com'
   const canAddUsers = joe || !isTeamSeat(seat || role)
 
@@ -115,6 +127,11 @@ export function SettingsPanel({
       setClients(((await window.brain.settings.clients()) as Record<string, unknown>[]).map(asClient))
       setLiveProjects(await window.brain.settings.projects().catch(() => []))
       setAppVer(await window.brain.version().catch(() => ''))
+      const skin = await window.brain.skin.get().catch(() => ({ capture: false, joe: false, components: [] }))
+      if (skin.joe) {
+        setSkinCap(Boolean(skin.capture))
+        setCaptures(await window.brain.skin.list().catch(() => []))
+      }
       setLoaded(true)
     })()
     return window.brain.onUpdate((ev) => {
@@ -319,6 +336,77 @@ export function SettingsPanel({
           You are {seatLabel(seat || role)} in {here}. The owner adds people.
         </p>
       )}
+
+      {joe ? (
+        <section className="set-block">
+          <p className="kicker">Skin captures</p>
+          <h3 className="set-h">Catalog school</h3>
+          <p>Only you see this. Turn capture on to log unmatched CLI screens on this Mac. They stay in this app’s data folder, not the shared brain.</p>
+          <label className="set-row">
+            <span>Capture screens</span>
+            <button
+              type="button"
+              className={skinCap ? 'primary' : 'ghost'}
+              onClick={() => {
+                void window.brain.skin.toggle(!skinCap).then((r) => setSkinCap(Boolean(r.capture)))
+              }}
+            >
+              {skinCap ? 'On' : 'Off'}
+            </button>
+          </label>
+          {captures.length === 0 ? (
+            <p className="tiny">No captures yet.</p>
+          ) : (
+            <ul className="looking">
+              {captures.slice(0, 24).map((c) => (
+                <li key={c.fingerprint + c.at}>
+                  <span>
+                    {c.cli} · {c.eventKind} · {c.matched ? c.catalogId : 'unmatched'}
+                    {c.label ? ` · ${c.label}` : ''}
+                  </span>
+                  <select
+                    value={c.label || ''}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      if (!v) return
+                      void window.brain.skin.label(c.fingerprint, v).then(() => {
+                        void window.brain.skin.list().then(setCaptures)
+                      })
+                    }}
+                  >
+                    <option value="">Label</option>
+                    <option value="raw">raw</option>
+                    <option value="ignore">ignore</option>
+                    {(
+                      [
+                        'UserMessage',
+                        'AgentMessage',
+                        'Thought',
+                        'ToolCard',
+                        'WorkPulse',
+                        'PermissionAsk',
+                        'Picker',
+                        'SlashMenu',
+                        'Plan',
+                        'ContextMeter',
+                        'CompactNotice',
+                        'ErrorNotice',
+                        'LoginNeed',
+                        'Queue',
+                        'RawFallback'
+                      ] as const
+                    ).map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </select>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
 
       {joe && superAdmin ? (
         <section className="set-block">
