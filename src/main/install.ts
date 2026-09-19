@@ -1,7 +1,9 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { createWriteStream, existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pipeline } from 'node:stream/promises'
+import { Readable } from 'node:stream'
 import { shell } from 'electron'
 import { DOWNLOAD_AB } from '../shared/contracts'
 import { detectApp, readWatching } from './agency-brain'
@@ -165,6 +167,70 @@ async function openAb(): Promise<void> {
   await shell.openPath(d.path)
 }
 
+async function findAbInstaller(): Promise<string | null> {
+  try {
+    const r = await fetch(DOWNLOAD_AB, { headers: { 'user-agent': 'Brain/0.1' } })
+    if (!r.ok) return null
+    const html = await r.text()
+    const re = process.platform === 'win32' ? /https:[^"'<\s]+\.exe/gi : /https:[^"'<\s]+\.dmg/gi
+    const hits = html.match(re) || []
+    return hits[0] || null
+  } catch {
+    return null
+  }
+}
+
+async function downloadFile(url: string, dest: string): Promise<void> {
+  const r = await fetch(url, { headers: { 'user-agent': 'Brain/0.1' } })
+  if (!r.ok || !r.body) throw new Error(`Could not download (${r.status})`)
+  await pipeline(Readable.fromWeb(r.body as never), createWriteStream(dest))
+}
+
+async function installAgencyBrainApp(): Promise<InstallResult> {
+  if (detectApp().installed) {
+    await openAb()
+    return {
+      ok: true,
+      detail: 'Agency Brain is already on this computer. Skip its setup wizard. Sign-in and GitHub stay in this app.',
+      wait: 'none'
+    }
+  }
+  const url = await findAbInstaller()
+  if (!url) {
+    return {
+      ok: true,
+      detail: 'This app already puts the brain folder on this computer and syncs it. Agency Brain is optional. We could not fetch its installer from here.',
+      wait: 'none'
+    }
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'brain-ab-'))
+  const file = join(dir, process.platform === 'win32' ? 'AgencyBrain.exe' : 'AgencyBrain.dmg')
+  try {
+    await downloadFile(url, file)
+  } catch (e) {
+    return { ok: false, detail: String((e as Error).message || e), wait: 'none' }
+  }
+  if (process.platform === 'darwin') {
+    const mount = join(dir, 'mnt')
+    await run('/usr/bin/hdiutil', ['attach', file, '-nobrowse', '-mountpoint', mount])
+    const appPath = join(mount, 'Agency Brain.app')
+    if (!existsSync(appPath)) {
+      await run('/usr/bin/hdiutil', ['detach', mount, '-quiet'])
+      return { ok: false, detail: 'The installer did not contain Agency Brain.app.', wait: 'none' }
+    }
+    await run('/usr/bin/ditto', [appPath, '/Applications/Agency Brain.app'])
+    await run('/usr/bin/hdiutil', ['detach', mount, '-quiet'])
+    await openAb()
+    return {
+      ok: true,
+      detail: 'Agency Brain is in Applications. Do not run its create-organization wizard. This app already signed you in.',
+      wait: 'none'
+    }
+  }
+  await shell.openPath(file)
+  return { ok: true, detail: 'The Agency Brain installer is open. Finish it, then come back here. Skip its setup wizard.', wait: 'present' }
+}
+
 const TOOL_IDS: NeedId[] = ['brew', 'git', 'ab', 'grok', 'claude', 'cursor', 'gpt']
 
 export function isNeedId(id: string): id is NeedId {
@@ -265,12 +331,8 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
         wait: 'watching'
       }
     }
-    await shell.openExternal(DOWNLOAD_AB)
-    return {
-      ok: true,
-      detail: 'Opened the Agency Brain download. Install it, then open it. We will continue when it is on this computer.',
-      wait: 'present'
-    }
+    const put = await installAgencyBrainApp()
+    return put
   }
   if (id === 'grok') {
     if (detectAi().grok) return { ok: true, detail: 'Grok CLI is already here.', wait: 'none' }

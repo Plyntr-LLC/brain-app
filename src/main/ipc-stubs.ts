@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { DOWNLOAD_AB, GITHUB_APP_INSTALL, GITHUB_NEW_ORG, type AiKind } from '../shared/contracts'
+import { GITHUB_APP_INSTALL, GITHUB_NEW_ORG, type AiKind } from '../shared/contracts'
+import { openInApp } from './in-app-browse'
 import * as ads2ai from './ads2ai'
 import { homedir } from 'node:os'
 import {
@@ -92,6 +93,7 @@ export function registerStubIpc(): void {
   ipcMain.handle('bridge:openUrl', (_e, raw: string) => {
     const url = String(raw || '')
     if (!/^https?:\/\//i.test(url)) throw new Error('That is not a web address.')
+    if (/^https:\/\/(github\.com|ads2ai\.com)\//i.test(url)) return openInApp(url, 'Setup')
     shell.openExternal(url)
     return { ok: true }
   })
@@ -278,15 +280,10 @@ export function registerStubIpc(): void {
     return ads2ai.createTeam(getMemberToken(), name)
   })
   ipcMain.handle('setup:lookupOrg', async (_e, login: string) => ads2ai.lookupGithubAccount(login))
-  ipcMain.handle('setup:openCreateOrg', () => {
-    shell.openExternal(GITHUB_NEW_ORG)
-    return { ok: true }
-  })
+  ipcMain.handle('setup:openCreateOrg', () => openInApp(GITHUB_NEW_ORG, 'Create a GitHub organization'))
   ipcMain.handle('setup:openAppInstall', (_e, slug: string, org?: string) => {
-    const url = org
-      ? `${GITHUB_APP_INSTALL}?state=${encodeURIComponent(slug)}`
-      : `${GITHUB_APP_INSTALL}?state=${encodeURIComponent(slug)}`
-    shell.openExternal(url)
+    const url = `${GITHUB_APP_INSTALL}?state=${encodeURIComponent(slug)}`
+    openInApp(url, 'Install Agency Brain Sync')
     return { ok: true, url }
   })
   ipcMain.handle('setup:pollInstall', async (_e, slug: string) => {
@@ -335,12 +332,7 @@ export function registerStubIpc(): void {
   })
 
   ipcMain.handle('ab:detect', async () => detectApp())
-  ipcMain.handle('ab:install', async () => {
-    const d = detectApp()
-    if (d.installed) return { ok: true, already: true, path: d.path }
-    shell.openExternal(DOWNLOAD_AB)
-    return { ok: true, openedDownload: true }
-  })
+  ipcMain.handle('ab:install', async () => installNeed('ab'))
   ipcMain.handle('ab:watching', async () => readWatching())
 
   ipcMain.handle('setup:status', async () => listNeeds())

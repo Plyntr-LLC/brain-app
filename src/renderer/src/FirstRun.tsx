@@ -313,8 +313,8 @@ export function FirstRun() {
               <p className="kicker">No code</p>
               <h1>Sign in with your email.</h1>
               <p>
-                Owners who use Agency Brain can get a code by email. Teammates who only use this app: type the same email
-                the owner put on the team list, then open the shared folder.
+                This window is the whole setup. Teammates: type the email on the team list, then open the shared folder.
+                Owners: email code or setup code, then GitHub opens in a Brain window if a new brain needs an organization.
               </p>
               <label className="field">
                 Your email
@@ -425,21 +425,21 @@ export function FirstRun() {
           {s.screen === 'abget' && (
             <>
               <p className="kicker">Owner and scout</p>
-              <h1>Get Agency Brain on this computer.</h1>
-              <p>{s.business ? `This is ${s.business}` : 'This brain'}{s.email ? `, for ${s.email}` : ''}. Agency Brain keeps the shared folder in sync.</p>
+              <h1>Next: GitHub, then this folder.</h1>
+              <p>{s.business ? `This is ${s.business}` : 'This brain'}{s.email ? `, for ${s.email}` : ''}.</p>
               <div className="warn-box">
-                <h3>Before we start: you will need to allow access</h3>
-                <p>
-                  Your browser will open the Agency Brain download. Put it in Applications (or run the Windows installer),
-                  then open it. macOS may say the app is from the internet: click Open. Sign in, then pick the shared folder.
-                </p>
+                <h3>What happens where</h3>
+                <ol>
+                  <li>This app: your email, the brain folder, Git, and your AI.</li>
+                  <li>GitHub (opens in a Brain window, not Chrome): create a free organization if you need one, then install the sharing app. Choose Only select repositories.</li>
+                  <li>Skip Agency Brain’s own wizard. Do not enter the code or create the organization there too.</li>
+                </ol>
               </div>
               <div className="actions">
                 <button className="primary" type="button" onClick={async () => {
-                  await window.brain.setup.install('ab').catch(() => {})
                   if (s.path === 'second') await afterMembership()
                   else go('github')
-                }}>Download Agency Brain</button>
+                }}>Continue</button>
               </div>
             </>
           )}
@@ -447,12 +447,11 @@ export function FirstRun() {
             <>
               <p className="kicker">Private place</p>
               <h1>A GitHub organization, then Continue.</h1>
-              <p>GitHub will not let the brain live on a personal account. Make a free organization (or use one you already have), then we'll install the sharing app on it. That GitHub page is the one screen we don't own.</p>
+              <p>GitHub will open in a Brain window. Sign in there. Create a free organization if you need one, then we install the sharing app. Stay in this app. Do not also do this in Agency Brain.</p>
               <div className="warn-box">
-                <h3>Before we start: you will need to allow access</h3>
+                <h3>In the GitHub window</h3>
                 <p>
-                  GitHub may ask you to sign in. When you install the sharing app, choose <strong>Only select repositories</strong>,
-                  then this brain. Never All repositories.
+                  Choose <strong>Only select repositories</strong>, then this brain. Never All repositories.
                 </p>
               </div>
               <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
