@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { specFromStreamEvent, userMessageSpec } from '../../../shared/skin/from-events'
+import { isHiddenStreamKind } from '../../../shared/skin/hidden-kinds'
 import { isSkinComponent } from '../../../shared/skin/catalog'
 import type { SkinSpec } from '../../../shared/skin/spec'
 import type { AiKind } from '@shared/contracts'
@@ -26,6 +27,14 @@ function thinkIsLive(messages: Msg[], idx: number, busy: boolean): boolean {
   return true
 }
 
+/** Hide tool-name noise in the pulse; keep Thinking / Writing / Compacting. */
+function busyLabel(waitLabel: string, wantPower: boolean): string {
+  const label = waitLabel || 'Working'
+  if (wantPower) return label
+  if (label === 'Thinking' || label === 'Writing' || label === 'Compacting') return label
+  return 'Working'
+}
+
 export function SkinPane({
   tabId,
   cwd,
@@ -43,7 +52,10 @@ export function SkinPane({
   onScroll,
   onPeel,
   onFiles,
-  onAction
+  onAction,
+  showPower,
+  wantPower,
+  cliName
 }: {
   tabId: string
   cwd: string
@@ -67,6 +79,9 @@ export function SkinPane({
   onPeel: (open: boolean) => void
   onFiles: (hits: FileHit[], live: boolean) => void
   onAction: (id: string, spec: SkinSpec) => void
+  showPower: boolean
+  wantPower: boolean
+  cliName: string
 }) {
   const [openThink, setOpenThink] = useState<Record<string, boolean>>({})
   const specs: { spec: SkinSpec; thinkKey?: string; thinkLive?: boolean }[] = []
@@ -77,10 +92,15 @@ export function SkinPane({
       if (s) specs.push({ spec: s })
     } else if (m.who === 'err' && m.text) {
       const s = specFromStreamEvent({ kind: 'error', data: m.text })
-      if (s) specs.push({ spec: s })
+      if (s) {
+        specs.push({
+          spec: s.component === 'LoginNeed' ? { ...s, props: { ...s.props, cliName } } : s
+        })
+      }
     } else if (m.who === 'raw') {
-      if (m.skinLabel === 'ignore') return
+      if (m.skinLabel === 'ignore' || isHiddenStreamKind(m.rawKind || '')) return
       const ev = { kind: m.rawKind || 'unknown', data: m.text }
+      if (!ev.kind || isHiddenStreamKind(ev.kind)) return
       let s = specFromStreamEvent(ev)
       if (m.skinLabel && isSkinComponent(m.skinLabel) && m.skinLabel !== 'RawFallback') {
         s = s
@@ -126,7 +146,7 @@ export function SkinPane({
     if (s) specs.push({ spec: s })
   }
   if (busy) {
-    const s = specFromStreamEvent({ kind: 'status', data: 'work:' + (waitLabel || 'Working') })
+    const s = specFromStreamEvent({ kind: 'status', data: 'work:' + busyLabel(waitLabel, wantPower) })
     if (s) {
       s.props.seconds = waitSec
       specs.push({ spec: s })
@@ -184,13 +204,17 @@ export function SkinPane({
           )
         })}
       </div>
+      {(wantPower || peel || ctxSpec) ? (
       <p className="tiny skin-cli">
-        {kind} · skin on this chat
-        {ctxSpec ? <SkinCard spec={ctxSpec} onAction={onAction} /> : null}
-        <button type="button" className="linkish" onClick={() => onPeel(!peel)}>
-          {peel ? 'Hide terminal' : 'Show terminal'}
-        </button>
+        {wantPower || peel ? `${cliName} · this chat` : null}
+        {ctxSpec && wantPower ? <SkinCard spec={ctxSpec} onAction={onAction} /> : null}
+        {wantPower || peel ? (
+          <button type="button" className="linkish" onClick={() => onPeel(!peel)}>
+            {peel ? 'Hide terminal' : 'Show terminal'}
+          </button>
+        ) : null}
       </p>
+      ) : null}
     </div>
   )
 }

@@ -939,6 +939,12 @@ button.runmeta-v:hover { color: var(--orange-deep); }
   padding: 0.4rem 1rem 0;
   flex-shrink: 0;
 }
+.skin-more {
+  align-self: flex-start;
+  margin: 0.4rem 1rem 0;
+  flex-shrink: 0;
+  font-size: 0.78rem;
+}
 .skin-switch button {
   font-size: 0.78rem;
   font-weight: 700;

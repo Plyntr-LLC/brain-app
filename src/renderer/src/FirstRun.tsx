@@ -506,9 +506,9 @@ export function FirstRun() {
                 </p>
               </div>
               <div className="ai-grid">
-                {([['claude', 'Claude', 'Claude Code'], ['grok', 'Grok', 'Grok CLI'], ['cursor', 'Cursor', 'cursor-agent'], ['gpt', 'ChatGPT', 'Codex CLI']] as const).map(([id, n, sub]) => (
+                {([['claude', 'Claude'], ['grok', 'Grok'], ['cursor', 'Cursor'], ['gpt', 'ChatGPT']] as const).map(([id, n]) => (
                   <button type="button" key={id} className={`ai ${s.ai === id ? 'on' : ''}`} onClick={() => setS({ ...s, ai: id })} disabled={detected[id] === false}>
-                    <strong>{n}</strong><span>{detected[id] === false ? 'not found' : detected[id] ? `ready · ${sub}` : sub}</span>
+                    <strong>{n}</strong><span>{detected[id] === false ? 'not found' : detected[id] ? 'ready' : ''}</span>
                   </button>
                 ))}
               </div>
@@ -546,7 +546,7 @@ export function FirstRun() {
                   type="button"
                   onClick={() => startChat()}
                 >
-                  I signed in. Open Chat
+                  I signed in. Start
                 </button>
                 <button
                   className="ghost"

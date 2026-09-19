@@ -10,6 +10,7 @@ import { SkinPane } from './skin/SkinPane'
 import { SkinCard } from './skin/Registry'
 import { skinPtyId } from './skin/SkinTerm'
 import { specFromStreamEvent } from '../../shared/skin/from-events'
+import { isHiddenStreamKind } from '../../shared/skin/hidden-kinds'
 
 type Mode = 'chat' | 'term'
 type Attach = { path: string; name: string; mime: string; preview?: string }
@@ -430,9 +431,11 @@ function ChatPane({
   const [queue, setQueue] = useState<Queued[]>([])
   const queueRef = useRef<Queued[]>([])
   const [skinOn, setSkinOn] = useState(true)
+  const [wantPower, setWantPower] = useState(false)
   const [cliSid, setCliSid] = useState(resumeId || '')
   const [tuiGen, setTuiGen] = useState(0)
   const [peel, setPeel] = useState(false)
+  const showPower = wantPower || messages.some((m) => m.who === 'me')
   const lastWarm = useRef('')
   const [permission, setPermission] = useState<{
     title?: string
@@ -444,6 +447,12 @@ function ChatPane({
   const pinBottom = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
   const skipDrain = useRef(0)
+  const onFilesRef = useRef(onFiles)
+  const onContextRef = useRef(onContext)
+  const skinOnRef = useRef(skinOn)
+  onFilesRef.current = onFiles
+  onContextRef.current = onContext
+  skinOnRef.current = skinOn
 
   function writeQueue(next: Queued[]) {
     queueRef.current = next
@@ -512,7 +521,7 @@ function ChatPane({
         const next = { used: ev.used, total: ev.total, percent: ev.percent }
         ctxRef.current = next
         setCtx(next)
-        onContext(id, next)
+        onContextRef.current(id, next)
       }
       if (ev.kind === 'status' && ev.data === 'compacting') {
         compactingRef.current = true
@@ -536,7 +545,7 @@ function ChatPane({
       }
       if (ev.kind === 'status' && ev.data && ev.data.startsWith('work:')) {
         const label = ev.data.slice(5).trim()
-        if (label) setWaitLabel(label)
+        if (label && !skinOnRef.current) setWaitLabel(label)
       }
       if (ev.kind === 'permission') {
         setPermission({
@@ -548,11 +557,13 @@ function ChatPane({
       }
       if (ev.kind === 'file' && ev.path) {
         const hit = { path: ev.path, tool: ev.tool, live: true }
-        const base = ev.path.replace(/\\/g, '/').split('/').filter(Boolean).pop() || ev.path
-        setWaitLabel(ev.tool ? `${ev.tool} · ${base}` : `Reading ${base}`)
+        if (!skinOnRef.current) {
+          const base = ev.path.replace(/\\/g, '/').split('/').filter(Boolean).pop() || ev.path
+          setWaitLabel(ev.tool ? `${ev.tool} · ${base}` : `Reading ${base}`)
+        }
         if (!filesRef.current.some((f) => f.path === hit.path)) {
           filesRef.current = [...filesRef.current, hit]
-          onFiles(id, filesRef.current)
+          onFilesRef.current(id, filesRef.current)
         }
       }
       if (ev.kind === 'done' || ev.kind === 'error') {
@@ -572,7 +583,7 @@ function ChatPane({
         compactingRef.current = false
         setCompacting(false)
         filesRef.current = filesRef.current.map((f) => ({ ...f, live: false }))
-        onFiles(id, filesRef.current)
+        onFilesRef.current(id, filesRef.current)
         if (ev.kind === 'error' && ev.data) {
           setMessages((m) => [...m, { who: 'err', text: ev.data || '' }])
         }
@@ -601,7 +612,13 @@ function ChatPane({
         'permission',
         'plan'
       ])
-      if (ev.kind && !known.has(ev.kind) && ev.skinLabel !== 'ignore') {
+      if (
+        ev.kind &&
+        !known.has(ev.kind) &&
+        !isHiddenStreamKind(ev.kind) &&
+        ev.skinLabel !== 'ignore' &&
+        specFromStreamEvent({ kind: ev.kind, data: ev.data })
+      ) {
         setMessages((m) => [
           ...m,
           {
@@ -616,7 +633,7 @@ function ChatPane({
     return () => {
       off()
     }
-  }, [id, greeting, onFiles])
+  }, [id])
 
   useEffect(() => {
     if (!pinBottom.current) return
@@ -1368,6 +1385,7 @@ function ChatPane({
           )}
         </div>
       )}
+      {showPower ? (
       <div className="skin-switch">
         <button type="button" className={skinOn ? 'on' : ''} onClick={() => setSkinOn(true)}>
           Skin
@@ -1376,6 +1394,11 @@ function ChatPane({
           Chat
         </button>
       </div>
+      ) : (
+        <button type="button" className="linkish skin-more" onClick={() => setWantPower(true)}>
+          More
+        </button>
+      )}
       {skinOn ? null : permission ? (
         <div className="skin-perm">
           <p className="skin-perm-title">{permission.title || 'Allow this?'}</p>
@@ -1421,6 +1444,9 @@ function ChatPane({
         onScroll={onThreadScroll}
         onPeel={setPeel}
         onFiles={mergeSkinFiles}
+        showPower={showPower}
+        wantPower={wantPower}
+        cliName={label(kind)}
         onAction={(actionId, spec) => {
           if (actionId === 'selectOption') {
             const opt = String(spec.props.value || '')
@@ -1465,7 +1491,16 @@ function ChatPane({
           ) : m.who === 'err' && m.text ? (
             <SkinCard
               key={i}
-              spec={specFromStreamEvent({ kind: 'error', data: m.text }) || { id: 'err-' + i, component: 'ErrorNotice', props: { text: m.text }, actions: [], source: 'error' }}
+              spec={(() => {
+                const s = specFromStreamEvent({ kind: 'error', data: m.text }) || {
+                  id: 'err-' + i,
+                  component: 'ErrorNotice' as const,
+                  props: { text: m.text },
+                  actions: [],
+                  source: 'error'
+                }
+                return s.component === 'LoginNeed' ? { ...s, props: { ...s.props, cliName: label(kind) } } : s
+              })()}
               onAction={(id) => {
                 if (id === 'login') void window.brain.ai.login(kind)
               }}
@@ -1604,7 +1639,9 @@ function ChatPane({
               ? queue.length
                 ? 'Enter queues. Empty Enter sends the next one.'
                 : 'Working. Enter queues a follow-up.'
-              : 'Message, drop a file, or / for commands'
+              : showPower
+                ? 'Message, drop a file, or / for commands'
+                : 'Message or drop a file'
           }
         />
         <button className="ghost" type="button" onClick={() => void pickAttach()} title="Attach">
@@ -2148,7 +2185,7 @@ export function TerminalWorkspace({
                   agentMode={t.agentMode}
                   alwaysApprove={t.alwaysApprove}
                   active={t.id === active}
-                  greeting={`You're in ${folderName}. Type / for commands.`}
+                  greeting={`You're in ${folderName}.`}
                   initialMessages={transcripts[t.id]}
                   onFiles={onFiles}
                   onNew={() => addTab(t.kind || 'grok')}

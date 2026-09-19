@@ -129,7 +129,7 @@ export function SkinCard({
         {spec.component === 'LoginNeed' ? (
           <div className="skin-perm-actions">
             <button type="button" className="primary" onClick={() => onAction('login', spec)}>
-              Sign in
+              {typeof p.cliName === 'string' && p.cliName ? `Sign in to ${p.cliName}` : 'Sign in'}
             </button>
           </div>
         ) : null}
@@ -178,16 +178,7 @@ export function SkinCard({
       </div>
     )
   }
-  if (spec.component === 'RawFallback') {
-    return (
-      <div className="skin-raw-card">
-        <p>This screen is not in the catalog yet.</p>
-        <button type="button" className="ghost" onClick={() => onAction('openRaw', spec)}>
-          Show terminal
-        </button>
-      </div>
-    )
-  }
+  if (spec.component === 'RawFallback') return null
   if (spec.component === 'Picker') {
     const options = Array.isArray(p.options) ? (p.options as { id: string; label: string }[]) : []
     return (
