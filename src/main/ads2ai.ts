@@ -1,4 +1,5 @@
 import { API_BASE } from '../shared/contracts'
+import { parseGithubOrgLogin } from './github-repo'
 
 function assertNoSecretLog(): void {
   /* tokens never go to console */
@@ -138,23 +139,57 @@ export async function ensureBrainRepo(token: string, teamSlug: string): Promise<
 export async function lookupGithubAccount(login: string): Promise<{
   ok: boolean
   reason?: string
+  detail?: string
   login?: string
   type?: string
+  id?: number
 }> {
-  const name = String(login || '').trim().replace(/^@/, '')
-  if (!/^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$/.test(name)) {
-    return { ok: false, reason: 'invalid-name', login: name }
+  const name = parseGithubOrgLogin(login)
+  if (!name) {
+    return {
+      ok: false,
+      reason: 'invalid-name',
+      detail: 'Paste the GitHub organization name (one short word, like harolds-books) or its github.com address.',
+      login: String(login || '').trim()
+    }
   }
   try {
     const r = await fetch(`https://api.github.com/users/${encodeURIComponent(name)}`, {
       headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'brain-app' }
     })
-    const body = await r.json().catch(() => null) as { login?: string; type?: string } | null
-    if (r.status === 404) return { ok: false, reason: 'not-found', login: name }
-    if (!r.ok) return { ok: false, reason: 'github', login: name }
-    if (body?.type === 'Organization') return { ok: true, login: body.login || name, type: 'Organization' }
-    return { ok: false, reason: 'personal-account', login: body?.login || name, type: body?.type }
+    const body = await r.json().catch(() => null) as { login?: string; type?: string; id?: number } | null
+    if (r.status === 404) {
+      return {
+        ok: false,
+        reason: 'not-found',
+        detail: `GitHub has no organization named ${name}. Copy the name from the GitHub page after you create it.`,
+        login: name
+      }
+    }
+    if (!r.ok) {
+      return {
+        ok: false,
+        reason: 'github',
+        detail: 'GitHub did not answer. Try again in a minute.',
+        login: name
+      }
+    }
+    if (body?.type === 'Organization') {
+      return { ok: true, login: body.login || name, type: 'Organization', id: Number(body.id) || undefined }
+    }
+    return {
+      ok: false,
+      reason: 'personal-account',
+      detail: `${body?.login || name} is a person on GitHub, not an organization. Create a free organization, then paste that name.`,
+      login: body?.login || name,
+      type: body?.type
+    }
   } catch {
-    return { ok: false, reason: 'offline', login: name }
+    return {
+      ok: false,
+      reason: 'offline',
+      detail: 'This computer could not reach GitHub.',
+      login: name
+    }
   }
 }

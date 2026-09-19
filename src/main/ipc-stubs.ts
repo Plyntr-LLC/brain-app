@@ -11,8 +11,7 @@ import {
   readTeamMember,
   readTeamRoster,
   readWatching,
-  upsertTeamMember,
-  writesAllowed
+  upsertTeamMember
 } from './agency-brain'
 import { cloneBrain } from './clone'
 import { startBrainSync, stopBrainSync } from './brain-sync'
@@ -78,9 +77,9 @@ function saveRecent(folder: string): RecentFolder {
   return { path: folder, name }
 }
 
-/** Folder writes / new teams stay off unless BRAIN_APP_ALLOW_CREATE=1. Chat and login are live. */
+/** Dev only (`npm run dev`). Packed Brain creates teams and clones. */
 export function dryRun(): boolean {
-  return !writesAllowed()
+  return process.env.BRAIN_APP_DRY_RUN === '1'
 }
 
 export function registerStubIpc(): void {
@@ -410,21 +409,29 @@ export function registerStubIpc(): void {
   )
 
   ipcMain.handle('setup:createTeam', async (_e, name: string) => {
-    if (!writesAllowed()) {
-      return { skipped: true, reason: 'create-team blocked until BRAIN_APP_ALLOW_CREATE=1', name }
+    if (dryRun()) {
+      return { skipped: true, reason: 'create-team skipped in dry-run', name }
     }
     return ads2ai.createTeam(getMemberToken(), name)
   })
   ipcMain.handle('setup:lookupOrg', async (_e, login: string) => ads2ai.lookupGithubAccount(login))
   ipcMain.handle('setup:openCreateOrg', () => openInApp(GITHUB_NEW_ORG, 'Create a GitHub organization'))
-  ipcMain.handle('setup:openAppInstall', (_e, slug: string, org?: string) => {
-    const url = `${GITHUB_APP_INSTALL}?state=${encodeURIComponent(slug)}`
+  ipcMain.handle('setup:openAppInstall', async (_e, slug: string, org?: string) => {
+    const state = encodeURIComponent(slug)
+    let url = `${GITHUB_APP_INSTALL}?state=${state}`
+    const login = String(org || '').trim()
+    if (login) {
+      const look = await ads2ai.lookupGithubAccount(login)
+      if (look.ok && look.id) {
+        url = `${GITHUB_APP_INSTALL}/permissions?target_id=${look.id}&state=${state}`
+      }
+    }
     openInApp(url, 'Install Agency Brain Sync')
     return { ok: true, url }
   })
   ipcMain.handle('setup:pollInstall', (_e, slug: string) => ads2ai.installStatus(slug))
   ipcMain.handle('setup:ensureRepo', async (_e, slug: string) => {
-    if (!writesAllowed()) return { skipped: true }
+    if (dryRun()) return { skipped: true }
     return ads2ai.ensureBrainRepo(getMemberToken(), slug)
   })
   ipcMain.handle('setup:applyFolder', async (_e, opts?: { teamSlug?: string; dest?: string }) => {

@@ -99,6 +99,8 @@ Empty until Joe says next 3.
 
 Bugs and product gaps. One line each. Date + what.
 
+- [x] 2026-09-20 Joe: Start setup does nothing, GitHub org is not used, and Continue with GitHub sends me back to Shared folder ready (One setup). Done: 2026-09-20. Grok 4.6 xhigh APPROVE. Evidence: packed `dryRun` is only `BRAIN_APP_DRY_RUN`; Continue stays on GitHub then `abapply`; paste copy + `target_id`.
+
 - [x] 2026-09-19 Joe: GitHub login in the in-app window does not support passkeys, so I cannot log in. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `openInApp` → `shell.openExternal`; poll unchanged.
 
 - [x] 2026-09-19 Joe: While a turn is working, Queue works, but Send now and empty Enter do nothing. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `sendNow` stops the live turn then `sendText({ fromQueue: true, cancel: true })`.

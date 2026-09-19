@@ -12,7 +12,6 @@ export function FirstRun() {
   const [otp, setOtp] = useState('')
   const [choice, setChoice] = useState<'new' | 'existing' | ''>('')
   const [org, setOrg] = useState('')
-  const [showOrg, setShowOrg] = useState(false)
 
   const [err, setErr] = useState('')
   const [detected, setDetected] = useState<Partial<Record<AiKind, boolean>>>({})
@@ -114,7 +113,7 @@ export function FirstRun() {
     return () => {
       stop = true
     }
-  }, [s.screen])
+  }, [s.screen, s.team?.slug])
 
   useEffect(() => {
     const waiting = s.screen === 'aiwork' || (s.screen === 'abapply' && !s.abWatching)
@@ -140,9 +139,13 @@ export function FirstRun() {
     setDetected(d)
     const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
     const next = { ...patch, ai: patch?.ai || pick, brainPath }
+    if (!brainPath) {
+      if (s.screen === 'github' || s.screen === 'abapply' || s.screen === 'abget') return
+      go('needs', next)
+      return
+    }
     if (st.ready || (brainPath && pick)) go('chat', { ...next, abWatching: st.watching })
-    else if (st.watching || brainPath) go('aipick', { ...next, abWatching: st.watching })
-    else go('needs', next)
+    else go('aipick', { ...next, abWatching: st.watching })
   }
 
   const title = s.business || 'Brain'
@@ -245,11 +248,11 @@ export function FirstRun() {
         </aside>
         ) : null}
         <section className="main">
-          {s.screen !== 'chat' && (
+          {s.screen !== 'chat' && s.dryRun ? (
             <div className="demo">
-              <span>Chat is live against the folder Agency Brain is watching. New GitHub orgs and clones stay off.</span>
+              <span>Dev dry-run. New GitHub orgs and clones stay off until you pack the app.</span>
             </div>
-          )}
+          ) : null}
           {s.screen === 'needs' && (
             <SetupNeeds
               onReady={({ ready, watching, ai }) => {
@@ -257,6 +260,7 @@ export function FirstRun() {
                 if (ready) go('chat', { abWatching: true, brainPath: s.brainPath, ai: pick })
                 else if (watching) go('aipick', { abWatching: true, ai: pick })
               }}
+              onNeedFolder={() => go('github')}
               onCode={() => go('welcome')}
             />
           )}
@@ -529,21 +533,20 @@ export function FirstRun() {
             <>
               <p className="kicker">Private place</p>
               <h1>A GitHub organization, then Continue.</h1>
-              <p>GitHub will open in your browser. Sign in there (a passkey works). Create a free organization if you need one, then we install the sharing app. Come back here when GitHub is done. Do not also do this in Agency Brain.</p>
+              <p>GitHub will open in your browser. Create a free organization if you need one. Then copy the organization name (one short word, like harolds-books) and paste it below. A github.com address works too. Do not also do this in Agency Brain.</p>
               <div className="warn-box">
-                <h3>In the GitHub page</h3>
+                <h3>What to paste</h3>
                 <p>
-                  Choose <strong>Only select repositories</strong>, then this brain. Never All repositories.
+                  After GitHub finishes, copy the organization name from that page. Then we install the sharing app on that org. Choose <strong>Only select repositories</strong>, then this brain. Never All repositories.
                 </p>
               </div>
               <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
                 <button className="ghost" type="button" onClick={() => window.brain.setup.openCreateOrg()}>Create a free organization</button>
               </div>
-              <label className="field" style={{ marginTop: '1rem' }}>Organization name
+              <label className="field" style={{ marginTop: '1rem' }}>Paste the GitHub organization name
                 <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="harolds-books" />
               </label>
-              <p><button className="linkish" type="button" onClick={() => setShowOrg(!showOrg)}>{showOrg ? 'Hide' : 'I already have an organization'}</button></p>
-              {showOrg && <p className="tiny">Type it above. We'll check it's an organization, not a person.</p>}
+              <p className="tiny">Not the business name. The short GitHub name, or the github.com/orgs/… address.</p>
               {err && <p className="note">{err}</p>}
               <div className="actions">
                 <button className="ghost" type="button" onClick={() => void skipToExisting()}>
@@ -553,13 +556,17 @@ export function FirstRun() {
                   try {
                     setErr('')
                     const look = await window.brain.setup.lookupOrg(org.trim())
-                    if (look && look.ok === false) { setErr(look.reason || 'GitHub did not accept that name'); return }
+                    if (look && look.ok === false) {
+                      setErr(look.detail || look.reason || 'GitHub did not accept that name')
+                      return
+                    }
+                    if (look?.login) setOrg(look.login)
                     const created = (await window.brain.setup.createTeam(s.business)) as {
                       skipped?: boolean
-                      team?: { slug?: string }
+                      team?: { slug?: string; name?: string }
                     }
                     if (created?.skipped) {
-                      await afterMembership({ orgLogin: org.trim() })
+                      setErr('This is a dry-run window. Packed Brain creates the team and stays on this page until GitHub is done.')
                       return
                     }
                     const slug = String(created?.team?.slug || '').trim()
@@ -567,7 +574,8 @@ export function FirstRun() {
                       setErr('Could not make the team.')
                       return
                     }
-                    await window.brain.setup.openAppInstall(slug, org.trim())
+                    const login = String(look?.login || org.trim())
+                    await window.brain.setup.openAppInstall(slug, login)
                     setErr('Waiting for GitHub. Finish in your browser, then come back here.')
                     const until = Date.now() + 120000
                     let installed = false
@@ -582,10 +590,13 @@ export function FirstRun() {
                       await new Promise((r) => setTimeout(r, 2000))
                     }
                     if (!installed) {
-                      setErr('GitHub is not on that organization yet. Authorize Agency Brain Sync, then Continue with GitHub again.')
+                      setErr('GitHub is not on that organization yet. Authorize Agency Brain Sync on that org, then Continue with GitHub again.')
                       return
                     }
-                    await afterMembership({ orgLogin: org.trim() })
+                    go('abapply', {
+                      orgLogin: login,
+                      team: { slug, name: created.team?.name || s.business, role: 'owner' }
+                    })
                   } catch (e) { setErr(String((e as Error).message || e)) }
                 }}>Continue with GitHub</button>
               </div>

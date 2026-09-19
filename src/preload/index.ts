@@ -213,7 +213,15 @@ const brain = {
   },
   setup: {
     createTeam: (name: string) => ipcRenderer.invoke('setup:createTeam', name),
-    lookupOrg: (login: string) => ipcRenderer.invoke('setup:lookupOrg', login),
+    lookupOrg: (login: string) =>
+      ipcRenderer.invoke('setup:lookupOrg', login) as Promise<{
+        ok: boolean
+        reason?: string
+        detail?: string
+        login?: string
+        type?: string
+        id?: number
+      }>,
     openCreateOrg: () => ipcRenderer.invoke('setup:openCreateOrg'),
     openAppInstall: (slug: string, org?: string) =>
       ipcRenderer.invoke('setup:openAppInstall', slug, org),

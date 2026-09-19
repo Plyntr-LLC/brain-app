@@ -32,9 +32,11 @@ function pickAi(items: ToolNeed[]): AiKind | undefined {
 
 export function SetupNeeds({
   onReady,
+  onNeedFolder,
   onCode
 }: {
   onReady: (info: { ready: boolean; watching: boolean; ai?: AiKind }) => void
+  onNeedFolder?: () => void
   onCode: () => void
 }) {
   const [items, setItems] = useState<ToolNeed[]>([])
@@ -128,6 +130,11 @@ export function SetupNeeds({
         return
       }
       const missing = first.items.filter((i) => !i.present)
+      if (missing.length === 0 && !first.watching) {
+        setPhase('review')
+        onNeedFolder?.()
+        return
+      }
       const required = new Set(['brew', 'git'])
       for (const item of missing) {
         if (stop.current) {
@@ -158,6 +165,11 @@ export function SetupNeeds({
         return
       }
       setPhase('review')
+      if (!st.watching) {
+        setNote('Tools are ready. Next is GitHub so we can get the shared folder.')
+        onNeedFolder?.()
+        return
+      }
       setNote('Still missing a watched folder or an AI tool. Finish the open installer, then Start setup again.')
     } catch (e) {
       setPhase('review')
