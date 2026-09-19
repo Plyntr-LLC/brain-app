@@ -92,7 +92,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Shipping Brain 0.1.4 so Skin is in the installed app. Chat stays the default.
+Empty. Inbox is drained. Wait for **next 3** if new lines land. Skin is in 0.1.4 (opt-in Chat | Skin).
 
 ## Inbox
 
@@ -100,7 +100,7 @@ Bugs and product gaps. One line each. Date + what.
 
 - [x] 2026-09-19 Joe: Skin catalog slice A — seed catalog + map StreamEvent kinds. ChatPane bubble path unchanged. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `src/shared/skin/`, `from-events.test.ts`.
 - [x] 2026-09-19 Joe: Skin catalog slice B — Joe-only capture in userData/skin-captures. Settings review list. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `src/main/skin/capture.ts`, Settings Skin captures.
-- [x] 2026-09-19 Joe: Skin catalog slice C — opt-in Skin view + Raw drawer + PermissionAsk. Chat auto-approve unchanged. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: Chat|Skin switch, `SkinPane`, `RawDrawer`. Do not pack unless Joe says yes.
+- [x] 2026-09-19 Joe: Skin catalog slice C — opt-in Skin view + Raw drawer + PermissionAsk. Chat auto-approve unchanged. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Packed as 0.1.4. Evidence: Chat|Skin switch, `SkinPane`, `RawDrawer`, GitHub v0.1.4, `/Applications/Brain.app` swapped.
 
 - [x] 2026-09-19 Joe: 0.1.2 will not open. Main-process `Named export 'autoUpdater' not found`. Done: 2026-09-19. Evidence: v0.1.3 signed+notarized, GitHub latest, `/Applications/Brain.app` swapped and launched. Direct: https://github.com/Plyntr-LLC/brain-app/releases/latest/download/Brain-0.1.3-mac.dmg
 
