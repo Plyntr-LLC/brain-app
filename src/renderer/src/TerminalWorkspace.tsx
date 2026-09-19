@@ -1641,7 +1641,7 @@ function ChatPane({
                 : 'Working. Enter queues a follow-up.'
               : showPower
                 ? 'Message, drop a file, or / for commands'
-                : 'Message or drop a file'
+                : 'Ask about this folder'
           }
         />
         <button className="ghost" type="button" onClick={() => void pickAttach()} title="Attach">
@@ -2185,7 +2185,7 @@ export function TerminalWorkspace({
                   agentMode={t.agentMode}
                   alwaysApprove={t.alwaysApprove}
                   active={t.id === active}
-                  greeting={`You're in ${folderName}.`}
+                  greeting={`You're in ${folderName}. Ask a question. I'll use the files in this folder.`}
                   initialMessages={transcripts[t.id]}
                   onFiles={onFiles}
                   onNew={() => addTab(t.kind || 'grok')}

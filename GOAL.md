@@ -93,14 +93,14 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Jeen day-one: empty Skin copy next. grok-4.6 xhigh APPROVE, then live, then the update line. Do not pack/notarize until Joe says pack.
+Jeen day-one: update notice next. grok-4.6 xhigh APPROVE, then live. Do not pack/notarize until Joe says pack.
 
 ## Inbox
 
 Bugs and product gaps. One line each. Date + what.
 
 - [x] 2026-09-19 Joe: Jeen setup. After missing bits, land in Skin with one place to type. Hide Chat / Show terminal / CLI jargon until she needs them. Sign in is a labeled button for that CLI. Done: 2026-09-19. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `showPower` / More, `I signed in. Start`, `Sign in to ${cliName}`, greeting without slash.
-- [ ] 2026-09-19 Joe: Empty Skin tells her what to send so the reply knows this brain folder.
+- [x] 2026-09-19 Joe: Empty Skin tells her what to send so the reply knows this brain folder. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: greeting + composer `Ask about this folder`.
 - [ ] 2026-09-19 Joe: After an update, one line that the app updated and chats are where she left them. Skin + Chat survive.
 
 - [x] 2026-09-19 Joe: Skin Plan card is catalog-only. ACP already emits `plan`. Paint it. Done: 2026-09-19. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `onEvent` plan-per-turn, `SkinPane` Plan, Chat `ol.skin-plan`.
