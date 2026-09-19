@@ -234,9 +234,9 @@ export function claudeClose(tabId: string): void {
   }
 }
 
-export async function claudeReset(opts: { tabId: string; cwd: string; model?: string }): Promise<void> {
+export async function claudeReset(opts: { tabId: string; cwd: string; model?: string }): Promise<{ model?: string; effort?: string }> {
   claudeClose(opts.tabId)
-  await claudeWarm(opts)
+  return claudeWarm(opts)
 }
 
 export function claudeKillAll(): void {

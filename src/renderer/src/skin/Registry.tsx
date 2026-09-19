@@ -1,42 +1,81 @@
+import { useLayoutEffect, useRef } from 'react'
 import { WorkPulse } from '../WorkPulse'
+import { cleanThink, mdToHtml, stripAnsi } from '../ptyChat'
 import type { SkinSpec } from '../../../shared/skin/spec'
 
-function md(text: string): string {
-  const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  return esc.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\n/g, '<br/>')
+function ThoughtBody({ html, follow }: { html: string; follow: boolean }) {
+  const box = useRef<HTMLDivElement>(null)
+  const pin = useRef(true)
+  useLayoutEffect(() => {
+    if (!follow) return
+    const el = box.current
+    if (!el || !pin.current) return
+    el.scrollTop = el.scrollHeight
+  }, [html, follow])
+  return (
+    <div
+      className="mdbody think-body"
+      ref={box}
+      onScroll={() => {
+        const el = box.current
+        if (!el) return
+        pin.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+      }}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  )
+}
+
+function fileBase(path: string): string {
+  return path.replace(/\\/g, '/').split('/').filter(Boolean).pop() || path
 }
 
 export function SkinCard({
   spec,
-  onAction
+  onAction,
+  thinkOpen,
+  thinkLive,
+  onThinkToggle
 }: {
   spec: SkinSpec
   onAction: (id: string, spec: SkinSpec) => void
+  thinkOpen?: boolean
+  thinkLive?: boolean
+  onThinkToggle?: () => void
 }) {
   const p = spec.props
   if (spec.component === 'UserMessage') {
     return <div className="bubble me">{String(p.text || '')}</div>
   }
   if (spec.component === 'AgentMessage') {
+    const text = stripAnsi(String(p.text || '')).trim()
+    if (!text) return null
     return (
       <div className="bubble md">
-        <div className="mdbody" dangerouslySetInnerHTML={{ __html: md(String(p.text || '')) }} />
+        <div className="mdbody" dangerouslySetInnerHTML={{ __html: mdToHtml(text) }} />
       </div>
     )
   }
   if (spec.component === 'Thought') {
+    const text = cleanThink(String(p.text || ''))
+    if (!text) return null
+    const open = thinkOpen === true
     return (
       <div className="bubble think">
-        <div className="think-label">Thinking</div>
-        {String(p.text || '')}
+        <button type="button" className="think-label" onClick={onThinkToggle} disabled={!onThinkToggle}>
+          Thinking{open ? '' : ' · show'}
+        </button>
+        {open ? <ThoughtBody html={mdToHtml(text)} follow={thinkLive === true} /> : null}
       </div>
     )
   }
   if (spec.component === 'ToolCard') {
+    const path = String(p.path || '')
+    const live = Boolean(p.live)
     return (
-      <div className="skin-tool">
-        <strong>{String(p.tool || 'file')}</strong>
-        <span>{String(p.path || '')}</span>
+      <div className={`skin-tool${live ? ' live' : ''}`}>
+        <span className="k">{String(p.tool || 'file')}</span>
+        <span className="p">{fileBase(path)}</span>
       </div>
     )
   }
@@ -64,10 +103,16 @@ export function SkinCard({
     )
   }
   if (spec.component === 'CompactNotice') {
+    const text =
+      typeof p.text === 'string' && p.text
+        ? p.text
+        : p.phase === 'compacting'
+          ? 'Compacting…'
+          : 'Older turns were summarized. The thread on screen is unchanged.'
     return (
       <div className="bubble">
         <div className="think-label">Command</div>
-        {p.phase === 'compacting' ? 'Compacting…' : 'Older turns were summarized. The thread on screen is unchanged.'}
+        {text}
       </div>
     )
   }
@@ -132,7 +177,7 @@ export function SkinCard({
       <div className="skin-raw-card">
         <p>This screen is not in the catalog yet.</p>
         <button type="button" className="ghost" onClick={() => onAction('openRaw', spec)}>
-          Open raw
+          Show terminal
         </button>
       </div>
     )

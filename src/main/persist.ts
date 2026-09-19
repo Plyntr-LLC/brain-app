@@ -57,7 +57,7 @@ export function saveChats(state: SavedChats): void {
   const messages: Record<string, SavedMsg[]> = {}
   for (const [id, list] of Object.entries(state.messages || {})) {
     messages[id] = (list || [])
-      .filter((m) => m.who !== 'think')
+      .filter((m) => m.who === 'me' || m.who === 'brain' || m.who === 'sys')
       .slice(-200)
       .map((m) => ({ who: m.who, text: m.text }))
   }

@@ -7,6 +7,7 @@ import { binEnv, resolveBin } from './ai-cli'
 import { loginCli } from './install'
 import { acpPromptParts, type Attach } from './attach'
 import { underRoot } from './files'
+import { grokAcpArgs, ensureGrokLeader, killGrokLeader } from './grok-leader'
 import { asRecord, asText, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 import { captureEvent } from './skin/capture'
 
@@ -243,16 +244,10 @@ function poolKey(kind: 'grok' | 'cursor', cwd: string): string {
   return kind + ':' + cwd
 }
 
-function spawnArgs(kind: 'grok' | 'cursor', cwd: string): string[] {
+async function spawnArgs(kind: 'grok' | 'cursor', cwd: string): Promise<string[]> {
   if (kind === 'grok') {
-    return [
-      '--cwd',
-      cwd,
-      'agent',
-      '--always-approve',
-      '--no-leader',
-      'stdio'
-    ]
+    const useLeader = await ensureGrokLeader()
+    return grokAcpArgs(cwd, useLeader)
   }
   return ['--trust', '--workspace', cwd, 'acp']
 }
@@ -553,7 +548,7 @@ async function bootPoolNow(kind: 'grok' | 'cursor', cwd: string, key: string): P
   if (again && !again.rpc.dead) return again
   const bin = resolveBin(kind)
   if (!bin) throw new Error(`${kind} is not installed on this computer`)
-  const proc = spawnBin(bin, spawnArgs(kind, cwd), cwd, binEnv())
+  const proc = spawnBin(bin, await spawnArgs(kind, cwd), cwd, binEnv())
   const pool: Pool = {
     kind,
     cwd,
@@ -1009,15 +1004,16 @@ export async function acpReset(opts: {
   cwd: string
   model?: string
   effort?: string
-}): Promise<void> {
+}): Promise<LiveRun> {
   acpClose(opts.tabId)
-  await acpWarm(opts)
+  return acpWarm(opts)
 }
 
 export function acpKillAll(): void {
   for (const pool of pools.values()) pool.rpc.kill()
   pools.clear()
   tabPool.clear()
+  killGrokLeader()
 }
 
 export function isAcpKind(kind: AiKind): kind is 'grok' | 'cursor' {

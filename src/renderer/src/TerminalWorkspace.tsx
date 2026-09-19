@@ -7,6 +7,7 @@ import { mdToHtml, tidy, type FileHit } from './ptyChat'
 import { WorldClocks } from './WorldClocks'
 import { WorkPulse } from './WorkPulse'
 import { SkinPane } from './skin/SkinPane'
+import { skinPtyId } from './skin/SkinTerm'
 
 type Mode = 'chat' | 'term'
 type Attach = { path: string; name: string; mime: string; preview?: string }
@@ -34,7 +35,13 @@ function filePath(f: File): string {
     return ''
   }
 }
-type Msg = { who: 'me' | 'brain' | 'think' | 'sys'; text: string; files?: Attach[]; at?: number }
+type Msg = {
+  who: 'me' | 'brain' | 'think' | 'sys' | 'plan'
+  text: string
+  files?: Attach[]
+  at?: number
+  steps?: { title: string; status?: string }[]
+}
 type Queued = { id: string; text: string; files?: Attach[] }
 
 function wantsStop(text: string): boolean {
@@ -417,8 +424,11 @@ function ChatPane({
   const turn = useRef({ think: false, answer: false })
   const [queue, setQueue] = useState<Queued[]>([])
   const queueRef = useRef<Queued[]>([])
-  const [skinOn, setSkinOn] = useState(false)
-  const [rawOpen, setRawOpen] = useState(false)
+  const [skinOn, setSkinOn] = useState(true)
+  const [cliSid, setCliSid] = useState(resumeId || '')
+  const [tuiGen, setTuiGen] = useState(0)
+  const [peel, setPeel] = useState(false)
+  const lastWarm = useRef('')
   const [permission, setPermission] = useState<{
     title?: string
     path?: string
@@ -463,6 +473,30 @@ function ChatPane({
             turn.current.answer = true
             next.push({ who: 'brain', text: bit })
           }
+          return next
+        })
+      }
+      if (ev.kind === 'plan' && ev.steps?.length) {
+        const steps = ev.steps
+        setMessages((msgs) => {
+          const next = [...msgs]
+          let lastMe = -1
+          for (let i = next.length - 1; i >= 0; i--) {
+            if (next[i].who === 'me') {
+              lastMe = i
+              break
+            }
+          }
+          let planAt = -1
+          for (let i = next.length - 1; i > lastMe; i--) {
+            if (next[i].who === 'plan') {
+              planAt = i
+              break
+            }
+          }
+          const row = { who: 'plan' as const, text: '', steps }
+          if (planAt >= 0) next[planAt] = row
+          else next.push(row)
           return next
         })
       }
@@ -557,7 +591,7 @@ function ChatPane({
   useEffect(() => {
     if (!pinBottom.current) return
     thread.current?.scrollTo(0, thread.current.scrollHeight)
-  }, [messages, busy])
+  }, [messages, busy, queue, permission, skinOn])
 
   function onThreadScroll() {
     const el = thread.current
@@ -597,6 +631,9 @@ function ChatPane({
 
   useEffect(() => {
     if (!cwd) return
+    const key = [id, kind, cwd, model, effort, agentMode, resumeId].join('|')
+    if (lastWarm.current === key) return
+    lastWarm.current = key
     setWarming(true)
     setWaitLabel(`Starting ${kind === 'gpt' ? 'ChatGPT' : kind === 'cursor' ? 'Cursor' : kind === 'claude' ? 'Claude' : 'Grok'}`)
     void window.brain.chat
@@ -604,6 +641,7 @@ function ChatPane({
       .then((r) => {
         if (r?.models?.length) setModels(r.models)
         if (r?.commands?.length) setSessionCmds(r.commands)
+        if (r?.sessionId) setCliSid(r.sessionId)
         onCaps({
           model: r?.model,
           effort: r?.effort,
@@ -693,6 +731,7 @@ function ChatPane({
     }
     const msgs = (r.messages || []).map((m) => ({ who: m.who, text: m.text })) as Msg[]
     setMessages(msgs.length ? msgs : [{ who: 'sys', text: 'Session loaded. The model has the history.' }])
+    setCliSid(r.sessionId || sessionId)
     onResume(r.sessionId || sessionId)
   }
 
@@ -700,8 +739,46 @@ function ChatPane({
     setMessages((m) => [...m, { who: 'sys', text }])
   }
 
+  async function resetCli() {
+    const r = await window.brain.chat.reset({ tabId: id, kind, cwd, model, effort })
+    if (r?.sessionId) {
+      setCliSid(r.sessionId)
+      onCaps({ sessionId: r.sessionId, model: r.model, effort: r.effort })
+    }
+  }
+
   function popup(title: string, body: string) {
     setPanel({ title, body })
+  }
+
+  async function sendSkinTerm(line: string) {
+    const showing = peel
+    setPeel(true)
+    const ptyId = skinPtyId(id)
+    const r = (await window.brain.pty.create({
+      id: ptyId,
+      cwd,
+      kind,
+      cols: 80,
+      rows: 24
+    })) as { reused?: boolean }
+    const go = () => window.brain.pty.write(ptyId, line + '\r')
+    if (showing && r?.reused) {
+      await go()
+      return
+    }
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      off()
+      window.clearTimeout(timer)
+      void go()
+    }
+    const off = window.brain.pty.onData((ev) => {
+      if (ev.id === ptyId) finish()
+    })
+    const timer = window.setTimeout(finish, 2000)
   }
 
   function runSlash(raw: string): boolean {
@@ -718,7 +795,11 @@ function ChatPane({
       setMessages([{ who: 'brain', text: greeting }])
       filesRef.current = []
       onFiles(id, [])
-      void window.brain.chat.reset({ tabId: id, kind, cwd, model, effort }).catch(() => {})
+      void resetCli()
+        .then(() => {
+          if (skinOn) setTuiGen((g) => g + 1)
+        })
+        .catch(() => {})
       return true
     }
     if (name === 'delete') {
@@ -787,7 +868,11 @@ function ChatPane({
       setMessages([{ who: 'brain', text: greeting }])
       filesRef.current = []
       onFiles(id, [])
-      void window.brain.chat.reset({ tabId: id, kind, cwd, model, effort }).catch(() => {})
+      void resetCli()
+        .then(() => {
+          if (skinOn) setTuiGen((g) => g + 1)
+        })
+        .catch(() => {})
       return true
     }
     if (name === 'terminal') {
@@ -920,15 +1005,26 @@ function ChatPane({
     return false
   }
 
+  function takeSlash(raw: string): boolean {
+    if (runSlash(raw)) return true
+    const t = raw.trim()
+    if (!skinOn || !t.startsWith('/')) return false
+    // Skin leftover `/` goes to the peel TUI, not ACP.
+    void sendSkinTerm(slashLine(t))
+    return true
+  }
+
   function applyPick(pick: Pick) {
     if (pick.kind === 'arg') {
       setSay('')
-      runSlash(pick.insert)
+      const raw = pick.insert.trim()
+      if (!takeSlash(raw)) void sendText(slashLine(raw))
       return
     }
     if (pick.kind === 'skill') {
       setSay('')
-      void sendText('/' + pick.name)
+      const line = '/' + pick.name
+      if (!takeSlash(line)) void sendText(line)
       return
     }
     if (pick.insert.endsWith(' ')) {
@@ -938,14 +1034,20 @@ function ChatPane({
     }
     if (pick.kind === 'builtin') {
       setSay('')
-      runSlash('/' + pick.name)
+      const line = '/' + pick.name
+      if (!takeSlash(line)) void sendText(line)
       return
     }
     setSay('')
-    void sendText('/' + pick.name)
+    const line = '/' + pick.name
+    if (!takeSlash(line)) void sendText(line)
   }
 
   async function stop() {
+    if (skinOn && peel) {
+      await window.brain.pty.write(skinPtyId(id), '\x03')
+      return
+    }
     skipDrain.current += 1
     await window.brain.chat.stop(id)
     setBusy(false)
@@ -965,9 +1067,7 @@ function ChatPane({
     }
     setSay('')
     const line = t.startsWith('/') ? slashLine(t) : t
-    const skillName = line.slice(1).split(/\s/)[0].toLowerCase()
-    const isSkill = cmds.some((c) => c.kind === 'skill' && c.name.toLowerCase() === skillName)
-    if (runSlash(t) && !isSkill) return
+    if (takeSlash(t)) return
     if (busy && wantsStop(line)) {
       await stop()
       if (justStop(line)) return
@@ -1104,8 +1204,35 @@ function ChatPane({
     setDropNote(got.skipped.length ? got.skipped.join('. ') : '')
   }
 
+  function mergeSkinFiles(hits: FileHit[], live: boolean) {
+    if (!live) {
+      filesRef.current = filesRef.current.map((f) => ({ ...f, live: false }))
+      onFiles(id, filesRef.current)
+      return
+    }
+    let next = filesRef.current
+    for (const h of hits) {
+      const i = next.findIndex((f) => f.path === h.path)
+      if (i < 0) next = [...next, { ...h, live: true }]
+      else next = next.map((f, j) => (j === i ? { ...f, live: true } : f))
+    }
+    filesRef.current = next
+    onFiles(id, next)
+  }
+
   async function sendText(t: string, opts?: { cancel?: boolean; fromQueue?: boolean; files?: Attach[] }) {
     await pendingDrops.current
+    if (skinOn && peel) {
+      const attached = opts?.fromQueue ? opts.files || [] : opts?.files || dropsRef.current
+      if (!opts?.fromQueue) {
+        dropsRef.current = []
+        setDrops([])
+        setDropNote('')
+      }
+      const shown = attached.length ? `${t}${t ? '\n' : ''}${attached.map((a) => a.path).join('\n')}` : t
+      if (shown) await window.brain.pty.write(skinPtyId(id), shown + '\r')
+      return
+    }
     if (opts?.cancel && busy) await stop()
     if (busy && !opts?.fromQueue && !opts?.cancel) {
       writeQueue([...queueRef.current, { id: crypto.randomUUID(), text: t, files: opts?.files }])
@@ -1212,14 +1339,14 @@ function ChatPane({
         </div>
       )}
       <div className="skin-switch">
-        <button type="button" className={!skinOn ? 'on' : ''} onClick={() => setSkinOn(false)}>
-          Chat
-        </button>
         <button type="button" className={skinOn ? 'on' : ''} onClick={() => setSkinOn(true)}>
           Skin
         </button>
+        <button type="button" className={!skinOn ? 'on' : ''} onClick={() => setSkinOn(false)}>
+          Chat
+        </button>
       </div>
-      {permission && !skinOn ? (
+      {skinOn ? null : permission ? (
         <div className="skin-perm">
           <p className="skin-perm-title">{permission.title || 'Allow this?'}</p>
           {permission.path ? <p className="tiny">{permission.path}</p> : null}
@@ -1247,43 +1374,55 @@ function ChatPane({
           </div>
         </div>
       ) : null}
-      {skinOn ? (
-        <SkinPane
-          tabId={id}
-          cwd={cwd}
-          kind={kind}
-          messages={messages}
-          busy={busy || compacting || warming}
-          waitLabel={compacting ? 'Compacting' : waitLabel}
-          waitSec={waitSec}
-          queue={queue}
-          permission={permission}
-          rawOpen={rawOpen}
-          onRaw={setRawOpen}
-          onAction={(actionId, spec) => {
-            if (actionId === 'allowOnce' || actionId === 'skip' || actionId === 'alwaysAllowInFolder') {
-              void window.brain.skin.decide(id, actionId)
-              setPermission(null)
-              return
-            }
-            if (actionId === 'stop') {
-              void window.brain.chat.stop(id)
-              return
-            }
-            if (actionId === 'login') {
-              void window.brain.ai.login(kind)
-              return
-            }
-            if (actionId === 'runSlash') {
-              const name = String(spec.props.name || '')
-              if (name) void sendTextRef.current('/' + name)
-            }
-          }}
-        />
-      ) : (
+      <SkinPane
+        tabId={id}
+        cwd={cwd}
+        kind={kind}
+        visible={skinOn && active}
+        restart={tuiGen}
+        peel={peel}
+        messages={messages}
+        busy={busy || compacting || warming}
+        waitLabel={compacting ? 'Compacting' : waitLabel}
+        waitSec={waitSec}
+        queue={queue}
+        permission={permission}
+        threadRef={thread}
+        onScroll={onThreadScroll}
+        onPeel={setPeel}
+        onFiles={mergeSkinFiles}
+        onAction={(actionId, spec) => {
+          if (actionId === 'allowOnce' || actionId === 'skip' || actionId === 'alwaysAllowInFolder') {
+            void window.brain.skin.decide(id, actionId)
+            setPermission(null)
+            return
+          }
+          if (actionId === 'stop') {
+            void window.brain.chat.stop(id)
+            return
+          }
+          if (actionId === 'login') {
+            void window.brain.ai.login(kind)
+            return
+          }
+          if (actionId === 'runSlash') {
+            const name = String(spec.props.name || '')
+            if (name) void sendTextRef.current('/' + name)
+          }
+        }}
+      />
+      {!skinOn ? (
       <div className="thread" ref={thread} onScroll={onThreadScroll}>
         {messages.map((m, i) =>
-          m.text || m.who === 'me' ? (
+          m.who === 'plan' && m.steps?.length ? (
+            <ol className="skin-plan" key={i}>
+              {m.steps.map((s, j) => (
+                <li key={j}>
+                  {s.title} {s.status ? <span className="tiny">{s.status}</span> : null}
+                </li>
+              ))}
+            </ol>
+          ) : m.text || m.who === 'me' ? (
             <div
               className={`bubble ${m.who === 'me' ? 'me' : ''} ${m.who === 'think' ? 'think' : ''} ${m.who === 'brain' ? 'md' : ''}`}
               key={i}
@@ -1314,11 +1453,11 @@ function ChatPane({
           ) : null
         )}
       </div>
-      )}
+      ) : null}
       {(busy || compacting || warming) && !skinOn && (
         <WorkPulse label={compacting ? 'Compacting' : waitLabel} seconds={waitSec} />
       )}
-      {!atBottom ? (
+      {!atBottom && !(skinOn && peel) ? (
         <button type="button" className="jump-latest" onClick={() => {
           pinBottom.current = true
           setAtBottom(true)
@@ -1379,7 +1518,8 @@ function ChatPane({
             ))}
           </div>
         )}
-        <input
+        <textarea
+          rows={1}
           value={say}
           onChange={(e) => {
             setSay(e.target.value)
@@ -1813,17 +1953,37 @@ export function TerminalWorkspace({
     }
   }
 
+  function turnHit(path: string, isDir: boolean) {
+    const a = path.replace(/\\/g, '/').replace(/\/$/, '')
+    const matches = hits.filter((h) => {
+      const b = h.path.replace(/\\/g, '/').replace(/\/$/, '')
+      if (isDir) return b === a || b.startsWith(a + '/')
+      return a === b || b.endsWith('/' + path.replace(/\\/g, '/').split('/').pop())
+    })
+    if (!matches.length) return null
+    return matches.find((h) => h.live) || matches[0]
+  }
+
   function renderTree(dir: string, depth = 0): ReactNode {
     return (kids[dir] || []).map((n) => {
       const open = Boolean(n.dir && openDirs[n.path])
+      const hit = turnHit(n.path, n.dir)
       return (
         <div key={n.path} className="fnode" style={{ paddingLeft: 8 + depth * 10 }}>
           {n.dir ? (
-            <button type="button" className="flink" onClick={() => void toggleDir(n.path)}>
+            <button
+              type="button"
+              className={`flink${hit ? ' turn' : ''}${hit?.live ? ' live' : ''}`}
+              onClick={() => void toggleDir(n.path)}
+            >
               {open ? '▾' : '▸'} {n.name}
             </button>
           ) : (
-            <button type="button" className="flink" onClick={() => void openFile(n.path)}>
+            <button
+              type="button"
+              className={`flink${hit ? ' turn' : ''}${hit?.live ? ' live' : ''}`}
+              onClick={() => void openFile(n.path)}
+            >
               {n.name}
             </button>
           )}

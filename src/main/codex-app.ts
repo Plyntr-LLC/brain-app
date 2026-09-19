@@ -351,9 +351,9 @@ export function codexClose(tabId: string): void {
   }
 }
 
-export async function codexReset(opts: { tabId: string; cwd: string; model?: string; effort?: string }): Promise<void> {
+export async function codexReset(opts: { tabId: string; cwd: string; model?: string; effort?: string }): Promise<LiveRun> {
   codexClose(opts.tabId)
-  await codexWarm(opts)
+  return codexWarm(opts)
 }
 
 export function codexKillAll(): void {

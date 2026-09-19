@@ -75,16 +75,15 @@ export function closeWarm(tabId: string): void {
   codexClose(tabId)
 }
 
-export async function resetWarm(opts: WarmOpts): Promise<void> {
+export async function resetWarm(opts: WarmOpts): Promise<LiveRun> {
   if (opts.kind === 'grok' || opts.kind === 'cursor') {
-    await acpReset({ kind: opts.kind, tabId: opts.tabId, cwd: opts.cwd, model: opts.model, effort: opts.effort })
-    return
+    return acpReset({ kind: opts.kind, tabId: opts.tabId, cwd: opts.cwd, model: opts.model, effort: opts.effort })
   }
   if (opts.kind === 'claude') {
-    await claudeReset({ tabId: opts.tabId, cwd: opts.cwd, model: opts.model })
-    return
+    return claudeReset({ tabId: opts.tabId, cwd: opts.cwd, model: opts.model })
   }
-  if (opts.kind === 'gpt') await codexReset(opts)
+  if (opts.kind === 'gpt') return codexReset(opts)
+  return {}
 }
 
 export function killAllWarm(): void {

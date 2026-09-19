@@ -3,7 +3,9 @@ import { homedir } from 'node:os'
 import { delimiter } from 'node:path'
 import pty from 'node-pty'
 import type { IPty } from 'node-pty'
-import { extraPath } from './ai-cli'
+import type { AiKind } from '../shared/contracts'
+import { extraPath, resolveBin } from './ai-cli'
+import { ensureGrokLeader, grokLeaderLive, grokTuiArgs } from './grok-leader'
 
 type Sess = { proc: IPty; sender: WebContents }
 
@@ -19,10 +21,39 @@ function env(): Record<string, string> {
   return e
 }
 
+function cliCommand(
+  kind: AiKind,
+  cwd: string,
+  resume: string | undefined
+): { bin: string; args: string[] } | null {
+  const bin = resolveBin(kind)
+  if (!bin) return null
+  if (kind === 'grok') return { bin, args: grokTuiArgs(cwd, resume, grokLeaderLive()) }
+  if (kind === 'cursor') {
+    const args = ['--trust', '--workspace', cwd]
+    if (resume) args.push('--resume', resume)
+    return { bin, args }
+  }
+  if (kind === 'claude') return { bin, args: resume ? ['--resume', resume] : [] }
+  if (resume) return { bin, args: ['resume', resume] }
+  return { bin, args: [] }
+}
+
 export function registerPtyIpc(): void {
   ipcMain.handle(
     'pty:create',
-    (e, opts: { id: string; cwd: string; cols: number; rows: number; shell?: boolean }) => {
+    async (
+      e,
+      opts: {
+        id: string
+        cwd: string
+        cols: number
+        rows: number
+        shell?: boolean
+        kind?: AiKind
+        sessionId?: string
+      }
+    ) => {
       const existing = sessions.get(opts.id)
       if (existing) {
         existing.sender = e.sender
@@ -38,12 +69,23 @@ export function registerPtyIpc(): void {
           }
         }
       }
-      if (!opts.shell) throw new Error('Terminal tabs are a shell, not an AI CLI.')
-      const bin =
-        process.platform === 'win32'
-          ? process.env.COMSPEC || 'powershell.exe'
-          : process.env.SHELL || '/bin/zsh'
-      const args = process.platform === 'win32' ? [] : ['-l']
+      let bin: string
+      let args: string[]
+      if (opts.kind) {
+        if (opts.kind === 'grok') await ensureGrokLeader()
+        const cmd = cliCommand(opts.kind, opts.cwd, opts.sessionId)
+        if (!cmd) throw new Error(`${opts.kind} is not installed on this computer`)
+        bin = cmd.bin
+        args = cmd.args
+      } else if (opts.shell) {
+        bin =
+          process.platform === 'win32'
+            ? process.env.COMSPEC || 'powershell.exe'
+            : process.env.SHELL || '/bin/zsh'
+        args = process.platform === 'win32' ? [] : ['-l']
+      } else {
+        throw new Error('Terminal tabs are a shell, not an AI CLI.')
+      }
       let proc: IPty
       try {
         proc = pty.spawn(bin, args, {
@@ -76,7 +118,7 @@ export function registerPtyIpc(): void {
           /* renderer gone */
         }
       })
-      return { ok: true, bin }
+      return { ok: true, bin, cli: Boolean(opts.kind) }
     }
   )
 

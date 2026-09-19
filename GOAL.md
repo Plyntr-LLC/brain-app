@@ -8,19 +8,20 @@ This file is the working set. Open this repo, read this file, work **Inbox** the
 
 ## Product
 
-One downloadable window that feels like Slack and has the power of the local AI CLIs (Grok, Claude, Cursor, Codex). Chat is the product. Terminal is optional and hidden by default.
+One downloadable window that feels like Slack and has the power of the local AI CLIs (Grok, Claude, Cursor, Codex). **Skin is the default face:** Brain catalog paint over the live CLI. Chat is the ACP bubble toggle. **Show terminal** peels the skin to the real CLI TUI in a PTY (not a login shell). Terminal (`+` → Terminal) is a login shell, optional and hidden by default.
 
-A teammate installs this app, Agency Brain (Mike’s, for git sync), and one AI CLI they already pay for. They sign into that CLI as themselves. They land in Chat against the watched brain folder. They never need to see a TUI, scrape it, or share Joe’s login.
+A teammate installs this app, Agency Brain (Mike’s, for git sync), and one AI CLI they already pay for. They sign into that CLI as themselves. They land in Skin against the watched brain folder. **Show terminal is its own CLI session** (accepted). App `/` commands stay in Brain; other `/` commands are typed into that CLI. They never scrape the TUI into bubbles, and they never share Joe’s login.
 
 Agency Brain owns git. This app does not start a second watcher and does not rewrite `~/Library/Application Support/Agency Brain/config.json` unless Joe has set `BRAIN_APP_ALLOW_CREATE=1` and the machine has no watched path.
 
 ## How it talks to the CLIs
 
-Keep one warm process per CLI and a session per chat tab. Do not spawn `grok -p` (or the others) on every send. Do not paste the whole thread back in.
+Skin paints catalog cards over a live CLI PTY. Chat keeps one warm ACP (or stream-json / app-server) process per tab. Composer Send for ordinary messages goes to that ACP session so the skin has a thread. **Show terminal** is a separate CLI TUI. In Skin, `/` that Brain does not handle is typed into that TUI (`/theme`, `/vim-mode`, `/fullscreen`, `/dashboard`, skills). Do not spawn `grok -p` (or the others) on every send. Do not paste the whole thread back in.
 
-| Chat | Transport |
+| Face | Transport |
 | --- | --- |
-| Grok | `grok agent --always-approve --no-leader stdio` (ACP) |
+| Skin | Catalog thread is ACP. **Show terminal** is a separate CLI TUI (accepted). Skin `/` except app commands goes into that TUI. |
+| Chat / Grok | `grok agent --always-approve --leader --leader-socket ~/.grok/leader-brain-app.sock stdio` (ACP). Isolated from the default `~/.grok/leader.sock`. Falls back to `--no-leader` if that leader does not start. |
 | Cursor | `cursor-agent --trust --workspace <cwd> acp` (ACP). Model ids look like `composer-2.5[fast=true]`. No `reasoning_effort` config option. Modes: ask / plan / agent. |
 | Claude | `claude -p --input-format stream-json --output-format stream-json` (process stays up) |
 | Codex | `codex app-server --listen stdio://` |
@@ -51,8 +52,8 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Right sidebar: In use files, live Model / Effort / Mode / Folder. Folder switch is local to this window (recents in this app’s userData). It does not change Mike’s watched path.
 - `/compact` goes to the live session. Auto-compact shows a wheel + “Compacting…” then a short note. Transcript on screen stays.
 - Grok and Cursor model/mode pickers follow the live session. ChatGPT/Codex picker does **not** yet (still falls through to `grok models`).
-- Slash: every `/` either does a real in-app job or is sent to the live session as the canonical name (aliases rewritten). TUI commands are not blocked. Grok catalog is in the `/` menu.
-- Terminal is a separate tab (`+` → Terminal, or `/terminal`). It is a login shell, not Grok/Claude. Chat stays ACP.
+- Slash: every `/` either does a real in-app job or is sent on. Chat leftover `/` goes ACP. Skin leftover `/` is typed into the peel TUI (`/theme`, `/vim-mode`, `/fullscreen`, `/dashboard`, skills). Grok catalog is in the `/` menu.
+- Skin default is catalog paint. Chat toggle is ACP bubbles. **Show terminal** is a separate CLI TUI (accepted). Terminal (`+` → Terminal, or `/terminal`) is a login shell, not Grok/Claude.
 - Settings: one company at the top (You are working on this company). Then job 1 company, job 2 brains for that company, job 3 people at that company. Buttons name the company. Stored in userData, not Agency Brain config.json.
 - Drag/drop, paste (including screenshots), and Attach on Chat for images and docs. Grok/Cursor: ACP image + embedded resource. Claude: image + PDF document. Codex: localImage + inlined text docs. Pathless clipboard files stash under userData/drops. 20 MB cap.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
@@ -92,11 +93,23 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Empty. Inbox is drained. Wait for **next 3** if new lines land. Skin is in 0.1.4 (opt-in Chat | Skin).
+Skin catalog leftovers: one item, grok-4.6 xhigh APPROVE, then live, then the next. Do not pack/notarize.
 
 ## Inbox
 
 Bugs and product gaps. One line each. Date + what.
+
+- [x] 2026-09-19 Joe: Skin Plan card is catalog-only. ACP already emits `plan`. Paint it. Done: 2026-09-19. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `onEvent` plan-per-turn, `SkinPane` Plan, Chat `ol.skin-plan`.
+- [ ] 2026-09-19 Joe: Skin ErrorNotice / LoginNeed are catalog-only. Error events paint as those cards. Sign in is wired.
+- [ ] 2026-09-19 Joe: Skin Queue card is show-only. Composer queue is the live one. Drop the duplicate card.
+- [ ] 2026-09-19 Joe: Skin ContextMeter is catalog-only. Context events already hit the sidebar. Show the meter on the Skin face too.
+- [ ] 2026-09-19 Joe: Chat permission is missing Always in this folder. Skin has it. Same three buttons, wired.
+- [ ] 2026-09-19 Joe: PermissionAsk ignores CLI option ids. Buttons should be the CLI options (`selectOption` → decide).
+- [ ] 2026-09-19 Joe: Settings Skin capture Label does not change paint. Labelled fingerprints choose that catalog row.
+- [ ] 2026-09-19 Joe: First-run rail/Invite/needs are leftover. Chat already hides the rail in CSS. Do not render them on chat. Invite is Settings.
+
+- [x] 2026-09-19 Joe: Skin is the default. Readable markdown. Isolated Grok leader + `/clear` session id + sys notes. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `SkinPane`, `grok-leader.ts`, `resetCli`.
+- [x] 2026-09-19 Joe: Skin is full terminal (CLI TUI in Brain chrome), not catalog cards. Composer injects into that PTY. Chat stays ACP. Open raw / folder shell is gone. Done: 2026-09-19. Then Joe: that dropped the skin. Catalog is the face again; Show terminal peels to the CLI PTY. Evidence: `SkinPane` overlay + `SkinTerm`.
 
 - [x] 2026-09-19 Joe: Skin catalog slice A — seed catalog + map StreamEvent kinds. ChatPane bubble path unchanged. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `src/shared/skin/`, `from-events.test.ts`.
 - [x] 2026-09-19 Joe: Skin catalog slice B — Joe-only capture in userData/skin-captures. Settings review list. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `src/main/skin/capture.ts`, Settings Skin captures.

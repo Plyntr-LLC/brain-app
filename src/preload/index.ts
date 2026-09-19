@@ -308,7 +308,13 @@ const brain = {
       cwd?: string
       model?: string
       effort?: string
-    }) => ipcRenderer.invoke('chat:reset', payload),
+    }) =>
+      ipcRenderer.invoke('chat:reset', payload) as Promise<{
+        ok: boolean
+        sessionId?: string
+        model?: string
+        effort?: string
+      }>,
     close: (tabId: string) => ipcRenderer.invoke('chat:close', tabId),
     loadState: (cwd?: string) => ipcRenderer.invoke('chat:loadState', cwd),
     onWillQuit: (cb: () => void) => {

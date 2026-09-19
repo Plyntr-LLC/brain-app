@@ -505,14 +505,14 @@ export function registerStubIpc(): void {
       const watching = readWatching()
       const cwd = payload.cwd && payload.cwd.length ? payload.cwd : watching.brainPath
       if (!cwd) return { ok: false }
-      await resetWarm({
+      const live = await resetWarm({
         kind: payload.kind || 'grok',
         tabId: payload.tabId,
         cwd,
         model: payload.model,
         effort: payload.effort
       })
-      return { ok: true }
+      return { ok: true, ...live }
     }
   )
   ipcMain.handle('chat:close', async (_e, tabId: string) => {
