@@ -56,7 +56,11 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   createWindow()
-  startAutoUpdate()
+  try {
+    startAutoUpdate()
+  } catch (e) {
+    console.error(e)
+  }
   const watching = readWatching()
   const acct = loadAccount()
   const folder = watching.brainPath || acct?.folder || ''

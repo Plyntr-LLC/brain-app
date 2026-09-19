@@ -1,5 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
-import { autoUpdater } from 'electron-updater'
+import electronUpdater from 'electron-updater'
+
+const { autoUpdater } = electronUpdater
 
 function send(status: string, detail = ''): void {
   for (const w of BrowserWindow.getAllWindows()) {
