@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { OWNER_NEEDS, STEPS, type AiKind, type PathKind, type Session } from '@shared/contracts'
-import { blankSession, needsDone, remainingNeeds, stepState } from './flow'
+import { STEPS, type AiKind, type PathKind, type Session } from '@shared/contracts'
+import { blankSession, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
 import { BridgeWizard, type BridgeDraft } from './BridgeWizard'
 import { SettingsPanel } from './SettingsPanel'
@@ -164,6 +164,7 @@ export function FirstRun() {
         />
       )}
       <div className="body">
+        {s.screen !== 'chat' ? (
         <aside className="rail">
           <h2>Where you are</h2>
           {STEPS.map((st) => {
@@ -179,23 +180,8 @@ export function FirstRun() {
               </div>
             )
           })}
-          {s.screen === 'chat' && s.path !== 'join' && (
-            <button className="primary rail-btn" type="button" onClick={() => setShowInvite(true)}>
-              Invite
-            </button>
-          )}
-          {s.screen === 'chat' && s.path !== 'second' && !needsDone(s) && (
-            <>
-              <h2 style={{ marginTop: '1.1rem' }}>The brain still needs</h2>
-              {(s.path === 'join' ? remainingNeeds(s).concat() : OWNER_NEEDS).map((n) => (
-                <div className={`need ${s.filled[n.id] ? 'got' : ''}`} key={n.id}>
-                  <span>{s.filled[n.id] ? '✓' : '○'}</span>
-                  <span>{n.label}</span>
-                </div>
-              ))}
-            </>
-          )}
         </aside>
+        ) : null}
         <section className="main">
           {s.screen !== 'chat' && (
             <div className="demo">

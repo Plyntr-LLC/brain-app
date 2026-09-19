@@ -104,7 +104,7 @@ Bugs and product gaps. One line each. Date + what.
 - [x] 2026-09-19 Joe: Skin Queue card is show-only. Composer queue is the live one. Drop the duplicate card. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: SkinPane no `queueSpec`; composer `followq`.
 - [x] 2026-09-19 Joe: Skin ContextMeter is catalog-only. Context events already hit the sidebar. Show the meter on the Skin face too. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: Skin caption `ContextMeter`.
 - [x] 2026-09-19 Joe: Chat permission is missing Always in this folder. Skin has it. Same three buttons, wired. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: Chat `alwaysAllowInFolder`.
-- [ ] 2026-09-19 Joe: PermissionAsk ignores CLI option ids. Buttons should be the CLI options (`selectOption` → decide).
+- [x] 2026-09-19 Joe: PermissionAsk ignores CLI option ids. Buttons should be the CLI options (`selectOption` → decide). Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: Registry `p.options`, Chat option map, `selectOption`.
 - [ ] 2026-09-19 Joe: Settings Skin capture Label does not change paint. Labelled fingerprints choose that catalog row.
 - [ ] 2026-09-19 Joe: First-run rail/Invite/needs are leftover. Chat already hides the rail in CSS. Do not render them on chat. Invite is Settings.
 
