@@ -93,7 +93,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Pack 0.1.8 so GitHub login uses the system browser (passkeys) on this Mac.
+Empty until Joe says next 3.
 
 ## Inbox
 
