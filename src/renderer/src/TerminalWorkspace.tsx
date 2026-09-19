@@ -60,7 +60,7 @@ type FileNode = { name: string; path: string; dir: boolean; kids?: FileNode[] }
 type Cap = { id: string; label: string }
 type SessionCmd = { name: string; description: string; hint?: string }
 
-const SESSION_QUIET = new Set(['compact', 'rewind', 'undo', 'flush', 'dream', 'context', 'session-info'])
+const SESSION_QUIET = new Set(['compact', 'rewind', 'undo', 'flush', 'dream', 'context', 'session-info', 'usage'])
 
 const SLASH_ALIAS: Record<string, string> = {
   undo: 'rewind',
@@ -858,6 +858,10 @@ function ChatPane({
       return true
     }
     if (name === 'usage' || name === 'cost') {
+      if (kind === 'grok' || kind === 'cursor') {
+        void sendQuiet('/usage')
+        return true
+      }
       void window.brain.slash.usage(cwd, kind).then((body) => popup('Usage', body))
       return true
     }

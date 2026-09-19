@@ -93,11 +93,13 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Jeen day-one Inbox drained. Pack when Joe says pack.
+Jeen day-one and `/usage` drained. Pack when Joe says pack.
 
 ## Inbox
 
 Bugs and product gaps. One line each. Date + what.
+
+- [x] 2026-09-19 Joe: `/usage` (and `/cost`) goes to the live CLI session, like `/compact`. Grok and Cursor send `/usage` on the warm session. Other CLIs keep the account blurb. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `sendQuiet('/usage')` for grok/cursor.
 
 - [x] 2026-09-19 Joe: Jeen setup. After missing bits, land in Skin with one place to type. Hide Chat / Show terminal / CLI jargon until she needs them. Sign in is a labeled button for that CLI. Done: 2026-09-19. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `showPower` / More, `I signed in. Start`, `Sign in to ${cliName}`, greeting without slash.
 - [x] 2026-09-19 Joe: Empty Skin tells her what to send so the reply knows this brain folder. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: greeting + composer `Ask about this folder`.
