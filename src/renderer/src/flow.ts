@@ -20,7 +20,7 @@ export function stepState(s: Session, id: (typeof STEPS)[number]['id']): 'now' |
   }
   if (id === 'ab') {
     if (s.abWatching) return 'done'
-    if (['abget', 'github', 'abapply', 'hello', 'choice', 'name', 'bridge', 'needs'].includes(s.screen)) return 'now'
+    if (['abget', 'github', 'abapply', 'hello', 'choice', 'name', 'needs'].includes(s.screen)) return 'now'
     return s.email && s.screen !== 'email' && s.screen !== 'code' ? 'now' : ''
   }
   if (id === 'ai') {

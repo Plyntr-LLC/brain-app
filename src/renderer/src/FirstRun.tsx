@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { STEPS, type AiKind, type PathKind, type Session } from '@shared/contracts'
 import { blankSession, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
-import { BridgeWizard, type BridgeDraft } from './BridgeWizard'
 import { SettingsPanel } from './SettingsPanel'
 import { SetupNeeds } from './SetupNeeds'
 import { WorkPulse } from './WorkPulse'
@@ -246,34 +245,6 @@ export function FirstRun() {
               <span>Chat is live against the folder Agency Brain is watching. New GitHub orgs and clones stay off.</span>
             </div>
           )}
-          {s.screen === 'bridge' && (
-            <BridgeWizard
-              watching={s.abWatching}
-              onCancel={() => go('welcome')}
-              onDone={(draft: BridgeDraft) => {
-                const role = draft.role
-                const teamLike = role === 'team'
-                void window.brain.settings.clients().then((list) => {
-                  const row = {
-                    company: draft.company,
-                    slug: draft.slug,
-                    hqName: draft.hqName,
-                    hqAddress: draft.hqAddress,
-                    projects: draft.projects,
-                    setupLink: draft.setupLink
-                  }
-                  const rest = (list as { slug?: string }[]).filter((c) => c.slug !== draft.slug)
-                  return window.brain.settings.saveClients([...rest, row])
-                })
-                go(teamLike ? 'chat' : s.abWatching ? 'chat' : 'aipick', {
-                  role,
-                  brainKind: draft.brainKind,
-                  business: draft.hqName || draft.company || s.business,
-                  path: teamLike ? 'join' : s.abWatching ? 'second' : 'create'
-                })
-              }}
-            />
-          )}
           {s.screen === 'needs' && (
             <SetupNeeds
               onReady={({ ready, watching, ai }) => {
@@ -282,7 +253,6 @@ export function FirstRun() {
                 else if (watching) go('aipick', { abWatching: true, ai: pick })
               }}
               onCode={() => go('welcome')}
-              onBridge={() => go('bridge')}
             />
           )}
           {s.screen === 'welcome' && (
@@ -345,9 +315,6 @@ export function FirstRun() {
                 </button>
                 <button className="ghost" type="button" onClick={() => void skipToExisting()}>
                   This computer already has a brain — skip to chat
-                </button>
-                <button className="ghost" type="button" onClick={() => go('bridge')}>
-                  Set up HQ and project brains
                 </button>
               </div>
             </>

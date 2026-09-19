@@ -32,12 +32,10 @@ function pickAi(items: ToolNeed[]): AiKind | undefined {
 
 export function SetupNeeds({
   onReady,
-  onCode,
-  onBridge
+  onCode
 }: {
   onReady: (info: { ready: boolean; watching: boolean; ai?: AiKind }) => void
   onCode: () => void
-  onBridge: () => void
 }) {
   const [items, setItems] = useState<ToolNeed[]>([])
   const [watching, setWatching] = useState(false)
@@ -271,9 +269,6 @@ export function SetupNeeds({
         ) : null}
         <button className="linkish" type="button" disabled={running} onClick={onCode}>
           I have a setup code
-        </button>
-        <button className="linkish" type="button" disabled={running} onClick={onBridge}>
-          Set up HQ and project brains
         </button>
       </div>
     </>
