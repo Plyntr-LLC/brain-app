@@ -11,7 +11,7 @@ The room in front of Agency Brain. Chat with Grok, Claude, Cursor, or ChatGPT ag
 
 Direct Mac:
 
-- https://github.com/Plyntr-LLC/brain-app/releases/latest/download/Brain-0.1.8-mac.dmg
+- https://github.com/Plyntr-LLC/brain-app/releases/latest/download/Brain-0.1.9-mac.dmg
 
 After 0.1.1, the app checks GitHub for updates and can install them. Settings has Check for update.
 
