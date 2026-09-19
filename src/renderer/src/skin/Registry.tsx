@@ -132,7 +132,7 @@ export function SkinCard({
   }
   if (spec.component === 'ContextMeter') {
     const pct = p.percent != null ? `${p.percent}%` : ''
-    return <div className="tiny">Context {pct}</div>
+    return <span>Context {pct}</span>
   }
   if (spec.component === 'SlashMenu') {
     const cmds = Array.isArray(p.commands) ? (p.commands as { name: string; description?: string }[]) : []

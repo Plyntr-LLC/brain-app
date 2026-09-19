@@ -419,6 +419,7 @@ function ChatPane({
   const [sessionCmds, setSessionCmds] = useState<SessionCmd[]>([])
   const [resumeRows, setResumeRows] = useState<{ id: string; title: string; updated: string }[] | null>(null)
   const ctxRef = useRef<{ used?: number; total?: number; percent?: number }>({})
+  const [ctx, setCtx] = useState<{ used?: number; total?: number; percent?: number }>({})
   const dropsRef = useRef<Attach[]>([])
   const pendingDrops = useRef(Promise.resolve())
   const thread = useRef<HTMLDivElement>(null)
@@ -506,8 +507,10 @@ function ChatPane({
         setSessionCmds(ev.commands)
       }
       if (ev.kind === 'context') {
-        ctxRef.current = { used: ev.used, total: ev.total, percent: ev.percent }
-        onContext(id, { used: ev.used, total: ev.total, percent: ev.percent })
+        const next = { used: ev.used, total: ev.total, percent: ev.percent }
+        ctxRef.current = next
+        setCtx(next)
+        onContext(id, next)
       }
       if (ev.kind === 'status' && ev.data === 'compacting') {
         compactingRef.current = true
@@ -1387,6 +1390,7 @@ function ChatPane({
         busy={busy || compacting || warming}
         waitLabel={compacting ? 'Compacting' : waitLabel}
         waitSec={waitSec}
+        context={ctx}
         permission={permission}
         threadRef={thread}
         onScroll={onThreadScroll}

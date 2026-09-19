@@ -36,6 +36,7 @@ export function SkinPane({
   busy,
   waitLabel,
   waitSec,
+  context,
   permission,
   threadRef,
   onScroll,
@@ -53,6 +54,7 @@ export function SkinPane({
   busy: boolean
   waitLabel: string
   waitSec: number
+  context?: { used?: number; total?: number; percent?: number }
   permission: {
     title?: string
     path?: string
@@ -117,6 +119,15 @@ export function SkinPane({
     row.spec.id = 'row-' + i + '-' + row.spec.component
   })
 
+  const ctxSpec =
+    context && (context.percent != null || context.used)
+      ? specFromStreamEvent({
+          kind: 'context',
+          used: context.used,
+          total: context.total,
+          percent: context.percent
+        })
+      : null
   return (
     <div className={visible ? (peel ? 'skin-pane peel' : 'skin-pane') : 'skin-pane hide'}>
       <div className="skin-term">
@@ -158,6 +169,7 @@ export function SkinPane({
       </div>
       <p className="tiny skin-cli">
         {kind} · skin on this chat
+        {ctxSpec ? <SkinCard spec={ctxSpec} onAction={onAction} /> : null}
         <button type="button" className="linkish" onClick={() => onPeel(!peel)}>
           {peel ? 'Hide terminal' : 'Show terminal'}
         </button>
