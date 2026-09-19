@@ -7,7 +7,9 @@ import { mdToHtml, tidy, type FileHit } from './ptyChat'
 import { WorldClocks } from './WorldClocks'
 import { WorkPulse } from './WorkPulse'
 import { SkinPane } from './skin/SkinPane'
+import { SkinCard } from './skin/Registry'
 import { skinPtyId } from './skin/SkinTerm'
+import { specFromStreamEvent } from '../../shared/skin/from-events'
 
 type Mode = 'chat' | 'term'
 type Attach = { path: string; name: string; mime: string; preview?: string }
@@ -36,7 +38,7 @@ function filePath(f: File): string {
   }
 }
 type Msg = {
-  who: 'me' | 'brain' | 'think' | 'sys' | 'plan'
+  who: 'me' | 'brain' | 'think' | 'sys' | 'plan' | 'err'
   text: string
   files?: Attach[]
   at?: number
@@ -567,7 +569,7 @@ function ChatPane({
         filesRef.current = filesRef.current.map((f) => ({ ...f, live: false }))
         onFiles(id, filesRef.current)
         if (ev.kind === 'error' && ev.data) {
-          setMessages((m) => [...m, { who: 'brain', text: ev.data || '' }])
+          setMessages((m) => [...m, { who: 'err', text: ev.data || '' }])
         }
         if (ev.kind === 'done') setPermission(null)
         if (skipDrain.current > 0) {
@@ -1422,6 +1424,14 @@ function ChatPane({
                 </li>
               ))}
             </ol>
+          ) : m.who === 'err' && m.text ? (
+            <SkinCard
+              key={i}
+              spec={specFromStreamEvent({ kind: 'error', data: m.text }) || { id: 'err-' + i, component: 'ErrorNotice', props: { text: m.text }, actions: [], source: 'error' }}
+              onAction={(id) => {
+                if (id === 'login') void window.brain.ai.login(kind)
+              }}
+            />
           ) : m.text || m.who === 'me' ? (
             <div
               className={`bubble ${m.who === 'me' ? 'me' : ''} ${m.who === 'think' ? 'think' : ''} ${m.who === 'brain' ? 'md' : ''}`}

@@ -74,6 +74,9 @@ export function SkinPane({
     else if (m.who === 'plan' && m.steps?.length) {
       const s = specFromStreamEvent({ kind: 'plan', steps: m.steps })
       if (s) specs.push({ spec: s })
+    } else if (m.who === 'err' && m.text) {
+      const s = specFromStreamEvent({ kind: 'error', data: m.text })
+      if (s) specs.push({ spec: s })
     } else if (m.who === 'think') {
       const text = cleanThink(m.text || '')
       if (!text) return
