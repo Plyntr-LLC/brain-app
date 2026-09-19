@@ -100,7 +100,7 @@ Skin catalog leftovers: one item, grok-4.6 xhigh APPROVE, then live, then the ne
 Bugs and product gaps. One line each. Date + what.
 
 - [x] 2026-09-19 Joe: Skin Plan card is catalog-only. ACP already emits `plan`. Paint it. Done: 2026-09-19. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `onEvent` plan-per-turn, `SkinPane` Plan, Chat `ol.skin-plan`.
-- [ ] 2026-09-19 Joe: Skin ErrorNotice / LoginNeed are catalog-only. Error events paint as those cards. Sign in is wired.
+- [x] 2026-09-19 Joe: Skin ErrorNotice / LoginNeed are catalog-only. Error events paint as those cards. Sign in is wired. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `who: 'err'`, `specFromStreamEvent` error, Registry Sign in.
 - [ ] 2026-09-19 Joe: Skin Queue card is show-only. Composer queue is the live one. Drop the duplicate card.
 - [ ] 2026-09-19 Joe: Skin ContextMeter is catalog-only. Context events already hit the sidebar. Show the meter on the Skin face too.
 - [ ] 2026-09-19 Joe: Chat permission is missing Always in this folder. Skin has it. Same three buttons, wired.
