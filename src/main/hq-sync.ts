@@ -288,6 +288,35 @@ export async function ensureHqSyncAgent(): Promise<{ ok: boolean; folder?: strin
   return { ok: true, folder: seat.folder, label: seat.label }
 }
 
+export type HqAgentHealth = {
+  present: boolean
+  label: string
+  lastSync: string
+  offline: boolean
+  error: string
+}
+
+export async function hqAgentHealth(): Promise<HqAgentHealth> {
+  const empty: HqAgentHealth = { present: false, label: '', lastSync: '', offline: false, error: '' }
+  try {
+    const mod = await loadAgent()
+    for (const id of mod.listSeats()) {
+      const state = mod.readState(mod.seatDir(id))
+      if (!state?.mini_root) continue
+      return {
+        present: true,
+        label: String(state.brain_label || id),
+        lastSync: String(state.last_sync_at || ''),
+        offline: Boolean(state.offline),
+        error: String(state.last_error || '')
+      }
+    }
+  } catch {
+    /* vendor missing in tests */
+  }
+  return empty
+}
+
 export async function requestHqCode(email: string): Promise<{ ok: boolean }> {
   const key = String(email || '').trim().toLowerCase()
   if (!key.includes('@')) throw new Error('Type your work email first.')

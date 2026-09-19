@@ -9,6 +9,7 @@ import { killAllPtys, registerPtyIpc } from './pty'
 import { killAllWarm, prewarm } from './warm'
 import { registerUpdateIpc, startAutoUpdate, recordLaunchVersion } from './update'
 import { registerSkinIpc } from './skin/ipc'
+import { refreshTray, startTray } from './tray'
 
 registerStubIpc()
 registerPtyIpc()
@@ -26,7 +27,10 @@ process.on('unhandledRejection', (err) => {
   console.error(err)
 })
 
-function createWindow(): void {
+let mainWin: BrowserWindow | null = null
+let allowQuit = false
+
+function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1100,
     height: 740,
@@ -44,6 +48,15 @@ function createWindow(): void {
       webviewTag: true
     }
   })
+  mainWin = win
+  win.on('close', (e) => {
+    if (allowQuit) return
+    e.preventDefault()
+    win.hide()
+  })
+  win.on('closed', () => {
+    if (mainWin === win) mainWin = null
+  })
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
@@ -55,11 +68,21 @@ function createWindow(): void {
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'))
   }
+  return win
+}
+
+function pushHealth(): void {
+  void refreshTray().then((h) => {
+    if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('sync:health', h)
+  })
 }
 
 app.whenReady().then(() => {
   recordLaunchVersion()
   createWindow()
+  startTray(() => mainWin)
+  pushHealth()
+  setInterval(pushHealth, 15_000)
   try {
     startAutoUpdate()
   } catch (e) {
@@ -77,7 +100,8 @@ app.whenReady().then(() => {
     prewarm('grok', folder)
   }
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (!mainWin || mainWin.isDestroyed()) createWindow()
+    else mainWin.show()
   })
 })
 
@@ -85,11 +109,12 @@ let quitFlushed = false
 let quitStarted = false
 
 app.on('window-all-closed', () => {
+  if (!allowQuit) return
   killAllPtys()
   killAllWarm()
-  if (process.platform !== 'darwin') app.quit()
 })
 app.on('before-quit', (e) => {
+  allowQuit = true
   if (quitFlushed) {
     killAllPtys()
     killAllWarm()
@@ -99,7 +124,7 @@ app.on('before-quit', (e) => {
     e.preventDefault()
     return
   }
-  const win = BrowserWindow.getAllWindows()[0]
+  const win = mainWin && !mainWin.isDestroyed() ? mainWin : BrowserWindow.getAllWindows()[0]
   if (!win || win.isDestroyed()) {
     quitFlushed = true
     killAllPtys()

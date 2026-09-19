@@ -22,6 +22,7 @@ export function FirstRun() {
   const [updatedLine, setUpdatedLine] = useState('')
   const [projectSeat, setProjectSeat] = useState<{ folder: string; label: string } | null>(null)
   const [loginVia, setLoginVia] = useState<'ads2ai' | 'hq-sync' | ''>('')
+  const [sync, setSync] = useState<{ ok: boolean; line: string } | null>(null)
 
   useEffect(() => {
     void (async () => {
@@ -56,6 +57,11 @@ export function FirstRun() {
         ai: prev.ai || pick
       }))
     })().catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    void window.brain.hqSync.health().then(setSync).catch(() => {})
+    return window.brain.onSyncHealth(setSync)
   }, [])
 
   async function skipToExisting() {
@@ -183,14 +189,13 @@ export function FirstRun() {
             {s.brainKind === 'project' ? ' · project' : s.brainKind === 'hq' ? ' · HQ' : ''}
           </span>
         ) : null}
-        <span className={`sync-pill ${s.abWatching ? 'on' : ''}`}>
-          {s.role === 'project' || s.brainKind === 'project'
-            ? s.abWatching
-              ? 'Project folders syncing'
-              : 'Project folder not syncing yet'
-            : s.abWatching
-              ? 'Agency Brain · watching this folder'
-              : 'Folder not watching yet'}
+        <span className={`sync-pill ${sync?.ok ? 'on' : ''}`} title={sync?.line || ''}>
+          {sync?.line ||
+            (s.abWatching
+              ? s.role === 'project' || s.brainKind === 'project'
+                ? 'Project folders syncing'
+                : 'Agency Brain · watching this folder'
+              : 'Folder not syncing')}
         </span>
         {s.email ? <span className="tiny" style={{ marginLeft: 'auto' }}>{s.email}</span> : null}
         {s.screen === 'chat' || s.email ? (

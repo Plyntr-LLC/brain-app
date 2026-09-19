@@ -30,6 +30,7 @@ import {
   requestHqCode,
   revokeProjectSeat
 } from './hq-sync'
+import { readSyncHealth } from './sync-health'
 import { isJoeSuperAdmin } from './super-admin'
 import { classifyLogin, type LoginVia } from './login-route'
 import { installNeed, isNeedId, listNeeds, loginCli } from './install'
@@ -399,6 +400,7 @@ export function registerStubIpc(): void {
     })
   )
   ipcMain.handle('hqSync:revoke', (_e, seatId: string) => revokeProjectSeat(seatId))
+  ipcMain.handle('hqSync:health', () => readSyncHealth())
   ipcMain.handle(
     'hqSync:addCompany',
     (

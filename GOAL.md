@@ -93,7 +93,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-HQ sync leftovers, one at a time: grok-4.6 xhigh APPROVE, then live. Do not pack until Joe says pack.
+Empty. HQ sync leftovers are live on `main`. Do not pack until Joe says pack.
 
 ## Inbox
 
@@ -104,7 +104,7 @@ Bugs and product gaps. One line each. Date + what.
 - [x] 2026-09-19 Joe: Connect HQ from the watched folder. Open the Brain Bridge GitHub App if needed, wait until GitHub is done, then bind. First-run waits the same way for Agency Brain Sync. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `hqRepoFromFolder`, `ownerBindUntilReady`, FirstRun `pollInstall`.
 - [x] 2026-09-19 Joe: Add a company lives in Settings (platform API), not only the Worker website. Superadmin only (`joe@plyntr.com`). Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `hqSync:addCompany` → POST `/platform/businesses`; Settings Superadmin form; `isJoeSuperAdmin`.
 - [x] 2026-09-19 Joe: Drop the leftover Railway Brain Bridge wizard. Welcome does not send people to the copier prompt. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: deleted `BridgeWizard.tsx`; Welcome/SetupNeeds no “Set up HQ and project brains”.
-- [ ] 2026-09-19 Joe: Sync health in the window (last sync, offline, error) plus a tray light (orange ok, grey not). Quitting the window must not stop the silent agent.
+- [x] 2026-09-19 Joe: Sync health in the window (last sync, offline, error) plus a tray light (orange ok, grey not). Quitting the window must not stop the silent agent. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `paintHealth` + titlebar `sync-pill`; `src/main/tray.ts`; hide-on-close; no `uninstallAgentService`.
 
 - [x] 2026-09-19 Joe: `/usage` popup shows real plan/session usage, not Loading and not Cursor `about`. Grok `grok usage` for this session. Cursor plan spend from this Mac’s Cursor login. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `slash.usage` → `cursorPlanBlurb` + `grok usage`; cmdpanel; no ACP `/usage`.
 

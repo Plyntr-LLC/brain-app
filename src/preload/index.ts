@@ -14,6 +14,14 @@ const brain = {
       ipcRenderer.removeListener('app:update', h)
     }
   },
+  onSyncHealth: (fn: (ev: { ok: boolean; line: string; lastSync: string; offline: boolean; error: string }) => void) => {
+    const h = (_e: unknown, payload: { ok: boolean; line: string; lastSync: string; offline: boolean; error: string }) =>
+      fn(payload)
+    ipcRenderer.on('sync:health', h)
+    return () => {
+      ipcRenderer.removeListener('sync:health', h)
+    }
+  },
   env: () =>
     ipcRenderer.invoke('env:get') as Promise<{
       dryRun: boolean
@@ -191,6 +199,14 @@ const brain = {
         install_url?: string
         detail: string
         projects?: string[]
+      }>,
+    health: () =>
+      ipcRenderer.invoke('hqSync:health') as Promise<{
+        ok: boolean
+        line: string
+        lastSync: string
+        offline: boolean
+        error: string
       }>,
     revoke: (seatId: string) =>
       ipcRenderer.invoke('hqSync:revoke', seatId) as Promise<{ ok: boolean; detail: string }>
