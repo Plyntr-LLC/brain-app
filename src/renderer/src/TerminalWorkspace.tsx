@@ -464,6 +464,18 @@ function ChatPane({
   onContextRef.current = onContext
   skinOnRef.current = skinOn
 
+  useEffect(() => {
+    if (!panel && !resumeRows) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      setPanel(null)
+      setResumeRows(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [panel, resumeRows])
+
   function writeQueue(next: Queued[]) {
     queueRef.current = next
     setQueue(next)
@@ -1635,9 +1647,17 @@ function ChatPane({
               setHi((h) => (e.key === 'ArrowDown' ? Math.min(matches.length - 1, h + 1) : Math.max(0, h - 1)))
               return
             }
-            if (e.key === 'Escape' && slashOn) {
-              setSay('')
-              return
+            if (e.key === 'Escape') {
+              if (panel || resumeRows) {
+                e.preventDefault()
+                setPanel(null)
+                setResumeRows(null)
+                return
+              }
+              if (slashOn) {
+                setSay('')
+                return
+              }
             }
             if (e.key === 'Enter') {
               if (enterSends && !e.shiftKey) {
@@ -2177,7 +2197,7 @@ export function TerminalWorkspace({
           <div className="ftree">{renderTree(cwd)}</div>
           {s.path !== 'join' && (
             <div className="invite-dock">
-              <button className="primary rail-btn" type="button" onClick={() => setShowInvite(true)}>
+              <button className="primary rail-btn settings-toggle" type="button" onClick={() => setShowInvite(!showInvite)}>
                 Settings
               </button>
             </div>

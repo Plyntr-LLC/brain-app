@@ -76,6 +76,17 @@ export function FirstRun() {
   }
 
   useEffect(() => {
+    if (!showInvite) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      setShowInvite(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showInvite])
+
+  useEffect(() => {
     if (s.screen !== 'aiwork' || !s.ai) return
     void window.brain.ai.login(s.ai as AiKind).catch((e) => setErr(String((e as Error).message || e)))
   }, [s.screen, s.ai])
@@ -156,7 +167,7 @@ export function FirstRun() {
             Log out
           </button>
         ) : null}
-        <button type="button" className="ghost title-set" onClick={() => setShowInvite(true)}>
+        <button type="button" className="ghost title-set settings-toggle" onClick={() => setShowInvite(!showInvite)}>
           Settings
         </button>
       </div>
@@ -169,11 +180,14 @@ export function FirstRun() {
         </div>
       ) : null}
       {showInvite && (
-        <SettingsPanel
-          role={s.role}
-          onClose={() => setShowInvite(false)}
-          onLogout={() => void logOut()}
-        />
+        <>
+          <div className="settings-scrim" onMouseDown={() => setShowInvite(false)} />
+          <SettingsPanel
+            role={s.role}
+            onClose={() => setShowInvite(false)}
+            onLogout={() => void logOut()}
+          />
+        </>
       )}
       <div className="body">
         {s.screen !== 'chat' ? (
