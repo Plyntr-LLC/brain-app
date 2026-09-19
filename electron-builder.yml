@@ -16,6 +16,9 @@ mac:
     - target: dmg
       arch:
         - arm64
+    - target: zip
+      arch:
+        - arm64
   artifactName: Brain-${version}-mac.${ext}
   hardenedRuntime: true
   gatekeeperAssess: false
@@ -36,4 +39,7 @@ nsis:
   oneClick: true
   perMachine: false
   shortcutName: Brain
-publish: null
+publish:
+  provider: github
+  owner: Plyntr-LLC
+  repo: brain-app

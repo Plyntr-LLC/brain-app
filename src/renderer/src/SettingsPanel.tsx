@@ -96,6 +96,8 @@ export function SettingsPanel({
   const [note, setNote] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [moreBrains, setMoreBrains] = useState(false)
+  const [appVer, setAppVer] = useState('')
+  const [upd, setUpd] = useState('')
   const joe = email === 'joe@plyntr.com'
   const canAddUsers = joe || !isTeamSeat(seat || role)
 
@@ -112,8 +114,16 @@ export function SettingsPanel({
       setPeople(local)
       setClients(((await window.brain.settings.clients()) as Record<string, unknown>[]).map(asClient))
       setLiveProjects(await window.brain.settings.projects().catch(() => []))
+      setAppVer(await window.brain.version().catch(() => ''))
       setLoaded(true)
     })()
+    return window.brain.onUpdate((ev) => {
+      if (ev.status === 'checking') setUpd('Checking for an update…')
+      else if (ev.status === 'available') setUpd(`Update ${ev.detail} is downloading.`)
+      else if (ev.status === 'none') setUpd('You already have the latest Brain.')
+      else if (ev.status === 'downloaded') setUpd(`Update ${ev.detail} is ready. Restart to install.`)
+      else if (ev.status === 'error') setUpd(ev.detail || 'Could not check for an update.')
+    })
   }, [])
 
   const client = clients[cur]
@@ -157,6 +167,29 @@ export function SettingsPanel({
         <p className="set-now-k">Welcome, {who}</p>
         <p>You are inside {here}.</p>
       </div>
+
+      <section className="set-block" style={{ borderTop: 0, paddingTop: 0 }}>
+        <p className="tiny">Brain {appVer || ''}</p>
+        <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+          <button
+            className="ghost"
+            type="button"
+            onClick={async () => {
+              setUpd('Checking for an update…')
+              const r = await window.brain.checkUpdate()
+              if (!r.ok && r.detail) setUpd(r.detail)
+            }}
+          >
+            Check for update
+          </button>
+          {upd.includes('ready') ? (
+            <button className="primary" type="button" onClick={() => void window.brain.installUpdate()}>
+              Restart to install
+            </button>
+          ) : null}
+        </div>
+        {upd ? <p className="tiny">{upd}</p> : null}
+      </section>
 
       {onLogout && email ? (
         <p>

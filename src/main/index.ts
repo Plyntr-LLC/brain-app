@@ -6,9 +6,11 @@ import { loadAccount } from './session-token'
 import { registerStubIpc } from './ipc-stubs'
 import { killAllPtys, registerPtyIpc } from './pty'
 import { killAllWarm, prewarm } from './warm'
+import { registerUpdateIpc, startAutoUpdate } from './update'
 
 registerStubIpc()
 registerPtyIpc()
+registerUpdateIpc()
 
 process.on('uncaughtException', (err) => {
   const msg = String((err as NodeJS.ErrnoException).message || err)
@@ -54,6 +56,7 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   createWindow()
+  startAutoUpdate()
   const watching = readWatching()
   const acct = loadAccount()
   const folder = watching.brainPath || acct?.folder || ''

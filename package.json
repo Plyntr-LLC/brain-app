@@ -1,6 +1,6 @@
 {
   "name": "brain-app",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "author": "Plyntr LLC",
   "description": "The room in front of Agency Brain: first-run, interview, chat.",
@@ -17,6 +17,7 @@
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
+    "electron-updater": "^6.8.9",
     "node-pty": "^1.0.0"
   },
   "devDependencies": {

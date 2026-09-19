@@ -10,7 +10,8 @@ const { homedir } = require('node:os')
 const { join } = require('node:path')
 
 const root = join(__dirname, '..')
-const dmg = join(root, 'dist', 'Brain-0.1.0-mac.dmg')
+const pkg = require('../package.json')
+const dmg = join(root, 'dist', `Brain-${pkg.version}-mac.dmg`)
 const key = join(homedir(), '.appstoreconnect/private_keys/AuthKey_Q43V6P7Q24.p8')
 const issuer = process.env.ASC_ISSUER_ID || process.env.APP_STORE_CONNECT_ISSUER_ID
 const keyId = process.env.ASC_KEY_ID || process.env.APP_STORE_CONNECT_KEY_ID
@@ -43,3 +44,14 @@ if (staple.status) process.exit(staple.status)
 const validate = spawnSync('xcrun', ['stapler', 'validate', dmg], { stdio: 'inherit' })
 if (validate.status) process.exit(validate.status)
 console.log('Notarized and stapled:', dmg)
+
+const zip = join(root, 'dist', `Brain-${pkg.version}-mac.zip`)
+if (existsSync(zip)) {
+  console.log('Submitting zip for auto-update (cannot staple a zip).')
+  const z = spawnSync(
+    'xcrun',
+    ['notarytool', 'submit', zip, '--key', key, '--key-id', keyId, '--issuer', issuer, '--wait', '--timeout', '20m'],
+    { stdio: 'inherit' }
+  )
+  if (z.status) process.exit(z.status)
+}

@@ -3,6 +3,17 @@ import type { AiKind } from '../shared/contracts'
 
 const brain = {
   quit: () => ipcRenderer.invoke('app:quit'),
+  version: () => ipcRenderer.invoke('app:version') as Promise<string>,
+  checkUpdate: () =>
+    ipcRenderer.invoke('app:checkUpdate') as Promise<{ ok: boolean; detail?: string; version?: string }>,
+  installUpdate: () => ipcRenderer.invoke('app:installUpdate') as Promise<{ ok: boolean }>,
+  onUpdate: (fn: (ev: { status: string; detail: string }) => void) => {
+    const h = (_e: unknown, payload: { status: string; detail: string }) => fn(payload)
+    ipcRenderer.on('app:update', h)
+    return () => {
+      ipcRenderer.removeListener('app:update', h)
+    }
+  },
   env: () =>
     ipcRenderer.invoke('env:get') as Promise<{
       dryRun: boolean
