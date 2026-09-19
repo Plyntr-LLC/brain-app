@@ -6,7 +6,7 @@ The room in front of Agency Brain. Chat with Grok, Claude, Cursor, or ChatGPT ag
 
 **[Latest release](https://github.com/Plyntr-LLC/brain-app/releases/latest)**
 
-- Mac (Apple Silicon): `Brain-0.1.0-mac.dmg` (signed and notarized)
+- Mac (Apple Silicon): `Brain-0.1.0-mac.dmg` (signed by Plyntr LLC)
 - Windows: `Brain-0.1.0-win.exe` (unsigned; SmartScreen may warn)
 
 Direct files:
