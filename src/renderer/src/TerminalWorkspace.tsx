@@ -1165,16 +1165,11 @@ function ChatPane({
     const item = queueRef.current.find((q) => q.id === qid)
     if (!item) return
     writeQueue(queueRef.current.filter((q) => q.id !== qid))
-    if (wantsStop(item.text) && busy) {
-      await stop()
-      if (!justStop(item.text)) await sendText(item.text, { fromQueue: true, files: item.files || [] })
+    if (justStop(item.text)) {
+      if (busy) await stop()
       return
     }
-    if (busy) {
-      writeQueue([item, ...queueRef.current])
-      return
-    }
-    await sendText(item.text, { fromQueue: true, files: item.files || [] })
+    await sendText(item.text, { fromQueue: true, files: item.files || [], cancel: busy })
   }
 
   function editQueued(qid: string) {
@@ -1303,6 +1298,7 @@ function ChatPane({
         setDrops([])
         setDropNote('')
       }
+      if (opts?.cancel) await window.brain.pty.write(skinPtyId(id), '\x03')
       const shown = attached.length ? `${t}${t ? '\n' : ''}${attached.map((a) => a.path).join('\n')}` : t
       if (shown) await window.brain.pty.write(skinPtyId(id), shown + '\r')
       return
