@@ -2,10 +2,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 
+import { asSeat, type SeatRole } from '../shared/contracts'
+
 export type TeamPerson = {
   name: string
   email: string
-  role: 'owner' | 'scout' | 'team'
+  role: SeatRole
   brain: string
   /** Company slug this person belongs to. Empty on older rows. */
   client?: string
@@ -62,7 +64,7 @@ export function saveTeam(people: TeamPerson[]): TeamPerson[] {
   const clean: TeamPerson[] = (people || []).map((p) => ({
     name: String(p.name || '').trim(),
     email: String(p.email || '').trim().toLowerCase(),
-    role: p.role === 'scout' || p.role === 'team' ? p.role : ('owner' as const),
+    role: asSeat(p.role),
     brain: String(p.brain || 'hq'),
     client: String(p.client || '').trim(),
     brains: Array.isArray(p.brains) ? p.brains.map((b) => String(b || '').trim()).filter(Boolean) : []

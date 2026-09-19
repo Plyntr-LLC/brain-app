@@ -39,7 +39,7 @@ const brain = {
         {
           name: string
           email: string
-          role: 'owner' | 'scout' | 'team'
+          role: 'owner' | 'scout' | 'team' | 'project'
           brain: string
           brains?: string[]
         }[]
@@ -49,7 +49,7 @@ const brain = {
         {
           name: string
           email: string
-          role: 'owner' | 'scout' | 'team'
+          role: 'owner' | 'scout' | 'team' | 'project'
           brain: string
           client?: string
           brains?: string[]
@@ -59,7 +59,7 @@ const brain = {
       people: {
         name: string
         email: string
-        role: 'owner' | 'scout' | 'team'
+        role: 'owner' | 'scout' | 'team' | 'project'
         brain: string
         client?: string
         brains?: string[]
@@ -70,7 +70,7 @@ const brain = {
     addTeammate: (person: {
       name: string
       email: string
-      role: 'owner' | 'scout' | 'team'
+      role: 'owner' | 'scout' | 'team' | 'project'
       brain?: string
       client?: string
       brains?: string[]

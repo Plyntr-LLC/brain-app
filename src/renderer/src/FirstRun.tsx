@@ -139,7 +139,7 @@ export function FirstRun() {
         <span>{title}</span>
         {s.role ? (
           <span className="role-lock">
-            {s.role === 'team' || s.role === 'member' ? 'Team' : s.role === 'scout' ? 'Scout' : 'Owner'}
+            {s.role === 'project' ? 'Project only' : s.role === 'team' || s.role === 'member' ? 'Agency team' : s.role === 'scout' ? 'Scout' : 'Owner'}
             {s.brainKind === 'project' ? ' · project' : s.brainKind === 'hq' ? ' · HQ' : ''}
           </span>
         ) : null}
@@ -327,7 +327,7 @@ export function FirstRun() {
                     const res = await window.brain.auth.joinFolder(s.email)
                     const d = await window.brain.ai.detect()
                     const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
-                    const teamLike = res.role === 'team' || res.role === 'member'
+                    const teamLike = res.role === 'team' || res.role === 'member' || res.role === 'project'
                     go(pick ? 'chat' : 'aipick', {
                       email: res.email,
                       role: res.role,

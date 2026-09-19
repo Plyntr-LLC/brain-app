@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
+import { isTeamSeat, seatLabel, type SeatRole } from '@shared/contracts'
 
 type Person = {
   name: string
   email: string
-  role: 'owner' | 'scout' | 'team'
+  role: SeatRole
   brain: string
   client?: string
   brains?: string[]
@@ -96,8 +97,7 @@ export function SettingsPanel({
   const [loaded, setLoaded] = useState(false)
   const [moreBrains, setMoreBrains] = useState(false)
   const joe = email === 'joe@plyntr.com'
-  const teamSeat = (seat || role) === 'team' || (seat || role) === 'member'
-  const canAddUsers = joe || !teamSeat
+  const canAddUsers = joe || !isTeamSeat(seat || role)
 
   useEffect(() => {
     void (async () => {
@@ -171,11 +171,15 @@ export function SettingsPanel({
         <section className="set-block">
           <p className="kicker">People in {here}</p>
           <h3 className="set-h">Add users</h3>
-          <p>They sign in with this email and open this brain. Owners and scouts see HQ. Team gets the projects you tick.</p>
+          <p>
+            Agency team is on this brain. Project only is limited to the projects you tick. Owners and scouts see all of{' '}
+            {here}.
+          </p>
           {people.map((p) => {
             const ids = p.brains?.length ? p.brains : p.brain && p.brain !== 'hq' ? [p.brain] : []
             const names = ids.map((id) => liveProjects.find((x) => x.id === id)?.name || prettyName(id)).join(', ')
-            const seatLine = p.role === 'team' ? names || 'team' : p.role
+            const seatLine =
+              p.role === 'project' ? `Project only${names ? ` · ${names}` : ''}` : seatLabel(p.role)
             return (
               <div className="set-row" key={p.email}>
                 <span>
@@ -212,12 +216,16 @@ export function SettingsPanel({
             <label className="field">
               Seat
               <select value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value as Person['role'] })}>
-                <option value="team">Team</option>
+                <option value="team">Agency team</option>
+                <option value="project">Project only</option>
                 <option value="scout">Scout</option>
                 <option value="owner">Owner</option>
               </select>
             </label>
             {draft.role === 'team' ? (
+              <p className="tiny">They use this whole brain ({here}), same folder as owners, without skill-edit rights.</p>
+            ) : null}
+            {draft.role === 'project' ? (
               liveProjects.length ? (
                 <div className="field">
                   Projects they can use
@@ -241,17 +249,21 @@ export function SettingsPanel({
                   })}
                 </div>
               ) : (
-                <p className="tiny">No project folders in this brain yet. They can still sign in to {here}.</p>
+                <p className="tiny">No project folders in this brain yet. Add folders under projects/ before a Project only seat.</p>
               )
-            ) : (
+            ) : draft.role === 'owner' || draft.role === 'scout' ? (
               <p className="tiny">They use all of {here}.</p>
-            )}
+            ) : null}
             <button
               className="primary"
               type="button"
-              disabled={!draft.name.trim() || !draft.email.includes('@')}
+              disabled={
+                !draft.name.trim() ||
+                !draft.email.includes('@') ||
+                (draft.role === 'project' && !(draft.brains || []).length)
+              }
               onClick={async () => {
-                const brains = draft.role === 'team' ? draft.brains || [] : []
+                const brains = draft.role === 'project' ? draft.brains || [] : []
                 const res = await window.brain.settings.addTeammate({
                   name: draft.name.trim(),
                   email: draft.email.trim().toLowerCase(),
@@ -270,7 +282,9 @@ export function SettingsPanel({
           </div>
         </section>
       ) : (
-        <p>You are on the team in {here}. The owner adds people.</p>
+        <p>
+          You are {seatLabel(seat || role)} in {here}. The owner adds people.
+        </p>
       )}
 
       {joe && superAdmin ? (

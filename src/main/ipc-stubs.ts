@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { GITHUB_APP_INSTALL, GITHUB_NEW_ORG, type AiKind } from '../shared/contracts'
+import { asSeat, GITHUB_APP_INSTALL, GITHUB_NEW_ORG, type AiKind } from '../shared/contracts'
 import { openInApp } from './in-app-browse'
 import * as ads2ai from './ads2ai'
 import { homedir } from 'node:os'
@@ -133,7 +133,7 @@ export function registerStubIpc(): void {
     return (roster?.members || []).map((m) => ({
       name: m.name,
       email: m.email,
-      role: m.role === 'scout' || m.role === 'owner' ? m.role : 'team',
+      role: asSeat(m.role),
       brain: (m.brains && m.brains[0]) || 'hq',
       brains: m.brains || []
     }))
@@ -159,7 +159,7 @@ export function registerStubIpc(): void {
     const row: TeamPerson = {
       name: String(person.name || '').trim(),
       email,
-      role: person.role === 'scout' || person.role === 'team' ? person.role : 'owner',
+      role: asSeat(person.role),
       brain: brains[0] || 'hq',
       client: String(person.client || '').trim(),
       brains

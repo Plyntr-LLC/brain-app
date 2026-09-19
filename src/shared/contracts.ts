@@ -1,5 +1,28 @@
 export type PathKind = 'create' | 'join' | 'second'
 export type AiKind = 'claude' | 'grok' | 'gpt' | 'cursor'
+export type SeatRole = 'owner' | 'scout' | 'team' | 'project'
+
+export function asSeat(role?: string): SeatRole {
+  const r = String(role || '').toLowerCase()
+  if (r === 'scout') return 'scout'
+  if (r === 'project' || r === 'project-only' || r === 'project_team' || r === 'project-team') return 'project'
+  if (r === 'team' || r === 'member') return 'team'
+  if (r === 'owner' || r === 'head_scout') return 'owner'
+  return 'team'
+}
+
+export function seatLabel(role?: string): string {
+  const r = asSeat(role)
+  if (r === 'owner') return 'Owner'
+  if (r === 'scout') return 'Scout'
+  if (r === 'project') return 'Project only'
+  return 'Agency team'
+}
+
+export function isTeamSeat(role?: string): boolean {
+  const r = asSeat(role)
+  return r === 'team' || r === 'project'
+}
 export type NeedId = 'what' | 'who' | 'offer' | 'voice' | 'now' | 'people' | 'you'
 
 export type Member = { email: string; name?: string; token: string }
