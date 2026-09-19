@@ -173,6 +173,113 @@ export function SettingsPanel({
         </p>
       ) : null}
 
+      {joe && superAdmin ? (
+        <section className="set-block">
+          <p className="kicker">Superadmin</p>
+          <h3 className="set-h">Add a company</h3>
+          <p>Only you see this. Adding a company emails that person a login. They connect GitHub themselves.</p>
+          {!hq?.signedIn ? (
+            <>
+              <p className="tiny">A six-digit code to joe@plyntr.com unlocks send. It lasts ten minutes.</p>
+              <label className="field">
+                Login code
+                <input value={hqCode} onChange={(e) => setHqCode(e.target.value)} placeholder="184 392" />
+              </label>
+              <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await window.brain.hqSync.ownerRequestCode('joe@plyntr.com')
+                      setNote('Check joe@plyntr.com for a six-digit code. It lasts ten minutes.')
+                    } catch (e) {
+                      setNote(String((e as Error).message || e))
+                    }
+                  }}
+                >
+                  Email me a login code
+                </button>
+                <button
+                  className="primary"
+                  type="button"
+                  disabled={hqCode.replace(/\s/g, '').length < 4}
+                  onClick={async () => {
+                    try {
+                      await window.brain.hqSync.ownerLogin({ email: 'joe@plyntr.com', code: hqCode })
+                      setHq(await window.brain.hqSync.ownerStatus())
+                      setNote('Signed in. Add a company below.')
+                    } catch (e) {
+                      setNote(String((e as Error).message || e))
+                    }
+                  }}
+                >
+                  Sign in
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="tiny">Signed in as {hq.email}.</p>
+          )}
+          {(hq?.businesses || []).map((b) => (
+            <p className="tiny" key={b.id}>
+              {b.name}
+              {b.owners?.[0]?.email ? ` · ${b.owners[0].email}` : ''}
+              {b.hq_repo ? ` · ${b.hq_repo}` : ''}
+            </p>
+          ))}
+          <label className="field">
+            Company name
+            <input value={bizName} onChange={(e) => setBizName(e.target.value)} placeholder="Acme" />
+          </label>
+          <label className="field">
+            First owner name
+            <input value={bizOwnerName} onChange={(e) => setBizOwnerName(e.target.value)} placeholder="Pat" />
+          </label>
+          <label className="field">
+            First owner email
+            <input value={bizEmail} onChange={(e) => setBizEmail(e.target.value)} placeholder="pat@acme.org" />
+          </label>
+          <label className="field">
+            Role
+            <select value={bizRole} onChange={(e) => setBizRole(e.target.value === 'scout' ? 'scout' : 'owner')}>
+              <option value="owner">owner</option>
+              <option value="scout">scout</option>
+            </select>
+          </label>
+          <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+            <button
+              className="primary"
+              type="button"
+              disabled={bizBusy || !bizName.trim() || !bizEmail.includes('@') || !hq?.signedIn}
+              onClick={async () => {
+                try {
+                  setBizBusy(true)
+                  const res = await window.brain.hqSync.addCompany({
+                    name: bizName,
+                    email: bizEmail,
+                    owner_name: bizOwnerName,
+                    role: bizRole
+                  })
+                  setNote(res.detail)
+                  setBizName('')
+                  setBizEmail('')
+                  setBizOwnerName('')
+                  setBizRole('owner')
+                  setHq(await window.brain.hqSync.ownerStatus())
+                } catch (e) {
+                  setNote(String((e as Error).message || e))
+                } finally {
+                  setBizBusy(false)
+                }
+              }}
+            >
+              {bizBusy ? 'Sending login…' : 'Add company and send login'}
+            </button>
+          </div>
+        </section>
+      ) : null}
+
       {canAddUsers ? (
         <section className="set-block">
           <p className="kicker">People in {here}</p>
@@ -490,86 +597,6 @@ export function SettingsPanel({
                 </li>
               ))}
             </ul>
-          )}
-        </section>
-      ) : null}
-
-      {joe && superAdmin ? (
-        <section className="set-block">
-          <p className="kicker">Superadmin</p>
-          <h3 className="set-h">Add a company</h3>
-          <p>Only you see this. Adding a company emails that person a login. They connect GitHub themselves.</p>
-          {!hq?.signedIn ? (
-            <p className="tiny">Sign in for project sync above with joe@plyntr.com first.</p>
-          ) : hq.kind !== 'platform' && !(hq.businesses || []).length ? (
-            <p className="tiny">This login cannot add companies. Sign in with joe@plyntr.com.</p>
-          ) : (
-            <>
-              {(hq.businesses || []).map((b) => (
-                <p className="tiny" key={b.id}>
-                  {b.name}
-                  {b.owners?.[0]?.email ? ` · ${b.owners[0].email}` : ''}
-                  {b.hq_repo ? ` · ${b.hq_repo}` : ''}
-                </p>
-              ))}
-              <label className="field">
-                Company name
-                <input value={bizName} onChange={(e) => setBizName(e.target.value)} placeholder="Acme" />
-              </label>
-              <label className="field">
-                First owner name
-                <input
-                  value={bizOwnerName}
-                  onChange={(e) => setBizOwnerName(e.target.value)}
-                  placeholder="Pat"
-                />
-              </label>
-              <label className="field">
-                First owner email
-                <input
-                  value={bizEmail}
-                  onChange={(e) => setBizEmail(e.target.value)}
-                  placeholder="pat@acme.org"
-                />
-              </label>
-              <label className="field">
-                Role
-                <select value={bizRole} onChange={(e) => setBizRole(e.target.value === 'scout' ? 'scout' : 'owner')}>
-                  <option value="owner">owner</option>
-                  <option value="scout">scout</option>
-                </select>
-              </label>
-              <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
-                <button
-                  className="primary"
-                  type="button"
-                  disabled={bizBusy || !bizName.trim() || !bizEmail.includes('@')}
-                  onClick={async () => {
-                    try {
-                      setBizBusy(true)
-                      const res = await window.brain.hqSync.addCompany({
-                        name: bizName,
-                        email: bizEmail,
-                        owner_name: bizOwnerName,
-                        role: bizRole
-                      })
-                      setNote(res.detail)
-                      setBizName('')
-                      setBizEmail('')
-                      setBizOwnerName('')
-                      setBizRole('owner')
-                      setHq(await window.brain.hqSync.ownerStatus())
-                    } catch (e) {
-                      setNote(String((e as Error).message || e))
-                    } finally {
-                      setBizBusy(false)
-                    }
-                  }}
-                >
-                  {bizBusy ? 'Sending login…' : 'Add company and send login'}
-                </button>
-              </div>
-            </>
           )}
         </section>
       ) : null}
