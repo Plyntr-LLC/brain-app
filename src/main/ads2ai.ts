@@ -136,6 +136,26 @@ export async function ensureBrainRepo(token: string, teamSlug: string): Promise<
   return r.json()
 }
 
+export async function adoptOrgInstallation(
+  token: string,
+  teamSlug: string,
+  orgLogin: string
+): Promise<{ ok?: boolean; skipped?: boolean }> {
+  const org = String(orgLogin || '').trim()
+  if (!org) return { skipped: true }
+  const r = await fetch(`${API_BASE}/api/team-brain/adopt-org-installation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ teamSlug, org, orgLogin: org })
+  })
+  if (r.status === 404) return { skipped: true }
+  if (!r.ok) {
+    const body = (await r.json().catch(() => ({}))) as { error?: string }
+    throw new Error(body.error || `Could not attach GitHub to this brain (HTTP ${r.status})`)
+  }
+  return r.json() as Promise<{ ok?: boolean }>
+}
+
 export async function lookupGithubAccount(login: string): Promise<{
   ok: boolean
   reason?: string

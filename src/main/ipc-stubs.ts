@@ -1,19 +1,21 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { asSeat, GITHUB_APP_INSTALL, GITHUB_NEW_ORG, type AiKind } from '../shared/contracts'
+import { asSeat, GITHUB_NEW_ORG, type AiKind } from '../shared/contracts'
 import { openInApp } from './in-app-browse'
 import * as ads2ai from './ads2ai'
 import { homedir } from 'node:os'
 import {
   detectApp,
   listProjectFolders,
+  readTeamIdentity,
   readTeamMember,
   readTeamRoster,
   readWatching,
   upsertTeamMember
 } from './agency-brain'
 import { cloneBrain } from './clone'
+import { githubAppInstallUrl, reuseExistingFolder } from './setup-folder'
 import { startBrainSync, stopBrainSync } from './brain-sync'
 import {
   addCompany,
@@ -412,21 +414,22 @@ export function registerStubIpc(): void {
     if (dryRun()) {
       return { skipped: true, reason: 'create-team skipped in dry-run', name }
     }
-    return ads2ai.createTeam(getMemberToken(), name)
+    try {
+      return await ads2ai.createTeam(getMemberToken(), name)
+    } catch (e) {
+      const want = String(name || '').trim().toLowerCase()
+      const list = await ads2ai.myTeams(getMemberToken()).catch(() => ({ teams: [] as { slug: string; name: string }[] }))
+      const hit = (list.teams || []).find((t) => String(t.name || '').trim().toLowerCase() === want)
+      if (hit) return { team: hit, reused: true }
+      throw e
+    }
   })
   ipcMain.handle('setup:lookupOrg', async (_e, login: string) => ads2ai.lookupGithubAccount(login))
-  ipcMain.handle('setup:openCreateOrg', () => openInApp(GITHUB_NEW_ORG, 'Create a GitHub organization'))
+  ipcMain.handle('setup:openCreateOrg', () => openInApp(GITHUB_NEW_ORG, 'Create a free GitHub organization'))
   ipcMain.handle('setup:openAppInstall', async (_e, slug: string, org?: string) => {
-    const state = encodeURIComponent(slug)
-    let url = `${GITHUB_APP_INSTALL}?state=${state}`
-    const login = String(org || '').trim()
-    if (login) {
-      const look = await ads2ai.lookupGithubAccount(login)
-      if (look.ok && look.id) {
-        url = `${GITHUB_APP_INSTALL}/permissions?target_id=${look.id}&state=${state}`
-      }
-    }
-    openInApp(url, 'Install Agency Brain Sync')
+    const look = String(org || '').trim() ? await ads2ai.lookupGithubAccount(org || '') : { ok: false as const }
+    const url = githubAppInstallUrl(slug, look.ok ? look.id : undefined)
+    openInApp(url, 'Install sharing on GitHub')
     return { ok: true, url }
   })
   ipcMain.handle('setup:pollInstall', (_e, slug: string) => ads2ai.installStatus(slug))
@@ -434,25 +437,37 @@ export function registerStubIpc(): void {
     if (dryRun()) return { skipped: true }
     return ads2ai.ensureBrainRepo(getMemberToken(), slug)
   })
-  ipcMain.handle('setup:applyFolder', async (_e, opts?: { teamSlug?: string; dest?: string }) => {
+
+  async function applyFolderImpl(opts?: { teamSlug?: string; dest?: string }): Promise<{
+    ok: boolean
+    brainPath?: string | null
+    skipped?: boolean
+    reason?: string
+    detail?: string
+  }> {
+    const slug = String(opts?.teamSlug || '').trim()
     const watching = readWatching()
-    if (watching.brainPath) {
-      startBrainSync(watching.brainPath)
-      return { ok: true, skipped: true, brainPath: watching.brainPath, reason: 'already-on-this-computer' }
-    }
     const acct = getAccount() || loadAccount()
-    if (acct?.folder && existsSync(acct.folder)) {
-      startBrainSync(acct.folder)
-      return { ok: true, brainPath: acct.folder }
+    const watchIdent = readTeamIdentity(watching.brainPath)
+    const acctIdent = readTeamIdentity(acct?.folder || null)
+    const reuse = reuseExistingFolder({
+      slug,
+      watchingPath: watching.brainPath,
+      watchingSlug: watchIdent?.slug || watching.teamSlug,
+      accountFolder: acct?.folder && existsSync(acct.folder) ? acct.folder : null,
+      accountSlug: acctIdent?.slug || null
+    })
+    if (reuse) {
+      startBrainSync(reuse)
+      return { ok: true, skipped: true, brainPath: reuse, reason: 'already-on-this-computer', detail: reuse }
     }
     if (process.env.BRAIN_APP_DRY_RUN === '1') {
       return { ok: true, skipped: true, reason: 'dry-run', brainPath: null }
     }
-    const slug = String(opts?.teamSlug || '').trim()
-    if (!slug) throw new Error('No team to clone. Sign in first, or open the shared folder.')
+    if (!slug) throw new Error('No team to clone. Sign in first, or finish GitHub.')
     const git = await ads2ai.gitToken(getMemberToken(), slug)
     const rawUrl = String(git.cloneUrl || git.url || git.repoUrl || '')
-    if (!rawUrl) throw new Error('Could not get a clone address for that brain.')
+    if (!rawUrl) throw new Error('GitHub is not on this brain yet. Click Install in the browser, then try again.')
     const token = String(git.token || '')
     const cloneUrl = token && rawUrl.startsWith('https://') && !rawUrl.includes('@')
       ? rawUrl.replace(/^https:\/\//, `https://x-access-token:${token}@`)
@@ -464,11 +479,29 @@ export function registerStubIpc(): void {
       email: acct?.email || '',
       name: acct?.name || ''
     })
-    if (!cloned.ok) throw new Error(cloned.detail || 'Clone failed.')
+    if (!cloned.ok) throw new Error(cloned.detail || 'Could not copy the shared folder onto this computer.')
     if (acct) saveAccount({ ...acct, folder: cloned.dest })
     saveRecent(cloned.dest)
     startBrainSync(cloned.dest)
     return { ok: true, brainPath: cloned.dest, detail: cloned.detail }
+  }
+
+  ipcMain.handle('setup:applyFolder', async (_e, opts?: { teamSlug?: string; dest?: string }) => applyFolderImpl(opts))
+  ipcMain.handle('setup:putFolder', async (_e, opts?: { teamSlug?: string; org?: string }) => {
+    if (dryRun()) {
+      return { ok: false, skipped: true, reason: 'dry-run', detail: 'Dry-run does not copy the folder.', brainPath: null }
+    }
+    const slug = String(opts?.teamSlug || '').trim()
+    const org = String(opts?.org || '').trim()
+    if (!slug) throw new Error('No team to clone. Finish GitHub first.')
+    if (org) {
+      await ads2ai.adoptOrgInstallation(getMemberToken(), slug, org).catch((e) => {
+        const msg = String((e as Error).message || e)
+        if (!/404|not found/i.test(msg)) throw e
+      })
+    }
+    await ads2ai.ensureBrainRepo(getMemberToken(), slug)
+    return applyFolderImpl({ teamSlug: slug })
   })
 
   ipcMain.handle('ab:detect', async () => detectApp())

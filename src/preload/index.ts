@@ -227,6 +227,14 @@ const brain = {
       ipcRenderer.invoke('setup:openAppInstall', slug, org),
     pollInstall: (slug: string) => ipcRenderer.invoke('setup:pollInstall', slug),
     ensureRepo: (slug: string) => ipcRenderer.invoke('setup:ensureRepo', slug),
+    putFolder: (opts: { teamSlug: string; org?: string }) =>
+      ipcRenderer.invoke('setup:putFolder', opts) as Promise<{
+        ok: boolean
+        brainPath?: string | null
+        skipped?: boolean
+        reason?: string
+        detail?: string
+      }>,
     applyFolder: (opts?: { teamSlug?: string; dest?: string }) =>
       ipcRenderer.invoke('setup:applyFolder', opts) as Promise<{
         ok: boolean

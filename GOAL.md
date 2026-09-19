@@ -99,6 +99,8 @@ Empty until Joe says next 3.
 
 Bugs and product gaps. One line each. Date + what.
 
+- [x] 2026-09-20 Joe: New brain setup did not install Agency Brain Sync on the GitHub repo and did not clone the folder. Make it obvious and make it actually clone this team’s folder. Done: 2026-09-20. Grok 4.6 xhigh APPROVE. Evidence: `putFolder` adopt+ensure+clone; reuse only same slug; install URL `installations/new?state=`; GitHub steps numbered.
+
 - [x] 2026-09-20 Joe: Start setup does nothing, GitHub org is not used, and Continue with GitHub sends me back to Shared folder ready (One setup). Done: 2026-09-20. Grok 4.6 xhigh APPROVE. Evidence: packed `dryRun` is only `BRAIN_APP_DRY_RUN`; Continue stays on GitHub then `abapply`; paste copy + `target_id`.
 
 - [x] 2026-09-19 Joe: GitHub login in the in-app window does not support passkeys, so I cannot log in. Done: 2026-09-19. Grok 4.6 xhigh APPROVE. Evidence: `openInApp` → `shell.openExternal`; poll unchanged.
