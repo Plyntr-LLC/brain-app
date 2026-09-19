@@ -1376,6 +1376,16 @@ function ChatPane({
             >
               Skip
             </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                void window.brain.skin.decide(id, 'alwaysAllowInFolder')
+                setPermission(null)
+              }}
+            >
+              Always in this folder
+            </button>
           </div>
         </div>
       ) : null}
