@@ -83,17 +83,23 @@ export function SkinCard({
     return <WorkPulse label={String(p.label || 'Working')} seconds={Number(p.seconds || 0) || undefined} />
   }
   if (spec.component === 'PermissionAsk') {
+    const options = Array.isArray(p.options) ? (p.options as { id: string; label: string }[]) : []
+    const buttons = options.length
+      ? options.map((o) => ({ id: o.id, label: o.label, cli: true }))
+      : spec.actions.map((a) => ({ id: a.id, label: a.label, cli: false }))
     return (
       <div className="skin-perm">
         <p className="skin-perm-title">{String(p.title || 'Allow this?')}</p>
         {p.path ? <p className="tiny">{String(p.path)}</p> : null}
         <div className="skin-perm-actions">
-          {spec.actions.map((a) => (
+          {buttons.map((a, i) => (
             <button
               type="button"
               key={a.id}
-              className={a.id === 'allowOnce' ? 'primary' : 'ghost'}
-              onClick={() => onAction(a.id, spec)}
+              className={i === 0 ? 'primary' : 'ghost'}
+              onClick={() =>
+                onAction(a.cli ? 'selectOption' : a.id, { ...spec, props: { ...p, value: a.id } })
+              }
             >
               {a.label}
             </button>

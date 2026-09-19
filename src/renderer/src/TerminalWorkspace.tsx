@@ -1356,36 +1356,26 @@ function ChatPane({
           <p className="skin-perm-title">{permission.title || 'Allow this?'}</p>
           {permission.path ? <p className="tiny">{permission.path}</p> : null}
           <div className="skin-perm-actions">
-            <button
-              type="button"
-              className="primary"
-              onClick={() => {
-                void window.brain.skin.decide(id, 'allowOnce')
-                setPermission(null)
-              }}
-            >
-              Allow
-            </button>
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => {
-                void window.brain.skin.decide(id, 'skip')
-                setPermission(null)
-              }}
-            >
-              Skip
-            </button>
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => {
-                void window.brain.skin.decide(id, 'alwaysAllowInFolder')
-                setPermission(null)
-              }}
-            >
-              Always in this folder
-            </button>
+            {(permission.options?.length
+              ? permission.options
+              : [
+                  { id: 'allowOnce', label: 'Allow' },
+                  { id: 'skip', label: 'Skip' },
+                  { id: 'alwaysAllowInFolder', label: 'Always in this folder' }
+                ]
+            ).map((o, i) => (
+              <button
+                type="button"
+                key={o.id}
+                className={i === 0 ? 'primary' : 'ghost'}
+                onClick={() => {
+                  void window.brain.skin.decide(id, o.id)
+                  setPermission(null)
+                }}
+              >
+                {o.label}
+              </button>
+            ))}
           </div>
         </div>
       ) : null}
@@ -1407,6 +1397,12 @@ function ChatPane({
         onPeel={setPeel}
         onFiles={mergeSkinFiles}
         onAction={(actionId, spec) => {
+          if (actionId === 'selectOption') {
+            const opt = String(spec.props.value || '')
+            if (opt) void window.brain.skin.decide(id, opt)
+            setPermission(null)
+            return
+          }
           if (actionId === 'allowOnce' || actionId === 'skip' || actionId === 'alwaysAllowInFolder') {
             void window.brain.skin.decide(id, actionId)
             setPermission(null)
