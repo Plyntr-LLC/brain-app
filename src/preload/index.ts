@@ -34,6 +34,16 @@ const brain = {
         plyntrBrain: boolean
       }>,
     setSuper: (on: boolean) => ipcRenderer.invoke('settings:setSuper', on),
+    roster: () =>
+      ipcRenderer.invoke('settings:roster') as Promise<
+        {
+          name: string
+          email: string
+          role: 'owner' | 'scout' | 'team'
+          brain: string
+          brains?: string[]
+        }[]
+      >,
     team: () =>
       ipcRenderer.invoke('settings:team') as Promise<
         {

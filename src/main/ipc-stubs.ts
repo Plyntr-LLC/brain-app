@@ -101,23 +101,41 @@ export function registerStubIpc(): void {
     const acct = getAccount() || loadAccount()
     const email = String(acct?.email || '').toLowerCase()
     const joe = email === 'joe@plyntr.com'
-    const plyntrBrain = watching.teamSlug === 'plyntr'
+    const folder = watching.brainPath || acct?.folder || null
+    const roster = readTeamRoster(folder)
+    const member = readTeamMember(folder, email)
+    const displayName = String(acct?.name || member?.name || '').trim() || (email ? email.split('@')[0] : '')
+    const brainName = String(roster?.name || watching.teamName || watching.name || '').trim()
+    const plyntrBrain = (roster?.slug || watching.teamSlug) === 'plyntr'
     const superAdmin = joe && acct?.source !== 'team-file' && file.superAdmin !== false
     return {
       superAdmin,
       email,
-      name: acct?.name || '',
-      role: acct?.role || '',
+      name: displayName,
+      role: String(acct?.role || member?.role || ''),
       signedIn: Boolean(acct?.email),
       watching: watching.watching,
-      brainPath: watching.brainPath,
-      brainName: watching.teamName || watching.name,
-      brainSlug: watching.teamSlug,
+      brainPath: folder,
+      brainName: brainName || (folder ? folder.split(/[/\\]/).filter(Boolean).pop() : '') || '',
+      brainSlug: roster?.slug || watching.teamSlug,
       plyntrBrain
     }
   })
   ipcMain.handle('settings:setSuper', (_e, on: boolean) => setSuperAdmin(Boolean(on)))
   ipcMain.handle('settings:team', () => loadTeam())
+  ipcMain.handle('settings:roster', () => {
+    const watching = readWatching()
+    const acct = getAccount()
+    const folder = watching.brainPath || acct?.folder || null
+    const roster = readTeamRoster(folder)
+    return (roster?.members || []).map((m) => ({
+      name: m.name,
+      email: m.email,
+      role: m.role === 'scout' || m.role === 'owner' ? m.role : 'team',
+      brain: (m.brains && m.brains[0]) || 'hq',
+      brains: m.brains || []
+    }))
+  })
   ipcMain.handle('settings:saveTeam', (_e, people: TeamPerson[]) => saveTeam(people))
   ipcMain.handle('settings:clients', () => loadClients())
   ipcMain.handle('settings:saveClients', (_e, clients: ClientBrain[]) => saveClients(clients))
