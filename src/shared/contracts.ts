@@ -66,11 +66,10 @@ export const TEAM_NEED: Need = {
 }
 
 export const STEPS = [
-  { id: 'signed', label: 'Signed in' },
-  { id: 'ab', label: 'Shared folder ready' },
-  { id: 'ai', label: 'AI connected' },
-  { id: 'know', label: 'Getting to know you' },
-  { id: 'invite', label: 'Invite your people' }
+  { id: 'signed', label: 'Got your code' },
+  { id: 'ab', label: 'Files on this Mac' },
+  { id: 'ai', label: 'AI signed in' },
+  { id: 'know', label: 'First question sent' }
 ] as const
 
 export const DOWNLOAD_AB = 'https://ads2ai.com/downloads'

@@ -384,7 +384,8 @@ function ChatPane({
   onAgentMode,
   onDelete,
   onOpenTerm,
-  onBusy
+  onBusy,
+  onPowerPickers
 }: {
   id: string
   kind: AiKind
@@ -421,6 +422,7 @@ function ChatPane({
   onDelete: () => void
   onOpenTerm: () => void
   onBusy: (id: string, busy: boolean) => void
+  onPowerPickers?: () => void
 }) {
   const [messages, setMessages] = useState<Msg[]>(
     initialMessages && initialMessages.length ? initialMessages : [{ who: 'brain', text: greeting }]
@@ -454,10 +456,15 @@ function ChatPane({
   const queueRef = useRef<Queued[]>([])
   const [skinOn, setSkinOn] = useState(true)
   const [wantPower, setWantPower] = useState(false)
+  const [moreHits, setMoreHits] = useState(0)
   const [cliSid, setCliSid] = useState(resumeId || '')
   const [tuiGen, setTuiGen] = useState(0)
   const [peel, setPeel] = useState(false)
-  const showPower = wantPower || messages.some((m) => m.who === 'me')
+  const firstMe = messages.findIndex((m) => m.who === 'me')
+  const sentOnce =
+    firstMe >= 0 && messages.slice(firstMe + 1).some((m) => m.who === 'brain' && Boolean(m.text))
+  const showPower = wantPower || sentOnce
+  const emptyChat = !messages.some((m) => m.who === 'me')
   const lastWarm = useRef('')
   const [permission, setPermission] = useState<{
     title?: string
@@ -475,6 +482,10 @@ function ChatPane({
   onFilesRef.current = onFiles
   onContextRef.current = onContext
   skinOnRef.current = skinOn
+
+  useEffect(() => {
+    if (sentOnce) onPowerPickers?.()
+  }, [sentOnce, onPowerPickers])
 
   useEffect(() => {
     if (!panel && !resumeRows) return
@@ -1456,11 +1467,15 @@ function ChatPane({
           Chat
         </button>
       </div>
-      ) : (
-        <button type="button" className="linkish skin-more" onClick={() => setWantPower(true)}>
+      ) : null}
+      {moreHits < 2 && !peel ? (
+        <button type="button" className="linkish skin-more" onClick={() => {
+          setWantPower(true)
+          setMoreHits((n) => n + 1)
+        }}>
           More
         </button>
-      )}
+      ) : null}
       {skinOn ? null : permission ? (
         <div className="skin-perm">
           <p className="skin-perm-title">{permission.title || 'Allow this?'}</p>
@@ -1508,6 +1523,7 @@ function ChatPane({
         onFiles={mergeSkinFiles}
         showPower={showPower}
         wantPower={wantPower}
+        canPeel={moreHits >= 2 || peel || messages.some((m) => m.skinLabel === 'RawFallback' || m.who === 'raw')}
         cliName={label(kind)}
         onAction={(actionId, spec) => {
           if (actionId === 'selectOption') {
@@ -1663,6 +1679,24 @@ function ChatPane({
             ))}
           </div>
         )}
+        {emptyChat ? (
+          <div className="starters">
+            {[
+              'What does this company do?',
+              'Summarize what\'s in this folder',
+              'What should I work on first?'
+            ].map((line) => (
+              <button
+                type="button"
+                key={line}
+                className="ghost starter"
+                onClick={() => void sendText(line)}
+              >
+                {line}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <textarea
           rows={1}
           value={say}
@@ -1787,6 +1821,7 @@ export function TerminalWorkspace({
   const [editTitle, setEditTitle] = useState('')
   const refsList = useRef<HTMLUListElement>(null)
   const [lastChatId, setLastChatId] = useState('')
+  const [powerPickers, setPowerPickers] = useState(false)
   const [transcripts, setTranscripts] = useState<Record<string, Msg[]>>({})
   const [contextByTab, setContextByTab] = useState<Record<string, { used?: number; total?: number; percent?: number }>>({})
   const [hydrated, setHydrated] = useState(false)
@@ -2314,6 +2349,7 @@ export function TerminalWorkspace({
                   onDelete={() => closeTab(t.id)}
                   onOpenTerm={() => addTerm()}
                   onBusy={(id, on) => setBusyTabs((m) => (m[id] === on ? m : { ...m, [id]: on }))}
+                  onPowerPickers={() => setPowerPickers(true)}
                 />
               ))}
           {tabs
@@ -2349,7 +2385,7 @@ export function TerminalWorkspace({
             ))}
           </ul>
           <div className="runmeta" onMouseDown={(e) => e.stopPropagation()}>
-            {pick && (
+            {pick && (powerPickers || pick === 'folder') && (
               <div className="runpick">
                 {pick === 'model' &&
                   (modelChoices.length === 0 ? (
@@ -2414,6 +2450,8 @@ export function TerminalWorkspace({
                 )}
               </div>
             )}
+            {powerPickers ? (
+              <>
             <div className="runmeta-k">Model</div>
             <button type="button" className="runmeta-v" onClick={() => setPick((p) => (p === 'model' ? null : 'model'))}>
               {prettyModel(chatTab?.model, chatTab?.kind, modelChoices)}
@@ -2432,6 +2470,8 @@ export function TerminalWorkspace({
                 <button type="button" className="runmeta-v" onClick={() => setPick((p) => (p === 'agentMode' ? null : 'agentMode'))}>
                   {chatTab.agentModes.find((m) => m.id === chatTab.agentMode)?.label || chatTab.agentMode || 'Agent'}
                 </button>
+              </>
+            ) : null}
               </>
             ) : null}
             {contextByTab[chatId || ''] && (contextByTab[chatId || ''].percent != null || contextByTab[chatId || ''].used) ? (

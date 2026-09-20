@@ -173,6 +173,23 @@
 .step.now { color: var(--ink); }
 .step.now .mark { border-color: var(--ink); background: var(--ink); color: #fff; }
 .step.blocked { opacity: 0.55; }
+.two-apps {
+  margin: 0 0 1.1rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.starters {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+button.ghost.starter {
+  text-align: left;
+  white-space: normal;
+}
 .need {
   display: grid;
   grid-template-columns: 0.85rem 1fr;

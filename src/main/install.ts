@@ -1,5 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createWriteStream, existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { bringAppFront } from './bring-front'
+import { cliSignedIn } from './cli-auth'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -54,7 +56,7 @@ function gitPresent(): boolean {
   }
 }
 
-export function listNeeds(): { ready: boolean; watching: boolean; items: NeedItem[] } {
+export function listNeeds(): { ready: boolean; watching: boolean; brainPath: string | null; items: NeedItem[] } {
   const ai = detectAi()
   const watchingInfo = readWatching()
   const watching = Boolean(watchingInfo.brainPath)
@@ -87,6 +89,14 @@ export function listNeeds(): { ready: boolean; watching: boolean; items: NeedIte
       accept: 'Type your Mac password in Terminal, then press Return.'
     })
   }
+  items.push({
+    id: 'ab',
+    label: 'Agency Brain',
+    line: 'Menu bar app. Sign in there and pick the shared folder. You keep working in Brain.',
+    present: watching,
+    warn: 'Agency Brain will open. Sign in, pick the shared folder, and allow access if macOS or Windows asks.',
+    accept: 'Sign in to Agency Brain and pick the shared folder. We continue when it is watching.'
+  })
   items.push({
     id: 'grok',
     label: 'Grok CLI',
@@ -121,7 +131,12 @@ export function listNeeds(): { ready: boolean; watching: boolean; items: NeedIte
   })
   const hasCli = ai.grok || ai.claude || ai.cursor || ai.gpt
   const folder = Boolean(watchingInfo.brainPath) || Boolean(loadAccount()?.folder)
-  return { ready: folder && hasCli, watching, items }
+  return {
+    ready: folder && hasCli,
+    watching,
+    brainPath: watchingInfo.brainPath || loadAccount()?.folder || null,
+    items
+  }
 }
 
 function run(cmd: string, args: string[], timeoutMs = 8 * 60_000): Promise<{ code: number; out: string }> {
@@ -223,7 +238,7 @@ async function installAgencyBrainApp(): Promise<InstallResult> {
     await openAb()
     return {
       ok: true,
-      detail: 'Agency Brain is in Applications. Do not run its create-organization wizard. This app already signed you in.',
+      detail: 'Agency Brain is in Applications. Skip its setup wizard. Sign-in stays in Brain.',
       wait: 'none'
     }
   }
@@ -249,13 +264,14 @@ function shQuote(s: string): string {
 }
 
 /** Open this CLI’s own sign-in. Browser or Terminal may appear. */
-export async function loginCli(kind: AiKind): Promise<{ ok: boolean; detail: string }> {
+export async function loginCli(kind: AiKind): Promise<{ ok: boolean; detail: string; marker?: string }> {
   const bin = resolveBin(kind)
   if (!bin) return { ok: false, detail: `${kind} is not installed on this computer.` }
   const args = LOGIN_ARGS[kind]
   if (process.platform === 'darwin') {
     const dir = mkdtempSync(join(tmpdir(), 'brain-login-'))
     const file = join(dir, `login-${kind}.command`)
+    const marker = join(dir, 'done')
     writeFileSync(
       file,
       [
@@ -263,6 +279,7 @@ export async function loginCli(kind: AiKind): Promise<{ ok: boolean; detail: str
         'set -e',
         `echo "Sign in to ${kind}. A browser may open."`,
         `${shQuote(bin)} ${args.map(shQuote).join(' ')}`,
+        `echo ok > ${shQuote(marker)}`,
         'echo "Done. You can close this window."'
       ].join('\n'),
       { mode: 0o755 }
@@ -270,12 +287,39 @@ export async function loginCli(kind: AiKind): Promise<{ ok: boolean; detail: str
     const opened = await shell.openPath(file)
     return {
       ok: !opened,
-      detail: opened || 'Sign-in opened. Finish it in the browser or Terminal, then continue.'
+      detail: opened || 'Sign-in opened. Finish it in the browser or Terminal, then continue.',
+      marker
     }
   }
   const argList = args.map((a) => JSON.stringify(a)).join(',')
   await win(`Start-Process -FilePath ${JSON.stringify(bin)} -ArgumentList @(${argList})`)
   return { ok: true, detail: 'Sign-in started. Finish it, then continue.' }
+}
+
+/** Setup only. Wait until the CLI is signed in, then steal focus back. */
+export async function loginCliUntilDone(kind: AiKind): Promise<{ ok: boolean; detail: string; signedIn?: boolean }> {
+  if (cliSignedIn(kind)) {
+    bringAppFront()
+    return { ok: true, detail: 'Already signed in.', signedIn: true }
+  }
+  const opened = await loginCli(kind)
+  if (!opened.ok) return opened
+  const until = Date.now() + 180000
+  while (Date.now() < until) {
+    if (cliSignedIn(kind)) {
+      bringAppFront()
+      return { ok: true, detail: 'Signed in.', signedIn: true }
+    }
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  bringAppFront()
+  return {
+    ok: true,
+    signedIn: cliSignedIn(kind),
+    detail: cliSignedIn(kind)
+      ? 'Signed in.'
+      : 'Sign-in is still open. Finish it, then continue here.'
+  }
 }
 
 export async function installNeed(id: NeedId): Promise<InstallResult> {
@@ -332,7 +376,13 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
       }
     }
     const put = await installAgencyBrainApp()
-    return put
+    if (!put.ok) return put
+    if (readWatching().brainPath) return { ...put, wait: 'none' }
+    return {
+      ok: true,
+      detail: 'Opened Agency Brain. Sign in and pick the shared folder. We will continue when it is watching.',
+      wait: 'watching'
+    }
   }
   if (id === 'grok') {
     if (detectAi().grok) return { ok: true, detail: 'Grok CLI is already here.', wait: 'none' }

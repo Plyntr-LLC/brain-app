@@ -237,17 +237,22 @@ function loadFullConfig(): AgencyConfig | null {
   }
 }
 
-/** Plyntr owner email from Agency Brain profiles. Never returns tokens. */
-export function plyntrOwnerEmail(): string | null {
+/** Plyntr owner from Agency Brain profiles. Never returns tokens. */
+export function plyntrOwnerProfile(): { email: string; name: string } | null {
   const cfg = loadFullConfig()
   if (!cfg) return null
   const rows = [...(Array.isArray(cfg.brains) ? cfg.brains : []), cfg]
   for (const b of rows) {
     if (String(b.teamSlug || '').trim().toLowerCase() !== 'plyntr') continue
     const email = String(b.memberEmail || '').trim().toLowerCase()
-    if (email.includes('@')) return email
+    if (!email.includes('@')) continue
+    return { email, name: String(b.memberName || '').trim() }
   }
   return null
+}
+
+export function plyntrOwnerEmail(): string | null {
+  return plyntrOwnerProfile()?.email ?? null
 }
 
 function writeConfigAtomic(cfg: AgencyConfig): void {

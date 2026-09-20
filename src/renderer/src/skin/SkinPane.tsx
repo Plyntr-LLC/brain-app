@@ -55,6 +55,7 @@ export function SkinPane({
   onAction,
   showPower,
   wantPower,
+  canPeel,
   cliName
 }: {
   tabId: string
@@ -81,6 +82,7 @@ export function SkinPane({
   onAction: (id: string, spec: SkinSpec) => void
   showPower: boolean
   wantPower: boolean
+  canPeel: boolean
   cliName: string
 }) {
   const [openThink, setOpenThink] = useState<Record<string, boolean>>({})
@@ -204,11 +206,11 @@ export function SkinPane({
           )
         })}
       </div>
-      {(wantPower || peel || ctxSpec) ? (
+      {(wantPower || peel || ctxSpec || canPeel) ? (
       <p className="tiny skin-cli">
         {wantPower || peel ? `${cliName} · this chat` : null}
         {ctxSpec && wantPower ? <SkinCard spec={ctxSpec} onAction={onAction} /> : null}
-        {wantPower || peel ? (
+        {canPeel ? (
           <button type="button" className="linkish" onClick={() => onPeel(!peel)}>
             {peel ? 'Hide terminal' : 'Show terminal'}
           </button>

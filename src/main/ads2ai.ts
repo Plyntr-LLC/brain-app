@@ -169,7 +169,7 @@ export async function lookupGithubAccount(login: string): Promise<{
     return {
       ok: false,
       reason: 'invalid-name',
-      detail: 'Paste the GitHub organization name (one short word, like harolds-books) or its github.com address.',
+      detail: 'Paste the GitHub short name (one word, like harolds-books, not your business name) or its github.com address.',
       login: String(login || '').trim()
     }
   }
@@ -182,7 +182,7 @@ export async function lookupGithubAccount(login: string): Promise<{
       return {
         ok: false,
         reason: 'not-found',
-        detail: `GitHub has no organization named ${name}. Copy the name from the GitHub page after you create it.`,
+        detail: `GitHub has no short name ${name}. Copy the name from the GitHub page after you create it.`,
         login: name
       }
     }
@@ -200,7 +200,7 @@ export async function lookupGithubAccount(login: string): Promise<{
     return {
       ok: false,
       reason: 'personal-account',
-      detail: `${body?.login || name} is a person on GitHub, not an organization. Create a free organization, then paste that name.`,
+      detail: `${body?.login || name} is a person's GitHub login. Paste the short name you created (one word, like harolds-books), not your own username.`,
       login: body?.login || name,
       type: body?.type
     }

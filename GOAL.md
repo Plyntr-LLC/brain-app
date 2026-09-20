@@ -59,7 +59,7 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
 - Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, one setup screen lists them, pre-warns every permission dialog, then **Start setup** (one click) runs official installers in order and waits. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.
 - Long runs show a live Working strip (wheel, phase, elapsed time) plus a pulse on the chat tab. Tools update the phase. Setup polls use the same strip. The thread does not sit on a frozen Thinking label.
-- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.14**. Developer ID Application: Plyntr LLC.
+- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.16**. Developer ID Application: Plyntr LLC.
 
 ## How Joe runs Inbox
 
@@ -93,19 +93,23 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Settings switcher (Joe superadmin only) follows the **Brain.app login**, not the member email on the brain you switched into. Switching never strands you. Retargets Agency Brain plus Plyntr project sync. Add a company brain is the Ads2AI join code.
+Call script for Jeen is `docs/jeen-call.md`. Packed 0.1.16 has AB watching auto-continue, CLI login auto-start, two-apps line, empty-Skin starters, GitHub short name, hide power UI, owner skip GitHub when the repo exists, setup checklist, and Jev autoheal.
 
 ## Inbox
 
 Bugs and product gaps. One line each. Date + what.
 
+- [x] 2026-09-20 Joe: Jeen list. AB watching auto-continue. CLI login auto-start. Two-apps line. Empty-Skin starters. GitHub short name + paste. Hide power UI. Owner skip GitHub when repo exists. Setup checklist. Pack autoheal in the Jeen build. Done: 2026-09-20. Grok 4.6 xhigh APPROVE (cycle 4). Evidence: v0.1.16 signed+notarized, GitHub latest, `/Applications/Brain.app`. Direct: https://github.com/Plyntr-LLC/brain-app/releases/latest/download/Brain-0.1.16-mac.dmg
+
 - [x] 2026-09-20 Joe: Claude model picker lists Grok 4.5/4.6. Title says Jeen-AI-Brain-test while the window is Plyntr. Add-company must not attach to Jeen. Wire pickers and folder to the CLI and brain in use. Done: 2026-09-20. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `listSlash` claude branch, `claude-models.ts`, `hq-folder.ts`, `watchingHealth`, Settings add-company copy.
 
-- [ ] 2026-09-20 Joe: Setup that leaves Brain (GitHub, installers, AI sign-in) should bring you back. Only required fields. No skip of steps the app needs. Clear errors if something is blank. In progress.
+- [x] 2026-09-20 Joe: Settings Welcome said jj ww (test company) and Loading waited on HQ/skin. Brain.app login name; paint after get+brains. Done: 2026-09-20. Grok 4.6 xhigh APPROVE. Evidence: packed 0.1.15 `/Applications/Brain.app`.
 
-- [ ] 2026-09-20 Joe: Switch brain hid after leaving Plyntr (login became the other brain’s email). Brain.app login stays; switcher still works both ways. In progress.
+- [x] 2026-09-20 Joe: Setup that leaves Brain (GitHub, installers, AI sign-in) should bring you back. Only required fields. No skip of steps the app needs. Clear errors if something is blank. Done: 2026-09-20. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `watchClipboardOrg` + `stopClipboardOrgWatch`, `loginCliUntilDone`, FirstRun blank-field errors.
 
-- [ ] 2026-09-20 Joe: Jev high-confidence unmatched screens join the catalog on their own (autoheal). Spend TypeSafe yes. PermissionAsk never Allow. In progress.
+- [x] 2026-09-20 Joe: Switch brain hid after leaving Plyntr (login became the other brain’s email). Brain.app login stays; switcher still works both ways. Done: 2026-09-20. Grok 4.6 xhigh APPROVE. Evidence: v0.1.14 signed+notarized, GitHub latest, `/Applications/Brain.app`. Direct: https://github.com/Plyntr-LLC/brain-app/releases/latest/download/Brain-0.1.14-mac.dmg
+
+- [x] 2026-09-20 Joe: Jev high-confidence unmatched screens join the catalog on their own (autoheal). Spend TypeSafe yes. PermissionAsk never Allow. Done: 2026-09-20. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `proposeFromCapture` + `setLearned`, `joeOnly` is `isJoeSuperAdmin`, PermissionAsk `paint: false` / `shouldLearn` false.
 
 - [x] 2026-09-20 Joe: Turn Jev on for Skin. Propose catalog rows from unmatched captures. Do not Allow a write. Spend TypeSafe yes. Done: 2026-09-20. Grok 4.6 xhigh APPROVE. Evidence: `src/main/skin/jev.ts`, Settings Jev toggle, `skin.json` jev on.
 

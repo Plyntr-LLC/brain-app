@@ -1,12 +1,14 @@
 import { chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
-import { plyntrOwnerEmail } from './agency-brain'
+import { plyntrOwnerEmail, plyntrOwnerProfile } from './agency-brain'
+import { helloName } from './login-identity'
 import { SUPERADMIN_EMAIL } from './super-admin'
 
 export type Account = {
   email: string
   appEmail?: string
+  appName?: string
   name?: string
   token: string
   role?: string
@@ -37,6 +39,7 @@ function persist(next: Account | null): void {
     JSON.stringify({
       email: next.email,
       appEmail: next.appEmail || next.email || '',
+      appName: next.appName || next.name || '',
       name: next.name || '',
       token: next.token,
       role: next.role || '',
@@ -66,10 +69,15 @@ export function loadAccount(): Account | null {
       if (hint === SUPERADMIN_EMAIL) appEmail = hint
     }
     if (!appEmail) appEmail = email
+    const greet = helloName(
+      { email, appEmail, name: raw.name, appName: raw.appName },
+      plyntrOwnerProfile()
+    )
     account = {
       email: appEmail === SUPERADMIN_EMAIL ? appEmail : email,
       appEmail,
-      name: String(raw.name || ''),
+      appName: greet,
+      name: greet,
       token,
       role: String(raw.role || ''),
       source: raw.source === 'team-file' ? 'team-file' : raw.source === 'hq-sync' ? 'hq-sync' : 'ads2ai',
@@ -77,7 +85,11 @@ export function loadAccount(): Account | null {
       brains: Array.isArray(raw.brains) ? raw.brains.map((b) => String(b || '').trim()).filter(Boolean) : []
     }
     memberToken = token
-    if (appEmail === SUPERADMIN_EMAIL && email !== SUPERADMIN_EMAIL) persist(account)
+    const rawApp = String(raw.appEmail || '').trim().toLowerCase()
+    const rawName = String(raw.appName || raw.name || '').trim()
+    if (appEmail !== rawApp || greet !== rawName || (appEmail === SUPERADMIN_EMAIL && email !== SUPERADMIN_EMAIL)) {
+      persist(account)
+    }
     return account
   } catch {
     return null
@@ -87,10 +99,12 @@ export function loadAccount(): Account | null {
 export function saveAccount(next: Account): Account {
   const email = String(next.email || '').trim().toLowerCase()
   const appEmail = String(next.appEmail || email).trim().toLowerCase()
+  const greet = helloName({ ...next, email, appEmail }, plyntrOwnerProfile())
   persist({
     email: appEmail === SUPERADMIN_EMAIL ? appEmail : email,
     appEmail,
-    name: String(next.name || ''),
+    appName: greet,
+    name: greet,
     token: String(next.token || ''),
     role: String(next.role || ''),
     source: next.source === 'team-file' ? 'team-file' : next.source === 'hq-sync' ? 'hq-sync' : 'ads2ai',

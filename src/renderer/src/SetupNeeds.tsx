@@ -14,11 +14,24 @@ type ToolNeed = {
 type Status = {
   ready: boolean
   watching: boolean
+  brainPath?: string | null
   items: ToolNeed[]
 }
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
+}
+
+function asReady(
+  st: Status,
+  extra: { ready?: boolean; watching?: boolean }
+): { ready: boolean; watching: boolean; ai?: AiKind; brainPath?: string } {
+  return {
+    ready: extra.ready ?? st.ready,
+    watching: extra.watching ?? st.watching,
+    ai: pickAi(st.items),
+    brainPath: st.brainPath || undefined
+  }
 }
 
 function pickAi(items: ToolNeed[]): AiKind | undefined {
@@ -34,7 +47,7 @@ export function SetupNeeds({
   onReady,
   onNeedFolder
 }: {
-  onReady: (info: { ready: boolean; watching: boolean; ai?: AiKind }) => void
+  onReady: (info: { ready: boolean; watching: boolean; ai?: AiKind; brainPath?: string }) => void
   onNeedFolder?: () => void
 }) {
   const [items, setItems] = useState<ToolNeed[]>([])
@@ -106,15 +119,26 @@ export function SetupNeeds({
     const r = await window.brain.setup.install(item.id)
     if (!r.ok) throw new Error(r.detail || `Could not install ${item.label}.`)
     setNote(r.detail || `${item.label} done.`)
-    if (r.wait === 'present') {
+    if (r.wait === 'present' || r.wait === 'watching') {
       setBanner(item.accept || `Finish ${item.label}, then this window continues.`)
       const ok = await pollUntil(
-        (st) => Boolean(st.items.find((i) => i.id === item.id)?.present),
-        `Waiting on ${item.label}. ${item.accept || 'Finish that window, then we continue.'}`
+        (st) =>
+          r.wait === 'watching'
+            ? Boolean(st.watching)
+            : Boolean(st.items.find((i) => i.id === item.id)?.present),
+        r.wait === 'watching'
+          ? 'Waiting on Agency Brain. Sign in there and pick the shared folder. We continue when it is watching.'
+          : `Waiting on ${item.label}. ${item.accept || 'Finish that window, then we continue.'}`
       )
       await window.brain.setup.bringFront()
       if (stop.current) return
-      if (!ok) throw new Error(`${item.label} is still missing. Finish that installer, then Start setup again.`)
+      if (!ok) {
+        throw new Error(
+          r.wait === 'watching'
+            ? 'Agency Brain is not watching a folder yet. Finish sign-in there, then Recheck.'
+            : `${item.label} is still missing. Finish that installer, then Start setup again.`
+        )
+      }
     }
   }
 
@@ -125,16 +149,11 @@ export function SetupNeeds({
     try {
       const first = await refresh()
       if (first.ready) {
-        onReady({ ready: true, watching: true, ai: pickAi(first.items) })
+        onReady(asReady(first, { ready: true, watching: true }))
         return
       }
       const missing = first.items.filter((i) => !i.present)
-      if (missing.length === 0 && !first.watching) {
-        setPhase('review')
-        onNeedFolder?.()
-        return
-      }
-      const required = new Set(['brew', 'git'])
+      const required = new Set(['brew', 'git', 'ab'])
       for (const item of missing) {
         if (stop.current) {
           setPhase('review')
@@ -161,17 +180,16 @@ export function SetupNeeds({
         return
       }
       if (st.ready) {
-        onReady({ ready: true, watching: true, ai })
+        onReady(asReady(st, { ready: true, watching: true }))
         return
       }
       if (st.watching && ai) {
-        onReady({ ready: false, watching: true, ai })
+        onReady(asReady(st, { ready: false, watching: true }))
         return
       }
       setPhase('review')
       if (!st.watching) {
-        setNote('Tools are ready. Next is GitHub so we can get the shared folder.')
-        onNeedFolder?.()
+        setErr('Agency Brain is not watching a folder yet. Finish sign-in there, then Recheck.')
         return
       }
       setNote('Still missing a watched folder or an AI tool. Finish the open installer, then Start setup again.')
@@ -261,8 +279,8 @@ export function SetupNeeds({
             }
             const st = await refresh()
             const ai = pickAi(st.items)
-            if (st.ready) onReady({ ready: true, watching: true, ai })
-            else if (st.watching && ai) onReady({ ready: false, watching: true, ai })
+            if (st.ready) onReady(asReady(st, { ready: true, watching: true }))
+            else if (st.watching && ai) onReady(asReady(st, { ready: false, watching: true }))
             else setErr('Still missing a required piece. Finish the open installer, then Recheck.')
           }}
         >

@@ -10,17 +10,19 @@ import {
   detectApp,
   listProjectFolders,
   memberTokenForTeam,
+  plyntrOwnerProfile,
   readTeamIdentity,
   readTeamMember,
   readTeamRoster,
   readWatching,
   upsertTeamMember
 } from './agency-brain'
+import { helloName } from './login-identity'
 import { cloneBrain } from './clone'
 import { githubAppInstallUrl, githubInstallReady, reuseExistingFolder } from './setup-folder'
 import { currentBrainFolder, folderForSlug, listBrains, rememberBrain, switchBrain } from './brains'
 import { clearPendingJoin, getPendingJoin, setPendingJoin } from './join-pending'
-import { bringAppFront } from './bring-front'
+import { bringAppFront, clipOrgLogin, stopClipboardOrgWatch, watchClipboardOrg } from './bring-front'
 import { startBrainSync, stopBrainSync } from './brain-sync'
 import {
   addCompany,
@@ -41,7 +43,8 @@ import {
 import { readSyncHealth } from './sync-health'
 import { isJoeSuperAdmin } from './super-admin'
 import { classifyLogin, type LoginVia } from './login-route'
-import { installNeed, isNeedId, listNeeds, loginCli } from './install'
+import { installNeed, isNeedId, listNeeds, loginCli, loginCliUntilDone } from './install'
+import { cliSignedIn } from './cli-auth'
 import * as ai from './ai-cli'
 import { asAttachBuf, inspectAttach, stashBytes } from './attach'
 import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot } from './files'
@@ -194,7 +197,7 @@ export function registerStubIpc(): void {
     const folder = currentBrainFolder() || watching.brainPath || acct?.folder || null
     const roster = readTeamRoster(folder)
     const member = readTeamMember(folder, email)
-    const displayName = String(acct?.name || member?.name || '').trim() || (email ? email.split('@')[0] : '')
+    const displayName = helloName(acct, plyntrOwnerProfile())
     const ident = readTeamIdentity(folder)
     const brainName = String(ident?.name || roster?.name || watching.teamName || watching.name || '').trim()
     const plyntrBrain = (ident?.slug || roster?.slug || watching.teamSlug) === 'plyntr'
@@ -348,6 +351,8 @@ export function registerStubIpc(): void {
     const email = String(m.email || res.memberEmail || '').toLowerCase()
     saveAccount({
       email,
+      appEmail: email,
+      appName: String(m.name || res.memberName || ''),
       name: String(m.name || res.memberName || ''),
       token: res.memberToken
     })
@@ -410,12 +415,14 @@ export function registerStubIpc(): void {
 
     async function asAgency() {
       const res = await ads2ai.verifyCode(key, code)
-      saveAccount({
-        email: String(res.member.email || key).toLowerCase(),
-        name: res.member.name || '',
-        token: res.token,
-        source: 'ads2ai'
-      })
+    saveAccount({
+      email: String(res.member.email || key).toLowerCase(),
+      appEmail: String(res.member.email || key).toLowerCase(),
+      appName: res.member.name || '',
+      name: res.member.name || '',
+      token: res.token,
+      source: 'ads2ai'
+    })
       const teams = (await ads2ai.myTeams(res.token)).teams || []
       return { ok: true, via: 'ads2ai' as const, member: res.member, teams, role: '' }
     }
@@ -438,8 +445,8 @@ export function registerStubIpc(): void {
     if (!acct) return { signedIn: false, email: '', name: '', role: '', folder: '', source: '' }
     return {
       signedIn: true,
-      email: acct.email,
-      name: acct.name || '',
+      email: acct.appEmail || acct.email,
+      name: helloName(acct, plyntrOwnerProfile()),
       role: acct.role || '',
       folder: acct.folder || '',
       source: acct.source || ''
@@ -561,8 +568,13 @@ export function registerStubIpc(): void {
     }
   })
   ipcMain.handle('setup:lookupOrg', async (_e, login: string) => ads2ai.lookupGithubAccount(login))
-  ipcMain.handle('setup:openCreateOrg', () => openInApp(GITHUB_NEW_ORG, 'Create a free GitHub organization'))
+  ipcMain.handle('setup:openCreateOrg', async () => {
+    openInApp(GITHUB_NEW_ORG, 'Create a GitHub short name')
+    const org = await watchClipboardOrg()
+    return { ok: true, org }
+  })
   ipcMain.handle('setup:openAppInstall', async (_e, slug: string, org?: string) => {
+    stopClipboardOrgWatch()
     const look = String(org || '').trim() ? await ads2ai.lookupGithubAccount(org || '') : { ok: false as const }
     const url = githubAppInstallUrl(slug, look.ok ? look.id : undefined)
     openInApp(url, 'Install sharing on GitHub')
@@ -570,6 +582,7 @@ export function registerStubIpc(): void {
   })
   ipcMain.handle('setup:pollInstall', (_e, slug: string) => ads2ai.installStatus(slug))
   ipcMain.handle('setup:waitInstall', async (_e, slug: string) => {
+    stopClipboardOrgWatch()
     const id = String(slug || '').trim()
     if (!id) return { ok: false, detail: 'No GitHub team to wait on.' }
     const until = Date.now() + 180000
@@ -592,6 +605,7 @@ export function registerStubIpc(): void {
     bringAppFront()
     return { ok: true }
   })
+  ipcMain.handle('setup:clipOrg', () => ({ ok: true, org: clipOrgLogin() }))
   ipcMain.handle('setup:ensureRepo', async (_e, slug: string) => {
     const id = String(slug || '').trim()
     if (!id) throw new Error('No GitHub team.')
@@ -674,6 +688,8 @@ export function registerStubIpc(): void {
 
   ipcMain.handle('ai:detect', async () => ai.detect())
   ipcMain.handle('ai:login', async (_e, which: AiKind) => loginCli(which))
+  ipcMain.handle('ai:loginWait', async (_e, which: AiKind) => loginCliUntilDone(which))
+  ipcMain.handle('ai:signedIn', (_e, which: AiKind) => ({ ok: true, signedIn: cliSignedIn(which) }))
 
   ipcMain.handle('files:tree', async (_e, root?: string) => {
     const watching = readWatching()

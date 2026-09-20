@@ -29,14 +29,8 @@ export function stepState(s: Session, id: (typeof STEPS)[number]['id']): 'now' |
     return s.abWatching ? 'now' : ''
   }
   if (id === 'know') {
-    if (needsDone(s)) return 'done'
     if (s.screen === 'chat') return 'now'
     return ''
-  }
-  if (id === 'invite') {
-    if (s.path === 'join') return 'blocked'
-    if (needsDone(s) && s.screen === 'chat') return 'now'
-    return 'blocked'
   }
   return ''
 }

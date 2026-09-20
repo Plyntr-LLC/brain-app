@@ -125,18 +125,34 @@ export function SettingsPanel({
 
   useEffect(() => {
     void (async () => {
-      const s = await window.brain.settings.get()
+      const [s, list] = await Promise.all([
+        window.brain.settings.get(),
+        window.brain.brains.list().catch(() => [])
+      ])
       setSuper(s.superAdmin)
       setEmail(s.email)
       setHelloName(String(s.name || '').trim())
       setBrainName(prettyName(String(s.brainName || '')))
       setSeat(String(s.role || ''))
-      setBrains(await window.brain.brains.list().catch(() => []))
-      const roster = await window.brain.settings.roster().catch(() => [])
-      const local = roster.length ? roster : await window.brain.settings.team()
+      setBrains(list)
+      setLoaded(true)
+      const [roster, projects, bridge, ver, skin] = await Promise.all([
+        window.brain.settings.roster().catch(() => []),
+        window.brain.settings.projects().catch(() => []),
+        window.brain.hqSync.ownerStatus().catch(() => null),
+        window.brain.version().catch(() => ''),
+        window.brain.skin.get().catch(() => ({
+          capture: false,
+          jev: false,
+          jevReady: false,
+          joe: false,
+          components: [] as string[],
+          learned: [] as { cli: string; eventKind: string; component: string; confidence: number }[]
+        }))
+      ])
+      const local = roster.length ? roster : await window.brain.settings.team().catch(() => [])
       setPeople(local)
-      setLiveProjects(await window.brain.settings.projects().catch(() => []))
-      const bridge = await window.brain.hqSync.ownerStatus().catch(() => null)
+      setLiveProjects(projects)
       if (bridge) {
         setHq(bridge)
         const watched = await window.brain.hqSync.watchedRepo().catch(() => '')
@@ -146,15 +162,7 @@ export function SettingsPanel({
           setLiveProjects(bridge.projects.map((p) => ({ id: p.slug, name: prettyName(p.slug) })))
         }
       }
-      setAppVer(await window.brain.version().catch(() => ''))
-      const skin = await window.brain.skin.get().catch(() => ({
-        capture: false,
-        jev: false,
-        jevReady: false,
-        joe: false,
-        components: [] as string[],
-        learned: [] as { cli: string; eventKind: string; component: string; confidence: number }[]
-      }))
+      setAppVer(ver)
       if (skin.joe) {
         setSkinCap(Boolean(skin.capture))
         setSkinJev(Boolean(skin.jev))
@@ -162,7 +170,6 @@ export function SettingsPanel({
         setLearned(skin.learned || [])
         setCaptures(await window.brain.skin.list().catch(() => []))
       }
-      setLoaded(true)
     })()
     const offUpdate = window.brain.onUpdate((ev) => {
       if (ev.status === 'checking') setUpd('Checking for an update…')
@@ -307,7 +314,7 @@ export function SettingsPanel({
                     passkey works there.
                   </p>
                   <label className="field">
-                    GitHub organization
+                    GitHub short name
                     <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="harolds-books" />
                   </label>
                   <p className="tiny">The short GitHub name, not the business name. Copy it from the GitHub page.</p>
@@ -325,7 +332,7 @@ export function SettingsPanel({
                       disabled={bizBusy || org.trim().length < 2}
                       onClick={async () => {
                         if (org.trim().length < 2) {
-                          setNote('Paste the GitHub organization name first. Open GitHub if you do not have it yet.')
+                          setNote('Paste the GitHub short name first. Open GitHub if you do not have it yet.')
                           return
                         }
                         try {
@@ -404,7 +411,7 @@ export function SettingsPanel({
                           const res = await window.brain.brains.add({ code })
                           if (res.setup) {
                             setPending({ slug: String(res.slug || ''), name: String(res.name || 'this company') })
-                            setNote('GitHub is not on this brain yet. Open GitHub, paste the organization name, then Continue.')
+                            setNote('GitHub is not on this brain yet. Open GitHub, paste the short name, then Continue.')
                             return
                           }
                           if (res.brainPath) {

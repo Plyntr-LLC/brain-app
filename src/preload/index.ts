@@ -251,7 +251,8 @@ const brain = {
         type?: string
         id?: number
       }>,
-    openCreateOrg: () => ipcRenderer.invoke('setup:openCreateOrg'),
+    openCreateOrg: () =>
+      ipcRenderer.invoke('setup:openCreateOrg') as Promise<{ ok: boolean; org?: string }>,
     openAppInstall: (slug: string, org?: string) =>
       ipcRenderer.invoke('setup:openAppInstall', slug, org),
     pollInstall: (slug: string) => ipcRenderer.invoke('setup:pollInstall', slug),
@@ -263,6 +264,7 @@ const brain = {
         detail?: string
       }>,
     bringFront: () => ipcRenderer.invoke('setup:bringFront'),
+    clipOrg: () => ipcRenderer.invoke('setup:clipOrg') as Promise<{ ok: boolean; org?: string }>,
     onBack: (fn: (ev: { org?: string }) => void) => {
       const h = (_e: unknown, payload: { org?: string }) => fn(payload || {})
       ipcRenderer.on('setup:back', h)
@@ -291,6 +293,7 @@ const brain = {
       ipcRenderer.invoke('setup:status') as Promise<{
         ready: boolean
         watching: boolean
+        brainPath?: string | null
         items: {
           id: string
           label: string
@@ -314,7 +317,11 @@ const brain = {
   },
   ai: {
     detect: () => ipcRenderer.invoke('ai:detect'),
-    login: (which: AiKind) => ipcRenderer.invoke('ai:login', which)
+    login: (which: AiKind) => ipcRenderer.invoke('ai:login', which),
+    loginWait: (which: AiKind) =>
+      ipcRenderer.invoke('ai:loginWait', which) as Promise<{ ok: boolean; detail: string; signedIn?: boolean }>,
+    signedIn: (which: AiKind) =>
+      ipcRenderer.invoke('ai:signedIn', which) as Promise<{ ok: boolean; signedIn: boolean }>
   },
   pty: {
     create: (opts: {

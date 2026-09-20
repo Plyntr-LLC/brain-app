@@ -1,5 +1,7 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import { getAccount } from '../session-token'
+import { getSettings } from '../settings-store'
+import { isJoeSuperAdmin } from '../super-admin'
 import { acpDecidePermission } from '../acp-session'
 import {
   captureOn,
@@ -18,8 +20,7 @@ import { getLearned, listLearned } from './learned'
 import { typesafeReady, warmTypesafeKey } from './typesafe'
 
 function joeOnly(): boolean {
-  const acct = getAccount()
-  return String(acct?.email || '').toLowerCase() === 'joe@plyntr.com'
+  return isJoeSuperAdmin(getAccount(), getSettings())
 }
 
 function withProposal(row: SkinCapture) {
