@@ -6,8 +6,11 @@ import { openInApp } from './in-app-browse'
 import * as ads2ai from './ads2ai'
 import { homedir } from 'node:os'
 import {
+  accountFieldsForFolder,
+  activateWatching,
   detectApp,
   listProjectFolders,
+  memberTokenForTeam,
   readTeamIdentity,
   readTeamMember,
   readTeamRoster,
@@ -15,11 +18,15 @@ import {
   upsertTeamMember
 } from './agency-brain'
 import { cloneBrain } from './clone'
-import { githubAppInstallUrl, reuseExistingFolder } from './setup-folder'
+import { githubAppInstallUrl, githubInstallReady, reuseExistingFolder } from './setup-folder'
+import { currentBrainFolder, folderForSlug, listBrains, rememberBrain, switchBrain } from './brains'
+import { clearPendingJoin, getPendingJoin, setPendingJoin } from './join-pending'
+import { bringAppFront } from './bring-front'
 import { startBrainSync, stopBrainSync } from './brain-sync'
 import {
   addCompany,
   addProjectSeat,
+  assertJoeSuper,
   existingProjectSeat,
   isHqMiniFolder,
   joinProject,
@@ -29,6 +36,7 @@ import {
   ownerLogin,
   ownerStatus,
   requestHqCode,
+  retargetHqSync,
   revokeProjectSeat
 } from './hq-sync'
 import { readSyncHealth } from './sync-health'
@@ -79,20 +87,85 @@ function saveRecent(folder: string): RecentFolder {
   return { path: folder, name }
 }
 
-/** Dev only (`npm run dev`). Packed Brain creates teams and clones. */
+/** Dev only (`npm run dev`). Packed Brain skips Ads2AI create-team. Join, clone, and Agency Brain switch still run. */
 export function dryRun(): boolean {
   return process.env.BRAIN_APP_DRY_RUN === '1'
+}
+
+function tokenForSlug(slug: string): string {
+  const t = memberTokenForTeam(slug)
+  if (t) return t
+  return getMemberToken()
+}
+
+function applyAccountForFolder(folder: string): void {
+  const fields = accountFieldsForFolder(folder)
+  const acct = getAccount()
+  if (!fields) {
+    if (acct) saveAccount({ ...acct, folder })
+    return
+  }
+  saveAccount({
+    email: fields.email || acct?.email || '',
+    name: fields.name || acct?.name || '',
+    token: fields.token,
+    role: fields.role || acct?.role,
+    source: 'ads2ai',
+    folder,
+    brains: acct?.brains
+  })
+}
+
+async function adoptFolder(path: string): Promise<{
+  path: string
+  name: string
+  slug: string
+  agency: { ok: boolean; detail: string }
+  hq: { ok: boolean; detail: string }
+}> {
+  const row = switchBrain(path)
+  saveRecent(row.path)
+  const agency = await activateWatching(row.path)
+  applyAccountForFolder(row.path)
+  stopBrainSync()
+  const hq = await retargetHqSync(row.path)
+  if (!isHqMiniFolder(row.path)) startBrainSync(row.path)
+  const pending = getPendingJoin()
+  if (pending && row.slug && pending.teamSlug.toLowerCase() === row.slug.toLowerCase()) clearPendingJoin()
+  return { ...row, agency, hq }
+}
+
+function joinCodeError(err: unknown): Error {
+  const msg = String((err as Error)?.message || err)
+  if (/not found|404/i.test(msg)) {
+    return new Error(
+      'That code is not a company brain. Create the company in Ads2AI first, then paste the code it shows.'
+    )
+  }
+  if (/expired|410/i.test(msg)) return new Error('That code has expired. Open Ads2AI and get a new one.')
+  if (/github app|409/i.test(msg)) {
+    return new Error('GitHub is not finished on that company yet. Wait a minute, then paste the code again.')
+  }
+  return new Error(msg.slice(0, 200) || 'That code did not work.')
 }
 
 export function registerStubIpc(): void {
   loadAccount()
   ipcMain.handle('env:get', async () => {
     const watching = readWatching()
-    const seat = await existingProjectSeat(watching.brainPath || undefined).catch(() => null)
+    const folder = currentBrainFolder() || watching.brainPath
+    const ident = readTeamIdentity(folder)
+    const seat = await existingProjectSeat(folder || undefined).catch(() => null)
     return {
       dryRun: dryRun(),
       chatLive: true,
-      existingBrain: watching,
+      existingBrain: {
+        ...watching,
+        brainPath: folder || watching.brainPath,
+        name: ident?.name || watching.name,
+        teamSlug: ident?.slug || watching.teamSlug,
+        teamName: ident?.name || watching.teamName
+      },
       justUpdated: justUpdated(),
       projectSeat: seat
         ? { folder: seat.folder, label: seat.label, lastSync: seat.lastSync }
@@ -126,13 +199,14 @@ export function registerStubIpc(): void {
     const watching = readWatching()
     const file = getSettings()
     const acct = getAccount() || loadAccount()
-    const email = String(acct?.email || '').toLowerCase()
-    const folder = watching.brainPath || acct?.folder || null
+    const email = String(acct?.email || '').trim().toLowerCase()
+    const folder = currentBrainFolder() || watching.brainPath || acct?.folder || null
     const roster = readTeamRoster(folder)
     const member = readTeamMember(folder, email)
     const displayName = String(acct?.name || member?.name || '').trim() || (email ? email.split('@')[0] : '')
-    const brainName = String(roster?.name || watching.teamName || watching.name || '').trim()
-    const plyntrBrain = (roster?.slug || watching.teamSlug) === 'plyntr'
+    const ident = readTeamIdentity(folder)
+    const brainName = String(ident?.name || roster?.name || watching.teamName || watching.name || '').trim()
+    const plyntrBrain = (ident?.slug || roster?.slug || watching.teamSlug) === 'plyntr'
     const superAdmin = isJoeSuperAdmin(acct, file)
     const hqMini = (acct?.source === 'hq-sync' || isHqMiniFolder(acct?.folder)) && !watching.brainPath
     return {
@@ -154,7 +228,7 @@ export function registerStubIpc(): void {
   ipcMain.handle('settings:roster', () => {
     const watching = readWatching()
     const acct = getAccount()
-    const folder = watching.brainPath || acct?.folder || null
+    const folder = currentBrainFolder() || watching.brainPath || acct?.folder || null
     const roster = readTeamRoster(folder)
     return (roster?.members || []).map((m) => ({
       name: m.name,
@@ -170,12 +244,81 @@ export function registerStubIpc(): void {
   ipcMain.handle('settings:projects', (_e, folder?: string) => {
     const watching = readWatching()
     const acct = getAccount()
-    return listProjectFolders(folder || watching.brainPath || acct?.folder || null)
+    return listProjectFolders(folder || currentBrainFolder() || watching.brainPath || acct?.folder || null)
   })
+  ipcMain.handle('brains:list', () => listBrains())
+  ipcMain.handle('brains:switch', async (_e, folder: string) => {
+    assertJoeSuper('switch brains')
+    return adoptFolder(folder)
+  })
+  ipcMain.handle('brains:add', async (_e, opts: { code?: string }) => {
+    assertJoeSuper('add a company brain')
+    const code = String(opts?.code || '')
+      .replace(/[^A-Za-z0-9]/g, '')
+      .toUpperCase()
+      .slice(0, 6)
+    if (code.length < 4) throw new Error('Paste the code Ads2AI showed after you created the company.')
+    let res: ads2ai.InviteResolve
+    try {
+      res = await ads2ai.resolveInvite(code)
+    } catch (err) {
+      throw joinCodeError(err)
+    }
+    const slug = String(res.teamSlug || '').trim()
+    if (!slug) throw new Error('That code did not name a company brain.')
+    const member = res.member || {}
+    const name = String(res.teamName || slug)
+    setPendingJoin({
+      memberToken: res.memberToken,
+      teamSlug: slug,
+      teamName: String(res.teamName || slug),
+      repoUrl: String(res.repoUrl || ''),
+      kind: String(res.kind || 'agency'),
+      brandName: String(res.teamName || slug),
+      memberEmail: String(member.email || res.memberEmail || '').toLowerCase(),
+      memberName: String(member.name || res.memberName || ''),
+      memberRole: String(member.role || res.memberRole || 'owner'),
+      scoutSeats: res.scoutSeats ?? null,
+      packageTier: res.packageTier ?? null
+    })
+    const local = folderForSlug(slug)
+    if (local) {
+      const adopted = await adoptFolder(local)
+      clearPendingJoin()
+      return {
+        ok: true,
+        slug,
+        name: adopted.name || name,
+        already: true,
+        brainPath: adopted.path,
+        agency: adopted.agency
+      }
+    }
+    const st = await ads2ai.installStatus(slug).catch(() => null)
+    const setup = !githubInstallReady(st) && !String(res.repoUrl || '').trim()
+    if (setup) {
+      return { ok: true, slug, name, setup: true }
+    }
+    const applied = await applyFolderImpl({ teamSlug: slug })
+    const path = String(applied?.brainPath || '')
+    if (!path) throw new Error(applied?.detail || 'Could not copy the shared folder onto this computer.')
+    const adopted = await adoptFolder(path)
+    clearPendingJoin()
+    return {
+      ok: true,
+      slug,
+      name: adopted.name || name,
+      brainPath: adopted.path,
+      agency: adopted.agency
+    }
+  })
+  ipcMain.handle('brains:remember', (_e, row: { path?: string; name?: string; slug?: string; role?: string }) =>
+    rememberBrain(row)
+  )
   ipcMain.handle('settings:addTeammate', async (_e, person: TeamPerson) => {
     const watching = readWatching()
     const acct = getAccount()
-    const folder = watching.brainPath || acct?.folder || null
+    const folder = currentBrainFolder() || watching.brainPath || acct?.folder || null
     const email = String(person.email || '').trim().toLowerCase()
     const brains = Array.isArray(person.brains)
       ? person.brains.map((b) => String(b || '').trim()).filter(Boolean)
@@ -392,7 +535,9 @@ export function registerStubIpc(): void {
   ipcMain.handle('hqSync:ownerRequestCode', (_e, email: string) => requestHqCode(email))
   ipcMain.handle('hqSync:ownerLogin', (_e, opts: { email: string; code: string }) => ownerLogin(opts))
   ipcMain.handle('hqSync:ownerStatus', () => ownerStatus())
-  ipcMain.handle('hqSync:watchedRepo', () => hqRepoFromFolder(readWatching().brainPath || ''))
+  ipcMain.handle('hqSync:watchedRepo', () =>
+    hqRepoFromFolder(currentBrainFolder() || readWatching().brainPath || '')
+  )
   ipcMain.handle('hqSync:bind', (_e, hqRepo: string) =>
     ownerBindUntilReady(hqRepo, {
       openInstall: (url) => {
@@ -433,9 +578,33 @@ export function registerStubIpc(): void {
     return { ok: true, url }
   })
   ipcMain.handle('setup:pollInstall', (_e, slug: string) => ads2ai.installStatus(slug))
+  ipcMain.handle('setup:waitInstall', async (_e, slug: string) => {
+    const id = String(slug || '').trim()
+    if (!id) return { ok: false, detail: 'No GitHub team to wait on.' }
+    const until = Date.now() + 180000
+    while (Date.now() < until) {
+      const st = (await ads2ai.installStatus(id).catch(() => null)) as {
+        installed?: boolean
+        repoUrl?: string
+        repo?: string
+      } | null
+      if (githubInstallReady(st)) {
+        bringAppFront()
+        return { ok: true, installed: true, repoUrl: st?.repoUrl || st?.repo || '' }
+      }
+      await new Promise((r) => setTimeout(r, 2000))
+    }
+    bringAppFront()
+    return { ok: false, detail: 'GitHub is not finished. Click Install in the browser, then try again.' }
+  })
+  ipcMain.handle('setup:bringFront', () => {
+    bringAppFront()
+    return { ok: true }
+  })
   ipcMain.handle('setup:ensureRepo', async (_e, slug: string) => {
-    if (dryRun()) return { skipped: true }
-    return ads2ai.ensureBrainRepo(getMemberToken(), slug)
+    const id = String(slug || '').trim()
+    if (!id) throw new Error('No GitHub team.')
+    return ads2ai.ensureBrainRepo(tokenForSlug(id), id)
   })
 
   async function applyFolderImpl(opts?: { teamSlug?: string; dest?: string }): Promise<{
@@ -450,22 +619,21 @@ export function registerStubIpc(): void {
     const acct = getAccount() || loadAccount()
     const watchIdent = readTeamIdentity(watching.brainPath)
     const acctIdent = readTeamIdentity(acct?.folder || null)
-    const reuse = reuseExistingFolder({
-      slug,
-      watchingPath: watching.brainPath,
-      watchingSlug: watchIdent?.slug || watching.teamSlug,
-      accountFolder: acct?.folder && existsSync(acct.folder) ? acct.folder : null,
-      accountSlug: acctIdent?.slug || null
-    })
+    const reuse =
+      reuseExistingFolder({
+        slug,
+        watchingPath: watching.brainPath,
+        watchingSlug: watchIdent?.slug || watching.teamSlug,
+        accountFolder: acct?.folder && existsSync(acct.folder) ? acct.folder : null,
+        accountSlug: acctIdent?.slug || null
+      }) || folderForSlug(slug)
     if (reuse) {
       startBrainSync(reuse)
+      rememberBrain({ path: reuse, slug, name: readTeamIdentity(reuse)?.name || slug })
       return { ok: true, skipped: true, brainPath: reuse, reason: 'already-on-this-computer', detail: reuse }
     }
-    if (process.env.BRAIN_APP_DRY_RUN === '1') {
-      return { ok: true, skipped: true, reason: 'dry-run', brainPath: null }
-    }
     if (!slug) throw new Error('No team to clone. Sign in first, or finish GitHub.')
-    const git = await ads2ai.gitToken(getMemberToken(), slug)
+    const git = await ads2ai.gitToken(tokenForSlug(slug), slug)
     const rawUrl = String(git.cloneUrl || git.url || git.repoUrl || '')
     if (!rawUrl) throw new Error('GitHub is not on this brain yet. Click Install in the browser, then try again.')
     const token = String(git.token || '')
@@ -473,34 +641,33 @@ export function registerStubIpc(): void {
       ? rawUrl.replace(/^https:\/\//, `https://x-access-token:${token}@`)
       : rawUrl
     const dest = String(opts?.dest || '').trim() || join(homedir(), 'Projects', `${slug}-brain`)
+    const pending = getPendingJoin()
     const cloned = await cloneBrain({
       cloneUrl,
       dest,
-      email: acct?.email || '',
-      name: acct?.name || ''
+      email: pending?.memberEmail || acct?.email || '',
+      name: pending?.memberName || acct?.name || ''
     })
     if (!cloned.ok) throw new Error(cloned.detail || 'Could not copy the shared folder onto this computer.')
-    if (acct) saveAccount({ ...acct, folder: cloned.dest })
     saveRecent(cloned.dest)
+    rememberBrain({ path: cloned.dest, slug, name: readTeamIdentity(cloned.dest)?.name || slug })
     startBrainSync(cloned.dest)
     return { ok: true, brainPath: cloned.dest, detail: cloned.detail }
   }
 
   ipcMain.handle('setup:applyFolder', async (_e, opts?: { teamSlug?: string; dest?: string }) => applyFolderImpl(opts))
   ipcMain.handle('setup:putFolder', async (_e, opts?: { teamSlug?: string; org?: string }) => {
-    if (dryRun()) {
-      return { ok: false, skipped: true, reason: 'dry-run', detail: 'Dry-run does not copy the folder.', brainPath: null }
-    }
     const slug = String(opts?.teamSlug || '').trim()
     const org = String(opts?.org || '').trim()
     if (!slug) throw new Error('No team to clone. Finish GitHub first.')
+    const token = tokenForSlug(slug)
     if (org) {
-      await ads2ai.adoptOrgInstallation(getMemberToken(), slug, org).catch((e) => {
+      await ads2ai.adoptOrgInstallation(token, slug, org).catch((e) => {
         const msg = String((e as Error).message || e)
         if (!/404|not found/i.test(msg)) throw e
       })
     }
-    await ads2ai.ensureBrainRepo(getMemberToken(), slug)
+    await ads2ai.ensureBrainRepo(token, slug)
     return applyFolderImpl({ teamSlug: slug })
   })
 
@@ -519,7 +686,7 @@ export function registerStubIpc(): void {
 
   ipcMain.handle('files:tree', async (_e, root?: string) => {
     const watching = readWatching()
-    const cwd = root || watching.brainPath
+    const cwd = root || currentBrainFolder() || watching.brainPath
     if (!cwd) return []
     return tree(cwd)
   })
@@ -528,7 +695,7 @@ export function registerStubIpc(): void {
   ipcMain.handle('files:read', async (_e, root: string, abs: string) => readSafe(root, abs))
   ipcMain.handle('files:browse', async (_e, root?: string) => {
     const watching = readWatching()
-    return browseDocs(root || watching.brainPath || '')
+    return browseDocs(root || currentBrainFolder() || watching.brainPath || '')
   })
   ipcMain.handle('files:fileUrl', async (_e, root: string, abs: string) => {
     if (!underRoot(root, abs)) throw new Error('That file is not in this brain.')
@@ -537,12 +704,19 @@ export function registerStubIpc(): void {
   ipcMain.handle('files:recents', async () => {
     const w = readWatching()
     const rec = loadRecents()
+    const known = listBrains().map((b) => ({ path: b.path, name: b.name, watching: Boolean(b.watching) }))
     const watched =
       w.brainPath && existsSync(w.brainPath)
         ? [{ path: w.brainPath, name: basename(w.brainPath), watching: true as const }]
         : []
-    const seen = new Set(watched.map((x) => x.path))
-    return [...watched, ...rec.filter((r) => !seen.has(r.path))]
+    const seen = new Set<string>()
+    const out: { path: string; name: string; watching?: boolean }[] = []
+    for (const row of [...known, ...watched, ...rec]) {
+      if (!row.path || seen.has(row.path)) continue
+      seen.add(row.path)
+      out.push(row)
+    }
+    return out
   })
   ipcMain.handle('files:remember', async (_e, folder: string) => {
     const abs = String(folder || '')

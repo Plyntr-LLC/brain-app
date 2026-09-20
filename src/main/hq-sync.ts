@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { pickSeatForFolder } from './hq-folder'
+import { pickSeatForFolder, pickSeatForHqRepo } from './hq-folder'
 import { pathToFileURL } from 'node:url'
 import { app } from 'electron'
 import { parseGithubHqRepo } from './github-repo'
@@ -40,6 +40,7 @@ type Agent = {
     }
   }>
   installAgentService: (opts: { seatId: string; nodePath: string; cliPath: string; logs: string }) => unknown
+  uninstallAgentService: (seatId: string) => unknown
   listSeats: () => string[]
   readState: (dir: string) => {
     mini_root?: string
@@ -49,6 +50,7 @@ type Agent = {
     offline?: boolean
     last_error?: string
     roots?: string[]
+    hq_repo?: string
   } | null
   readToken: (dir: string) => string
   seatDir: (seatId: string) => string
@@ -81,6 +83,7 @@ async function loadAgent(): Promise<Agent> {
     createApi: api.createApi,
     exchangeAndCompose: setup.exchangeAndCompose,
     installAgentService: setup.installAgentService,
+    uninstallAgentService: setup.uninstallAgentService,
     listSeats: health.listSeats,
     readState: setup.readState,
     readToken: setup.readToken,
@@ -217,27 +220,90 @@ export async function existingProjectSeat(folder?: string): Promise<{
   return fallback
 }
 
-async function startWatch(seatId: string): Promise<void> {
-  if (watching.has(seatId)) return
-  const mod = await loadAgent()
-  watching.add(seatId)
-  if (app.isPackaged) {
-    try {
-      mod.installAgentService({
-        seatId,
-        nodePath: process.execPath,
-        cliPath: cliPath(),
-        logs: mod.logDir(seatId)
-      })
-      return
-    } catch (err) {
-      console.error(err)
+async function stopHqAgent(): Promise<void> {
+  watching.clear()
+  try {
+    const mod = await loadAgent()
+    const ids = mod.listSeats()
+    if (ids.length) {
+      for (const id of ids) {
+        try {
+          mod.uninstallAgentService(id)
+        } catch {
+          /* */
+        }
+      }
+    } else {
+      try {
+        mod.uninstallAgentService('')
+      } catch {
+        /* */
+      }
+    }
+  } catch {
+    /* vendor missing */
+  }
+  if (process.platform === 'darwin') {
+    const uid = typeof process.getuid === 'function' ? process.getuid() : undefined
+    if (uid != null) {
+      try {
+        execFileSync('launchctl', ['bootout', `gui/${uid}/com.plyntr.brain-sync`], { stdio: 'pipe' })
+      } catch {
+        /* not loaded */
+      }
     }
   }
-  void mod.watchLoop({ seatId }).catch((err) => {
-    watching.delete(seatId)
+}
+
+async function startWatch(seatId: string): Promise<void> {
+  const id = String(seatId || '').trim()
+  if (!id) return
+  if (watching.has(id)) return
+  const mod = await loadAgent()
+  watching.add(id)
+  try {
+    mod.installAgentService({
+      seatId: id,
+      nodePath: process.execPath,
+      cliPath: cliPath(),
+      logs: mod.logDir(id)
+    })
+    return
+  } catch (err) {
     console.error(err)
+  }
+  void mod.watchLoop({ seatId: id }).catch((e) => {
+    watching.delete(id)
+    console.error(e)
   })
+}
+
+/** One active brain: project sync follows this folder’s HQ, or stops. */
+export async function retargetHqSync(folder: string): Promise<{ ok: boolean; detail: string }> {
+  const path = String(folder || '').trim()
+  await stopHqAgent()
+  if (!path) return { ok: true, detail: 'Project sync is off.' }
+  try {
+    const mod = await loadAgent()
+    const seats = mod.listSeats().map((id) => {
+      const state = mod.readState(mod.seatDir(id)) || {}
+      const payload = payloadFromToken(mod.readToken(mod.seatDir(id)))
+      return {
+        id,
+        mini_root: state.mini_root,
+        brain_label: state.brain_label,
+        hq_repo: String(state.hq_repo || payload?.hq_repo || '')
+      }
+    })
+    const hit = pickSeatForFolder(seats, path) || pickSeatForHqRepo(seats, hqRepoFromFolder(path))
+    if (hit?.id) {
+      await startWatch(hit.id)
+      return { ok: true, detail: 'Project sync is on this brain.' }
+    }
+  } catch {
+    /* vendor missing */
+  }
+  return { ok: true, detail: 'No project-sync seat for this brain.' }
 }
 
 function payloadFromToken(token: string): { email?: string; kind?: string; hq_repo?: string } | null {
@@ -287,7 +353,13 @@ export async function openExistingSeat(): Promise<{
   }
 }
 
-export async function ensureHqSyncAgent(): Promise<{ ok: boolean; folder?: string; label?: string }> {
+export async function ensureHqSyncAgent(folder?: string): Promise<{ ok: boolean; folder?: string; label?: string }> {
+  const want = String(folder || '').trim()
+  if (want) {
+    await retargetHqSync(want)
+    const seat = await existingProjectSeat(want)
+    return { ok: Boolean(seat), folder: seat?.folder, label: seat?.label }
+  }
   const seat = await existingProjectSeat()
   if (!seat) return { ok: false }
   await startWatch(seat.seatId)
@@ -532,9 +604,9 @@ export async function ownerStatus(): Promise<{
   }
 }
 
-function assertJoeSuper(): void {
+export function assertJoeSuper(job = 'do that'): void {
   if (!isJoeSuperAdmin(getAccount() || loadAccount(), getSettings())) {
-    throw new Error('Only the superadmin can add a company.')
+    throw new Error(`Only the superadmin can ${job}.`)
   }
 }
 
@@ -544,7 +616,7 @@ export async function addCompany(opts: {
   owner_name: string
   role?: string
 }): Promise<{ ok: true; business: PlatformBusiness; detail: string }> {
-  assertJoeSuper()
+  assertJoeSuper('add a company')
   const session = loadOwnerSession()
   if (!session) {
     throw new Error('Sign in for project sync first. Use joe@plyntr.com and the code from your email.')

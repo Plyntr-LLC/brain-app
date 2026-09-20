@@ -46,6 +46,7 @@ type Msg = {
   steps?: { title: string; status?: string }[]
   rawKind?: string
   skinLabel?: string | null
+  fingerprint?: string
 }
 type Queued = { id: string; text: string; files?: Attach[] }
 
@@ -658,7 +659,8 @@ function ChatPane({
             who: 'raw',
             text: ev.data || ev.kind,
             rawKind: ev.kind,
-            skinLabel: ev.skinLabel
+            skinLabel: ev.skinLabel,
+            fingerprint: ev.fingerprint
           }
         ])
       }
@@ -667,6 +669,22 @@ function ChatPane({
       off()
     }
   }, [id])
+
+  useEffect(() => {
+    return window.brain.skin.onHealed((ev) => {
+      setMessages((m) =>
+        m.map((row) => {
+          if (row.fingerprint && row.fingerprint === ev.fingerprint) {
+            return { ...row, skinLabel: ev.component }
+          }
+          if (row.who === 'raw' && row.rawKind === ev.eventKind && (!row.skinLabel || row.skinLabel === 'RawFallback')) {
+            return { ...row, skinLabel: ev.component, fingerprint: row.fingerprint || ev.fingerprint }
+          }
+          return row
+        })
+      )
+    })
+  }, [])
 
   useEffect(() => {
     if (!pinBottom.current) return
@@ -1786,8 +1804,8 @@ export function TerminalWorkspace({
   )
 
   useEffect(() => {
-    if (!cwd && s.brainPath) setCwd(s.brainPath)
-  }, [s.brainPath, cwd])
+    if (s.brainPath && s.brainPath !== cwd) setCwd(s.brainPath)
+  }, [s.brainPath])
 
   useEffect(() => {
     if (!cwd) return
@@ -1814,12 +1832,13 @@ export function TerminalWorkspace({
           )
           setActive(saved.active || saved.tabs[0].id)
           setLastChatId(saved.tabs.find((t) => t.type === 'chat')?.id || saved.tabs[0].id)
-          if (saved.messages) setTranscripts(saved.messages)
+          setTranscripts(saved.messages || {})
         } else {
           const t = freshTab()
           setTabs([t])
           setActive(t.id)
           setLastChatId(t.id)
+          setTranscripts({})
         }
       })
       .catch(() => {
@@ -1828,6 +1847,7 @@ export function TerminalWorkspace({
         setTabs([t])
         setActive(t.id)
         setLastChatId(t.id)
+        setTranscripts({})
       })
       .finally(() => {
         if (!live) return

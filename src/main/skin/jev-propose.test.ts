@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { KIND_CONFIDENCE, buildQuestions, decideProposal, jevShouldRun } from './jev-propose.ts'
+import { KIND_CONFIDENCE, buildQuestions, decideProposal, drainStillOpen, jevShouldRun, shouldLearn, withCurrentPaintPolicy } from './jev-propose.ts'
 
 test('jevShouldRun skips matched, hidden, and token kinds', () => {
   assert.equal(jevShouldRun({ matched: true, eventKind: 'waiting_screen' }), false)
@@ -65,6 +65,73 @@ test('invented catalog ids do not paint', () => {
   })
   assert.equal(p.component, null)
   assert.equal(p.paint, false)
+})
+
+test('high-confidence Picker paints and is learnable', () => {
+  const p = decideProposal({
+    answers: { kind: { choice: 'Picker', confidence: KIND_CONFIDENCE } },
+    optionLabels: []
+  })
+  assert.equal(p.paint, true)
+  assert.equal(shouldLearn(p), true)
+})
+
+test('PermissionAsk is not learnable', () => {
+  const p = decideProposal({
+    answers: {
+      kind: { choice: 'PermissionAsk', confidence: 0.99 },
+      looks_like_permission: { noul: 0.95 }
+    },
+    optionLabels: ['Allow']
+  })
+  assert.equal(shouldLearn(p), false)
+})
+
+test('stale Picker propose-only cache becomes learnable under current policy', () => {
+  const stale = decideProposal({
+    answers: { kind: { choice: 'Picker', confidence: KIND_CONFIDENCE } },
+    optionLabels: []
+  })
+  const revived = withCurrentPaintPolicy({ ...stale, paint: false, detail: 'propose only' })
+  assert.equal(revived.paint, true)
+  assert.equal(shouldLearn(revived), true)
+})
+
+test('stale PermissionAsk cache stays not learnable', () => {
+  const stale = decideProposal({
+    answers: {
+      kind: { choice: 'PermissionAsk', confidence: 0.99 },
+      looks_like_permission: { noul: 0.95 }
+    },
+    optionLabels: ['Allow']
+  })
+  assert.equal(shouldLearn(withCurrentPaintPolicy(stale)), false)
+})
+
+test('drainStillOpen skips learned, matched, and finished PermissionAsk', () => {
+  assert.equal(drainStillOpen({ learned: true, matched: false, eventKind: 'waiting_screen' }), false)
+  assert.equal(drainStillOpen({ learned: false, matched: true, eventKind: 'waiting_screen' }), false)
+  assert.equal(drainStillOpen({ learned: false, matched: false, eventKind: 'waiting_screen' }), true)
+  const perm = decideProposal({
+    answers: {
+      kind: { choice: 'PermissionAsk', confidence: 0.99 },
+      looks_like_permission: { noul: 0.95 }
+    },
+    optionLabels: ['Allow']
+  })
+  assert.equal(drainStillOpen({ learned: false, matched: false, eventKind: 'waiting_screen', cached: perm }), false)
+})
+
+test('drainStillOpen keeps a stale high-confidence Picker so autoheal can learn it', () => {
+  const stale = {
+    ...decideProposal({
+      answers: { kind: { choice: 'Picker', confidence: KIND_CONFIDENCE } },
+      optionLabels: []
+    }),
+    paint: false,
+    detail: 'propose only'
+  }
+  assert.equal(drainStillOpen({ learned: false, matched: false, eventKind: 'waiting_screen', cached: stale }), true)
 })
 
 test('option_binding question only lists on-screen labels', () => {

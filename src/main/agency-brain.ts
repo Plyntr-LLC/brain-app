@@ -1,6 +1,19 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, openSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
+import { promisify } from 'node:util'
+import { execFile } from 'node:child_process'
+import {
+  activateProfile,
+  alreadyActive,
+  findProfile,
+  type AgencyConfig,
+  type AgencyProfile
+} from './agency-config'
+import { getPendingJoin } from './join-pending'
+
+const execFileP = promisify(execFile)
 
 function appCandidates(): string[] {
   const home = homedir()
@@ -208,4 +221,156 @@ export function watchingHealth(): {
 
 export function writesAllowed(): boolean {
   return process.env.BRAIN_APP_ALLOW_CREATE === '1'
+}
+
+function backupPath(): string {
+  return configPath().replace(/config\.json$/, 'config.backup.json')
+}
+
+function loadFullConfig(): AgencyConfig | null {
+  const p = configPath()
+  if (!existsSync(p)) return null
+  try {
+    return JSON.parse(readFileSync(p, 'utf8')) as AgencyConfig
+  } catch {
+    return null
+  }
+}
+
+function writeConfigAtomic(cfg: AgencyConfig): void {
+  const p = configPath()
+  const json = JSON.stringify(cfg, null, 2)
+  const tmp = p + '.tmp'
+  const fd = openSync(tmp, 'w')
+  try {
+    writeFileSync(fd, json)
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+  renameSync(tmp, p)
+  try {
+    writeFileSync(backupPath(), json)
+  } catch {
+    /* best effort */
+  }
+}
+
+/** Token for this team from Agency Brain config or the in-flight join. Never log it. */
+export function memberTokenForTeam(slug: string): string | null {
+  const want = String(slug || '').trim().toLowerCase()
+  if (!want) return null
+  const pending = getPendingJoin()
+  if (pending && pending.teamSlug.toLowerCase() === want && pending.memberToken) return pending.memberToken
+  const cfg = loadFullConfig()
+  if (!cfg) return null
+  if (String(cfg.teamSlug || '').trim().toLowerCase() === want && cfg.memberToken) {
+    return String(cfg.memberToken)
+  }
+  for (const b of cfg.brains || []) {
+    if (String(b.teamSlug || '').trim().toLowerCase() === want && b.memberToken) {
+      return String(b.memberToken)
+    }
+  }
+  return null
+}
+
+function profileFromJoin(folder: string): AgencyProfile | null {
+  const join = getPendingJoin()
+  if (!join?.memberToken || !join.teamSlug) return null
+  return {
+    brainPath: folder,
+    mode: 'agency',
+    teamSlug: join.teamSlug,
+    memberEmail: join.memberEmail,
+    memberName: join.memberName,
+    memberRole: join.memberRole || 'owner',
+    memberToken: join.memberToken,
+    scoutSeats: join.scoutSeats,
+    packageTier: join.packageTier,
+    kind: join.kind || 'agency',
+    brandName: join.brandName || join.teamName || join.teamSlug
+  }
+}
+
+async function bounceAgencyBrain(): Promise<void> {
+  if (process.platform === 'darwin') {
+    try {
+      await execFileP('osascript', [
+        '-e',
+        'if application "Agency Brain" is running then tell application "Agency Brain" to quit'
+      ])
+    } catch {
+      /* not running */
+    }
+    await new Promise((r) => setTimeout(r, 800))
+    spawn('open', ['-a', 'Agency Brain'], { detached: true, stdio: 'ignore' }).unref()
+    return
+  }
+  if (process.platform === 'win32') {
+    const exe = detectApp().path
+    try {
+      await execFileP('taskkill', ['/IM', 'Agency Brain.exe', '/F'])
+    } catch {
+      /* */
+    }
+    await new Promise((r) => setTimeout(r, 800))
+    if (exe && existsSync(exe)) spawn(exe, [], { detached: true, stdio: 'ignore' }).unref()
+  }
+}
+
+/** Point Agency Brain at this folder (archive the last brain, bounce the watcher). */
+export function accountFieldsForFolder(folder: string): {
+  email: string
+  name: string
+  role: string
+  token: string
+} | null {
+  const cfg = loadFullConfig()
+  if (!cfg) return null
+  const path = String(folder || '').trim()
+  const row =
+    String(cfg.brainPath || '').trim() === path && cfg.memberToken
+      ? cfg
+      : findProfile(cfg, path, readTeamIdentity(path)?.slug)
+  if (!row?.memberToken) return null
+  return {
+    email: String(row.memberEmail || '').trim().toLowerCase(),
+    name: String(row.memberName || ''),
+    role: String(row.memberRole || ''),
+    token: String(row.memberToken)
+  }
+}
+
+export async function activateWatching(folder: string): Promise<{ ok: boolean; detail: string }> {
+  const path = String(folder || '').trim()
+  if (!path || !existsSync(path)) return { ok: false, detail: 'That brain folder is not on this computer.' }
+  const cfg = loadFullConfig()
+  if (!cfg) return { ok: false, detail: 'Agency Brain is not set up on this computer yet.' }
+  const ident = readTeamIdentity(path)
+  const incoming = profileFromJoin(path)
+  const slug = incoming?.teamSlug || ident?.slug || ''
+  const found = findProfile(cfg, path, slug)
+  const target: AgencyProfile | null = incoming
+    ? {
+        ...(found || {}),
+        ...incoming,
+        brainPath: path,
+        brandName: incoming.brandName || ident?.name || incoming.teamSlug
+      }
+    : found
+      ? { ...found, brainPath: path, brandName: found.brandName || ident?.name || found.teamSlug }
+      : null
+  if (!target?.memberToken) {
+    return {
+      ok: false,
+      detail: 'Add this brain with the code from Ads2AI first so Agency Brain can watch it.'
+    }
+  }
+  if (alreadyActive(cfg, path, target.teamSlug) && String(cfg.memberToken || '') === target.memberToken) {
+    return { ok: true, detail: 'Agency Brain is already watching this brain.' }
+  }
+  writeConfigAtomic(activateProfile(cfg, target))
+  await bounceAgencyBrain()
+  return { ok: true, detail: 'Agency Brain is watching this brain.' }
 }

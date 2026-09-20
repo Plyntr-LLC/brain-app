@@ -104,6 +104,35 @@ const brain = {
     clients: () => ipcRenderer.invoke('settings:clients') as Promise<Record<string, unknown>[]>,
     saveClients: (clients: unknown[]) => ipcRenderer.invoke('settings:saveClients', clients)
   },
+  brains: {
+    list: () =>
+      ipcRenderer.invoke('brains:list') as Promise<
+        { path: string; name: string; slug: string; role?: string; watching?: boolean; current?: boolean }[]
+      >,
+    switch: (folder: string) =>
+      ipcRenderer.invoke('brains:switch', folder) as Promise<{
+        path: string
+        name: string
+        slug: string
+        agency?: { ok: boolean; detail: string }
+        hq?: { ok: boolean; detail: string }
+      }>,
+    add: (opts: { code: string }) =>
+      ipcRenderer.invoke('brains:add', opts) as Promise<{
+        ok?: boolean
+        skipped?: boolean
+        detail?: string
+        slug?: string
+        name?: string
+        setup?: boolean
+        already?: boolean
+        brainPath?: string
+        agency?: { ok: boolean; detail: string }
+        hq?: { ok: boolean; detail: string }
+      }>,
+    remember: (row: { path?: string; name?: string; slug?: string; role?: string }) =>
+      ipcRenderer.invoke('brains:remember', row)
+  },
   auth: {
     resolveCode: (code: string) => ipcRenderer.invoke('auth:resolveCode', code),
     requestCode: (email: string) =>
@@ -226,6 +255,21 @@ const brain = {
     openAppInstall: (slug: string, org?: string) =>
       ipcRenderer.invoke('setup:openAppInstall', slug, org),
     pollInstall: (slug: string) => ipcRenderer.invoke('setup:pollInstall', slug),
+    waitInstall: (slug: string) =>
+      ipcRenderer.invoke('setup:waitInstall', slug) as Promise<{
+        ok: boolean
+        installed?: boolean
+        repoUrl?: string
+        detail?: string
+      }>,
+    bringFront: () => ipcRenderer.invoke('setup:bringFront'),
+    onBack: (fn: (ev: { org?: string }) => void) => {
+      const h = (_e: unknown, payload: { org?: string }) => fn(payload || {})
+      ipcRenderer.on('setup:back', h)
+      return () => {
+        ipcRenderer.removeListener('setup:back', h)
+      }
+    },
     ensureRepo: (slug: string) => ipcRenderer.invoke('setup:ensureRepo', slug),
     putFolder: (opts: { teamSlug: string; org?: string }) =>
       ipcRenderer.invoke('setup:putFolder', opts) as Promise<{
@@ -459,6 +503,7 @@ const brain = {
         jevReady: boolean
         joe: boolean
         components: string[]
+        learned: { cli: string; eventKind: string; component: string; confidence: number }[]
       }>,
     toggle: (on: boolean) => ipcRenderer.invoke('skin:toggle', on) as Promise<{ ok: boolean; capture: boolean }>,
     toggleJev: (on: boolean) =>
@@ -473,6 +518,7 @@ const brain = {
           fingerprint: string
           catalogId: string | null
           matched: boolean
+          learned?: boolean
           label: string | null
           propsHint: Record<string, unknown>
           jevProposal: {
@@ -491,8 +537,25 @@ const brain = {
         detail?: string
         proposal?: { component: string | null; confidence: number; paint: boolean; detail: string }
       }>,
+    learn: () =>
+      ipcRenderer.invoke('skin:learn') as Promise<{
+        ok: boolean
+        added: number
+        detail?: string
+        learned?: { cli: string; eventKind: string; component: string; confidence: number }[]
+      }>,
     decide: (tabId: string, optionId: string) =>
-      ipcRenderer.invoke('skin:decide', { tabId, optionId }) as Promise<{ ok: boolean }>
+      ipcRenderer.invoke('skin:decide', { tabId, optionId }) as Promise<{ ok: boolean }>,
+    onHealed: (
+      fn: (ev: { fingerprint: string; cli: string; eventKind: string; component: string }) => void
+    ) => {
+      const h = (_e: unknown, payload: { fingerprint: string; cli: string; eventKind: string; component: string }) =>
+        fn(payload)
+      ipcRenderer.on('skin:healed', h)
+      return () => {
+        ipcRenderer.removeListener('skin:healed', h)
+      }
+    }
   }
 }
 

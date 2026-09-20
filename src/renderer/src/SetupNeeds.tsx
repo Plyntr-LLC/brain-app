@@ -32,12 +32,10 @@ function pickAi(items: ToolNeed[]): AiKind | undefined {
 
 export function SetupNeeds({
   onReady,
-  onNeedFolder,
-  onCode
+  onNeedFolder
 }: {
   onReady: (info: { ready: boolean; watching: boolean; ai?: AiKind }) => void
   onNeedFolder?: () => void
-  onCode: () => void
 }) {
   const [items, setItems] = useState<ToolNeed[]>([])
   const [watching, setWatching] = useState(false)
@@ -114,6 +112,7 @@ export function SetupNeeds({
         (st) => Boolean(st.items.find((i) => i.id === item.id)?.present),
         `Waiting on ${item.label}. ${item.accept || 'Finish that window, then we continue.'}`
       )
+      await window.brain.setup.bringFront()
       if (stop.current) return
       if (!ok) throw new Error(`${item.label} is still missing. Finish that installer, then Start setup again.`)
     }
@@ -156,6 +155,11 @@ export function SetupNeeds({
       setBusyLabel('')
       setBanner('')
       const ai = pickAi(st.items)
+      if (!ai) {
+        setPhase('review')
+        setErr('Install Grok, Claude, Cursor, or ChatGPT. Chat needs one of them. Then Start setup again.')
+        return
+      }
       if (st.ready) {
         onReady({ ready: true, watching: true, ai })
         return
@@ -259,9 +263,10 @@ export function SetupNeeds({
             const ai = pickAi(st.items)
             if (st.ready) onReady({ ready: true, watching: true, ai })
             else if (st.watching && ai) onReady({ ready: false, watching: true, ai })
+            else setErr('Still missing a required piece. Finish the open installer, then Recheck.')
           }}
         >
-          {running ? 'I finished that' : 'Recheck'}
+          {running ? 'I finished that window' : 'Recheck'}
         </button>
         {running ? (
           <button
@@ -276,12 +281,9 @@ export function SetupNeeds({
               setNote('Setup paused. Start setup again when you are ready.')
             }}
           >
-            Stop
+            Pause
           </button>
         ) : null}
-        <button className="linkish" type="button" disabled={running} onClick={onCode}>
-          I have a setup code
-        </button>
       </div>
     </>
   )

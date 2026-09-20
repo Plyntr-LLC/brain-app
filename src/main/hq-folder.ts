@@ -32,6 +32,7 @@ export type SeatRow = {
   last_sync_at?: string
   offline?: boolean
   last_error?: string
+  hq_repo?: string
 }
 
 /** Match the open/watched folder. Never fall back to some other company's seat. */
@@ -41,6 +42,20 @@ export function pickSeatForFolder<T extends SeatRow>(seats: T[], folder: string)
   for (const s of seats) {
     if (!s.mini_root) continue
     if (seatMatchesFolder(s, want)) return s
+  }
+  return null
+}
+
+export function normalizeHqRepo(raw: string): string {
+  return String(raw || '').trim().toLowerCase()
+}
+
+/** Project-sync seats that belong to this HQ repo. Never another company's. */
+export function pickSeatForHqRepo<T extends SeatRow>(seats: T[], hqRepo: string): T | null {
+  const want = normalizeHqRepo(hqRepo)
+  if (!want) return null
+  for (const s of seats) {
+    if (normalizeHqRepo(s.hq_repo || '') === want) return s
   }
   return null
 }

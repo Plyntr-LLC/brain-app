@@ -21,6 +21,8 @@
     "src/main/setup-folder.test.ts",
     "src/main/super-admin.test.ts",
     "src/main/sync-health.test.ts",
-    "src/main/cli-folder.test.ts"
+    "src/main/cli-folder.test.ts",
+    "src/main/brains-pick.test.ts",
+    "src/main/agency-config.test.ts"
   ]
 }

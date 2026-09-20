@@ -7,6 +7,7 @@ import { SKIN_COMPONENTS, isSkinComponent, type SkinComponentId } from '../../sh
 import type { SkinInEvent } from '../../shared/skin/spec'
 import type { AiKind } from '../../shared/contracts'
 import { getProposal } from './jev-cache'
+import { getLearned } from './learned'
 
 export type SkinCapture = {
   id: string
@@ -59,9 +60,18 @@ export function skinHint(opts: { cli: string; ev: SkinInEvent }): {
   catalogId: SkinComponentId | null
 } {
   const kind = String(opts.ev.kind || '')
-  const catalogId = catalogIdForEvent(opts.ev)
-  const fingerprint = fingerprintOf({ cli: opts.cli, kind, propsHint: propsHintOf(opts.ev), catalogId })
-  return { fingerprint, label: labeledFingerprints()[fingerprint] || jevPaintLabel(fingerprint), catalogId }
+  const codeId = catalogIdForEvent(opts.ev)
+  let learned: { component: SkinComponentId } | null = null
+  try {
+    learned = getLearned(opts.cli, kind)
+  } catch {
+    learned = null
+  }
+  const catalogId = codeId || learned?.component || null
+  const fingerprint = fingerprintOf({ cli: opts.cli, kind, propsHint: propsHintOf(opts.ev), catalogId: codeId })
+  const joe = labeledFingerprints()[fingerprint] || null
+  const label = joe || learned?.component || jevPaintLabel(fingerprint)
+  return { fingerprint, label, catalogId }
 }
 
 function jevPaintLabel(fingerprint: string): string | null {

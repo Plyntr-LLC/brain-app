@@ -85,6 +85,24 @@
   font-size: 0.95rem;
   margin: 0.2rem 0 0.4rem;
 }
+.set-fold {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.set-fold .set-h {
+  margin-bottom: 0;
+}
+.set-fold[aria-expanded='true'] .set-h {
+  margin-bottom: 0.4rem;
+}
 .person-add { margin-top: 0.7rem; }
 .set-row {
   display: flex;

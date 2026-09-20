@@ -4,6 +4,7 @@ export type HqAgentHealth = {
   lastSync: string
   offline: boolean
   error: string
+  openOnly?: boolean
 }
 
 export type SyncHealth = {
@@ -29,6 +30,9 @@ export function paintHealth(hq: HqAgentHealth, watching: boolean): SyncHealth {
     }
     if (hq.error) {
       return { ok: false, line: `${hq.label}: ${hq.error}`, lastSync: hq.lastSync, offline: false, error: hq.error }
+    }
+    if (hq.openOnly) {
+      return { ok: true, line: `${hq.label} · this window`, lastSync: hq.lastSync, offline: false, error: '' }
     }
     if (!hq.lastSync) {
       return {

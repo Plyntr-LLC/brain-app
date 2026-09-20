@@ -47,11 +47,13 @@ const PAINT_OK = new Set<SkinComponentId>([
   'Thought',
   'ToolCard',
   'WorkPulse',
+  'Picker',
   'SlashMenu',
   'Plan',
   'ContextMeter',
   'CompactNotice',
-  'ErrorNotice'
+  'ErrorNotice',
+  'Queue'
 ])
 
 const KIND_CRITERIA: Record<string, string> = {
@@ -173,7 +175,7 @@ export function decideProposal(opts: { answers: JevAnswers; optionLabels: string
       detail: permission >= PERMISSION_NOUL ? 'permission proposed, not bound' : 'permission low'
     }
   }
-  if (kind === 'LoginNeed' || kind === 'Queue' || kind === 'Picker') {
+  if (kind === 'LoginNeed') {
     return { ...base, component: kind, paint: false, detail: 'propose only' }
   }
   if (confidence < KIND_CONFIDENCE) {
@@ -183,6 +185,36 @@ export function decideProposal(opts: { answers: JevAnswers; optionLabels: string
     return { ...base, component: kind, paint: false, detail: 'no auto paint' }
   }
   return { ...base, component: kind, paint: true, detail: 'catalog hit' }
+}
+
+export function shouldLearn(p: JevProposal): boolean {
+  return Boolean(p.paint && p.component && isSkinComponent(p.component) && p.component !== 'RawFallback')
+}
+
+/** True when drain or live Jev should still look at this unmatched screen. */
+export function drainStillOpen(opts: {
+  learned: boolean
+  matched: boolean
+  eventKind: string
+  cached?: JevProposal | null
+}): boolean {
+  if (opts.learned || opts.matched) return false
+  if (!jevShouldRun({ matched: false, eventKind: opts.eventKind })) return false
+  if (!opts.cached) return true
+  return shouldLearn(withCurrentPaintPolicy(opts.cached))
+}
+
+/** Recompute paint from the stored choice using today’s policy (Picker/Queue used to be propose-only). */
+export function withCurrentPaintPolicy(p: JevProposal): JevProposal {
+  return decideProposal({
+    answers: {
+      kind: { choice: p.component || 'unknown', confidence: p.confidence },
+      is_waiting_for_human: { noul: p.waiting },
+      looks_like_permission: { noul: p.permission },
+      option_binding: p.option ? { choice: p.option } : undefined
+    },
+    optionLabels: p.option ? [p.option] : []
+  })
 }
 
 function uniqLabels(labels: string[]): string[] {

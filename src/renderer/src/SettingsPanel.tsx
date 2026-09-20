@@ -27,14 +27,46 @@ function prettyName(raw: string): string {
   return s.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ')
 }
 
+function nowIn(row: {
+  name: string
+  agency?: { ok: boolean; detail: string }
+  hq?: { ok: boolean; detail: string }
+}): string {
+  const name = prettyName(row.name) || 'this brain'
+  if (row.agency?.ok) return `Now in ${name}. Sync follows this brain.`
+  if (row.agency?.detail) return `Now in ${name}. ${row.agency.detail}`
+  return `Now in ${name}.`
+}
+
+function FoldHead({
+  kicker,
+  title,
+  open,
+  onToggle
+}: {
+  kicker: string
+  title: string
+  open: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button type="button" className="set-fold" onClick={onToggle} aria-expanded={open}>
+      <p className="kicker">{kicker}</p>
+      <h3 className="set-h">{title}</h3>
+    </button>
+  )
+}
+
 export function SettingsPanel({
   role,
   onClose,
-  onLogout
+  onLogout,
+  onSwitchBrain
 }: {
   role?: string
   onClose: () => void
   onLogout?: () => void
+  onSwitchBrain?: (row: { path: string; name: string }) => void
 }) {
   const [superAdmin, setSuper] = useState(false)
   const [email, setEmail] = useState('')
@@ -52,15 +84,23 @@ export function SettingsPanel({
   const [skinJev, setSkinJev] = useState(false)
   const [jevReady, setJevReady] = useState(false)
   const [jevBusy, setJevBusy] = useState('')
+  const [learned, setLearned] = useState<{ cli: string; eventKind: string; component: string; confidence: number }[]>(
+    []
+  )
   const [hq, setHq] = useState<HqStatus | null>(null)
   const [hqCode, setHqCode] = useState('')
   const [hqRepo, setHqRepo] = useState('')
   const [folderRepo, setFolderRepo] = useState('')
   const [hqBusy, setHqBusy] = useState(false)
-  const [bizName, setBizName] = useState('')
-  const [bizEmail, setBizEmail] = useState('')
-  const [bizOwnerName, setBizOwnerName] = useState('')
-  const [bizRole, setBizRole] = useState<'owner' | 'scout'>('owner')
+  const [brains, setBrains] = useState<
+    { path: string; name: string; slug: string; watching?: boolean; current?: boolean }[]
+  >([])
+  const [openAdd, setOpenAdd] = useState(false)
+  const [openPeople, setOpenPeople] = useState(false)
+  const [openCatalog, setOpenCatalog] = useState(false)
+  const [adsCode, setAdsCode] = useState('')
+  const [pending, setPending] = useState<{ slug: string; name: string } | null>(null)
+  const [org, setOrg] = useState('')
   const [bizBusy, setBizBusy] = useState(false)
   const [captures, setCaptures] = useState<
     {
@@ -71,6 +111,7 @@ export function SettingsPanel({
       catalogId: string | null
       matched: boolean
       label: string | null
+      learned?: boolean
       jevProposal?: {
         component: string | null
         confidence: number
@@ -90,6 +131,7 @@ export function SettingsPanel({
       setHelloName(String(s.name || '').trim())
       setBrainName(prettyName(String(s.brainName || '')))
       setSeat(String(s.role || ''))
+      setBrains(await window.brain.brains.list().catch(() => []))
       const roster = await window.brain.settings.roster().catch(() => [])
       const local = roster.length ? roster : await window.brain.settings.team()
       setPeople(local)
@@ -105,24 +147,43 @@ export function SettingsPanel({
         }
       }
       setAppVer(await window.brain.version().catch(() => ''))
-      const skin = await window.brain.skin
-        .get()
-        .catch(() => ({ capture: false, jev: false, jevReady: false, joe: false, components: [] }))
+      const skin = await window.brain.skin.get().catch(() => ({
+        capture: false,
+        jev: false,
+        jevReady: false,
+        joe: false,
+        components: [] as string[],
+        learned: [] as { cli: string; eventKind: string; component: string; confidence: number }[]
+      }))
       if (skin.joe) {
         setSkinCap(Boolean(skin.capture))
         setSkinJev(Boolean(skin.jev))
         setJevReady(Boolean(skin.jevReady))
+        setLearned(skin.learned || [])
         setCaptures(await window.brain.skin.list().catch(() => []))
       }
       setLoaded(true)
     })()
-    return window.brain.onUpdate((ev) => {
+    const offUpdate = window.brain.onUpdate((ev) => {
       if (ev.status === 'checking') setUpd('Checking for an update…')
       else if (ev.status === 'available') setUpd(`Update ${ev.detail} is downloading.`)
       else if (ev.status === 'none') setUpd('You already have the latest Brain.')
       else if (ev.status === 'downloaded') setUpd(`Update ${ev.detail} is ready. Restart to install. Your chats stay.`)
       else if (ev.status === 'error') setUpd(ev.detail || 'Could not check for an update.')
     })
+    const offHeal = window.brain.skin.onHealed(() => {
+      void window.brain.skin.get().then((s) => setLearned(s.learned || []))
+      void window.brain.skin.list().then(setCaptures)
+    })
+    const offBack = window.brain.setup.onBack((ev) => {
+      const login = String(ev.org || '').trim()
+      if (login) setOrg((cur) => (cur.trim() ? cur : login))
+    })
+    return () => {
+      offUpdate()
+      offHeal()
+      offBack()
+    }
   }, [])
 
   if (!loaded) {
@@ -154,6 +215,37 @@ export function SettingsPanel({
       <div className="set-now">
         <p className="set-now-k">Welcome, {who}</p>
         <p>You are inside {here}.</p>
+        {joe && superAdmin && brains.length ? (
+          <label className="field" style={{ marginTop: '0.7rem', marginBottom: 0 }}>
+            Switch brain
+            <select
+              value={brains.find((b) => b.current)?.path || ''}
+              onChange={async (e) => {
+                const path = e.target.value
+                if (!path) return
+                try {
+                  const row = await window.brain.brains.switch(path)
+                  setBrains(await window.brain.brains.list())
+                  setBrainName(prettyName(row.name))
+                  onSwitchBrain?.(row)
+                  const bridge = await window.brain.hqSync.ownerStatus().catch(() => null)
+                  setHq(bridge)
+                  setFolderRepo(await window.brain.hqSync.watchedRepo().catch(() => ''))
+                  setNote(nowIn(row))
+                } catch (err) {
+                  setNote(String((err as Error).message || err))
+                }
+              }}
+            >
+              {brains.map((b) => (
+                <option key={b.path} value={b.path}>
+                  {prettyName(b.name || b.slug || b.path)}
+                  {b.watching ? ' · Agency Brain watching' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </div>
 
       <section className="set-block" style={{ borderTop: 0, paddingTop: 0 }}>
@@ -190,123 +282,168 @@ export function SettingsPanel({
 
       {joe && superAdmin ? (
         <section className="set-block">
-          <p className="kicker">Superadmin</p>
-          <h3 className="set-h">Add a company</h3>
-          <p>
-            Only you see this. This starts a new company. They get a login email and connect GitHub themselves. It is not
-            added to {here}.
-          </p>
-          {folderRepo && hq?.hq_repo && folderRepo !== hq.hq_repo ? (
-            <p className="tiny">
-              This window is {here} ({folderRepo}). Project sync is still on {hq.hq_repo}.
-            </p>
-          ) : null}
-          {!hq?.signedIn ? (
+          <FoldHead
+            kicker="Ads2AI"
+            title="Add a new company brain"
+            open={openAdd}
+            onToggle={() => {
+              setOpenAdd((v) => !v)
+              if (openAdd) {
+                setPending(null)
+              }
+            }}
+          />
+          {openAdd ? (
             <>
-              <p className="tiny">A six-digit code to joe@plyntr.com unlocks send. It lasts ten minutes.</p>
-              <label className="field">
-                Login code
-                <input value={hqCode} onChange={(e) => setHqCode(e.target.value)} placeholder="184 392" />
-              </label>
-              <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
-                <button
-                  className="ghost"
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await window.brain.hqSync.ownerRequestCode('joe@plyntr.com')
-                      setNote('Check joe@plyntr.com for a six-digit code. It lasts ten minutes.')
-                    } catch (e) {
-                      setNote(String((e as Error).message || e))
-                    }
-                  }}
-                >
-                  Email me a login code
-                </button>
-                <button
-                  className="primary"
-                  type="button"
-                  disabled={hqCode.replace(/\s/g, '').length < 4}
-                  onClick={async () => {
-                    try {
-                      await window.brain.hqSync.ownerLogin({ email: 'joe@plyntr.com', code: hqCode })
-                      setHq(await window.brain.hqSync.ownerStatus())
-                      setNote('Signed in. Add a company below.')
-                    } catch (e) {
-                      setNote(String((e as Error).message || e))
-                    }
-                  }}
-                >
-                  Sign in
-                </button>
-              </div>
+              <p>
+                Create the company in Ads2AI first. Paste the code it gives you. If GitHub is not done, we walk you
+                through that here. If it is, we copy the folder onto this computer. Switching above also switches Agency
+                Brain so it watches this brain. Chats stay with each brain.
+              </p>
+              {pending ? (
+                <>
+                  <p>
+                    Finish GitHub so this company has a shared folder. A browser will open. Sign in if GitHub asks. A
+                    passkey works there.
+                  </p>
+                  <label className="field">
+                    GitHub organization
+                    <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="harolds-books" />
+                  </label>
+                  <p className="tiny">The short GitHub name, not the business name. Copy it from the GitHub page.</p>
+                  <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+                    <button
+                      className="ghost"
+                      type="button"
+                      onClick={() => window.brain.setup.openCreateOrg()}
+                    >
+                      Open GitHub
+                    </button>
+                    <button
+                      className="primary"
+                      type="button"
+                      disabled={bizBusy || org.trim().length < 2}
+                      onClick={async () => {
+                        if (org.trim().length < 2) {
+                          setNote('Paste the GitHub organization name first. Open GitHub if you do not have it yet.')
+                          return
+                        }
+                        try {
+                          setBizBusy(true)
+                          setNote('')
+                          const look = await window.brain.setup.lookupOrg(org.trim())
+                          if (look && look.ok === false) {
+                            setNote(look.detail || look.reason || 'GitHub did not accept that name')
+                            return
+                          }
+                          const login = String(look?.login || org.trim())
+                          if (look?.login) setOrg(look.login)
+                          await window.brain.setup.openAppInstall(pending.slug, login)
+                          setNote('In the browser: click Install, then Only select repositories. We wait here.')
+                          const waited = await window.brain.setup.waitInstall(pending.slug)
+                          if (!waited.ok) {
+                            setNote(waited.detail || 'GitHub is not finished. Click Install, then try again.')
+                            return
+                          }
+                          const applied = await window.brain.setup.putFolder({ teamSlug: pending.slug, org: login })
+                          const path = String(applied?.brainPath || '')
+                          if (!path) {
+                            setNote(applied?.detail || 'Could not copy the shared folder.')
+                            return
+                          }
+                          await window.brain.brains.remember({
+                            path,
+                            name: pending.name,
+                            slug: pending.slug
+                          })
+                          const row = await window.brain.brains.switch(path)
+                          setBrains(await window.brain.brains.list())
+                          setBrainName(prettyName(row.name))
+                          onSwitchBrain?.(row)
+                          setPending(null)
+                          setOpenAdd(false)
+                          setAdsCode('')
+                          setOrg('')
+                          setNote(nowIn(row))
+                        } catch (e) {
+                          setNote(String((e as Error).message || e))
+                        } finally {
+                          setBizBusy(false)
+                        }
+                      }}
+                    >
+                      {bizBusy ? 'Setting up…' : 'Continue with GitHub'}
+                    </button>
+                  </div>
+                </>
+              ) : null}
+              {!pending ? (
+                <>
+                  <label className="field">
+                    Ads2AI code
+                    <input
+                      value={adsCode}
+                      onChange={(e) => setAdsCode(e.target.value)}
+                      placeholder="184392"
+                      autoComplete="one-time-code"
+                    />
+                  </label>
+                  <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+                    <button
+                      className="primary"
+                      type="button"
+                      disabled={bizBusy || adsCode.replace(/[^A-Za-z0-9]/g, '').length < 4}
+                      onClick={async () => {
+                        const code = adsCode.replace(/[^A-Za-z0-9]/g, '')
+                        if (code.length < 4) {
+                          setNote('Paste the code Ads2AI showed after you created the company.')
+                          return
+                        }
+                        try {
+                          setBizBusy(true)
+                          const res = await window.brain.brains.add({ code })
+                          if (res.setup) {
+                            setPending({ slug: String(res.slug || ''), name: String(res.name || 'this company') })
+                            setNote('GitHub is not on this brain yet. Open GitHub, paste the organization name, then Continue.')
+                            return
+                          }
+                          if (res.brainPath) {
+                            setBrains(await window.brain.brains.list())
+                            setBrainName(prettyName(String(res.name || '')))
+                            onSwitchBrain?.({ path: res.brainPath, name: String(res.name || '') })
+                            setOpenAdd(false)
+                            setAdsCode('')
+                            setNote(nowIn({ name: String(res.name || ''), agency: res.agency }))
+                            return
+                          }
+                          setNote(res.detail || 'That code did not finish.')
+                        } catch (e) {
+                          setNote(String((e as Error).message || e))
+                        } finally {
+                          setBizBusy(false)
+                        }
+                      }}
+                    >
+                      {bizBusy ? 'Adding…' : 'Add this brain'}
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </>
-          ) : (
-            <p className="tiny">Signed in as {hq.email}.</p>
-          )}
-          {(hq?.businesses || []).map((b) => (
-            <p className="tiny" key={b.id}>
-              {b.name}
-              {b.owners?.[0]?.email ? ` · ${b.owners[0].email}` : ''}
-              {b.hq_repo ? ` · ${b.hq_repo}` : ''}
-            </p>
-          ))}
-          <label className="field">
-            Company name
-            <input value={bizName} onChange={(e) => setBizName(e.target.value)} placeholder="Acme" />
-          </label>
-          <label className="field">
-            First owner name
-            <input value={bizOwnerName} onChange={(e) => setBizOwnerName(e.target.value)} placeholder="Pat" />
-          </label>
-          <label className="field">
-            First owner email
-            <input value={bizEmail} onChange={(e) => setBizEmail(e.target.value)} placeholder="pat@acme.org" />
-          </label>
-          <label className="field">
-            Role
-            <select value={bizRole} onChange={(e) => setBizRole(e.target.value === 'scout' ? 'scout' : 'owner')}>
-              <option value="owner">owner</option>
-              <option value="scout">scout</option>
-            </select>
-          </label>
-          <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
-            <button
-              className="primary"
-              type="button"
-              disabled={bizBusy || !bizName.trim() || !bizEmail.includes('@') || !hq?.signedIn}
-              onClick={async () => {
-                try {
-                  setBizBusy(true)
-                  const res = await window.brain.hqSync.addCompany({
-                    name: bizName,
-                    email: bizEmail,
-                    owner_name: bizOwnerName,
-                    role: bizRole
-                  })
-                  setNote(res.detail)
-                  setBizName('')
-                  setBizEmail('')
-                  setBizOwnerName('')
-                  setBizRole('owner')
-                  setHq(await window.brain.hqSync.ownerStatus())
-                } catch (e) {
-                  setNote(String((e as Error).message || e))
-                } finally {
-                  setBizBusy(false)
-                }
-              }}
-            >
-              {bizBusy ? 'Sending login…' : 'Add company and send login'}
-            </button>
-          </div>
+          ) : null}
         </section>
       ) : null}
 
       {canAddUsers ? (
         <section className="set-block">
-          <p className="kicker">People in {here}</p>
-          <h3 className="set-h">Add users</h3>
+          <FoldHead
+            kicker={`People in ${here}`}
+            title="Add users"
+            open={openPeople}
+            onToggle={() => setOpenPeople((v) => !v)}
+          />
+          {openPeople ? (
+            <>
           <p>
             Agency team is on this whole brain. Project only never clones HQ. This app copies only the folders you tick,
             keeps them in sync in the background, and deletes those folders if you remove access.
@@ -553,6 +690,8 @@ export function SettingsPanel({
               Add this person
             </button>
           </div>
+            </>
+          ) : null}
         </section>
       ) : (
         <p>
@@ -562,9 +701,18 @@ export function SettingsPanel({
 
       {joe ? (
         <section className="set-block">
-          <p className="kicker">Skin captures</p>
-          <h3 className="set-h">Catalog school</h3>
-          <p>Only you see this. Capture logs unmatched CLI screens on this Mac. Jev can propose a catalog card for those screens. It does not Allow a write.</p>
+          <FoldHead
+            kicker="Skin captures"
+            title="Catalog school"
+            open={openCatalog}
+            onToggle={() => setOpenCatalog((v) => !v)}
+          />
+          {openCatalog ? (
+            <>
+          <p>
+            Only you see this. Capture logs unmatched CLI screens on this Mac. When Jev is on, high-confidence unmatched
+            screens join this Mac’s catalog on their own. Permission screens stay proposed. Jev does not Allow a write.
+          </p>
           <label className="set-row">
             <span>Capture screens</span>
             <button
@@ -586,6 +734,10 @@ export function SettingsPanel({
                 void window.brain.skin.toggleJev(!skinJev).then((r) => {
                   setSkinJev(Boolean(r.jev))
                   setJevReady(Boolean(r.jevReady))
+                  if (r.jev) {
+                    void window.brain.skin.get().then((s) => setLearned(s.learned || []))
+                    void window.brain.skin.list().then(setCaptures)
+                  }
                 })
               }}
             >
@@ -595,6 +747,20 @@ export function SettingsPanel({
           {skinJev && !jevReady ? (
             <p className="tiny">Jev needs Doppler TypeSafe on this Mac. New unmatched screens wait until the key is ready.</p>
           ) : null}
+          {skinJev && jevReady ? (
+            <p className="tiny">Jev is working unmatched captures into this Mac’s catalog in the background.</p>
+          ) : null}
+          {learned.length ? (
+            <ul className="looking">
+              {learned.slice(0, 12).map((row) => (
+                <li key={row.cli + row.eventKind}>
+                  <span>
+                    {row.cli} · {row.eventKind} · {row.component} · {row.confidence.toFixed(2)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {captures.length === 0 ? (
             <p className="tiny">No captures yet.</p>
           ) : (
@@ -603,6 +769,7 @@ export function SettingsPanel({
                 <li key={c.fingerprint + c.at}>
                   <span>
                     {c.cli} · {c.eventKind} · {c.matched ? c.catalogId : 'unmatched'}
+                    {c.learned ? ' · catalog' : ''}
                     {c.label ? ` · ${c.label}` : ''}
                     {c.jevProposal
                       ? ` · Jev ${c.jevProposal.component || 'unknown'} ${c.jevProposal.confidence.toFixed(2)}${c.jevProposal.paint ? ' paint' : ''}`
@@ -669,6 +836,8 @@ export function SettingsPanel({
               ))}
             </ul>
           )}
+            </>
+          ) : null}
         </section>
       ) : null}
 

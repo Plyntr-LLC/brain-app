@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import { getAccount } from '../session-token'
 import { acpDecidePermission } from '../acp-session'
 import {
@@ -8,11 +8,13 @@ import {
   listCaptures,
   onUnmatchedCapture,
   setCaptureOn,
-  setJevOn
+  setJevOn,
+  type SkinCapture
 } from './capture'
 import { SKIN_COMPONENTS } from '../../shared/skin/catalog'
 import { getProposal } from './jev-cache'
-import { proposeFromCapture } from './jev'
+import { learnUnmatchedCaptures, onCatalogHeal, proposeFromCapture } from './jev'
+import { getLearned, listLearned } from './learned'
 import { typesafeReady, warmTypesafeKey } from './typesafe'
 
 function joeOnly(): boolean {
@@ -20,17 +22,35 @@ function joeOnly(): boolean {
   return String(acct?.email || '').toLowerCase() === 'joe@plyntr.com'
 }
 
-function withProposal<T extends { fingerprint: string }>(row: T) {
-  return { ...row, jevProposal: getProposal(row.fingerprint) }
+function withProposal(row: SkinCapture) {
+  const learned = getLearned(String(row.cli), row.eventKind)
+  return {
+    ...row,
+    jevProposal: getProposal(row.fingerprint),
+    catalogId: row.catalogId || learned?.component || null,
+    matched: row.matched || Boolean(learned),
+    learned: Boolean(learned)
+  }
 }
+
+onCatalogHeal((row) => {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send('skin:healed', row)
+  }
+})
 
 onUnmatchedCapture((row) => {
   if (!jevOn()) return
-  void proposeFromCapture(row)
+  void proposeFromCapture(row).then(() => startDrain())
 })
 
+function startDrain(): void {
+  if (!jevOn()) return
+  void learnUnmatchedCaptures()
+}
+
 export function registerSkinIpc(): void {
-  void warmTypesafeKey()
+  void warmTypesafeKey().then(() => startDrain())
   ipcMain.handle('skin:get', async () => {
     if (joeOnly() && jevOn()) await warmTypesafeKey()
     return {
@@ -38,7 +58,8 @@ export function registerSkinIpc(): void {
       jev: joeOnly() && jevOn(),
       jevReady: joeOnly() && typesafeReady(),
       joe: joeOnly(),
-      components: [...SKIN_COMPONENTS]
+      components: [...SKIN_COMPONENTS],
+      learned: joeOnly() ? listLearned() : []
     }
   })
   ipcMain.handle('skin:toggle', (_e, on: boolean) => {
@@ -48,12 +69,22 @@ export function registerSkinIpc(): void {
   ipcMain.handle('skin:toggleJev', async (_e, on: boolean) => {
     if (!joeOnly()) return { ok: false, jev: false, jevReady: false }
     const jev = setJevOn(Boolean(on))
-    if (jev) await warmTypesafeKey()
+    if (jev) {
+      await warmTypesafeKey()
+      startDrain()
+    }
     return { ok: true, jev, jevReady: typesafeReady() }
   })
   ipcMain.handle('skin:list', () => {
     if (!joeOnly()) return []
     return listCaptures().map(withProposal)
+  })
+  ipcMain.handle('skin:learn', async () => {
+    if (!joeOnly()) return { ok: false, added: 0 }
+    if (!jevOn()) return { ok: false, added: 0, detail: 'Jev is off' }
+    await warmTypesafeKey()
+    const added = await learnUnmatchedCaptures()
+    return { ok: true, added, learned: listLearned() }
   })
   ipcMain.handle('skin:label', (_e, fingerprint: string, label: string) => {
     if (!joeOnly()) return { ok: false }

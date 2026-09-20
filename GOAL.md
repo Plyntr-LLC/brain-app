@@ -12,7 +12,7 @@ One downloadable window that feels like Slack and has the power of the local AI 
 
 A teammate installs this app, Agency Brain (Mike’s, for git sync), and one AI CLI they already pay for. They sign into that CLI as themselves. They land in Skin against the watched brain folder. **Show terminal is its own CLI session** (accepted). App `/` commands stay in Brain; other `/` commands are typed into that CLI. They never scrape the TUI into bubbles, and they never share Joe’s login.
 
-Agency Brain owns git. This app does not start a second watcher and does not rewrite `~/Library/Application Support/Agency Brain/config.json` unless Joe has set `BRAIN_APP_ALLOW_CREATE=1` and the machine has no watched path.
+Agency Brain owns git. This app does not start a second watcher. Switching brains (Joe superadmin) writes Agency Brain `config.json` so Mike watches the same folder, bounces Agency Brain, and retargets Plyntr project sync (`com.plyntr.brain-sync`) to that brain’s HQ seats or stops it. Adding a company brain uses the Ads2AI join code (create the company there first). Tokens in that file are never logged or sent to the renderer.
 
 ## How it talks to the CLIs
 
@@ -49,17 +49,17 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Electron + electron-vite + React. Chat-first workspace. Skip 6-digit setup when Agency Brain is already watching.
 - Warm Grok/Cursor ACP, Claude stream-json, Codex app-server. Process prewarm on launch for Grok.
 - Structured chat events: thought, text, files, compact status. Markdown tables in brain bubbles.
-- Right sidebar: In use files, live Model / Effort / Mode / Folder. Folder switch is local to this window (recents in this app’s userData). It does not change Mike’s watched path.
+- Right sidebar: In use files, live Model / Effort / Mode / Folder. Folder recents live in this app’s userData. **Settings → Switch brain** (Joe superadmin) also points Agency Brain and Plyntr project sync at that folder (one watcher each).
 - `/compact` goes to the live session. Auto-compact shows a wheel + “Compacting…” then a short note. Transcript on screen stays.
 - Grok and Cursor model/mode pickers follow the live session. Claude model picker reads this Mac’s Claude plan list. ChatGPT/Codex picker uses Codex `model/list`.
 - Slash: every `/` either does a real in-app job or is sent on. Chat leftover `/` goes ACP. Skin leftover `/` is typed into the peel TUI (`/theme`, `/vim-mode`, `/fullscreen`, `/dashboard`, skills). Grok catalog is in the `/` menu.
 - Skin default is catalog paint. Chat toggle is ACP bubbles. **Show terminal** is a separate CLI TUI (accepted). Terminal (`+` → Terminal, or `/terminal`) is a login shell, not Grok/Claude.
-- Settings: one company at the top (You are working on this company). Then job 1 company, job 2 brains for that company, job 3 people at that company. Buttons name the company. Stored in userData, not Agency Brain config.json.
+- Settings: one company at the top (You are working on this company). Joe superadmin: Switch brain retargets Agency Brain and Plyntr project sync. Add a company brain: paste the Ads2AI code. Setup if GitHub is missing, clone if the repo exists. Add users and Catalog school stay collapsed. Other people do not get the switcher.
 - Drag/drop, paste (including screenshots), and Attach on Chat for images and docs. Grok/Cursor: ACP image + embedded resource. Claude: image + PDF document. Codex: localImage + inlined text docs. Pathless clipboard files stash under userData/drops. 20 MB cap.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
 - Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, one setup screen lists them, pre-warns every permission dialog, then **Start setup** (one click) runs official installers in order and waits. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.
 - Long runs show a live Working strip (wheel, phase, elapsed time) plus a pulse on the chat tab. Tools update the phase. Setup polls use the same strip. The thread does not sit on a frozen Thinking label.
-- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.12**. Developer ID Application: Plyntr LLC. Notarized 2026-09-20.
+- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.13**. Developer ID Application: Plyntr LLC. Notarizing and releasing on Joe’s yes.
 
 ## How Joe runs Inbox
 
@@ -93,7 +93,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Claude picker lists this Mac’s Claude models. Title follows the watched folder. Add company is a new company, not the brain in the window.
+Settings switcher (Joe superadmin only) picks the brain for this window **and** retargets Agency Brain plus Plyntr project sync (`com.plyntr.brain-sync`). Other people stay on their one brain. Add a new company brain is the Ads2AI join code. Add users and Catalog school stay collapsed until clicked. Plyntr chats stay with the Plyntr folder. Jev auto-heals high-confidence unmatched screens into this Mac’s catalog. PermissionAsk never Allow.
 
 ## Inbox
 
@@ -101,7 +101,11 @@ Bugs and product gaps. One line each. Date + what.
 
 - [x] 2026-09-20 Joe: Claude model picker lists Grok 4.5/4.6. Title says Jeen-AI-Brain-test while the window is Plyntr. Add-company must not attach to Jeen. Wire pickers and folder to the CLI and brain in use. Done: 2026-09-20. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `listSlash` claude branch, `claude-models.ts`, `hq-folder.ts`, `watchingHealth`, Settings add-company copy.
 
-- [ ] 2026-09-20 Joe: Jev high-confidence unmatched screens join the catalog. Spend TypeSafe yes. PermissionAsk never Allow.
+- [ ] 2026-09-20 Joe: Setup that leaves Brain (GitHub, installers, AI sign-in) should bring you back. Only required fields. No skip of steps the app needs. Clear errors if something is blank. In progress.
+
+- [ ] 2026-09-20 Joe: Add a new company brain in Settings: paste the Ads2AI code (create the company there first). If GitHub is not done, walk setup. If it is, clone from GitHub. Switch brain also switches Agency Brain and Plyntr project sync. Superadmin only. Collapse Add company / Add users / Catalog school. In progress.
+
+- [ ] 2026-09-20 Joe: Jev high-confidence unmatched screens join the catalog on their own (autoheal). Spend TypeSafe yes. PermissionAsk never Allow. In progress.
 
 - [x] 2026-09-20 Joe: Turn Jev on for Skin. Propose catalog rows from unmatched captures. Do not Allow a write. Spend TypeSafe yes. Done: 2026-09-20. Grok 4.6 xhigh APPROVE. Evidence: `src/main/skin/jev.ts`, Settings Jev toggle, `skin.json` jev on.
 
@@ -175,7 +179,6 @@ Empty until Inbox Now is drained. Optional terminal stays a toggle, not the prod
 ## Blocked
 
 - Publishing / notarization until Joe says yes.
-- Writing Agency Brain `config.json` on Joe’s machine (watched path is Plyntr).
 - Sharing one AI login across the team (ToS).
 - Union Alpha / OpenCode is not installed on Joe’s Mac; do not block on it.
 

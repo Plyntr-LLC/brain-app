@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { pickSeatForFolder, seatMatchesFolder } from './hq-folder.ts'
+import { pickSeatForFolder, pickSeatForHqRepo, seatMatchesFolder } from './hq-folder.ts'
 import { claudeModelsFromCache } from './claude-models.ts'
 
 test('Claude cache lists plan models, never Grok', () => {
@@ -48,4 +48,16 @@ test('HQ title follows the open folder, not the first other company seat', () =>
   assert.equal(pickSeatForFolder(seats, '/Users/me/agency-brain'), pickSeatForFolder(seats, '/Users/me/agency-brain/'))
   assert.equal(pickSeatForFolder(seats, '/Users/me/some-other-brain'), null)
   assert.equal(seatMatchesFolder({ mini_root: '/tmp/mini' }, '/tmp/mini/src'), true)
+})
+
+test('pickSeatForHqRepo only matches that HQ, never another company', () => {
+  const seats = [
+    { id: 'bible', mini_root: '/Users/me/Brains/bible-jj-ww', hq_repo: 'Plyntr-LLC/agency-brain' },
+    { id: 'acme', mini_root: '/Users/me/Brains/acme-job', hq_repo: 'acme-org/acme-hq-brain' }
+  ]
+  assert.equal(pickSeatForHqRepo(seats, 'Plyntr-LLC/agency-brain')?.id, 'bible')
+  assert.equal(pickSeatForHqRepo(seats, 'plyntr-llc/agency-brain')?.id, 'bible')
+  assert.equal(pickSeatForHqRepo(seats, 'acme-org/acme-hq-brain')?.id, 'acme')
+  assert.equal(pickSeatForHqRepo(seats, 'other/repo'), null)
+  assert.equal(pickSeatForHqRepo(seats, ''), null)
 })
