@@ -237,6 +237,19 @@ function loadFullConfig(): AgencyConfig | null {
   }
 }
 
+/** Plyntr owner email from Agency Brain profiles. Never returns tokens. */
+export function plyntrOwnerEmail(): string | null {
+  const cfg = loadFullConfig()
+  if (!cfg) return null
+  const rows = [...(Array.isArray(cfg.brains) ? cfg.brains : []), cfg]
+  for (const b of rows) {
+    if (String(b.teamSlug || '').trim().toLowerCase() !== 'plyntr') continue
+    const email = String(b.memberEmail || '').trim().toLowerCase()
+    if (email.includes('@')) return email
+  }
+  return null
+}
+
 function writeConfigAtomic(cfg: AgencyConfig): void {
   const p = configPath()
   const json = JSON.stringify(cfg, null, 2)

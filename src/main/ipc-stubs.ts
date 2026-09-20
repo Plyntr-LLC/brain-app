@@ -6,7 +6,6 @@ import { openInApp } from './in-app-browse'
 import * as ads2ai from './ads2ai'
 import { homedir } from 'node:os'
 import {
-  accountFieldsForFolder,
   activateWatching,
   detectApp,
   listProjectFolders,
@@ -99,20 +98,12 @@ function tokenForSlug(slug: string): string {
 }
 
 function applyAccountForFolder(folder: string): void {
-  const fields = accountFieldsForFolder(folder)
   const acct = getAccount()
-  if (!fields) {
-    if (acct) saveAccount({ ...acct, folder })
-    return
-  }
+  if (!acct) return
   saveAccount({
-    email: fields.email || acct?.email || '',
-    name: fields.name || acct?.name || '',
-    token: fields.token,
-    role: fields.role || acct?.role,
-    source: 'ads2ai',
-    folder,
-    brains: acct?.brains
+    ...acct,
+    appEmail: acct.appEmail || acct.email,
+    folder
   })
 }
 
@@ -199,7 +190,7 @@ export function registerStubIpc(): void {
     const watching = readWatching()
     const file = getSettings()
     const acct = getAccount() || loadAccount()
-    const email = String(acct?.email || '').trim().toLowerCase()
+    const email = String(acct?.appEmail || acct?.email || '').trim().toLowerCase()
     const folder = currentBrainFolder() || watching.brainPath || acct?.folder || null
     const roster = readTeamRoster(folder)
     const member = readTeamMember(folder, email)

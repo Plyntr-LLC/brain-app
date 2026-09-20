@@ -1,9 +1,12 @@
 import { chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
+import { plyntrOwnerEmail } from './agency-brain'
+import { SUPERADMIN_EMAIL } from './super-admin'
 
 export type Account = {
   email: string
+  appEmail?: string
   name?: string
   token: string
   role?: string
@@ -33,6 +36,7 @@ function persist(next: Account | null): void {
     p,
     JSON.stringify({
       email: next.email,
+      appEmail: next.appEmail || next.email || '',
       name: next.name || '',
       token: next.token,
       role: next.role || '',
@@ -55,8 +59,16 @@ export function loadAccount(): Account | null {
     const email = String(raw.email || '').trim().toLowerCase()
     const token = String(raw.token || '')
     if (!email || !token) return null
+    let appEmail = String(raw.appEmail || '').trim().toLowerCase()
+    if (!appEmail && email === SUPERADMIN_EMAIL) appEmail = email
+    if (!appEmail) {
+      const hint = plyntrOwnerEmail()
+      if (hint === SUPERADMIN_EMAIL) appEmail = hint
+    }
+    if (!appEmail) appEmail = email
     account = {
-      email,
+      email: appEmail === SUPERADMIN_EMAIL ? appEmail : email,
+      appEmail,
       name: String(raw.name || ''),
       token,
       role: String(raw.role || ''),
@@ -65,6 +77,7 @@ export function loadAccount(): Account | null {
       brains: Array.isArray(raw.brains) ? raw.brains.map((b) => String(b || '').trim()).filter(Boolean) : []
     }
     memberToken = token
+    if (appEmail === SUPERADMIN_EMAIL && email !== SUPERADMIN_EMAIL) persist(account)
     return account
   } catch {
     return null
@@ -72,8 +85,11 @@ export function loadAccount(): Account | null {
 }
 
 export function saveAccount(next: Account): Account {
+  const email = String(next.email || '').trim().toLowerCase()
+  const appEmail = String(next.appEmail || email).trim().toLowerCase()
   persist({
-    email: String(next.email || '').trim().toLowerCase(),
+    email: appEmail === SUPERADMIN_EMAIL ? appEmail : email,
+    appEmail,
     name: String(next.name || ''),
     token: String(next.token || ''),
     role: String(next.role || ''),

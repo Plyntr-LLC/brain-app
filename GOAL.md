@@ -59,7 +59,7 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
 - Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, one setup screen lists them, pre-warns every permission dialog, then **Start setup** (one click) runs official installers in order and waits. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.
 - Long runs show a live Working strip (wheel, phase, elapsed time) plus a pulse on the chat tab. Tools update the phase. Setup polls use the same strip. The thread does not sit on a frozen Thinking label.
-- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.13**. Developer ID Application: Plyntr LLC. Notarized 2026-09-20, stapled.
+- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.14**. Developer ID Application: Plyntr LLC.
 
 ## How Joe runs Inbox
 
@@ -93,7 +93,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Settings switcher (Joe superadmin only) picks the brain for this window **and** retargets Agency Brain plus Plyntr project sync (`com.plyntr.brain-sync`). Other people stay on their one brain. Add a new company brain is the Ads2AI join code. Add users and Catalog school stay collapsed until clicked. Plyntr chats stay with the Plyntr folder. Jev auto-heals high-confidence unmatched screens into this Mac’s catalog. PermissionAsk never Allow.
+Settings switcher (Joe superadmin only) follows the **Brain.app login**, not the member email on the brain you switched into. Switching never strands you. Retargets Agency Brain plus Plyntr project sync. Add a company brain is the Ads2AI join code.
 
 ## Inbox
 
@@ -103,7 +103,7 @@ Bugs and product gaps. One line each. Date + what.
 
 - [ ] 2026-09-20 Joe: Setup that leaves Brain (GitHub, installers, AI sign-in) should bring you back. Only required fields. No skip of steps the app needs. Clear errors if something is blank. In progress.
 
-- [ ] 2026-09-20 Joe: Add a new company brain in Settings: paste the Ads2AI code (create the company there first). If GitHub is not done, walk setup. If it is, clone from GitHub. Switch brain also switches Agency Brain and Plyntr project sync. Superadmin only. Collapse Add company / Add users / Catalog school. In progress.
+- [ ] 2026-09-20 Joe: Switch brain hid after leaving Plyntr (login became the other brain’s email). Brain.app login stays; switcher still works both ways. In progress.
 
 - [ ] 2026-09-20 Joe: Jev high-confidence unmatched screens join the catalog on their own (autoheal). Spend TypeSafe yes. PermissionAsk never Allow. In progress.
 
