@@ -50,12 +50,12 @@ export function SkinPane({
   permission,
   threadRef,
   onScroll,
-  onPeel,
+  onPeel: _onPeel,
   onFiles,
   onAction,
   showPower,
   wantPower,
-  canPeel,
+  canPeel: _canPeel,
   cliName
 }: {
   tabId: string
@@ -198,23 +198,15 @@ export function SkinPane({
                       }))
                   : undefined
               }
-              onAction={(id, s) => {
-                if (id === 'openRaw') onPeel(true)
-                else onAction(id, s)
-              }}
+              onAction={onAction}
             />
           )
         })}
       </div>
-      {(wantPower || peel || ctxSpec || canPeel) ? (
+      {(wantPower || peel || ctxSpec) ? (
       <p className="tiny skin-cli">
         {wantPower || peel ? `${cliName} · this chat` : null}
         {ctxSpec && wantPower ? <SkinCard spec={ctxSpec} onAction={onAction} /> : null}
-        {canPeel ? (
-          <button type="button" className="linkish" onClick={() => onPeel(!peel)}>
-            {peel ? 'Hide terminal' : 'Show terminal'}
-          </button>
-        ) : null}
       </p>
       ) : null}
     </div>

@@ -59,7 +59,7 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
 - Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, one setup screen lists them, pre-warns every permission dialog, then **Start setup** (one click) runs official installers in order and waits. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.
 - Long runs show a live Working strip (wheel, phase, elapsed time) plus a pulse on the chat tab. Tools update the phase. Setup polls use the same strip. The thread does not sit on a frozen Thinking label.
-- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.16**. Developer ID Application: Plyntr LLC.
+- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.17**. Developer ID Application: Plyntr LLC.
 
 ## How Joe runs Inbox
 
@@ -93,11 +93,13 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Call script for Jeen is `docs/jeen-call.md`. Packed 0.1.16 has AB watching auto-continue, CLI login auto-start, two-apps line, empty-Skin starters, GitHub short name, hide power UI, owner skip GitHub when the repo exists, setup checklist, and Jev autoheal.
+Skin is the face. Chat stays in the code, hidden. Terminal is a top tab only. Last tab can close after a confirm. Empty stage is the card color, not black.
 
 ## Inbox
 
 Bugs and product gaps. One line each. Date + what.
+
+- [x] 2026-09-20 Joe: Hide Chat (keep Skin). No Show terminal in Skin. Bigger +. Last tab can close. Confirm before close. No black empty stage. Done: 2026-09-20. Grok 4.6 xhigh APPROVE. Evidence: v0.1.17 signed+notarized, GitHub latest, `/Applications/Brain.app`. Direct: https://github.com/Plyntr-LLC/brain-app/releases/latest/download/Brain-0.1.17-mac.dmg
 
 - [x] 2026-09-20 Joe: Jeen list. AB watching auto-continue. CLI login auto-start. Two-apps line. Empty-Skin starters. GitHub short name + paste. Hide power UI. Owner skip GitHub when repo exists. Setup checklist. Pack autoheal in the Jeen build. Done: 2026-09-20. Grok 4.6 xhigh APPROVE (cycle 4). Evidence: v0.1.16 signed+notarized, GitHub latest, `/Applications/Brain.app`. Direct: https://github.com/Plyntr-LLC/brain-app/releases/latest/download/Brain-0.1.16-mac.dmg
 

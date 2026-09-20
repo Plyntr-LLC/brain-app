@@ -454,9 +454,8 @@ function ChatPane({
   const turn = useRef({ think: false, answer: false })
   const [queue, setQueue] = useState<Queued[]>([])
   const queueRef = useRef<Queued[]>([])
-  const [skinOn, setSkinOn] = useState(true)
-  const [wantPower, setWantPower] = useState(false)
-  const [moreHits, setMoreHits] = useState(0)
+  const [skinOn] = useState(true)
+  const [wantPower] = useState(false)
   const [cliSid, setCliSid] = useState(resumeId || '')
   const [tuiGen, setTuiGen] = useState(0)
   const [peel, setPeel] = useState(false)
@@ -1131,11 +1130,7 @@ function ChatPane({
 
   function takeSlash(raw: string): boolean {
     if (runSlash(raw)) return true
-    const t = raw.trim()
-    if (!skinOn || !t.startsWith('/')) return false
-    // Skin leftover `/` goes to the peel TUI, not ACP.
-    void sendSkinTerm(slashLine(t))
-    return true
+    return false
   }
 
   function applyPick(pick: Pick) {
@@ -1458,23 +1453,15 @@ function ChatPane({
           )}
         </div>
       )}
-      {showPower ? (
+      {false ? (
       <div className="skin-switch">
-        <button type="button" className={skinOn ? 'on' : ''} onClick={() => setSkinOn(true)}>
+        <button type="button" className={skinOn ? 'on' : ''}>
           Skin
         </button>
-        <button type="button" className={!skinOn ? 'on' : ''} onClick={() => setSkinOn(false)}>
+        <button type="button" className={!skinOn ? 'on' : ''}>
           Chat
         </button>
       </div>
-      ) : null}
-      {moreHits < 2 && !peel ? (
-        <button type="button" className="linkish skin-more" onClick={() => {
-          setWantPower(true)
-          setMoreHits((n) => n + 1)
-        }}>
-          More
-        </button>
       ) : null}
       {skinOn ? null : permission ? (
         <div className="skin-perm">
@@ -1523,7 +1510,7 @@ function ChatPane({
         onFiles={mergeSkinFiles}
         showPower={showPower}
         wantPower={wantPower}
-        canPeel={moreHits >= 2 || peel || messages.some((m) => m.skinLabel === 'RawFallback' || m.who === 'raw')}
+        canPeel={false}
         cliName={label(kind)}
         onAction={(actionId, spec) => {
           if (actionId === 'selectOption') {
@@ -1813,6 +1800,7 @@ export function TerminalWorkspace({
   const [filesByTab, setFilesByTab] = useState<Record<string, FileHit[]>>({})
   const [filesOpen, setFilesOpen] = useState(true)
   const [picker, setPicker] = useState(false)
+  const [closingId, setClosingId] = useState<string | null>(null)
 
   const [detected, setDetected] = useState<Partial<Record<AiKind, boolean>>>({})
   const [kids, setKids] = useState<Record<string, FileNode[]>>({})
@@ -1841,6 +1829,17 @@ export function TerminalWorkspace({
   useEffect(() => {
     if (s.brainPath && s.brainPath !== cwd) setCwd(s.brainPath)
   }, [s.brainPath])
+
+  useEffect(() => {
+    if (!closingId) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      setClosingId(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [closingId])
 
   useEffect(() => {
     if (!cwd) return
@@ -2096,10 +2095,21 @@ export function TerminalWorkspace({
   }
 
   function closeTab(id: string) {
-    if (tabs.length === 1) return
+    setClosingId(id)
+  }
+
+  function keepTab() {
+    setClosingId(null)
+  }
+
+  function confirmCloseTab() {
+    const id = closingId
+    if (!id) return
+    setClosingId(null)
     const next = tabs.filter((t) => t.id !== id)
     setTabs(next)
-    if (active === id) setActive(next[next.length - 1].id)
+    if (next.length === 0) setActive('')
+    else if (active === id) setActive(next[next.length - 1].id)
     void window.brain.pty.kill(id)
     void window.brain.chat.close(id)
   }
@@ -2204,6 +2214,22 @@ export function TerminalWorkspace({
 
   return (
     <div className={`workspace ${filesOpen ? '' : 'files-off'} ${railOpen ? '' : 'rail-off'}`}>
+      {closingId ? (
+        <div className="tab-close">
+          <div className="tab-close-card" role="alertdialog" aria-labelledby="tab-close-title">
+            <h3 id="tab-close-title">Are you sure you want to close this tab?</h3>
+            <p>This chat or terminal will leave the window.</p>
+            <div className="actions">
+              <button className="primary" type="button" onClick={confirmCloseTab}>
+                Close tab
+              </button>
+              <button className="ghost" type="button" onClick={keepTab}>
+                Keep it
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div className="tabbar">
         <button type="button" className="edgebtn" onClick={() => setRailOpen(!railOpen)} title={railOpen ? 'Hide files' : 'Show files'}>
           {railOpen ? '‹' : '›'}
@@ -2237,11 +2263,9 @@ export function TerminalWorkspace({
                   {t.title}
                 </button>
               )}
-              {tabs.length > 1 && (
-                <button type="button" className="tabx" onClick={() => closeTab(t.id)} aria-label="Close tab">
+              <button type="button" className="tabx" onClick={() => closeTab(t.id)} aria-label="Close tab">
                   ×
                 </button>
-              )}
             </div>
           ))}
           <button type="button" className="tabadd" onClick={() => setPicker((p) => !p)} aria-label="New session">
@@ -2293,6 +2317,12 @@ export function TerminalWorkspace({
           )}
         </aside>
         <div className="stage">
+          {tabs.length === 0 ? (
+            <div className="stage-empty">
+              <p>No tabs open.</p>
+              <p className="tiny">Use + to start a chat or a terminal.</p>
+            </div>
+          ) : null}
           {hydrated && hydratedCwd === cwd &&
             tabs
               .filter((t) => t.type === 'chat')

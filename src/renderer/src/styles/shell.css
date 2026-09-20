@@ -488,7 +488,42 @@ button.ghost.starter {
 }
 .picker-row { display: flex; align-items: center; gap: 0.5rem; margin: 0.35rem 0; }
 .picker-row strong { width: 5.5rem; font-size: 0.85rem; }
-.stage { position: relative; min-height: 0; overflow: hidden; background: #1a1612; }
+.stage { position: relative; min-height: 0; overflow: hidden; background: var(--card); }
+.stage-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+.stage-empty p { margin: 0; }
+.tab-close {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: rgba(246, 241, 234, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+.tab-close-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  padding: 1rem 1.1rem 1.05rem;
+  max-width: 22rem;
+  width: 100%;
+  box-shadow: 0 8px 24px rgba(26, 22, 18, 0.12);
+}
+.tab-close-card h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1.05rem;
+}
+.tab-close-card p { margin: 0 0 0.85rem; color: var(--muted); font-weight: 600; }
 .chatpane {
   position: absolute;
   inset: 0;
@@ -735,7 +770,13 @@ button.think-label:disabled { cursor: default; }
   flex-shrink: 0;
 }
 .tabx { padding: 0.45rem 0.4rem; color: var(--muted); }
-.tabadd { color: var(--orange-deep); }
+.tabadd {
+  color: var(--orange-deep);
+  font-size: 1.55rem;
+  line-height: 1;
+  font-weight: 700;
+  padding: 0.25rem 0.85rem;
+}
 .chatrow {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr) minmax(140px, 22%);
