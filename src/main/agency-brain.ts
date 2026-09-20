@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 function appCandidates(): string[] {
   const home = homedir()
@@ -178,6 +178,31 @@ export function readWatching(): SafeConfig {
     }
   } catch {
     return { installed, brainPath: null, name: null, email: null, watching: false, teamSlug: null, teamName: null }
+  }
+}
+
+export function watchingHealth(): {
+  present: boolean
+  label: string
+  lastSync: string
+  offline: boolean
+  error: string
+} {
+  const w = readWatching()
+  if (!w.brainPath) return { present: false, label: '', lastSync: '', offline: false, error: '' }
+  let lastSync = ''
+  try {
+    const st = JSON.parse(readFileSync(statePath(), 'utf8')) as { updatedAt?: string }
+    lastSync = String(st.updatedAt || '')
+  } catch {
+    /* */
+  }
+  return {
+    present: true,
+    label: String(w.teamName || w.name || '').trim() || basename(w.brainPath),
+    lastSync,
+    offline: !w.watching,
+    error: ''
   }
 }
 

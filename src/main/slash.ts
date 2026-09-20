@@ -3,6 +3,7 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, s
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { binEnv, resolveBin } from './ai-cli'
+import { claudeModelsFromCache } from './claude-models'
 import { listCodexCaps } from './codex-app'
 import { grokLeaderSocket } from './grok-args'
 
@@ -36,6 +37,34 @@ function parseCursorModels(raw: string): { id: string; label: string }[] {
   return out
 }
 
+async function listClaudeModels(): Promise<{ id: string; label: string }[]> {
+  let cache: Record<string, unknown> | null = null
+  let settingsModel = ''
+  try {
+    cache = JSON.parse(readFileSync(join(homedir(), '.claude.json'), 'utf8')) as Record<string, unknown>
+  } catch {
+    cache = null
+  }
+  try {
+    const s = JSON.parse(readFileSync(join(homedir(), '.claude', 'settings.json'), 'utf8')) as {
+      model?: string
+    }
+    settingsModel = String(s.model || '').trim()
+  } catch {
+    /* */
+  }
+  let help = ''
+  const bin = resolveBin('claude')
+  if (bin) {
+    try {
+      help = await run(bin, ['--help'], homedir())
+    } catch {
+      /* */
+    }
+  }
+  return claudeModelsFromCache(cache, { help, settingsModel })
+}
+
 export function resolveModel(
   arg: string,
   models: { id: string; label: string }[]
@@ -65,13 +94,8 @@ export async function listSlash(
   kind = 'grok'
 ): Promise<{ commands: SlashCmd[]; models: { id: string; label: string }[] }> {
   const builtins: SlashCmd[] = appBuiltins(kind)
-  const grok = resolveBin('grok')
-  let skills: SlashCmd[] = []
-  let models: { id: string; label: string }[] = [
-    { id: 'grok-4.6', label: 'Grok 4.6' },
-    { id: 'grok-4.5', label: 'Grok 4.5' }
-  ]
   if (kind === 'cursor') {
+    let models: { id: string; label: string }[] = []
     const cursor = resolveBin('cursor')
     if (cursor) {
       try {
@@ -82,20 +106,27 @@ export async function listSlash(
         /* */
       }
     }
-    skills = []
     return { commands: builtins, models }
   }
   if (kind === 'gpt') {
+    let models: { id: string; label: string }[] = []
     try {
       const caps = await listCodexCaps(cwd)
       if (caps.models?.length) models = caps.models
-      else models = []
     } catch {
-      models = []
+      /* */
     }
-    skills = []
     return { commands: builtins, models }
   }
+  if (kind === 'claude') {
+    return { commands: builtins, models: await listClaudeModels() }
+  }
+  const grok = resolveBin('grok')
+  let skills: SlashCmd[] = []
+  let models: { id: string; label: string }[] = [
+    { id: 'grok-4.6', label: 'Grok 4.6' },
+    { id: 'grok-4.5', label: 'Grok 4.5' }
+  ]
   if (grok) {
     try {
       const raw = await run(grok, ['inspect', '--json'], cwd)

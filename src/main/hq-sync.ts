@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { pickSeatForFolder } from './hq-folder'
 import { pathToFileURL } from 'node:url'
 import { app } from 'electron'
 import { parseGithubHqRepo } from './github-repo'
@@ -188,7 +189,7 @@ export async function localProjectEmail(emailRaw: string): Promise<boolean> {
   return false
 }
 
-export async function existingProjectSeat(): Promise<{
+export async function existingProjectSeat(folder?: string): Promise<{
   seatId: string
   folder: string
   label: string
@@ -196,19 +197,24 @@ export async function existingProjectSeat(): Promise<{
 } | null> {
   const mod = await loadAgent()
   const ids = mod.listSeats()
+  const want = String(folder || '').trim()
+  let fallback: { seatId: string; folder: string; label: string; lastSync: string } | null = null
   for (const id of ids) {
     const state = mod.readState(mod.seatDir(id))
     const token = mod.readToken(mod.seatDir(id))
     if (!state?.mini_root || !token) continue
     if (!existsSync(state.mini_root)) continue
-    return {
+    const row = {
       seatId: id,
       folder: state.mini_root,
       label: String(state.brain_label || id),
       lastSync: String(state.last_sync_at || '')
     }
+    if (want && pickSeatForFolder([{ ...state, id }], want)) return row
+    if (!fallback) fallback = row
   }
-  return null
+  if (want) return null
+  return fallback
 }
 
 async function startWatch(seatId: string): Promise<void> {
@@ -296,20 +302,20 @@ export type HqAgentHealth = {
   error: string
 }
 
-export async function hqAgentHealth(): Promise<HqAgentHealth> {
+export async function hqAgentHealth(folder?: string): Promise<HqAgentHealth> {
   const empty: HqAgentHealth = { present: false, label: '', lastSync: '', offline: false, error: '' }
   try {
     const mod = await loadAgent()
-    for (const id of mod.listSeats()) {
-      const state = mod.readState(mod.seatDir(id))
-      if (!state?.mini_root) continue
-      return {
-        present: true,
-        label: String(state.brain_label || id),
-        lastSync: String(state.last_sync_at || ''),
-        offline: Boolean(state.offline),
-        error: String(state.last_error || '')
-      }
+    const seats = mod.listSeats().map((id) => ({ id, ...mod.readState(mod.seatDir(id)) }))
+    const want = String(folder || '').trim()
+    const hit = pickSeatForFolder(seats, want)
+    if (!hit?.mini_root) return empty
+    return {
+      present: true,
+      label: String(hit.brain_label || hit.id || ''),
+      lastSync: String(hit.last_sync_at || ''),
+      offline: Boolean(hit.offline),
+      error: String(hit.last_error || '')
     }
   } catch {
     /* vendor missing in tests */

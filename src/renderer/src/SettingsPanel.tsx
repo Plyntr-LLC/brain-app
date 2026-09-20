@@ -55,6 +55,7 @@ export function SettingsPanel({
   const [hq, setHq] = useState<HqStatus | null>(null)
   const [hqCode, setHqCode] = useState('')
   const [hqRepo, setHqRepo] = useState('')
+  const [folderRepo, setFolderRepo] = useState('')
   const [hqBusy, setHqBusy] = useState(false)
   const [bizName, setBizName] = useState('')
   const [bizEmail, setBizEmail] = useState('')
@@ -97,7 +98,8 @@ export function SettingsPanel({
       if (bridge) {
         setHq(bridge)
         const watched = await window.brain.hqSync.watchedRepo().catch(() => '')
-        setHqRepo(bridge.hq_repo || watched || '')
+        setFolderRepo(watched)
+        setHqRepo(watched || bridge.hq_repo || '')
         if (bridge.projects.length) {
           setLiveProjects(bridge.projects.map((p) => ({ id: p.slug, name: prettyName(p.slug) })))
         }
@@ -190,7 +192,15 @@ export function SettingsPanel({
         <section className="set-block">
           <p className="kicker">Superadmin</p>
           <h3 className="set-h">Add a company</h3>
-          <p>Only you see this. Adding a company emails that person a login. They connect GitHub themselves.</p>
+          <p>
+            Only you see this. This starts a new company. They get a login email and connect GitHub themselves. It is not
+            added to {here}.
+          </p>
+          {folderRepo && hq?.hq_repo && folderRepo !== hq.hq_repo ? (
+            <p className="tiny">
+              This window is {here} ({folderRepo}). Project sync is still on {hq.hq_repo}.
+            </p>
+          ) : null}
           {!hq?.signedIn ? (
             <>
               <p className="tiny">A six-digit code to joe@plyntr.com unlocks send. It lasts ten minutes.</p>
@@ -304,7 +314,13 @@ export function SettingsPanel({
           <div className="set-block" style={{ padding: 0 }}>
             <p className="tiny">
               {hq?.signedIn
-                ? `Project sync signed in as ${hq.email}${hq.hq_repo ? ` · ${hq.hq_repo}` : ''}.`
+                ? [
+                    `Project sync signed in as ${hq.email}`,
+                    hq.hq_repo ? hq.hq_repo : '',
+                    folderRepo && hq.hq_repo && folderRepo !== hq.hq_repo ? `This folder is ${folderRepo}` : ''
+                  ]
+                    .filter(Boolean)
+                    .join('. ') + '.'
                 : 'To add Project only people, sign in for project sync with a code to your owner email.'}
             </p>
             {!hq?.signedIn ? (
@@ -339,7 +355,8 @@ export function SettingsPanel({
                         const st = await window.brain.hqSync.ownerStatus()
                         setHq(st)
                         const watched = await window.brain.hqSync.watchedRepo().catch(() => '')
-                        setHqRepo(st.hq_repo || watched || '')
+                        setFolderRepo(watched)
+                        setHqRepo(watched || st.hq_repo || '')
                         if (st.projects.length) {
                           setLiveProjects(st.projects.map((p) => ({ id: p.slug, name: prettyName(p.slug) })))
                         }

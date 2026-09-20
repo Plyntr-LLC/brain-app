@@ -26,7 +26,7 @@ Skin paints catalog cards over a live CLI PTY. Chat keeps one warm ACP (or strea
 | Claude | `claude -p --input-format stream-json --output-format stream-json` (process stays up) |
 | Codex | `codex app-server --listen stdio://` |
 
-Pickers (model, effort, mode, folder) must follow what that CLI actually advertises. Do not send Grok fields to Cursor.
+Pickers (model, effort, mode, folder) must follow what that CLI actually advertises. Claude reads this Mac’s plan list (not Grok). Do not send Grok fields to Cursor.
 
 Default Chat effort is **high** (Joe’s TUI stays extra high). Cursor Chat defaults to **agent** so it can edit. Chat may write files in the watched folder (Grok no `--deny Write`, Claude Write/Edit allowed, Codex `workspace-write`). Google Ads and outbound mail still need a clear yes.
 
@@ -51,7 +51,7 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Structured chat events: thought, text, files, compact status. Markdown tables in brain bubbles.
 - Right sidebar: In use files, live Model / Effort / Mode / Folder. Folder switch is local to this window (recents in this app’s userData). It does not change Mike’s watched path.
 - `/compact` goes to the live session. Auto-compact shows a wheel + “Compacting…” then a short note. Transcript on screen stays.
-- Grok and Cursor model/mode pickers follow the live session. ChatGPT/Codex picker does **not** yet (still falls through to `grok models`).
+- Grok and Cursor model/mode pickers follow the live session. Claude model picker reads this Mac’s Claude plan list. ChatGPT/Codex picker uses Codex `model/list`.
 - Slash: every `/` either does a real in-app job or is sent on. Chat leftover `/` goes ACP. Skin leftover `/` is typed into the peel TUI (`/theme`, `/vim-mode`, `/fullscreen`, `/dashboard`, skills). Grok catalog is in the `/` menu.
 - Skin default is catalog paint. Chat toggle is ACP bubbles. **Show terminal** is a separate CLI TUI (accepted). Terminal (`+` → Terminal, or `/terminal`) is a login shell, not Grok/Claude.
 - Settings: one company at the top (You are working on this company). Then job 1 company, job 2 brains for that company, job 3 people at that company. Buttons name the company. Stored in userData, not Agency Brain config.json.
@@ -93,11 +93,15 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Empty until Joe says next 3.
+Claude picker lists this Mac’s Claude models. Title follows the watched folder. Add company is a new company, not the brain in the window.
 
 ## Inbox
 
 Bugs and product gaps. One line each. Date + what.
+
+- [x] 2026-09-20 Joe: Claude model picker lists Grok 4.5/4.6. Title says Jeen-AI-Brain-test while the window is Plyntr. Add-company must not attach to Jeen. Wire pickers and folder to the CLI and brain in use. Done: 2026-09-20. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `listSlash` claude branch, `claude-models.ts`, `hq-folder.ts`, `watchingHealth`, Settings add-company copy.
+
+- [ ] 2026-09-20 Joe: Jev high-confidence unmatched screens join the catalog. Spend TypeSafe yes. PermissionAsk never Allow.
 
 - [x] 2026-09-20 Joe: Turn Jev on for Skin. Propose catalog rows from unmatched captures. Do not Allow a write. Spend TypeSafe yes. Done: 2026-09-20. Grok 4.6 xhigh APPROVE. Evidence: `src/main/skin/jev.ts`, Settings Jev toggle, `skin.json` jev on.
 

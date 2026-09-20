@@ -88,7 +88,7 @@ export function registerStubIpc(): void {
   loadAccount()
   ipcMain.handle('env:get', async () => {
     const watching = readWatching()
-    const seat = await existingProjectSeat().catch(() => null)
+    const seat = await existingProjectSeat(watching.brainPath || undefined).catch(() => null)
     return {
       dryRun: dryRun(),
       chatLive: true,
@@ -134,7 +134,7 @@ export function registerStubIpc(): void {
     const brainName = String(roster?.name || watching.teamName || watching.name || '').trim()
     const plyntrBrain = (roster?.slug || watching.teamSlug) === 'plyntr'
     const superAdmin = isJoeSuperAdmin(acct, file)
-    const hqMini = acct?.source === 'hq-sync' || isHqMiniFolder(acct?.folder)
+    const hqMini = (acct?.source === 'hq-sync' || isHqMiniFolder(acct?.folder)) && !watching.brainPath
     return {
       superAdmin,
       email,
@@ -142,7 +142,7 @@ export function registerStubIpc(): void {
       role: String(acct?.role || member?.role || ''),
       signedIn: Boolean(acct?.email),
       watching: hqMini ? true : watching.watching,
-      brainPath: hqMini ? acct?.folder || folder : folder,
+      brainPath: folder,
       brainName: brainName || (folder ? folder.split(/[/\\]/).filter(Boolean).pop() : '') || '',
       brainSlug: roster?.slug || watching.teamSlug,
       plyntrBrain,

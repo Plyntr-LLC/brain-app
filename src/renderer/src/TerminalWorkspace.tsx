@@ -182,6 +182,17 @@ function prettyModel(id?: string, kind?: AiKind, models?: Cap[]): string {
     .replace(/^gpt-/i, 'GPT-')
 }
 
+function cliModels(kind: AiKind | undefined, list?: Cap[] | null): Cap[] {
+  const raw = Array.isArray(list) ? list : []
+  if (!kind || kind === 'grok') return raw
+  return raw.filter((m) => !/^grok[-_]/i.test(String(m.id || '')) && !/^grok\s/i.test(String(m.label || '')))
+}
+
+function modelOnList(id: string | undefined, list: Cap[]): string | undefined {
+  if (!id) return undefined
+  return list.some((m) => m.id === id || m.label === id) ? id : undefined
+}
+
 function normalizeEffort(id?: string): string | undefined {
   if (!id) return undefined
   const k = id.toLowerCase().replace(/_/g, '-').replace(/\s+/g, '-')
@@ -692,10 +703,19 @@ function ChatPane({
   }, [messages, active])
 
   useEffect(() => {
-    window.brain.slash.list(cwd, kind).then((r) => {
-      setCmds(r.commands)
-      setModels(r.models)
-    }).catch(() => {})
+    let live = true
+    setModels([])
+    window.brain.slash
+      .list(cwd, kind)
+      .then((r) => {
+        if (!live) return
+        setCmds(r.commands)
+        setModels(cliModels(kind, r.models))
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
   }, [cwd, kind])
 
   useEffect(() => {
@@ -708,7 +728,8 @@ function ChatPane({
     void window.brain.chat
       .warm({ tabId: id, kind, cwd, model, effort, agentMode, resumeId })
       .then((r) => {
-        if (r?.models?.length) setModels(r.models)
+        const listed = r?.models?.length ? cliModels(kind, r.models) : undefined
+        if (listed?.length) setModels(listed)
         if (r?.commands?.length) setSessionCmds(r.commands)
         if (r?.sessionId) setCliSid(r.sessionId)
         onCaps({
@@ -716,7 +737,7 @@ function ChatPane({
           effort: r?.effort,
           agentMode: r?.agentMode,
           sessionId: r?.sessionId,
-          models: r?.models,
+          models: listed,
           efforts: r?.efforts,
           agentModes: r?.agentModes
         })
@@ -1720,7 +1741,7 @@ export function TerminalWorkspace({
   const setupKind = (s.ai || 'grok') as AiKind
   const [cwd, setCwd] = useState(s.brainPath || '')
   const [pick, setPick] = useState<null | 'model' | 'effort' | 'folder' | 'agentMode'>(null)
-  const [models, setModels] = useState<{ id: string; label: string }[]>([])
+  const [modelsByKind, setModelsByKind] = useState<Partial<Record<AiKind, Cap[]>>>({})
   const [recents, setRecents] = useState<{ path: string; name: string; watching?: boolean }[]>([])
   const [busyTabs, setBusyTabs] = useState<Record<string, boolean>>({})
   function freshTab(): Tab {
@@ -1759,14 +1780,10 @@ export function TerminalWorkspace({
   const chatTab = tabs.find((t) => t.id === chatId)
   const hits = filesByTab[chatId] || []
   const folderName = cwd.split('/').filter(Boolean).pop() || 'Agency Brain'
-  const modelChoices =
-    chatTab?.models && chatTab.models.length
-      ? chatTab.models
-      : chatTab?.kind === 'gpt' || chatTab?.kind === 'cursor'
-        ? []
-        : models.length
-          ? models
-          : [{ id: 'grok-4.6', label: 'Grok 4.6' }]
+  const modelChoices = cliModels(
+    chatTab?.kind,
+    chatTab?.models && chatTab.models.length ? chatTab.models : modelsByKind[chatTab?.kind || 'grok']
+  )
 
   useEffect(() => {
     if (!cwd && s.brainPath) setCwd(s.brainPath)
@@ -1906,13 +1923,34 @@ export function TerminalWorkspace({
   }, [cwd])
 
   useEffect(() => {
-    const kind = chatTab?.kind || 'grok'
+    const kind = (chatTab?.kind || 'grok') as AiKind
+    const tabId = chatTab?.id
     if (!cwd) return
+    let live = true
     window.brain.slash
       .list(cwd, kind)
-      .then((r) => setModels(r.models))
+      .then((r) => {
+        if (!live) return
+        const listed = cliModels(kind, r.models)
+        setModelsByKind((m) => ({ ...m, [kind]: listed }))
+        if (!tabId) return
+        setTabs((all) =>
+          all.map((x) => {
+            if (x.id !== tabId || x.kind !== kind) return x
+            const nextModels = listed.length ? listed : cliModels(x.kind, x.models)
+            return {
+              ...x,
+              models: nextModels,
+              model: modelOnList(x.model, nextModels)
+            }
+          })
+        )
+      })
       .catch(() => {})
-  }, [cwd, chatTab?.kind])
+    return () => {
+      live = false
+    }
+  }, [cwd, chatTab?.kind, chatTab?.id])
 
   useEffect(() => {
     if (tab?.type === 'chat') setLastChatId(tab.id)
@@ -2228,14 +2266,15 @@ export function TerminalWorkspace({
                         x.id === t.id
                           ? {
                               ...x,
-                              model: c.model || x.model,
+                              model: modelOnList(c.model || x.model, cliModels(x.kind, c.models ?? x.models)) ||
+                                modelOnList(x.model, cliModels(x.kind, c.models ?? x.models)),
                               effort:
                                 c.efforts && c.efforts.length === 0
                                   ? undefined
                                   : normalizeEffort(c.effort) || (c.efforts?.length ? x.effort : undefined),
                               agentMode: c.agentMode || x.agentMode,
                               cliSessionId: c.sessionId || x.cliSessionId,
-                              models: c.models ?? x.models,
+                              models: cliModels(x.kind, c.models ?? x.models),
                               efforts: c.efforts,
                               agentModes: c.agentModes ?? x.agentModes
                             }
@@ -2357,7 +2396,7 @@ export function TerminalWorkspace({
             )}
             <div className="runmeta-k">Model</div>
             <button type="button" className="runmeta-v" onClick={() => setPick((p) => (p === 'model' ? null : 'model'))}>
-              {prettyModel(chatTab?.model, chatTab?.kind, chatTab?.models)}
+              {prettyModel(chatTab?.model, chatTab?.kind, modelChoices)}
             </button>
             {(chatTab?.efforts?.length || (chatTab?.kind && chatTab.kind !== 'cursor' && fallbackEfforts(chatTab.kind).length)) ? (
               <>

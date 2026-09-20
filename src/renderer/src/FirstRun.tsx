@@ -33,8 +33,7 @@ export function FirstRun() {
       setDetected(d)
       const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
       const email = acct.signedIn ? acct.email : existing?.email || ''
-      const hqMini = acct.source === 'hq-sync'
-      const folder = hqMini ? acct.folder || e.projectSeat?.folder || '' : existing?.brainPath || acct.folder || ''
+      const folder = existing?.brainPath || acct.folder || ''
       setProjectSeat(e.projectSeat ? { folder: e.projectSeat.folder, label: e.projectSeat.label } : null)
       let screen = 'email'
       if (acct.signedIn && (st.ready || (folder && pick))) screen = 'chat'
