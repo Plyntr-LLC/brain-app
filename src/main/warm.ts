@@ -80,7 +80,7 @@ export async function resetWarm(opts: WarmOpts): Promise<LiveRun> {
     return acpReset({ kind: opts.kind, tabId: opts.tabId, cwd: opts.cwd, model: opts.model, effort: opts.effort })
   }
   if (opts.kind === 'claude') {
-    return claudeReset({ tabId: opts.tabId, cwd: opts.cwd, model: opts.model })
+    return claudeReset({ tabId: opts.tabId, cwd: opts.cwd, model: opts.model, effort: opts.effort })
   }
   if (opts.kind === 'gpt') return codexReset(opts)
   return {}

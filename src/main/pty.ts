@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { delimiter } from 'node:path'
 import pty from 'node-pty'
 import type { IPty } from 'node-pty'
+import { CLAUDE_DEFAULT_EFFORT, CLAUDE_DEFAULT_MODEL } from '../shared/claude-defaults'
 import type { AiKind } from '../shared/contracts'
 import { extraPath, resolveBin } from './ai-cli'
 import { ensureGrokLeader, grokLeaderLive, grokTuiArgs } from './grok-leader'
@@ -34,7 +35,14 @@ function cliCommand(
     if (resume) args.push('--resume', resume)
     return { bin, args }
   }
-  if (kind === 'claude') return { bin, args: resume ? ['--resume', resume] : [] }
+  if (kind === 'claude') {
+    return {
+      bin,
+      args: resume
+        ? ['--resume', resume]
+        : ['--model', CLAUDE_DEFAULT_MODEL, '--effort', CLAUDE_DEFAULT_EFFORT]
+    }
+  }
   if (resume) return { bin, args: ['resume', resume] }
   return { bin, args: [] }
 }

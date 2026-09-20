@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import type { AiKind, Session } from '@shared/contracts'
+import { CLAUDE_DEFAULT_EFFORT, CLAUDE_DEFAULT_MODEL, keepClaudeModel } from '../../shared/claude-defaults'
 import { mdToHtml, tidy, type FileHit } from './ptyChat'
 import { WorldClocks } from './WorldClocks'
 import { WorkPulse } from './WorkPulse'
@@ -192,6 +193,10 @@ function cliModels(kind: AiKind | undefined, list?: Cap[] | null): Cap[] {
 function modelOnList(id: string | undefined, list: Cap[]): string | undefined {
   if (!id) return undefined
   return list.some((m) => m.id === id || m.label === id) ? id : undefined
+}
+
+function claudeModelOnList(id: string | undefined, list: Cap[]): string {
+  return keepClaudeModel(id, list)
 }
 
 function normalizeEffort(id?: string): string | undefined {
@@ -1791,7 +1796,8 @@ export function TerminalWorkspace({
       mode: 'chat',
       title: label(setupKind),
       sessionId: crypto.randomUUID(),
-      effort: undefined,
+      model: setupKind === 'claude' ? CLAUDE_DEFAULT_MODEL : undefined,
+      effort: setupKind === 'claude' ? CLAUDE_DEFAULT_EFFORT : undefined,
       agentMode: setupKind === 'cursor' ? 'agent' : undefined
     }
   }
@@ -1861,7 +1867,15 @@ export function TerminalWorkspace({
           setTabs(
             saved.tabs.map((t) => ({
               ...t,
-              effort: t.kind === 'cursor' || t.effort === 'high' ? undefined : t.effort
+              model: t.kind === 'claude' ? t.model || CLAUDE_DEFAULT_MODEL : t.model,
+              effort:
+                t.kind === 'cursor'
+                  ? undefined
+                  : t.kind === 'claude'
+                    ? t.effort || CLAUDE_DEFAULT_EFFORT
+                    : t.effort === 'high'
+                      ? undefined
+                      : t.effort
             }))
           )
           setActive(saved.active || saved.tabs[0].id)
@@ -1995,7 +2009,7 @@ export function TerminalWorkspace({
             return {
               ...x,
               models: nextModels,
-              model: modelOnList(x.model, nextModels)
+              model: x.kind === 'claude' ? claudeModelOnList(x.model, nextModels) : modelOnList(x.model, nextModels)
             }
           })
         )
@@ -2085,7 +2099,8 @@ export function TerminalWorkspace({
         title: label(kind),
         sessionId: crypto.randomUUID(),
         cliSessionId: resumeId,
-        effort: undefined,
+        model: kind === 'claude' ? CLAUDE_DEFAULT_MODEL : undefined,
+        effort: kind === 'claude' ? CLAUDE_DEFAULT_EFFORT : undefined,
         agentMode: kind === 'cursor' ? 'agent' : undefined
       }
     ])
@@ -2351,12 +2366,17 @@ export function TerminalWorkspace({
                         x.id === t.id
                           ? {
                               ...x,
-                              model: modelOnList(c.model || x.model, cliModels(x.kind, c.models ?? x.models)) ||
-                                modelOnList(x.model, cliModels(x.kind, c.models ?? x.models)),
+                              model:
+                                x.kind === 'claude'
+                                  ? claudeModelOnList(c.model || x.model, cliModels(x.kind, c.models ?? x.models))
+                                  : modelOnList(c.model || x.model, cliModels(x.kind, c.models ?? x.models)) ||
+                                    modelOnList(x.model, cliModels(x.kind, c.models ?? x.models)),
                               effort:
-                                c.efforts && c.efforts.length === 0
-                                  ? undefined
-                                  : normalizeEffort(c.effort) || (c.efforts?.length ? x.effort : undefined),
+                                x.kind === 'claude'
+                                  ? normalizeEffort(c.effort) || x.effort || CLAUDE_DEFAULT_EFFORT
+                                  : c.efforts && c.efforts.length === 0
+                                    ? undefined
+                                    : normalizeEffort(c.effort) || (c.efforts?.length ? x.effort : undefined),
                               agentMode: c.agentMode || x.agentMode,
                               cliSessionId: c.sessionId || x.cliSessionId,
                               models: cliModels(x.kind, c.models ?? x.models),

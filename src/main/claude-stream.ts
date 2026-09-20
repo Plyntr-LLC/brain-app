@@ -1,3 +1,4 @@
+import { resolveClaudeRun } from '../shared/claude-defaults'
 import type { StreamEvent } from './ai-cli'
 import { binEnv, resolveBin } from './ai-cli'
 import { claudeContent, type Attach } from './attach'
@@ -113,15 +114,16 @@ function claudeLive(s: Sess): { model?: string; effort?: string } {
 }
 
 export async function claudeWarm(opts: { tabId: string; cwd: string; model?: string; effort?: string }): Promise<{ model?: string; effort?: string }> {
+  const run = resolveClaudeRun(opts)
   const pending = booting.get(opts.tabId)
   if (pending) {
     await pending
     const have = sessions.get(opts.tabId)
-    if (have && !have.dead && have.cwd === opts.cwd && have.model === opts.model && have.effort === opts.effort) {
+    if (have && !have.dead && have.cwd === opts.cwd && have.model === run.model && have.effort === run.effort) {
       return claudeLive(have)
     }
   }
-  const work = claudeWarmNow(opts)
+  const work = claudeWarmNow({ ...opts, ...run })
   booting.set(opts.tabId, work)
   try {
     await work
@@ -129,12 +131,13 @@ export async function claudeWarm(opts: { tabId: string; cwd: string; model?: str
     booting.delete(opts.tabId)
   }
   const s = sessions.get(opts.tabId)
-  return s ? claudeLive(s) : { model: opts.model, effort: opts.effort }
+  return s ? claudeLive(s) : run
 }
 
 async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string; effort?: string }): Promise<void> {
+  const run = resolveClaudeRun(opts)
   const have = sessions.get(opts.tabId)
-  if (have && !have.dead && have.cwd === opts.cwd && have.model === opts.model && have.effort === opts.effort) return
+  if (have && !have.dead && have.cwd === opts.cwd && have.model === run.model && have.effort === run.effort) return
   if (have) claudeClose(opts.tabId)
   const bin = resolveBin('claude')
   if (!bin) throw new Error('Claude is not installed on this computer')
@@ -151,16 +154,18 @@ async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string;
     '--permission-prompts',
     'none',
     '--append-system-prompt',
-    RULES
+    RULES,
+    '--model',
+    run.model,
+    '--effort',
+    run.effort
   ]
-  if (opts.model) args.push('--model', opts.model)
-  if (opts.effort) args.push('--effort', opts.effort)
   const proc = spawnBin(bin, args, opts.cwd, binEnv())
   const s: Sess = {
     tabId: opts.tabId,
     cwd: opts.cwd,
-    model: opts.model,
-    effort: opts.effort,
+    model: run.model,
+    effort: run.effort,
     proc,
     buf: '',
     waiting: null,
@@ -234,7 +239,7 @@ export function claudeClose(tabId: string): void {
   }
 }
 
-export async function claudeReset(opts: { tabId: string; cwd: string; model?: string }): Promise<{ model?: string; effort?: string }> {
+export async function claudeReset(opts: { tabId: string; cwd: string; model?: string; effort?: string }): Promise<{ model?: string; effort?: string }> {
   claudeClose(opts.tabId)
   return claudeWarm(opts)
 }

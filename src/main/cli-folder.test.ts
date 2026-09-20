@@ -2,6 +2,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { pickSeatForFolder, pickSeatForHqRepo, seatMatchesFolder } from './hq-folder.ts'
 import { claudeModelsFromCache } from './claude-models.ts'
+import { formatClaudeUsage } from './claude-usage.ts'
+import {
+  CLAUDE_DEFAULT_EFFORT,
+  CLAUDE_DEFAULT_MODEL,
+  keepClaudeModel,
+  pickClaudeDefaultModel,
+  resolveClaudeRun
+} from '../shared/claude-defaults.ts'
 
 test('Claude cache lists plan models, never Grok', () => {
   const models = claudeModelsFromCache(
@@ -36,6 +44,53 @@ test('Claude help aliases are used when the plan cache is empty', () => {
     models.map((m) => m.id),
     ['fable', 'opus', 'sonnet']
   )
+})
+
+test('Claude Brain.app default is Opus 5 low, not Fable or the CLI settings model', () => {
+  assert.equal(CLAUDE_DEFAULT_MODEL, 'claude-opus-5')
+  assert.equal(CLAUDE_DEFAULT_EFFORT, 'low')
+  assert.equal(resolveClaudeRun({}).model, 'claude-opus-5')
+  assert.equal(resolveClaudeRun({}).effort, 'low')
+  assert.equal(resolveClaudeRun({ model: 'fable[1m]', effort: 'high' }).model, 'fable[1m]')
+  assert.equal(resolveClaudeRun({ model: 'fable[1m]', effort: 'high' }).effort, 'high')
+  const listed = claudeModelsFromCache(
+    {
+      cachedGrowthBookFeatures: {
+        tengu_curious_tower_stateless_models: 'fable-5-1, opus-5, opus-4-8, sonnet-5'
+      },
+      additionalModelOptionsCache: [{ value: 'claude-fable-5-1[1m]', label: 'Fable' }]
+    },
+    { settingsModel: 'fable[1m]' }
+  )
+  const picked = pickClaudeDefaultModel(listed)
+  assert.ok(/opus-5/i.test(picked), picked)
+  assert.equal(/fable/i.test(picked), false)
+  assert.equal(pickClaudeDefaultModel([{ id: 'opus' }, { id: 'sonnet' }]), 'opus')
+  assert.equal(keepClaudeModel('fable[1m]', []), 'fable[1m]')
+  assert.equal(keepClaudeModel('fable[1m]', listed), 'fable[1m]')
+  assert.equal(keepClaudeModel(undefined, listed), picked)
+  assert.equal(keepClaudeModel('claude-opus-5', []), 'claude-opus-5')
+})
+
+test('Claude /usage is the Claude account, never Grok', () => {
+  const body = formatClaudeUsage(
+    {
+      loggedIn: true,
+      authMethod: 'claude.ai',
+      subscriptionType: 'pro',
+      email: 'ada@example.com',
+      orgName: "ada@example.com's Organization"
+    },
+    '/tmp/brain'
+  )
+  assert.equal(body.includes('grok.com'), false)
+  assert.equal(body.includes('Grok account'), false)
+  assert.match(body, /Claude account/)
+  assert.match(body, /Plan: Claude Pro/)
+  assert.match(body, /ada@example\.com/)
+  assert.match(body, /claude\.ai\/settings\/usage/)
+  assert.match(body, /\/tmp\/brain/)
+  assert.equal(formatClaudeUsage({ loggedIn: false }, '/tmp/brain'), 'Claude is not signed in on this Mac.')
 })
 
 test('HQ title follows the open folder, not the first other company seat', () => {

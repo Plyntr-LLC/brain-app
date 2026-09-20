@@ -28,7 +28,7 @@ Skin paints catalog cards over a live CLI PTY. Chat keeps one warm ACP (or strea
 
 Pickers (model, effort, mode, folder) must follow what that CLI actually advertises. Claude reads this Mac’s plan list (not Grok). Do not send Grok fields to Cursor.
 
-Default Chat effort is **high** (Joe’s TUI stays extra high). Cursor Chat defaults to **agent** so it can edit. Chat may write files in the watched folder (Grok no `--deny Write`, Claude Write/Edit allowed, Codex `workspace-write`). Google Ads and outbound mail still need a clear yes.
+Default Chat effort is **high** (Joe’s TUI stays extra high). **Claude** Chat defaults to **Opus 5** at **low** effort, not Fable and not `~/.claude/settings.json`. Cursor Chat defaults to **agent** so it can edit. Chat may write files in the watched folder (Grok no `--deny Write`, Claude Write/Edit allowed, Codex `workspace-write`). Google Ads and outbound mail still need a clear yes.
 
 Each person uses their own CLI login. Never bake a Plyntr SuperGrok (or Cursor) account into the app.
 
@@ -59,7 +59,7 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
 - Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, one setup screen lists them, pre-warns every permission dialog, then **Start setup** (one click) runs official installers in order and waits. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.
 - Long runs show a live Working strip (wheel, phase, elapsed time) plus a pulse on the chat tab. Tools update the phase. Setup polls use the same strip. The thread does not sit on a frozen Thinking label.
-- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.17**. Developer ID Application: Plyntr LLC.
+- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.18**. Developer ID Application: Plyntr LLC.
 
 ## How Joe runs Inbox
 
@@ -93,11 +93,15 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-Skin is the face. Chat stays in the code, hidden. Terminal is a top tab only. Last tab can close after a confirm. Empty stage is the card color, not black.
+Skin is the face. Chat stays in the code, hidden. Terminal is a top tab only. Last tab can close after a confirm. Empty stage is the card color, not black. Claude tabs start on Opus 5 at low effort.
 
 ## Inbox
 
 Bugs and product gaps. One line each. Date + what.
+
+- [x] 2026-09-20 Joe: `/usage` in a Claude session shows the Grok account card. Done: 2026-09-20. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: v0.1.18, `claudeUsageBlurb` + `formatClaudeUsage`, never grok.com.
+
+- [x] 2026-09-20 Joe: Claude default is Opus 5 low, not Fable. Done: 2026-09-20. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: v0.1.18, `claude-defaults.ts`, `claude-stream.ts` always `--model`/`--effort`.
 
 - [x] 2026-09-20 Joe: Hide Chat (keep Skin). No Show terminal in Skin. Bigger +. Last tab can close. Confirm before close. No black empty stage. Done: 2026-09-20. Grok 4.6 xhigh APPROVE. Evidence: v0.1.17 signed+notarized, GitHub latest, `/Applications/Brain.app`. Direct: https://github.com/Plyntr-LLC/brain-app/releases/latest/download/Brain-0.1.17-mac.dmg
 

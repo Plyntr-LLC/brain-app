@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { binEnv, resolveBin } from './ai-cli'
 import { claudeModelsFromCache } from './claude-models'
+import { formatClaudeUsage } from './claude-usage'
 import { listCodexCaps } from './codex-app'
 import { grokLeaderSocket } from './grok-args'
 
@@ -504,11 +505,38 @@ async function cursorPlanBlurb(): Promise<string> {
   }
 }
 
+async function claudeUsageBlurb(cwd: string): Promise<string> {
+  const bin = resolveBin('claude')
+  if (!bin) return 'Claude is not installed on this computer.'
+  try {
+    const raw = await run(bin, ['auth', 'status', '--json'], cwd)
+    const start = raw.indexOf('{')
+    if (start < 0) return 'Could not read Claude usage.'
+    const o = JSON.parse(raw.slice(start)) as Record<string, unknown>
+    return formatClaudeUsage(o, cwd)
+  } catch (e) {
+    return `Could not read Claude usage.\n${String((e as Error).message || e)}`
+  }
+}
+
+function gptUsageBlurb(cwd: string): string {
+  return [
+    'ChatGPT (Codex) account',
+    '',
+    'Plan spend lives on the OpenAI account, not this chat.',
+    'Open: https://chatgpt.com',
+    '',
+    `This folder: ${cwd}`
+  ].join('\n')
+}
+
 export async function usageBlurb(cwd: string, kind = 'grok', sessionId?: string): Promise<string> {
   if (kind === 'cursor') {
     const [plan, about] = await Promise.all([cursorPlanBlurb(), cursorAboutBlurb(cwd)])
     return [plan, about].filter(Boolean).join('\n\n') || 'Cursor CLI is not installed.'
   }
+  if (kind === 'claude') return claudeUsageBlurb(cwd)
+  if (kind === 'gpt') return gptUsageBlurb(cwd)
   if (kind === 'grok') {
     const grok = resolveBin('grok')
     const sid = String(sessionId || '').trim()
@@ -524,18 +552,19 @@ export async function usageBlurb(cwd: string, kind = 'grok', sessionId?: string)
         return `Could not read Grok usage.\n${String((e as Error).message || e)}`
       }
     }
+    const acct = grokAccount()
+    return [
+      'Grok account (grok.com)',
+      `Name: ${acct.name || ''}`,
+      `Email: ${acct.email || ''}`,
+      '',
+      'Credits, weekly limit, and billing live on the account, not this chat.',
+      'Open: https://grok.com?_s=usage',
+      '',
+      `This folder: ${cwd}`
+    ].join('\n')
   }
-  const acct = grokAccount()
-  return [
-    'Grok account (grok.com)',
-    `Name: ${acct.name || ''}`,
-    `Email: ${acct.email || ''}`,
-    '',
-    'Credits, weekly limit, and billing live on the account, not this chat.',
-    'Open: https://grok.com?_s=usage',
-    '',
-    `This folder: ${cwd}`
-  ].join('\n')
+  return `Usage for this CLI is not available.`
 }
 
 function formatGrokUsage(raw: string): string | null {
