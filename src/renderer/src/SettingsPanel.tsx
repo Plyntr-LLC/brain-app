@@ -49,6 +49,9 @@ export function SettingsPanel({
   const [appVer, setAppVer] = useState('')
   const [upd, setUpd] = useState('')
   const [skinCap, setSkinCap] = useState(false)
+  const [skinJev, setSkinJev] = useState(false)
+  const [jevReady, setJevReady] = useState(false)
+  const [jevBusy, setJevBusy] = useState('')
   const [hq, setHq] = useState<HqStatus | null>(null)
   const [hqCode, setHqCode] = useState('')
   const [hqRepo, setHqRepo] = useState('')
@@ -67,6 +70,12 @@ export function SettingsPanel({
       catalogId: string | null
       matched: boolean
       label: string | null
+      jevProposal?: {
+        component: string | null
+        confidence: number
+        paint: boolean
+        detail: string
+      } | null
     }[]
   >([])
   const joe = email === 'joe@plyntr.com'
@@ -94,9 +103,13 @@ export function SettingsPanel({
         }
       }
       setAppVer(await window.brain.version().catch(() => ''))
-      const skin = await window.brain.skin.get().catch(() => ({ capture: false, joe: false, components: [] }))
+      const skin = await window.brain.skin
+        .get()
+        .catch(() => ({ capture: false, jev: false, jevReady: false, joe: false, components: [] }))
       if (skin.joe) {
         setSkinCap(Boolean(skin.capture))
+        setSkinJev(Boolean(skin.jev))
+        setJevReady(Boolean(skin.jevReady))
         setCaptures(await window.brain.skin.list().catch(() => []))
       }
       setLoaded(true)
@@ -534,7 +547,7 @@ export function SettingsPanel({
         <section className="set-block">
           <p className="kicker">Skin captures</p>
           <h3 className="set-h">Catalog school</h3>
-          <p>Only you see this. Turn capture on to log unmatched CLI screens on this Mac. They stay in this app’s data folder, not the shared brain.</p>
+          <p>Only you see this. Capture logs unmatched CLI screens on this Mac. Jev can propose a catalog card for those screens. It does not Allow a write.</p>
           <label className="set-row">
             <span>Capture screens</span>
             <button
@@ -547,6 +560,24 @@ export function SettingsPanel({
               {skinCap ? 'On' : 'Off'}
             </button>
           </label>
+          <label className="set-row">
+            <span>Jev</span>
+            <button
+              type="button"
+              className={skinJev ? 'primary' : 'ghost'}
+              onClick={() => {
+                void window.brain.skin.toggleJev(!skinJev).then((r) => {
+                  setSkinJev(Boolean(r.jev))
+                  setJevReady(Boolean(r.jevReady))
+                })
+              }}
+            >
+              {skinJev ? 'On' : 'Off'}
+            </button>
+          </label>
+          {skinJev && !jevReady ? (
+            <p className="tiny">Jev needs Doppler TypeSafe on this Mac. New unmatched screens wait until the key is ready.</p>
+          ) : null}
           {captures.length === 0 ? (
             <p className="tiny">No captures yet.</p>
           ) : (
@@ -556,7 +587,30 @@ export function SettingsPanel({
                   <span>
                     {c.cli} · {c.eventKind} · {c.matched ? c.catalogId : 'unmatched'}
                     {c.label ? ` · ${c.label}` : ''}
+                    {c.jevProposal
+                      ? ` · Jev ${c.jevProposal.component || 'unknown'} ${c.jevProposal.confidence.toFixed(2)}${c.jevProposal.paint ? ' paint' : ''}`
+                      : ''}
                   </span>
+                  {skinJev && !c.matched ? (
+                    <button
+                      type="button"
+                      className="ghost"
+                      disabled={jevBusy === c.fingerprint}
+                      onClick={() => {
+                        setJevBusy(c.fingerprint)
+                        void window.brain.skin
+                          .propose(c.fingerprint)
+                          .then((r) => {
+                            if (!r.ok) setNote(r.detail || 'Jev could not propose.')
+                            return window.brain.skin.list()
+                          })
+                          .then(setCaptures)
+                          .finally(() => setJevBusy(''))
+                      }}
+                    >
+                      {jevBusy === c.fingerprint ? 'Jev…' : 'Propose'}
+                    </button>
+                  ) : null}
                   <select
                     value={c.label || ''}
                     onChange={(e) => {

@@ -453,8 +453,16 @@ const brain = {
   },
   skin: {
     get: () =>
-      ipcRenderer.invoke('skin:get') as Promise<{ capture: boolean; joe: boolean; components: string[] }>,
+      ipcRenderer.invoke('skin:get') as Promise<{
+        capture: boolean
+        jev: boolean
+        jevReady: boolean
+        joe: boolean
+        components: string[]
+      }>,
     toggle: (on: boolean) => ipcRenderer.invoke('skin:toggle', on) as Promise<{ ok: boolean; capture: boolean }>,
+    toggleJev: (on: boolean) =>
+      ipcRenderer.invoke('skin:toggleJev', on) as Promise<{ ok: boolean; jev: boolean; jevReady: boolean }>,
     list: () =>
       ipcRenderer.invoke('skin:list') as Promise<
         {
@@ -467,10 +475,22 @@ const brain = {
           matched: boolean
           label: string | null
           propsHint: Record<string, unknown>
+          jevProposal: {
+            component: string | null
+            confidence: number
+            paint: boolean
+            detail: string
+          } | null
         }[]
       >,
     label: (fingerprint: string, label: string) =>
       ipcRenderer.invoke('skin:label', fingerprint, label) as Promise<{ ok: boolean }>,
+    propose: (fingerprint: string) =>
+      ipcRenderer.invoke('skin:propose', fingerprint) as Promise<{
+        ok: boolean
+        detail?: string
+        proposal?: { component: string | null; confidence: number; paint: boolean; detail: string }
+      }>,
     decide: (tabId: string, optionId: string) =>
       ipcRenderer.invoke('skin:decide', { tabId, optionId }) as Promise<{ ok: boolean }>
   }

@@ -3,9 +3,10 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, write
 import { join } from 'node:path'
 import { app } from 'electron'
 import { catalogIdForEvent } from '../../shared/skin/from-events'
-import { SKIN_COMPONENTS, type SkinComponentId } from '../../shared/skin/catalog'
+import { SKIN_COMPONENTS, isSkinComponent, type SkinComponentId } from '../../shared/skin/catalog'
 import type { SkinInEvent } from '../../shared/skin/spec'
 import type { AiKind } from '../../shared/contracts'
+import { getProposal } from './jev-cache'
 
 export type SkinCapture = {
   id: string
@@ -22,7 +23,13 @@ export type SkinCapture = {
   label: string | null
 }
 
-type CaptureFile = { capture?: boolean }
+type SkinSettings = { capture?: boolean; jev?: boolean }
+
+let unmatchedHook: ((row: SkinCapture) => void) | null = null
+
+export function onUnmatchedCapture(fn: (row: SkinCapture) => void): void {
+  unmatchedHook = fn
+}
 
 const seen = new Map<string, Set<string>>()
 let labelCache: Record<string, string> | null = null
@@ -54,7 +61,19 @@ export function skinHint(opts: { cli: string; ev: SkinInEvent }): {
   const kind = String(opts.ev.kind || '')
   const catalogId = catalogIdForEvent(opts.ev)
   const fingerprint = fingerprintOf({ cli: opts.cli, kind, propsHint: propsHintOf(opts.ev), catalogId })
-  return { fingerprint, label: labeledFingerprints()[fingerprint] || null, catalogId }
+  return { fingerprint, label: labeledFingerprints()[fingerprint] || jevPaintLabel(fingerprint), catalogId }
+}
+
+function jevPaintLabel(fingerprint: string): string | null {
+  if (!jevOn()) return null
+  try {
+    const p = getProposal(fingerprint)
+    if (!p?.paint || !p.component) return null
+    if (!isSkinComponent(p.component) || p.component === 'RawFallback') return null
+    return p.component
+  } catch {
+    return null
+  }
 }
 
 function dir(): string {
@@ -67,18 +86,38 @@ function settingsPath(): string {
   return join(app.getPath('userData'), 'skin.json')
 }
 
-export function captureOn(): boolean {
+function readSettings(): SkinSettings {
   try {
-    const raw = JSON.parse(readFileSync(settingsPath(), 'utf8')) as CaptureFile
-    return Boolean(raw.capture)
+    return JSON.parse(readFileSync(settingsPath(), 'utf8')) as SkinSettings
   } catch {
-    return false
+    return {}
   }
 }
 
+function writeSettings(patch: SkinSettings): { capture: boolean; jev: boolean } {
+  const cur = readSettings()
+  const next = {
+    capture: patch.capture != null ? Boolean(patch.capture) : Boolean(cur.capture),
+    jev: patch.jev != null ? Boolean(patch.jev) : Boolean(cur.jev)
+  }
+  writeFileSync(settingsPath(), JSON.stringify(next, null, 2))
+  return next
+}
+
+export function captureOn(): boolean {
+  return Boolean(readSettings().capture)
+}
+
+export function jevOn(): boolean {
+  return Boolean(readSettings().jev)
+}
+
 export function setCaptureOn(on: boolean): boolean {
-  writeFileSync(settingsPath(), JSON.stringify({ capture: Boolean(on) }, null, 2))
-  return Boolean(on)
+  return writeSettings({ capture: Boolean(on) }).capture
+}
+
+export function setJevOn(on: boolean): boolean {
+  return writeSettings({ jev: Boolean(on) }).jev
 }
 
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi
@@ -159,6 +198,7 @@ export function captureEvent(opts: {
   } catch {
     return null
   }
+  if (!row.matched) unmatchedHook?.(row)
   return row
 }
 
