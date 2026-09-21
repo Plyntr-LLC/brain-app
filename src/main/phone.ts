@@ -2,6 +2,7 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, clipboard, ipcMain } from 'electron'
@@ -276,6 +277,39 @@ function readBody(req: IncomingMessage, max = 32_000): Promise<string> {
   return readBuf(req, max).then((buf) => buf.toString('utf8'))
 }
 
+export const PHONE_PORT = 18765
+export const PHONE_HOST = 'brain-phone.plyntr.com'
+
+type NamedPhone = {
+  origin: string
+  host: string
+  tunnelId: string
+  port: number
+  tokenFile: string
+}
+
+function namedPhone(): NamedPhone | null {
+  const dir = join(homedir(), '.brain-secrets', 'brain-phone')
+  const cfgPath = join(dir, 'config.json')
+  const tokenFile = join(dir, 'token')
+  if (!existsSync(cfgPath) || !existsSync(tokenFile)) return null
+  try {
+    const raw = JSON.parse(readFileSync(cfgPath, 'utf8')) as {
+      origin?: string
+      host?: string
+      tunnelId?: string
+      port?: number
+    }
+    const host = String(raw.host || PHONE_HOST)
+    const origin = String(raw.origin || `https://${host}`).replace(/\/$/, '')
+    const port = Number(raw.port) || PHONE_PORT
+    if (!origin || !raw.tunnelId) return null
+    return { origin, host, tunnelId: String(raw.tunnelId), port, tokenFile }
+  } catch {
+    return null
+  }
+}
+
 function cloudflaredBin(): string | null {
   const extra = '/opt/homebrew/bin:/usr/local/bin'
   const named = [process.env.CLOUDFLARED_BIN, '/opt/homebrew/bin/cloudflared', '/usr/local/bin/cloudflared']
@@ -308,6 +342,62 @@ function startTunnel(port: number): Promise<string> {
       new Error('cloudflared is not on this Mac. In Terminal: brew install cloudflared')
     )
   }
+  const named = namedPhone()
+  if (named) return startNamedTunnel(bin, named, port)
+  return startQuickTunnel(bin, port)
+}
+
+function startNamedTunnel(bin: string, named: NamedPhone, port: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const extra = '/opt/homebrew/bin:/usr/local/bin'
+    tunnel = spawn(
+      bin,
+      [
+        'tunnel',
+        '--no-autoupdate',
+        'run',
+        '--token-file',
+        named.tokenFile,
+        '--url',
+        `http://127.0.0.1:${port}`
+      ],
+      {
+        env: { ...process.env, PATH: `${process.env.PATH || ''}:${extra}` },
+        stdio: ['ignore', 'pipe', 'pipe']
+      }
+    )
+    const tryParse = (chunk: Buffer) => {
+      const text = chunk.toString('utf8')
+      if (!settled && /Registered tunnel connection|connIndex=|Connected to/i.test(text)) {
+        settled = true
+        resolve(named.origin)
+      }
+    }
+    tunnel.stdout?.on('data', tryParse)
+    tunnel.stderr?.on('data', tryParse)
+    tunnel.on('exit', (code) => {
+      tunnel = null
+      if (!settled) {
+        settled = true
+        reject(new Error(code ? `The tunnel quit (${code}).` : 'The tunnel quit.'))
+        return
+      }
+      if (on) {
+        origin = ''
+        detail = 'The tunnel quit. Turn Phone off and on.'
+        pushStatus()
+      }
+    })
+    setTimeout(() => {
+      if (settled) return
+      settled = true
+      reject(new Error('The named tunnel did not come up. Check this Mac is online.'))
+    }, 25_000)
+  })
+}
+
+function startQuickTunnel(bin: string, port: number): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false
     const buf: string[] = []
@@ -707,11 +797,11 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
   res.end()
 }
 
-function listenLocal(): Promise<number> {
+function listenLocal(port = 0): Promise<number> {
   return new Promise((resolve, reject) => {
     const s = createServer(handle)
     s.on('error', reject)
-    s.listen(0, '127.0.0.1', () => {
+    s.listen(port, '127.0.0.1', () => {
       const addr = s.address()
       if (!addr || typeof addr === 'string') {
         s.close()
@@ -771,7 +861,7 @@ export async function startPhone(): Promise<PhoneStatus> {
   pushStatus()
   saveToken(mintToken())
   try {
-    localPort = await listenLocal()
+    localPort = await listenLocal(namedPhone()?.port || 0)
     if (mine !== boot) return status()
     spawnCaffeine()
     origin = await startTunnel(localPort)
@@ -797,8 +887,10 @@ export async function startPhone(): Promise<PhoneStatus> {
 
 export function rotatePhoneToken(): PhoneStatus {
   saveToken(mintToken())
+  const s = status()
+  if (s.url) clipboard.writeText(s.url)
   pushStatus()
-  return status()
+  return s
 }
 
 export function registerPhoneIpc(): void {

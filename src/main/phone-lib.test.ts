@@ -149,6 +149,9 @@ test('phone page uses Schibsted Grotesk and Source Serif 4, never Inter', () => 
   assert.match(html, /Bearer/)
   assert.match(html, /function seal/)
   assert.match(html, /history\.replaceState/)
+  assert.match(html, /pathname \+ location.hash/)
+  assert.match(html, /localStorage/)
+  assert.equal(/replaceState\(\{\}, '', location\.pathname\)/.test(html), false)
   assert.match(html, /1200 : 4000/)
   assert.match(html, /brain-phone-k/)
   assert.match(html, /encode\(sealSecret\)/)
@@ -178,7 +181,9 @@ test('shownPhoneLine names attachments like desktop', () => {
 
 test('phone server binds loopback only and does not log the token', () => {
   const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'phone.ts'), 'utf8')
-  assert.match(src, /listen\(0, '127\.0\.0\.1'/)
+  assert.match(src, /listen\(port, '127\.0\.0\.1'/)
+  assert.match(src, /--token-file/)
+  assert.match(src, /brain-phone\.plyntr\.com/)
   assert.equal(/0\.0\.0\.0/.test(src), false)
   assert.equal(/console\.(log|info|debug)\(/.test(src), false)
   assert.match(src, /function applyLiveEvent/)
@@ -204,6 +209,7 @@ test('phone server binds loopback only and does not log the token', () => {
   assert.match(src, /stashed\.has\(real\)/)
   assert.match(src, /Those files are not from this Phone session/)
   assert.match(src, /stashed\.clear\(\)/)
+  assert.match(src, /clipboard\.writeText\(s\.url\)/)
 })
 
 test('underDir only allows real files inside the drop folder', () => {

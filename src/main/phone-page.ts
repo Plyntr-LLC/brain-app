@@ -255,19 +255,29 @@ export function phonePageHtml(): string {
     }
     let token = tokenFromHash(location.hash)
     let sealSecret = keyFromHash(location.hash)
-    if (!token) {
-      try { token = sessionStorage.getItem('brain-phone') || '' } catch (e) { token = '' }
+    function readStore(name) {
+      try { return localStorage.getItem(name) || sessionStorage.getItem(name) || '' } catch (e) { return '' }
     }
-    if (!sealSecret) {
-      try { sealSecret = sessionStorage.getItem('brain-phone-k') || '' } catch (e) { sealSecret = '' }
+    function writeStore(name, value) {
+      try {
+        localStorage.setItem(name, value)
+        sessionStorage.setItem(name, value)
+      } catch (e) {}
+    }
+    if (!token) token = readStore('brain-phone')
+    if (!sealSecret) sealSecret = readStore('brain-phone-k')
+    if (token && !sealSecret) {
+      token = ''
+      try {
+        localStorage.removeItem('brain-phone')
+        sessionStorage.removeItem('brain-phone')
+      } catch (e) {}
     }
     if (token && sealSecret) {
-      try {
-        sessionStorage.setItem('brain-phone', token)
-        sessionStorage.setItem('brain-phone-k', sealSecret)
-      } catch (e) {}
-      if (location.hash || location.search) {
-        history.replaceState({}, '', location.pathname)
+      writeStore('brain-phone', token)
+      writeStore('brain-phone-k', sealSecret)
+      if (location.search) {
+        history.replaceState({}, '', location.pathname + location.hash)
       }
     }
     const auth = { authorization: 'Bearer ' + token }

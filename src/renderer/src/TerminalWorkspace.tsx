@@ -2191,12 +2191,17 @@ export function TerminalWorkspace({
     if (closingId) dropTab(closingId)
   }
 
+  const addTabRef = useRef(addTab)
+  const dropTabRef = useRef(dropTab)
+  addTabRef.current = addTab
+  dropTabRef.current = dropTab
+
   useEffect(() => {
     return window.brain.phone.onTab((ev) => {
       const kind: AiKind =
         ev.kind === 'claude' || ev.kind === 'gpt' || ev.kind === 'cursor' || ev.kind === 'grok' ? ev.kind : 'grok'
-      if (ev.op === 'new' && ev.id) addTab(kind, undefined, undefined, ev.id)
-      if (ev.op === 'close' && ev.id) dropTab(ev.id)
+      if (ev.op === 'new' && ev.id) addTabRef.current(kind, undefined, undefined, ev.id)
+      if (ev.op === 'close' && ev.id) dropTabRef.current(ev.id)
     })
   }, [])
 

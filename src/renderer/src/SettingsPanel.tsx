@@ -130,6 +130,7 @@ export function SettingsPanel({
   }>({ on: false, url: '', origin: '', detail: '', platform: '', watching: false })
   const [phoneBusy, setPhoneBusy] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [phoneNote, setPhoneNote] = useState('')
   const joe = email === 'joe@plyntr.com'
   const canAddUsers = joe || !isTeamSeat(seat || role)
 
@@ -289,7 +290,8 @@ export function SettingsPanel({
         <h3 className="set-h">Use Brain from Safari</h3>
         <p>
           Works on cellular or any wifi. This Mac has to stay on, with Brain.app open, and plugged in. Closing the lid
-          on battery will sleep.
+          on battery will sleep. Safari may ask for a one-time email code (joe@plyntr.com or joewine2@gmail.com). If
+          the page is blank after that, copy the secret link again and open it a second time.
         </p>
         <p>
           The copied link is the key. Anyone who has it, while Phone is on, can read every chat on this Mac and send
@@ -316,23 +318,31 @@ export function SettingsPanel({
           </button>
         </label>
         {phone.detail ? <p className="tiny">{phone.detail}</p> : null}
-        {phone.on && phone.url ? (
+        {phoneNote ? <p className="tiny">{phoneNote}</p> : null}
+        {phone.on ? (
           <>
             <p className="tiny">
               {phone.watching ? 'A phone is using this Mac.' : 'Waiting for the phone. Copy the secret link and open it in Safari.'}
             </p>
-            <p className="tiny">{phone.origin.replace(/^https:\/\//, '')}</p>
+            {phone.origin ? <p className="tiny">{phone.origin.replace(/^https:\/\//, '')}</p> : null}
             <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
               <button
                 type="button"
                 className="ghost"
+                disabled={!phone.url}
                 onClick={() => {
-                  void window.brain.phone.copy().then((r) => {
-                    if (r.ok) {
-                      setCopied(true)
-                      window.setTimeout(() => setCopied(false), 1500)
-                    }
-                  })
+                  void window.brain.phone
+                    .copy()
+                    .then((r) => {
+                      if (r.ok) {
+                        setCopied(true)
+                        setPhoneNote('Secret link copied. Open it in Safari on the phone.')
+                        window.setTimeout(() => setCopied(false), 1500)
+                      } else {
+                        setPhoneNote('Could not copy. Wait until Phone is fully on.')
+                      }
+                    })
+                    .catch((err) => setPhoneNote(String((err as Error).message || err)))
                 }}
               >
                 {copied ? 'Copied' : 'Copy secret link'}
@@ -341,7 +351,22 @@ export function SettingsPanel({
                 type="button"
                 className="ghost"
                 onClick={() => {
-                  void window.brain.phone.rotate().then(setPhone)
+                  void window.brain.phone
+                    .rotate()
+                    .then((s) => {
+                      setPhone(s)
+                      return window.brain.phone.copy()
+                    })
+                    .then((r) => {
+                      if (r?.ok) {
+                        setCopied(true)
+                        setPhoneNote('New link copied. Open it on the phone. The old one is dead.')
+                        window.setTimeout(() => setCopied(false), 2000)
+                      } else {
+                        setPhoneNote('Made a new code. Copy the secret link and open it on the phone.')
+                      }
+                    })
+                    .catch((err) => setPhoneNote(String((err as Error).message || err)))
                 }}
               >
                 New code
