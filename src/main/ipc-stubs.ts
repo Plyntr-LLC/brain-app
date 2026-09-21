@@ -48,7 +48,7 @@ import { cliSignedIn } from './cli-auth'
 import * as ai from './ai-cli'
 import { asAttachBuf, inspectAttach, stashBytes } from './attach'
 import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot } from './files'
-import { loadChats, saveChats, type SavedChats } from './persist'
+import { loadAnyChats, loadChats, saveChats, type SavedChats } from './persist'
 import { rememberPhoneChats } from './phone'
 import { emitChat, markChatBusy } from './chat-fan'
 import { cancelWarm, closeWarm, forkSession, promptWarm, resetWarm, resumeSession, warmSession } from './warm'
@@ -904,16 +904,14 @@ export function registerStubIpc(): void {
       return { ok: false, error: String((e as Error).message || e) }
     }
   })
-  ipcMain.handle('chat:loadState', async (_e, cwd?: string) => loadChats(cwd))
+  ipcMain.handle('chat:loadState', async (_e, cwd?: string) => loadAnyChats(cwd) || loadChats(cwd))
   ipcMain.handle('chat:saveState', async (_e, state: SavedChats) => {
-    saveChats(state)
-    rememberPhoneChats(state)
+    saveChats(rememberPhoneChats(state))
     return true
   })
   ipcMain.on('chat:saveStateSync', (e, state: SavedChats) => {
     try {
-      saveChats(state)
-      rememberPhoneChats(state)
+      saveChats(rememberPhoneChats(state))
       e.returnValue = true
     } catch {
       e.returnValue = false

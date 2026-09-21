@@ -17,6 +17,9 @@ import {
   pendingLanded,
   PHONE_TOKEN_MS,
   rateHit,
+  keepPhoneTabs,
+  isPhoneChatTab,
+  unknownEmptyChats,
   sealBytes,
   sealJson,
   shownPhoneLine,
@@ -29,6 +32,7 @@ import {
 } from './phone-lib.ts'
 import { phonePageHtml } from './phone-page.ts'
 import { escapeHtml, mdToHtml, phonePaintHtml } from '../shared/md.ts'
+import { outsideProject, sameCwd } from '../shared/paths.ts'
 
 test('tokenOk accepts the same token and rejects a miss', () => {
   const t = mintToken()
@@ -61,6 +65,37 @@ test('phoneUrl puts token and seal key in the hash and APIs only read Bearer', (
   assert.equal(tokenFromRequest('?t=leaked', ''), '')
   assert.equal(tokenFromRequest('', `Bearer ${t}`), t)
   assert.equal(tokenFromRequest('', ''), '')
+})
+
+test('keepPhoneTabs keeps a phone New that a stale Mac save has not caught yet', () => {
+  const mac = [{ id: 'a' }]
+  const live = [{ id: 'a' }, { id: 'phone-new' }]
+  assert.deepEqual(
+    keepPhoneTabs(mac, live, ['phone-new'], []).map((t) => t.id),
+    ['a', 'phone-new']
+  )
+  assert.deepEqual(
+    keepPhoneTabs(mac, live, ['phone-new'], ['phone-new']).map((t) => t.id),
+    ['a']
+  )
+  assert.equal(isPhoneChatTab({ type: 'chat' }), true)
+  assert.equal(isPhoneChatTab({}), true)
+  assert.equal(isPhoneChatTab({ type: 'term' }), false)
+  assert.equal(isPhoneChatTab({ type: 'file' }), false)
+  assert.equal(unknownEmptyChats([], {}, ['disk-1']), true)
+  assert.equal(
+    unknownEmptyChats([{ id: 'fresh', type: 'chat' }], { fresh: [] }, ['disk-1']),
+    true
+  )
+  assert.equal(
+    unknownEmptyChats(
+      [{ id: 'disk-1', type: 'chat' }],
+      { 'disk-1': [{ who: 'me', text: 'hi' }] },
+      ['disk-1']
+    ),
+    false
+  )
+  assert.equal(sameCwd('/Users/joe/Projects/agency-brain/', '/Users/joe/Projects/agency-brain'), true)
 })
 
 test('pickChatTab prefers the asked chat, then the active chat, then the first chat', () => {
@@ -142,8 +177,14 @@ test('phone page uses Schibsted Grotesk and Source Serif 4, never Inter', () => 
   assert.match(html, /class="bubble md"/)
   assert.match(html, /think-label/)
   assert.match(html, /mdbody/)
-  assert.match(html, /id="queue"/)
+  assert.equal(/id="queue"/.test(html), false)
+  assert.match(html, /id="stop"/)
   assert.match(html, /id="attach"/)
+  assert.match(html, /Send now/)
+  assert.match(html, /item.files && item.files.length/)
+  assert.match(html, /Ask about this folder/)
+  assert.match(html, /stopBtn.hidden/)
+  assert.match(html, /No chats yet/)
   assert.equal(/fonts\.googleapis|fonts\.gstatic/.test(html), false)
   assert.match(html, /\/font\/schibsted\.woff2/)
   assert.match(html, /Bearer/)
@@ -198,6 +239,17 @@ test('phone server binds loopback only and does not log the token', () => {
   assert.match(src, /sendSealed/)
   assert.match(src, /currentSealKey/)
   assert.match(src, /phoneUrl\(origin, token, sealKey\)/)
+  assert.match(src, /keepPhoneTabs/)
+  assert.match(src, /loadAnyChats/)
+  assert.match(src, /persistLiveChats/)
+  assert.match(src, /phoneOwned/)
+  assert.match(src, /freshUnknown && disk/)
+  assert.match(src, /newTabFromPhone\('grok'\)/)
+  assert.match(src, /phoneOwned.delete/)
+  assert.match(src, /saveChats\(\{ \.\.\.live.chats, cwd \}\)/)
+  const ipc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ipc-stubs.ts'), 'utf8')
+  assert.match(ipc, /saveChats\(rememberPhoneChats\(state\)\)/)
+  assert.match(ipc, /loadAnyChats\(cwd\)/)
   assert.match(src, /function closeTabFromPhone/)
   assert.match(src, /No chat to close/)
   const closeSrc = src.slice(src.indexOf('function closeTabFromPhone'), src.indexOf('function asFiles'))
@@ -235,7 +287,52 @@ test('phone Now routes through sendTextRef and sendText reads busyRef', () => {
   assert.match(sendText, /if \(opts\?\.cancel && busyRef\.current\)/)
   assert.match(sendText, /if \(busyRef\.current && !opts\?\.fromQueue/)
   assert.equal(/if \(opts\?\.cancel && busy\)/.test(sendText), false)
-  assert.match(src, /function markBusy/)
+  assert.match(src, /files: \(q\.files \|\| \[\]\)\.map/)
+  const persist = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'persist.ts'), 'utf8')
+  assert.match(persist, /if \(exact\) return exact/)
+  assert.match(persist, /normCwd\(state.cwd\)/)
+  const phoneMain = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'phone.ts'), 'utf8')
+  assert.match(phoneMain, /row\?\.files/)
+  assert.match(src, /sayBox\.current\?\.focus/)
+  assert.equal(/className="starters"/.test(src), false)
+  assert.equal(/What does this company do\?/.test(src), false)
+})
+
+test('explorer lists files outside the watched brain folder', () => {
+  const src = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/TerminalWorkspace.tsx'),
+    'utf8'
+  )
+  const pty = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/ptyChat.ts'),
+    'utf8'
+  )
+  assert.match(src, /Also touching/)
+  assert.match(src, /awayGroups/)
+  assert.match(src, /outsideProject/)
+  assert.match(src, /sameCwd\(saved.cwd/)
+  assert.match(pty, /export \{ outsideProject \}/)
+  assert.equal(
+    outsideProject('/Users/joe/Projects/agency-brain', '/Users/joe/Projects/brain-app/src/main/phone.ts'),
+    '/Users/joe/Projects/brain-app'
+  )
+  assert.equal(
+    outsideProject('/Users/joe/Projects/agency-brain', '/Users/joe/Projects/agency-brain/todo/x.md'),
+    null
+  )
+  assert.equal(outsideProject('/Users/joe/Projects/agency-brain', 'src/main/phone.ts'), null)
+})
+
+test('Restart to install flushes chats then quitAndInstall', () => {
+  const dir = dirname(fileURLToPath(import.meta.url))
+  const upd = readFileSync(join(dir, 'update.ts'), 'utf8')
+  const idx = readFileSync(join(dir, 'index.ts'), 'utf8')
+  const handle = upd.slice(upd.indexOf("ipcMain.handle('app:installUpdate'"), upd.indexOf('export function startAutoUpdate'))
+  assert.match(handle, /installing = true/)
+  assert.match(handle, /app\.quit\(\)/)
+  assert.equal(/quitAndInstall/.test(handle), false)
+  assert.match(idx, /isInstallingUpdate\(\)\) installDownloadedUpdate/)
+  assert.match(idx, /function finishQuit/)
 })
 
 test('sealJson roundtrips and query tokens are ignored', () => {

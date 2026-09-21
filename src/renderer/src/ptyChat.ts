@@ -1,6 +1,7 @@
 export type FileHit = { path: string; tool?: string; live?: boolean }
 
 export { cleanThink, escapeHtml, mdToHtml, stripAnsi, tidy } from '../../shared/md'
+export { outsideProject } from '../../shared/paths'
 
 const TOOL =
   /^(read_file|Read(?:ing)?(?: file)?|grep|list_dir|search_replace|glob_file_search|web_search|web_fetch|bash|Write|Edit|tool_call|available_commands|auto-accept|Always allow|shift\+tab|ctrl\+|Worked for|tokens)\b/i

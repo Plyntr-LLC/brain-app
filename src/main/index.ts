@@ -9,7 +9,7 @@ import { loadAccount } from './session-token'
 import { registerStubIpc } from './ipc-stubs'
 import { killAllPtys, registerPtyIpc } from './pty'
 import { killAllWarm, prewarm } from './warm'
-import { registerUpdateIpc, startAutoUpdate, recordLaunchVersion } from './update'
+import { registerUpdateIpc, startAutoUpdate, recordLaunchVersion, isInstallingUpdate, installDownloadedUpdate } from './update'
 import { registerSkinIpc } from './skin/ipc'
 import { registerPhoneIpc, stopPhone } from './phone'
 import { refreshTray, startTray } from './tray'
@@ -113,6 +113,16 @@ app.whenReady().then(() => {
 let quitFlushed = false
 let quitStarted = false
 
+function finishQuit(): void {
+  if (quitFlushed) return
+  quitFlushed = true
+  allowQuit = true
+  void stopPhone().finally(() => {
+    if (isInstallingUpdate()) installDownloadedUpdate()
+    else app.quit()
+  })
+}
+
 app.on('window-all-closed', () => {
   if (!allowQuit) return
   void stopPhone()
@@ -133,24 +143,15 @@ app.on('before-quit', (e) => {
   }
   const win = mainWin && !mainWin.isDestroyed() ? mainWin : BrowserWindow.getAllWindows()[0]
   if (!win || win.isDestroyed()) {
-    quitFlushed = true
-    void stopPhone()
-    killAllPtys()
-    killAllWarm()
+    finishQuit()
     return
   }
   quitStarted = true
   e.preventDefault()
   win.webContents.send('app:will-quit')
-  setTimeout(() => {
-    if (quitFlushed) return
-    quitFlushed = true
-    void stopPhone().finally(() => app.quit())
-  }, 2000)
+  setTimeout(() => finishQuit(), 2000)
 })
 
 ipcMain.on('app:flush-done', () => {
-  if (quitFlushed) return
-  quitFlushed = true
-  void stopPhone().finally(() => app.quit())
+  finishQuit()
 })

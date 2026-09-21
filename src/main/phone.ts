@@ -24,10 +24,12 @@ import {
   sendPhoneTab,
   type ChatFanPayload
 } from './chat-fan'
-import { loadChats, type SavedChats, type SavedMsg, type SavedTab } from './persist'
+import { loadAnyChats, saveChats, type SavedChats, type SavedMsg, type SavedTab } from './persist'
 import { phonePageHtml } from './phone-page'
 import {
+  isPhoneChatTab,
   isSealed,
+  keepPhoneTabs,
   mintToken,
   openJson,
   parseTunnelUrl,
@@ -38,6 +40,7 @@ import {
   sealJson,
   shownPhoneLine,
   tokenFresh,
+  unknownEmptyChats,
   tokenFromRequest,
   tokenOk,
   underDir,
@@ -126,24 +129,60 @@ function pushStatus(): void {
   }
 }
 
-export function rememberPhoneChats(state: SavedChats): void {
+const phoneOwned = new Set<string>()
+const phoneClosed = new Set<string>()
+
+function persistLiveChats(): void {
+  const cwd = currentBrainFolder() || readWatching().brainPath || ''
+  if (!live.chats || !cwd) return
+  saveChats({ ...live.chats, cwd })
+}
+
+export function rememberPhoneChats(state: SavedChats): SavedChats {
+  const disk = loadAnyChats(state.cwd || currentBrainFolder())
+  const known = (disk?.tabs || []).filter(isPhoneChatTab).map((t) => t.id)
+  const incoming = (state.tabs || []).filter(isPhoneChatTab)
+  const incomingEmpty = unknownEmptyChats(state.tabs || [], state.messages || {}, known)
+  const freshUnknown = incoming.length > 0 && incomingEmpty
   if (!live.chats) {
+    if (incomingEmpty && disk && (disk.tabs || []).some(isPhoneChatTab)) {
+      live.chats = disk
+      return live.chats
+    }
     live.chats = state
-    return
+    return live.chats
   }
+  const cur = live.chats
+  for (const t of incoming) phoneOwned.delete(t.id)
+  if (freshUnknown && disk && (disk.tabs || []).some(isPhoneChatTab)) {
+    const tabs = keepPhoneTabs(disk.tabs || [], cur.tabs || [], [...phoneOwned], [...phoneClosed])
+    live.chats = {
+      ...disk,
+      tabs,
+      messages: { ...(disk.messages || {}), ...(cur.messages || {}) },
+      active: pinChatId(tabs.filter(isPhoneChatTab).map((t) => t.id), cur.active, disk.active)
+    }
+    return live.chats
+  }
+  const tabs = keepPhoneTabs(state.tabs || [], cur.tabs || [], [...phoneOwned], [...phoneClosed])
   const messages = { ...(state.messages || {}) }
-  for (const id of Object.keys(live.chats.messages || {})) {
-    const have = live.chats.messages[id] || []
+  for (const id of Object.keys(cur.messages || {})) {
+    const have = cur.messages[id] || []
     const next = messages[id] || []
-    if (isChatBusy(id) || have.length > next.length) messages[id] = have
+    if (isChatBusy(id) || have.length > next.length || (phoneOwned.has(id) && !next.length)) {
+      messages[id] = have
+    }
   }
-  live.chats = { ...state, messages }
+  const keepActive = phoneOwned.has(cur.active) && tabs.some((t) => t.id === cur.active) ? cur.active : state.active
+  live.chats = { ...state, tabs, messages, active: keepActive || state.active }
+  return live.chats
 }
 
 function rawChats(): SavedChats | null {
+  if (live.chats) return live.chats
   const watching = readWatching()
   const cwd = currentBrainFolder() || watching.brainPath || ''
-  return live.chats || (cwd ? loadChats(cwd) : null) || loadChats()
+  return loadAnyChats(cwd)
 }
 
 function paintMessages(all: Record<string, SavedMsg[]>): Record<string, { who: string; text: string; html: string }[]> {
@@ -166,8 +205,8 @@ function snapshot(): {
   queue: Record<string, PhoneQueueItem[]>
 } {
   const chats = rawChats()
-  const tabs = chats?.tabs || []
-  const chatIds = tabs.filter((t) => t.type === 'chat').map((t) => t.id)
+  const tabs = (chats?.tabs || []).filter(isPhoneChatTab)
+  const chatIds = tabs.map((t) => t.id)
   return {
     tabs,
     active: pinChatId(chatIds, '', chats?.active || ''),
@@ -486,6 +525,8 @@ function newTabFromPhone(wantKind?: string): { ok: boolean; tabId?: string; deta
     tabs: chats?.tabs || [],
     messages: chats?.messages || {}
   }
+  phoneOwned.add(id)
+  phoneClosed.delete(id)
   live.chats = {
     ...next,
     active: id,
@@ -493,6 +534,7 @@ function newTabFromPhone(wantKind?: string): { ok: boolean; tabId?: string; deta
     messages: { ...(next.messages || {}), [id]: [] }
   }
   queues[id] = []
+  persistLiveChats()
   sendPhoneTab({ op: 'new', id, kind })
   return { ok: true, tabId: id }
 }
@@ -501,8 +543,10 @@ function closeTabFromPhone(tabId?: string): { ok: boolean; detail?: string } {
   const id = String(tabId || '')
   if (!id) return { ok: false, detail: 'No chat to close.' }
   const chats = rawChats()
-  const tab = (chats?.tabs || []).find((t) => t.id === id && t.type === 'chat') || null
+  const tab = (chats?.tabs || []).find((t) => t.id === id && isPhoneChatTab(t)) || null
   if (!tab) return { ok: false, detail: 'No chat to close.' }
+  phoneClosed.add(tab.id)
+  phoneOwned.delete(tab.id)
   cancelWarm(tab.id)
   closeWarm(tab.id)
   stopPrompt(tab.id)
@@ -513,13 +557,14 @@ function closeTabFromPhone(tabId?: string): { ok: boolean; detail?: string } {
     const tabs = live.chats.tabs.filter((t) => t.id !== tab.id)
     const messages = { ...live.chats.messages }
     delete messages[tab.id]
-    const chatIds = tabs.filter((t) => t.type === 'chat').map((t) => t.id)
+    const chatIds = tabs.filter((t) => isPhoneChatTab(t)).map((t) => t.id)
     live.chats = {
       ...live.chats,
       tabs,
       messages,
       active: pinChatId(chatIds, '', live.chats.active)
     }
+    persistLiveChats()
   }
   return { ok: true }
 }
@@ -558,8 +603,14 @@ function sendFromPhone(
   const line = String(text || '').trim()
   const attached = files || []
   if (!line && !attached.length) return { ok: false, detail: 'Type something or attach a file.' }
-  const chats = rawChats()
-  const tab = pickChatTab(chats?.tabs || [], chats?.active || '', tabId)
+  let chats = rawChats()
+  let tab = pickChatTab(chats?.tabs || [], chats?.active || '', tabId)
+  if (!tab) {
+    const made = newTabFromPhone('grok')
+    if (!made.ok || !made.tabId) return { ok: false, detail: made.detail || 'Open a chat tab in Brain on this Mac first.' }
+    chats = rawChats()
+    tab = pickChatTab(chats?.tabs || [], chats?.active || '', made.tabId)
+  }
   if (!tab) return { ok: false, detail: 'Open a chat tab in Brain on this Mac first.' }
   const watching = readWatching()
   const cwd = currentBrainFolder() || watching.brainPath || live.chats?.cwd || chats?.cwd || ''
@@ -569,7 +620,8 @@ function sendFromPhone(
     const item: PhoneQueueItem = {
       id: randomUUID(),
       text: line,
-      names: attached.map((f) => f.name)
+      names: attached.map((f) => f.name),
+      files: attached
     }
     queues[tab.id] = [...(queues[tab.id] || []), item]
     sendIncoming(tab.id, line, { files: attached, queued: true, queueId: item.id })
@@ -914,7 +966,16 @@ export function registerPhoneIpc(): void {
       ? items.map((row) => ({
           id: String(row?.id || ''),
           text: String(row?.text || ''),
-          names: Array.isArray(row?.names) ? row.names.map((n) => String(n || '')).filter(Boolean) : []
+          names: Array.isArray(row?.names) ? row.names.map((n) => String(n || '')).filter(Boolean) : [],
+          files: Array.isArray(row?.files)
+            ? row.files
+                .map((f) => ({
+                  path: String(f?.path || ''),
+                  name: String(f?.name || ''),
+                  mime: String(f?.mime || '')
+                }))
+                .filter((f) => f.path && f.name)
+            : []
         }))
       : []
   })

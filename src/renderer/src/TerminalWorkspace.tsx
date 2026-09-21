@@ -4,7 +4,8 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import type { AiKind, Session } from '@shared/contracts'
 import { CLAUDE_DEFAULT_EFFORT, CLAUDE_DEFAULT_MODEL, keepClaudeModel } from '../../shared/claude-defaults'
-import { mdToHtml, tidy, type FileHit } from './ptyChat'
+import { mdToHtml, tidy, outsideProject, type FileHit } from './ptyChat'
+import { sameCwd } from '../../shared/paths'
 import { WorldClocks } from './WorldClocks'
 import { WorkPulse } from './WorkPulse'
 import { SkinPane } from './skin/SkinPane'
@@ -248,11 +249,21 @@ function fallbackEfforts(kind?: AiKind): Cap[] {
 
 function rel(root: string, abs: string): string {
   if (!root) return abs
-  if (abs.startsWith(root)) {
-    const r = abs.slice(root.length).replace(/^\//, '')
-    return r || abs.split('/').pop() || abs
+  const a = root.replace(/\\/g, '/').replace(/\/$/, '')
+  const b = abs.replace(/\\/g, '/')
+  if (b === a || b.startsWith(a + '/')) {
+    const r = b.slice(a.length).replace(/^\//, '')
+    return r || b.split('/').pop() || b
   }
-  return abs.split('/').pop() || abs
+  return b.split('/').pop() || b
+}
+
+function hitLabel(cwd: string, abs: string): string {
+  const away = outsideProject(cwd, abs)
+  if (!away) return rel(cwd, abs)
+  const name = away.split('/').filter(Boolean).pop() || away
+  const rest = rel(away, abs)
+  return rest && rest !== name ? `${name}/${rest}` : name
 }
 
 function TermPane({ id, cwd, active }: { id: string; cwd: string; active: boolean }) {
@@ -455,6 +466,7 @@ function ChatPane({
   const dropsRef = useRef<Attach[]>([])
   const pendingDrops = useRef(Promise.resolve())
   const thread = useRef<HTMLDivElement>(null)
+  const sayBox = useRef<HTMLTextAreaElement>(null)
   const filesRef = useRef<FileHit[]>([])
   const turn = useRef({ think: false, answer: false })
   const [queue, setQueue] = useState<Queued[]>([])
@@ -468,7 +480,6 @@ function ChatPane({
   const sentOnce =
     firstMe >= 0 && messages.slice(firstMe + 1).some((m) => m.who === 'brain' && Boolean(m.text))
   const showPower = wantPower || sentOnce
-  const emptyChat = !messages.some((m) => m.who === 'me')
   const lastWarm = useRef('')
   const [permission, setPermission] = useState<{
     title?: string
@@ -495,6 +506,12 @@ function ChatPane({
   }
 
   useEffect(() => {
+    if (!active) return
+    const t = window.setTimeout(() => sayBox.current?.focus(), 0)
+    return () => window.clearTimeout(t)
+  }, [active])
+
+  useEffect(() => {
     if (sentOnce) onPowerPickers?.()
   }, [sentOnce, onPowerPickers])
 
@@ -518,7 +535,8 @@ function ChatPane({
       next.map((q) => ({
         id: q.id,
         text: q.text,
-        names: (q.files || []).map((f) => f.name)
+        names: (q.files || []).map((f) => f.name),
+        files: (q.files || []).map((f) => ({ path: f.path, name: f.name, mime: f.mime }))
       }))
     )
   }
@@ -1722,25 +1740,8 @@ function ChatPane({
             ))}
           </div>
         )}
-        {emptyChat ? (
-          <div className="starters">
-            {[
-              'What does this company do?',
-              'Summarize what\'s in this folder',
-              'What should I work on first?'
-            ].map((line) => (
-              <button
-                type="button"
-                key={line}
-                className="ghost starter"
-                onClick={() => void sendText(line)}
-              >
-                {line}
-              </button>
-            ))}
-          </div>
-        ) : null}
         <textarea
+          ref={sayBox}
           rows={1}
           value={say}
           onChange={(e) => {
@@ -1881,6 +1882,17 @@ export function TerminalWorkspace({
   const chatId = tab?.type === 'chat' ? tab.id : lastChatId
   const chatTab = tabs.find((t) => t.id === chatId)
   const hits = filesByTab[chatId] || []
+  const awayGroups = (() => {
+    const map = new Map<string, FileHit[]>()
+    for (const h of hits) {
+      const root = outsideProject(cwd, h.path)
+      if (!root) continue
+      const list = map.get(root) || []
+      list.push(h)
+      map.set(root, list)
+    }
+    return [...map.entries()]
+  })()
   const folderName = cwd.split('/').filter(Boolean).pop() || 'Agency Brain'
   const modelChoices = cliModels(
     chatTab?.kind,
@@ -1918,7 +1930,7 @@ export function TerminalWorkspace({
           tabs?: Tab[]
           messages?: Record<string, Msg[]>
         } | null
-        if (saved?.cwd === wanted && Array.isArray(saved.tabs) && saved.tabs.length) {
+        if (saved && sameCwd(saved.cwd || '', wanted) && Array.isArray(saved.tabs) && saved.tabs.length) {
           setTabs(
             saved.tabs.map((t) => ({
               ...t,
@@ -2399,6 +2411,23 @@ export function TerminalWorkspace({
             </button>
           </h2>
           <div className="ftree">{renderTree(cwd)}</div>
+          {awayGroups.length > 0 ? (
+            <div className="away">
+              <h3>Also touching</h3>
+              {awayGroups.map(([root, files]) => (
+                <div key={root}>
+                  <p className="place" title={root}>
+                    {root.split('/').filter(Boolean).pop() || root}
+                  </p>
+                  {files.map((h) => (
+                    <span key={h.path} className={`flink turn${h.live ? ' live' : ''}`}>
+                      {rel(root, h.path)}
+                    </span>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : null}
           {s.path !== 'join' && (
             <div className="invite-dock">
               <button className="primary rail-btn settings-toggle" type="button" onClick={() => setShowInvite(!showInvite)}>
@@ -2504,9 +2533,13 @@ export function TerminalWorkspace({
             {hits.length === 0 && <li className="tiny">Nothing for this chat yet.</li>}
             {hits.map((h) => (
               <li key={h.path} className={h.live ? 'live' : ''}>
-                <button type="button" className="flink" onClick={() => void openFile(h.path)}>
-                  {rel(cwd, h.path)}
-                </button>
+                {outsideProject(cwd, h.path) ? (
+                  <span className="flink">{hitLabel(cwd, h.path)}</span>
+                ) : (
+                  <button type="button" className="flink" onClick={() => void openFile(h.path)}>
+                    {hitLabel(cwd, h.path)}
+                  </button>
+                )}
               </li>
             ))}
           </ul>

@@ -125,6 +125,49 @@ export function pinChatId(chatIds: string[], current: string, macActive: string)
   return ids[0] || ''
 }
 
+export function isPhoneChatTab(t: { type?: string }): boolean {
+  if (t.type === 'file' || t.type === 'term') return false
+  return t.type === 'chat' || !t.type
+}
+
+export function unknownEmptyChats(
+  tabs: { id: string; type?: string }[],
+  messages: Record<string, { who: string }[] | undefined>,
+  knownIds: string[]
+): boolean {
+  const chats = (tabs || []).filter(isPhoneChatTab)
+  if (!chats.length) return true
+  const known = new Set(knownIds)
+  return chats.every((t) => {
+    const list = messages[t.id] || []
+    const said = list.some((m) => m.who === 'me' || m.who === 'brain')
+    return !said && !known.has(t.id)
+  })
+}
+
+export function keepPhoneTabs<T extends { id: string }>(
+  macTabs: T[],
+  liveTabs: T[],
+  owned: string[],
+  closed: string[]
+): T[] {
+  const gone = new Set(closed)
+  const mine = new Set(owned)
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const t of macTabs || []) {
+    if (!t?.id || gone.has(t.id)) continue
+    seen.add(t.id)
+    out.push(t)
+  }
+  for (const t of liveTabs || []) {
+    if (!t?.id || gone.has(t.id) || seen.has(t.id) || !mine.has(t.id)) continue
+    seen.add(t.id)
+    out.push(t)
+  }
+  return out
+}
+
 export function pickChatTab<T extends { id: string; type?: string }>(
   tabs: T[],
   active: string,
@@ -132,12 +175,12 @@ export function pickChatTab<T extends { id: string; type?: string }>(
 ): T | null {
   const list = Array.isArray(tabs) ? tabs : []
   if (want) {
-    const hit = list.find((t) => t.id === want && t.type === 'chat')
+    const hit = list.find((t) => t.id === want && isPhoneChatTab(t))
     if (hit) return hit
   }
-  const cur = list.find((t) => t.id === active && t.type === 'chat')
+  const cur = list.find((t) => t.id === active && isPhoneChatTab(t))
   if (cur) return cur
-  return list.find((t) => t.type === 'chat') || null
+  return list.find((t) => isPhoneChatTab(t)) || null
 }
 
 export function pendingLanded(
@@ -157,7 +200,7 @@ export function chatTransport(kind: string): 'acp' | 'stream-json' | 'app-server
 }
 
 export type PhoneAttach = { path: string; name: string; mime: string }
-export type PhoneQueueItem = { id: string; text: string; names: string[] }
+export type PhoneQueueItem = { id: string; text: string; names: string[]; files?: PhoneAttach[] }
 
 export function shownPhoneLine(text: string, files?: { name: string }[]): string {
   const line = String(text || '').trim()

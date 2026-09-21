@@ -8,6 +8,15 @@ const { autoUpdater } = electronUpdater
 export type JustUpdated = { from: string; to: string } | null
 
 let launchNotice: JustUpdated = null
+let installing = false
+
+export function isInstallingUpdate(): boolean {
+  return installing
+}
+
+export function installDownloadedUpdate(): void {
+  autoUpdater.quitAndInstall(false, true)
+}
 
 function seenFile(): string {
   return join(app.getPath('userData'), 'last-version.json')
@@ -52,7 +61,9 @@ export function registerUpdateIpc(): void {
     }
   })
   ipcMain.handle('app:installUpdate', () => {
-    autoUpdater.quitAndInstall(false, true)
+    if (!app.isPackaged) return { ok: false, detail: 'Dev builds do not update from GitHub.' }
+    installing = true
+    setImmediate(() => app.quit())
     return { ok: true }
   })
 }

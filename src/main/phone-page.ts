@@ -160,7 +160,7 @@ export function phonePageHtml(): string {
     .followq { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 0.35rem; }
     .followq-row {
       display: grid;
-      grid-template-columns: 1fr auto auto;
+      grid-template-columns: 1fr auto auto auto;
       gap: 0.4rem;
       align-items: center;
       font-size: 0.9rem;
@@ -230,11 +230,10 @@ export function phonePageHtml(): string {
     <footer>
       <div id="qbox" class="followq" hidden></div>
       <div id="drops" class="attachrow"></div>
-      <textarea id="say" rows="2" placeholder="Ask…"></textarea>
+      <textarea id="say" rows="2" placeholder="Ask about this folder"></textarea>
       <button type="button" id="attach" class="ghost">Attach</button>
-      <button type="button" id="queue" class="ghost">Queue</button>
-      <button type="button" id="stop" class="ghost">Stop</button>
       <button type="button" id="send">Send</button>
+      <button type="button" id="stop" class="ghost" hidden>Stop</button>
       <input id="file" type="file" multiple accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.md,.csv,.json,.xlsx,.xls,.html,.heic,.mp4,.mov,.mp3,.m4a,.wav" />
     </footer>
   </div>
@@ -327,7 +326,6 @@ export function phonePageHtml(): string {
     const tabsEl = document.getElementById('tabs')
     const say = document.getElementById('say')
     const sendBtn = document.getElementById('send')
-    const queueBtn = document.getElementById('queue')
     const stopBtn = document.getElementById('stop')
     const attachBtn = document.getElementById('attach')
     const newBtn = document.getElementById('new')
@@ -396,7 +394,8 @@ export function phonePageHtml(): string {
         ? ('<p class="tiny">Queued. Runs after this turn.</p>' + list.map(function (q) {
             const extra = (q.names || []).length ? ' · ' + esc(q.names.join(', ')) : ''
             return '<div class="followq-row"><span>' + esc(q.text || 'Attachment') + extra + '</span>' +
-              '<button type="button" class="linkish" data-qnow="' + esc(q.id) + '">Now</button>' +
+              '<button type="button" class="linkish" data-qnow="' + esc(q.id) + '">Send now</button>' +
+              '<button type="button" class="linkish" data-qedit="' + esc(q.id) + '">Edit</button>' +
               '<button type="button" class="linkish" data-qdrop="' + esc(q.id) + '">Delete</button></div>'
           }).join(''))
         : ''
@@ -434,10 +433,16 @@ export function phonePageHtml(): string {
       thread.scrollTop = thread.scrollHeight
       const tab = tabs.find(function (t) { return t.id === active })
       title.textContent = tab ? (tab.title || 'Chat') : 'This Mac'
-      sendBtn.disabled = !token || !sealSecret || (!say.value.trim() && !drops.length && !busy())
-      queueBtn.disabled = !token || !sealSecret || (!say.value.trim() && !drops.length)
+      const queued = (queueBy[active] || []).length
+      const hasText = Boolean(say.value.trim() || drops.length)
+      sendBtn.textContent = busy() ? (hasText ? 'Queue' : queued ? 'Send now' : 'Queue') : 'Send'
+      sendBtn.disabled = !token || !sealSecret || (!hasText && !(busy() && queued))
+      stopBtn.hidden = !busy()
       stopBtn.disabled = !token || !sealSecret || !busy()
       closeBtn.disabled = !token || !sealSecret || !active
+      say.placeholder = busy()
+        ? (queued ? 'Enter queues. Empty Enter sends the next one.' : 'Working. Enter queues a follow-up.')
+        : 'Ask about this folder'
       paintDrops()
       paintQueue()
     }
@@ -457,7 +462,7 @@ export function phonePageHtml(): string {
       return n > p.meCount
     }
     function applyState(s) {
-      tabs = (s.tabs || []).filter(function (t) { return t.type === 'chat' })
+      tabs = (s.tabs || []).filter(function (t) { return t.type !== 'file' && t.type !== 'term' })
       const incoming = s.messages || {}
       Object.keys(incoming).forEach(function (id) {
         const have = messages[id] || []
@@ -469,9 +474,11 @@ export function phonePageHtml(): string {
       busyBy = Object.assign({}, s.busy || {})
       if (pending) busyBy[pending.tabId] = true
       queueBy = s.queue || {}
-      tabsEl.innerHTML = tabs.map(function (t) {
-        return '<option value="' + esc(t.id) + '"' + (t.id === active ? ' selected' : '') + '>' + esc(t.title || t.kind || 'Chat') + '</option>'
-      }).join('')
+      tabsEl.innerHTML = tabs.length
+        ? tabs.map(function (t) {
+            return '<option value="' + esc(t.id) + '"' + (t.id === active ? ' selected' : '') + '>' + esc(t.title || t.kind || 'Chat') + '</option>'
+          }).join('')
+        : '<option value="">No chats yet</option>'
       paint()
     }
     async function pullState() {
@@ -531,8 +538,22 @@ export function phonePageHtml(): string {
       return open
     }
     async function send(queue) {
+      let tabId = active
+      if (!tabId) {
+        try {
+          const r = await postJson('/api/tab', { op: 'new', kind: 'grok' })
+          if (r.tabId) {
+            tabId = r.tabId
+            active = r.tabId
+            await pullState()
+            tabId = active || tabId
+          }
+        } catch (e) {
+          showBanner(String(e.message || e))
+          return
+        }
+      }
       const text = say.value.trim()
-      const tabId = active
       const files = drops.slice()
       if ((!text && !files.length) || !tabId) {
         const q = (queueBy[tabId] || [])[0]
@@ -594,7 +615,6 @@ export function phonePageHtml(): string {
       paint()
     })
     sendBtn.addEventListener('click', function () { void send(false) })
-    queueBtn.addEventListener('click', function () { void send(true) })
     stopBtn.addEventListener('click', function () {
       if (!active) return
       void postJson('/api/stop', { tabId: active }).then(function () {
@@ -610,11 +630,16 @@ export function phonePageHtml(): string {
       if (list.length) void addFiles(list)
     })
     newBtn.addEventListener('click', function () {
+      if (newBtn.disabled) return
+      newBtn.disabled = true
       const tab = tabs.find(function (t) { return t.id === active })
       void postJson('/api/tab', { op: 'new', kind: tab ? tab.kind : 'grok' }).then(function (r) {
         if (r.tabId) active = r.tabId
         return pullState()
-      }).catch(function (e) { showBanner(String(e.message || e)) })
+      }).catch(function (e) { showBanner(String(e.message || e)) }).finally(function () {
+        newBtn.disabled = false
+        paint()
+      })
     })
     closeBtn.addEventListener('click', function () {
       if (!active) return
@@ -635,8 +660,18 @@ export function phonePageHtml(): string {
     qbox.addEventListener('click', function (e) {
       const now = e.target.closest('[data-qnow]')
       const drop = e.target.closest('[data-qdrop]')
-      const id = (now || drop) ? (now || drop).getAttribute(now ? 'data-qnow' : 'data-qdrop') : ''
+      const edit = e.target.closest('[data-qedit]')
+      const id = (now || drop || edit) ? (now || drop || edit).getAttribute(now ? 'data-qnow' : drop ? 'data-qdrop' : 'data-qedit') : ''
       if (!id) return
+      if (edit) {
+        const item = (queueBy[active] || []).find(function (q) { return q.id === id })
+        void postJson('/api/queue', { op: 'drop', tabId: active, id: id }).then(function () {
+          if (item) say.value = item.text || ''
+          if (item && item.files && item.files.length) drops = item.files.slice()
+          return pullState()
+        }).then(function () { paint() }).catch(function (e) { showBanner(String(e.message || e)) })
+        return
+      }
       void postJson('/api/queue', { op: now ? 'now' : 'drop', tabId: active, id: id }).then(function () {
         return pullState()
       }).catch(function (e) { showBanner(String(e.message || e)) })

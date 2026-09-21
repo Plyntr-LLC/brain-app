@@ -657,7 +657,10 @@ const brain = {
         ipcRenderer.removeListener('phone:queue', h)
       }
     },
-    reportQueue: (tabId: string, items: { id: string; text: string; names: string[] }[]) => {
+    reportQueue: (
+      tabId: string,
+      items: { id: string; text: string; names: string[]; files?: { path: string; name: string; mime: string }[] }[]
+    ) => {
       ipcRenderer.send('phone:reportQueue', tabId, items)
     }
   }
