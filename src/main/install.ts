@@ -14,7 +14,7 @@ import { loadAccount } from './session-token'
 import { binEnv, detect as detectAi, resolveBin } from './ai-cli'
 import type { AiKind } from '../shared/contracts'
 
-export type NeedId = 'brew' | 'git' | 'ab' | 'grok' | 'claude' | 'cursor' | 'gpt'
+export type NeedId = 'brew' | 'git' | 'ab' | 'cloudflared' | 'grok' | 'claude' | 'cursor' | 'gpt'
 
 export type NeedItem = {
   id: NeedId
@@ -57,6 +57,22 @@ function gitPresent(): boolean {
   }
 }
 
+function cloudflaredPresent(): boolean {
+  const extra = '/opt/homebrew/bin:/usr/local/bin'
+  const env = { ...process.env, PATH: `${process.env.PATH || ''}:${extra}` }
+  try {
+    if (spawnSync('cloudflared', ['--version'], { stdio: 'ignore', env }).status === 0) return true
+  } catch {
+    /* */
+  }
+  try {
+    const r = spawnSync('which', ['cloudflared'], { encoding: 'utf8', env })
+    return r.status === 0 && Boolean(String(r.stdout || '').trim())
+  } catch {
+    return false
+  }
+}
+
 export function listNeeds(): { ready: boolean; watching: boolean; brainPath: string | null; items: NeedItem[] } {
   const ai = detectAi()
   const watchingInfo = readWatching()
@@ -90,6 +106,16 @@ export function listNeeds(): { ready: boolean; watching: boolean; brainPath: str
       accept: 'Type your Mac password in Terminal, then press Return.'
     })
   }
+  items.push({
+    id: 'cloudflared',
+    label: 'Cloudflare Tunnel',
+    line: 'Lets Phone work from a phone on cellular. Installed with Homebrew (or winget on Windows).',
+    present: cloudflaredPresent(),
+    warn: win32
+      ? 'Windows may ask to allow the installer. Click Yes.'
+      : 'Homebrew may ask for your Mac password in Terminal.',
+    accept: win32 ? 'Click Yes if Windows asks to allow the installer.' : 'Type your Mac password in Terminal if asked.'
+  })
   items.push({
     id: 'grok',
     label: 'Grok CLI',
@@ -240,7 +266,7 @@ async function installAgencyBrainApp(): Promise<InstallResult> {
   return { ok: true, detail: 'The Agency Brain installer is open. Finish it, then come back here. Skip its setup wizard.', wait: 'present' }
 }
 
-const TOOL_IDS: NeedId[] = ['brew', 'git', 'grok', 'claude', 'cursor', 'gpt']
+const TOOL_IDS: NeedId[] = ['brew', 'git', 'cloudflared', 'grok', 'claude', 'cursor', 'gpt']
 
 export function isNeedId(id: string): id is NeedId {
   return (TOOL_IDS as string[]).includes(id)
@@ -376,6 +402,27 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
       ok: true,
       detail: 'Opened Agency Brain. Sign in and pick the shared folder. We will continue when it is watching.',
       wait: 'watching'
+    }
+  }
+  if (id === 'cloudflared') {
+    if (cloudflaredPresent()) return { ok: true, detail: 'Cloudflare Tunnel is already here.', wait: 'none' }
+    if (win32) {
+      const r = await win(
+        'winget install --id Cloudflare.cloudflared -e --accept-source-agreements --accept-package-agreements'
+      )
+      return {
+        ok: cloudflaredPresent() || r.code === 0,
+        detail: r.out.slice(-800) || 'Cloudflare Tunnel installer finished.',
+        wait: 'none'
+      }
+    }
+    const brew = brewBin()
+    if (!brew) return { ok: false, detail: 'Homebrew first, then Cloudflare Tunnel.', wait: 'none' }
+    const r = await run(brew, ['install', 'cloudflared'])
+    return {
+      ok: cloudflaredPresent() || r.code === 0,
+      detail: r.out.slice(-800) || 'Cloudflare Tunnel is installed.',
+      wait: 'none'
     }
   }
   if (id === 'grok') {

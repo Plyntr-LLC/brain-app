@@ -40,6 +40,8 @@ test('setup does not require Agency Brain.app', () => {
   const src = readFileSync(new URL('./install.ts', import.meta.url), 'utf8')
   assert.equal(/label: 'Agency Brain'/.test(src), false)
   assert.match(src, /currentBrainFolder\(\)/)
+  assert.match(src, /id: 'cloudflared'/)
+  assert.match(src, /brew, \['install', 'cloudflared'\]/)
   const ipc = readFileSync(new URL('./ipc-stubs.ts', import.meta.url), 'utf8')
   assert.match(ipc, /clone skipped in dry-run/)
   assert.match(ipc, /switchBrain\(cloned\.dest\)/)
