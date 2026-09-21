@@ -120,6 +120,15 @@ export function SettingsPanel({
       } | null
     }[]
   >([])
+  const [phone, setPhone] = useState<{
+    on: boolean
+    url: string
+    origin: string
+    detail: string
+    platform: string
+  }>({ on: false, url: '', origin: '', detail: '', platform: '' })
+  const [phoneBusy, setPhoneBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
   const joe = email === 'joe@plyntr.com'
   const canAddUsers = joe || !isTeamSeat(seat || role)
 
@@ -136,7 +145,7 @@ export function SettingsPanel({
       setSeat(String(s.role || ''))
       setBrains(list)
       setLoaded(true)
-      const [roster, projects, bridge, ver, skin] = await Promise.all([
+      const [roster, projects, bridge, ver, skin, phoneNow] = await Promise.all([
         window.brain.settings.roster().catch(() => []),
         window.brain.settings.projects().catch(() => []),
         window.brain.hqSync.ownerStatus().catch(() => null),
@@ -148,6 +157,13 @@ export function SettingsPanel({
           joe: false,
           components: [] as string[],
           learned: [] as { cli: string; eventKind: string; component: string; confidence: number }[]
+        })),
+        window.brain.phone.status().catch(() => ({
+          on: false,
+          url: '',
+          origin: '',
+          detail: '',
+          platform: ''
         }))
       ])
       const local = roster.length ? roster : await window.brain.settings.team().catch(() => [])
@@ -163,6 +179,7 @@ export function SettingsPanel({
         }
       }
       setAppVer(ver)
+      setPhone(phoneNow)
       if (skin.joe) {
         setSkinCap(Boolean(skin.capture))
         setSkinJev(Boolean(skin.jev))
@@ -186,10 +203,12 @@ export function SettingsPanel({
       const login = String(ev.org || '').trim()
       if (login) setOrg((cur) => (cur.trim() ? cur : login))
     })
+    const offPhone = window.brain.phone.onStatus(setPhone)
     return () => {
       offUpdate()
       offHeal()
       offBack()
+      offPhone()
     }
   }, [])
 
@@ -256,6 +275,64 @@ export function SettingsPanel({
       </div>
 
       <section className="set-block" style={{ borderTop: 0, paddingTop: 0 }}>
+        <p className="kicker">Phone</p>
+        <h3 className="set-h">Use Brain from Safari</h3>
+        <p>
+          Works on cellular or any wifi. This Mac has to stay on, with Brain.app open, and plugged in. Closing the lid
+          on battery will sleep.
+        </p>
+        <label className="set-row">
+          <span>Phone</span>
+          <button
+            type="button"
+            className={phone.on ? 'primary' : 'ghost'}
+            disabled={phoneBusy}
+            onClick={() => {
+              setPhoneBusy(true)
+              const run = phone.on ? window.brain.phone.stop() : window.brain.phone.start()
+              void run
+                .then(setPhone)
+                .finally(() => setPhoneBusy(false))
+            }}
+          >
+            {phoneBusy ? 'Working…' : phone.on ? 'On' : 'Off'}
+          </button>
+        </label>
+        {phone.detail ? <p className="tiny">{phone.detail}</p> : null}
+        {phone.on && phone.url ? (
+          <>
+            <p className="tiny">Open this on your phone. Add to Home Screen if you want. The address changes each time you turn Phone on.</p>
+            <p className="set-url">{phone.url}</p>
+            <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  void window.brain.phone.copy().then((r) => {
+                    if (r.ok) {
+                      setCopied(true)
+                      window.setTimeout(() => setCopied(false), 1500)
+                    }
+                  })
+                }}
+              >
+                {copied ? 'Copied' : 'Copy link'}
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  void window.brain.phone.rotate().then(setPhone)
+                }}
+              >
+                New code
+              </button>
+            </div>
+          </>
+        ) : null}
+      </section>
+
+      <section className="set-block">
         <p className="tiny">Brain {appVer || ''}</p>
         <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
           <button

@@ -563,6 +563,60 @@ const brain = {
         ipcRenderer.removeListener('skin:healed', h)
       }
     }
+  },
+  phone: {
+    start: () =>
+      ipcRenderer.invoke('phone:start') as Promise<{
+        on: boolean
+        url: string
+        origin: string
+        detail: string
+        platform: string
+      }>,
+    stop: () =>
+      ipcRenderer.invoke('phone:stop') as Promise<{
+        on: boolean
+        url: string
+        origin: string
+        detail: string
+        platform: string
+      }>,
+    status: () =>
+      ipcRenderer.invoke('phone:status') as Promise<{
+        on: boolean
+        url: string
+        origin: string
+        detail: string
+        platform: string
+      }>,
+    rotate: () =>
+      ipcRenderer.invoke('phone:rotate') as Promise<{
+        on: boolean
+        url: string
+        origin: string
+        detail: string
+        platform: string
+      }>,
+    copy: () => ipcRenderer.invoke('phone:copy') as Promise<{ ok: boolean }>,
+    onStatus: (
+      fn: (ev: { on: boolean; url: string; origin: string; detail: string; platform: string }) => void
+    ) => {
+      const h = (
+        _e: unknown,
+        payload: { on: boolean; url: string; origin: string; detail: string; platform: string }
+      ) => fn(payload)
+      ipcRenderer.on('phone:status', h)
+      return () => {
+        ipcRenderer.removeListener('phone:status', h)
+      }
+    },
+    onIncoming: (fn: (ev: { tabId: string; text: string }) => void) => {
+      const h = (_e: unknown, payload: { tabId: string; text: string }) => fn(payload)
+      ipcRenderer.on('phone:incoming', h)
+      return () => {
+        ipcRenderer.removeListener('phone:incoming', h)
+      }
+    }
   }
 }
 

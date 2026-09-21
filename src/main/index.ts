@@ -11,12 +11,14 @@ import { killAllPtys, registerPtyIpc } from './pty'
 import { killAllWarm, prewarm } from './warm'
 import { registerUpdateIpc, startAutoUpdate, recordLaunchVersion } from './update'
 import { registerSkinIpc } from './skin/ipc'
+import { registerPhoneIpc, stopPhone } from './phone'
 import { refreshTray, startTray } from './tray'
 
 registerStubIpc()
 registerPtyIpc()
 registerUpdateIpc()
 registerSkinIpc()
+registerPhoneIpc()
 
 process.on('uncaughtException', (err) => {
   const msg = String((err as NodeJS.ErrnoException).message || err)
@@ -113,12 +115,14 @@ let quitStarted = false
 
 app.on('window-all-closed', () => {
   if (!allowQuit) return
+  void stopPhone()
   killAllPtys()
   killAllWarm()
 })
 app.on('before-quit', (e) => {
   allowQuit = true
   if (quitFlushed) {
+    void stopPhone()
     killAllPtys()
     killAllWarm()
     return
@@ -130,6 +134,7 @@ app.on('before-quit', (e) => {
   const win = mainWin && !mainWin.isDestroyed() ? mainWin : BrowserWindow.getAllWindows()[0]
   if (!win || win.isDestroyed()) {
     quitFlushed = true
+    void stopPhone()
     killAllPtys()
     killAllWarm()
     return
@@ -140,12 +145,12 @@ app.on('before-quit', (e) => {
   setTimeout(() => {
     if (quitFlushed) return
     quitFlushed = true
-    app.quit()
+    void stopPhone().finally(() => app.quit())
   }, 2000)
 })
 
 ipcMain.on('app:flush-done', () => {
   if (quitFlushed) return
   quitFlushed = true
-  app.quit()
+  void stopPhone().finally(() => app.quit())
 })

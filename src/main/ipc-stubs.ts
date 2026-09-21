@@ -49,8 +49,9 @@ import * as ai from './ai-cli'
 import { asAttachBuf, inspectAttach, stashBytes } from './attach'
 import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot } from './files'
 import { loadChats, saveChats, type SavedChats } from './persist'
+import { rememberPhoneChats } from './phone'
+import { emitChat, markChatBusy } from './chat-fan'
 import { cancelWarm, closeWarm, forkSession, promptWarm, resetWarm, resumeSession, warmSession } from './warm'
-import { captureEvent, skinHint } from './skin/capture'
 import { justUpdated } from './update'
 import { contextBlurb, grokCli, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
 import { clearAccount, getAccount, getMemberToken, loadAccount, saveAccount } from './session-token'
@@ -767,7 +768,7 @@ export function registerStubIpc(): void {
   ipcMain.handle(
     'chat:send',
     async (
-      e,
+      _e,
       payload: {
         tabId: string
         text: string
@@ -786,25 +787,16 @@ export function registerStubIpc(): void {
       const watching = readWatching()
       const cwd = payload.cwd && payload.cwd.length ? payload.cwd : watching.brainPath
       if (!cwd) throw new Error('No brain folder on this computer to talk against')
-      const wc = e.sender
+      const kind = payload.kind || 'grok'
+      markChatBusy(payload.tabId, true)
       const onEvent = (ev: ai.StreamEvent) => {
-        const cli = payload.kind || 'grok'
-        captureEvent({
-          cli,
-          sessionId: payload.sessionId || payload.tabId,
-          ev,
-          transport:
-            payload.kind === 'claude' ? 'stream-json' : payload.kind === 'gpt' ? 'app-server' : 'acp'
-        })
-        const hint = skinHint({ cli, ev })
-        wc.send('chat:event', {
+        emitChat({
           tabId: payload.tabId,
-          ...ev,
-          fingerprint: hint.fingerprint,
-          skinLabel: hint.label
+          cli: kind,
+          sessionId: payload.sessionId || payload.tabId,
+          ev
         })
       }
-      const kind = payload.kind || 'grok'
       try {
         const reply = await promptWarm({
           kind,
@@ -915,11 +907,13 @@ export function registerStubIpc(): void {
   ipcMain.handle('chat:loadState', async (_e, cwd?: string) => loadChats(cwd))
   ipcMain.handle('chat:saveState', async (_e, state: SavedChats) => {
     saveChats(state)
+    rememberPhoneChats(state)
     return true
   })
   ipcMain.on('chat:saveStateSync', (e, state: SavedChats) => {
     try {
       saveChats(state)
+      rememberPhoneChats(state)
       e.returnValue = true
     } catch {
       e.returnValue = false

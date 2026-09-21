@@ -112,6 +112,15 @@
   margin: 0 0 0.45rem;
   font-size: 0.88rem;
 }
+.set-url {
+  font-size: 0.78rem;
+  word-break: break-all;
+  user-select: all;
+  background: #fff;
+  border: 1px solid var(--line);
+  padding: 0.5rem 0.6rem;
+  margin: 0 0 0.55rem;
+}
 .sync-pill {
   margin-left: auto;
   font-size: 0.72rem;

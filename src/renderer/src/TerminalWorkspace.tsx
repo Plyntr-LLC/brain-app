@@ -509,6 +509,18 @@ function ChatPane({
   }
 
   useEffect(() => {
+    return window.brain.phone.onIncoming((ev) => {
+      if (ev.tabId !== id) return
+      setBusy(true)
+      setWaitLabel('Working')
+      turn.current = { think: false, answer: false }
+      pinBottom.current = true
+      setAtBottom(true)
+      setMessages((m) => [...m, { who: 'me', text: ev.text, at: Date.now() }])
+    })
+  }, [id])
+
+  useEffect(() => {
     const off = window.brain.chat.onEvent((ev) => {
       if (ev.tabId !== id) return
       if (ev.kind === 'thought' && ev.data) {
