@@ -572,6 +572,7 @@ const brain = {
         origin: string
         detail: string
         platform: string
+        watching: boolean
       }>,
     stop: () =>
       ipcRenderer.invoke('phone:stop') as Promise<{
@@ -580,6 +581,7 @@ const brain = {
         origin: string
         detail: string
         platform: string
+        watching: boolean
       }>,
     status: () =>
       ipcRenderer.invoke('phone:status') as Promise<{
@@ -588,6 +590,7 @@ const brain = {
         origin: string
         detail: string
         platform: string
+        watching: boolean
       }>,
     rotate: () =>
       ipcRenderer.invoke('phone:rotate') as Promise<{
@@ -596,26 +599,66 @@ const brain = {
         origin: string
         detail: string
         platform: string
+        watching: boolean
       }>,
     copy: () => ipcRenderer.invoke('phone:copy') as Promise<{ ok: boolean }>,
     onStatus: (
-      fn: (ev: { on: boolean; url: string; origin: string; detail: string; platform: string }) => void
+      fn: (ev: { on: boolean; url: string; origin: string; detail: string; platform: string; watching: boolean }) => void
     ) => {
       const h = (
         _e: unknown,
-        payload: { on: boolean; url: string; origin: string; detail: string; platform: string }
+        payload: { on: boolean; url: string; origin: string; detail: string; platform: string; watching: boolean }
       ) => fn(payload)
       ipcRenderer.on('phone:status', h)
       return () => {
         ipcRenderer.removeListener('phone:status', h)
       }
     },
-    onIncoming: (fn: (ev: { tabId: string; text: string }) => void) => {
-      const h = (_e: unknown, payload: { tabId: string; text: string }) => fn(payload)
+    onIncoming: (fn: (ev: {
+      tabId: string
+      text: string
+      files?: { path: string; name: string; mime: string }[]
+      queued?: boolean
+      queueId?: string
+    }) => void) => {
+      const h = (
+        _e: unknown,
+        payload: {
+          tabId: string
+          text: string
+          files?: { path: string; name: string; mime: string }[]
+          queued?: boolean
+          queueId?: string
+        }
+      ) => fn(payload)
       ipcRenderer.on('phone:incoming', h)
       return () => {
         ipcRenderer.removeListener('phone:incoming', h)
       }
+    },
+    onTab: (fn: (ev: { op: 'new' | 'close'; id: string; kind?: string }) => void) => {
+      const h = (_e: unknown, payload: { op: 'new' | 'close'; id: string; kind?: string }) => fn(payload)
+      ipcRenderer.on('phone:tab', h)
+      return () => {
+        ipcRenderer.removeListener('phone:tab', h)
+      }
+    },
+    onStop: (fn: (ev: { tabId: string }) => void) => {
+      const h = (_e: unknown, payload: { tabId: string }) => fn(payload)
+      ipcRenderer.on('phone:stop', h)
+      return () => {
+        ipcRenderer.removeListener('phone:stop', h)
+      }
+    },
+    onQueue: (fn: (ev: { op: 'drop' | 'now'; tabId: string; id: string }) => void) => {
+      const h = (_e: unknown, payload: { op: 'drop' | 'now'; tabId: string; id: string }) => fn(payload)
+      ipcRenderer.on('phone:queue', h)
+      return () => {
+        ipcRenderer.removeListener('phone:queue', h)
+      }
+    },
+    reportQueue: (tabId: string, items: { id: string; text: string; names: string[] }[]) => {
+      ipcRenderer.send('phone:reportQueue', tabId, items)
     }
   }
 }

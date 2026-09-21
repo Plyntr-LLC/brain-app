@@ -1,24 +1,50 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, clipboard, ipcMain } from 'electron'
 import type { AiKind } from '../shared/contracts'
+import { phonePaintHtml } from '../shared/md'
 import { readWatching } from './agency-brain'
+import { MAX_ATTACH, stashBytes, type Attach } from './attach'
+import { stopPrompt } from './ai-cli'
 import { currentBrainFolder } from './brains'
-import { emitChat, addChatFan, busyMap, isChatBusy, markChatBusy, sendIncoming, type ChatFanPayload } from './chat-fan'
+import {
+  emitChat,
+  addChatFan,
+  busyMap,
+  isChatBusy,
+  markChatBusy,
+  sendIncoming,
+  sendPhoneQueue,
+  sendPhoneStop,
+  sendPhoneTab,
+  type ChatFanPayload
+} from './chat-fan'
 import { loadChats, type SavedChats, type SavedMsg, type SavedTab } from './persist'
 import { phonePageHtml } from './phone-page'
 import {
+  isSealed,
   mintToken,
+  openJson,
   parseTunnelUrl,
   phoneUrl,
   pickChatTab,
   pinChatId,
+  rateHit,
+  sealJson,
+  shownPhoneLine,
+  tokenFresh,
   tokenFromRequest,
-  tokenOk
+  tokenOk,
+  underDir,
+  type PhoneAttach,
+  type PhoneQueueItem,
+  type Sealed
 } from './phone-lib'
-import { cancelWarm, promptWarm } from './warm'
+import { cancelWarm, closeWarm, promptWarm } from './warm'
 
 export type PhoneStatus = {
   on: boolean
@@ -26,9 +52,8 @@ export type PhoneStatus = {
   origin: string
   detail: string
   platform: NodeJS.Platform
+  watching: boolean
 }
-
-type SseClient = ServerResponse
 
 let server: Server | null = null
 let tunnel: ChildProcess | null = null
@@ -39,9 +64,14 @@ let on = false
 let starting = false
 let boot = 0
 let detail = ''
-let sse: SseClient[] = []
-let pingTimer: ReturnType<typeof setInterval> | null = null
 const live: { chats: SavedChats | null } = { chats: null }
+const queues: Record<string, PhoneQueueItem[]> = {}
+const stashed = new Set<string>()
+let tokenAt = 0
+let sealKey = ''
+let lastSeen = 0
+let apiHits: number[] = []
+let badHits: number[] = []
 
 function tokenFile(): string {
   return join(app.getPath('userData'), 'phone.json')
@@ -49,19 +79,25 @@ function tokenFile(): string {
 
 function loadToken(): string {
   try {
-    const raw = JSON.parse(readFileSync(tokenFile(), 'utf8')) as { token?: string }
-    if (raw.token && String(raw.token).length >= 16) return String(raw.token)
+    const raw = JSON.parse(readFileSync(tokenFile(), 'utf8')) as { token?: string; key?: string; at?: number }
+    if (raw.token && String(raw.token).length >= 16 && raw.key && String(raw.key).length >= 16) {
+      tokenAt = Number(raw.at) || tokenAt
+      sealKey = String(raw.key)
+      return String(raw.token)
+    }
   } catch {
     /* */
   }
-  return saveToken(mintToken())
+  return saveToken(mintToken(), mintToken())
 }
 
-function saveToken(token: string): string {
+function saveToken(token: string, key = mintToken()): string {
   const dir = app.getPath('userData')
   mkdirSync(dir, { recursive: true })
   const dest = tokenFile()
-  writeFileSync(dest, JSON.stringify({ token }), { mode: 0o600 })
+  tokenAt = Date.now()
+  sealKey = key
+  writeFileSync(dest, JSON.stringify({ token, key, at: tokenAt }), { mode: 0o600 })
   try {
     chmodSync(dest, 0o600)
   } catch {
@@ -74,10 +110,11 @@ function status(): PhoneStatus {
   const token = on ? loadToken() : ''
   return {
     on,
-    url: on && origin ? phoneUrl(origin, token) : '',
+    url: on && origin ? phoneUrl(origin, token, sealKey) : '',
     origin: on ? origin : '',
     detail,
-    platform: process.platform
+    platform: process.platform,
+    watching: on && lastSeen > 0 && Date.now() - lastSeen < 5000
   }
 }
 
@@ -86,15 +123,6 @@ function pushStatus(): void {
   for (const w of BrowserWindow.getAllWindows()) {
     if (!w.isDestroyed()) w.webContents.send('phone:status', payload)
   }
-}
-
-function sseWrite(res: ServerResponse, data: unknown): void {
-  res.write(`data: ${JSON.stringify(data)}\n\n`)
-}
-
-function sseBroadcast(data: unknown): void {
-  sse = sse.filter((res) => !res.writableEnded)
-  for (const res of sse) sseWrite(res, data)
 }
 
 export function rememberPhoneChats(state: SavedChats): void {
@@ -111,40 +139,122 @@ export function rememberPhoneChats(state: SavedChats): void {
   live.chats = { ...state, messages }
 }
 
+function rawChats(): SavedChats | null {
+  const watching = readWatching()
+  const cwd = currentBrainFolder() || watching.brainPath || ''
+  return live.chats || (cwd ? loadChats(cwd) : null) || loadChats()
+}
+
+function paintMessages(all: Record<string, SavedMsg[]>): Record<string, { who: string; text: string; html: string }[]> {
+  const out: Record<string, { who: string; text: string; html: string }[]> = {}
+  for (const [id, list] of Object.entries(all || {})) {
+    out[id] = (list || []).map((m) => ({
+      who: m.who,
+      text: m.text,
+      html: phonePaintHtml(m.who, m.text)
+    }))
+  }
+  return out
+}
+
 function snapshot(): {
   tabs: SavedTab[]
   active: string
-  messages: Record<string, SavedMsg[]>
+  messages: Record<string, { who: string; text: string; html: string }[]>
   busy: Record<string, boolean>
+  queue: Record<string, PhoneQueueItem[]>
 } {
-  const watching = readWatching()
-  const cwd = currentBrainFolder() || watching.brainPath || ''
-  const chats = live.chats || (cwd ? loadChats(cwd) : null) || loadChats()
+  const chats = rawChats()
   const tabs = chats?.tabs || []
   const chatIds = tabs.filter((t) => t.type === 'chat').map((t) => t.id)
   return {
     tabs,
     active: pinChatId(chatIds, '', chats?.active || ''),
-    messages: chats?.messages || {},
-    busy: busyMap()
+    messages: paintMessages(chats?.messages || {}),
+    busy: busyMap(),
+    queue: queues
   }
 }
 
 function authed(req: IncomingMessage, url: URL): boolean {
+  const want = loadToken()
+  if (!tokenFresh(tokenAt)) return false
   const got = tokenFromRequest(url.search, String(req.headers.authorization || ''))
-  return tokenOk(got, loadToken())
+  const ok = tokenOk(got, want)
+  if (ok) lastSeen = Date.now()
+  return ok
 }
 
 function sendJson(res: ServerResponse, code: number, body: unknown): void {
   const raw = JSON.stringify(body)
   res.writeHead(code, {
     'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store'
+    'cache-control': 'no-store',
+    'referrer-policy': 'no-referrer'
   })
   res.end(raw)
 }
 
-function readBody(req: IncomingMessage, max = 32_000): Promise<string> {
+function currentSealKey(): string {
+  loadToken()
+  return sealKey
+}
+
+function sendSealed(res: ServerResponse, code: number, body: unknown): void {
+  sendJson(res, code, sealJson(currentSealKey(), body))
+}
+
+function readSealed(req: IncomingMessage, max = 400_000): Promise<unknown> {
+  return readBody(req, max).then((raw) => {
+    let parsed: unknown = {}
+    try {
+      parsed = JSON.parse(raw || '{}')
+    } catch {
+      throw new Error('bad')
+    }
+    if (!isSealed(parsed)) throw new Error('bad')
+    return openJson(currentSealKey(), parsed as Sealed)
+  })
+}
+
+function fontDir(): string {
+  const names = [
+    join(process.resourcesPath || '', 'phone-fonts'),
+    join(dirname(fileURLToPath(import.meta.url)), 'phone-fonts'),
+    join(app.getAppPath(), 'src/main/phone-fonts')
+  ]
+  for (const dir of names) {
+    if (dir && existsSync(join(dir, 'schibsted.woff2'))) return dir
+  }
+  return names[1]
+}
+
+function sendFont(res: ServerResponse, name: string): void {
+  const allowed: Record<string, string> = {
+    'schibsted.woff2': 'font/woff2',
+    'source-serif.woff2': 'font/woff2'
+  }
+  const mime = allowed[name]
+  if (!mime) {
+    res.writeHead(404)
+    res.end()
+    return
+  }
+  const file = join(fontDir(), name)
+  if (!existsSync(file)) {
+    res.writeHead(404)
+    res.end()
+    return
+  }
+  res.writeHead(200, {
+    'content-type': mime,
+    'cache-control': 'no-store',
+    'referrer-policy': 'no-referrer'
+  })
+  res.end(readFileSync(file))
+}
+
+function readBuf(req: IncomingMessage, max: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     let n = 0
@@ -157,9 +267,13 @@ function readBody(req: IncomingMessage, max = 32_000): Promise<string> {
       }
       chunks.push(c)
     })
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('end', () => resolve(Buffer.concat(chunks)))
     req.on('error', reject)
   })
+}
+
+function readBody(req: IncomingMessage, max = 32_000): Promise<string> {
+  return readBuf(req, max).then((buf) => buf.toString('utf8'))
 }
 
 function cloudflaredBin(): string | null {
@@ -246,6 +360,9 @@ function applyLiveEvent(ev: ChatFanPayload): void {
     else list.push({ who: 'think', text: ev.data })
   } else if (ev.kind === 'error' && ev.data) {
     list.push({ who: 'brain', text: ev.data })
+  } else if (ev.kind === 'file' && ev.path) {
+    const base = String(ev.path).replace(/\\/g, '/').split('/').filter(Boolean).pop() || ev.path
+    list.push({ who: 'sys', text: `${ev.tool || 'file'} · ${base}` })
   } else {
     return
   }
@@ -255,21 +372,123 @@ function applyLiveEvent(ev: ChatFanPayload): void {
   }
 }
 
-async function sendFromPhone(text: string, tabId?: string): Promise<{ ok: boolean; detail?: string }> {
+function chatKind(raw?: string): AiKind {
+  if (raw === 'claude' || raw === 'gpt' || raw === 'cursor' || raw === 'grok') return raw
+  return 'grok'
+}
+
+function chatTitle(kind: AiKind): string {
+  if (kind === 'claude') return 'Claude'
+  if (kind === 'gpt') return 'ChatGPT'
+  if (kind === 'cursor') return 'Cursor'
+  return 'Grok'
+}
+
+function newTabFromPhone(wantKind?: string): { ok: boolean; tabId?: string; detail?: string } {
+  const chats = rawChats()
+  const cur = pickChatTab(chats?.tabs || [], chats?.active || '')
+  const kind = chatKind(wantKind || cur?.kind)
+  const id = randomUUID()
+  const row: SavedTab = { id, type: 'chat', title: chatTitle(kind), kind }
+  const next = live.chats || {
+    cwd: currentBrainFolder() || readWatching().brainPath || chats?.cwd || '',
+    active: id,
+    tabs: chats?.tabs || [],
+    messages: chats?.messages || {}
+  }
+  live.chats = {
+    ...next,
+    active: id,
+    tabs: [...(next.tabs || []), row],
+    messages: { ...(next.messages || {}), [id]: [] }
+  }
+  queues[id] = []
+  sendPhoneTab({ op: 'new', id, kind })
+  return { ok: true, tabId: id }
+}
+
+function closeTabFromPhone(tabId?: string): { ok: boolean; detail?: string } {
+  const id = String(tabId || '')
+  if (!id) return { ok: false, detail: 'No chat to close.' }
+  const chats = rawChats()
+  const tab = (chats?.tabs || []).find((t) => t.id === id && t.type === 'chat') || null
+  if (!tab) return { ok: false, detail: 'No chat to close.' }
+  cancelWarm(tab.id)
+  closeWarm(tab.id)
+  stopPrompt(tab.id)
+  markChatBusy(tab.id, false)
+  delete queues[tab.id]
+  sendPhoneTab({ op: 'close', id: tab.id })
+  if (live.chats) {
+    const tabs = live.chats.tabs.filter((t) => t.id !== tab.id)
+    const messages = { ...live.chats.messages }
+    delete messages[tab.id]
+    const chatIds = tabs.filter((t) => t.type === 'chat').map((t) => t.id)
+    live.chats = {
+      ...live.chats,
+      tabs,
+      messages,
+      active: pinChatId(chatIds, '', live.chats.active)
+    }
+  }
+  return { ok: true }
+}
+
+function asFiles(raw: unknown): PhoneAttach[] {
+  if (!Array.isArray(raw)) return []
+  const root = join(app.getPath('userData'), 'drops')
+  const out: PhoneAttach[] = []
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue
+    const rec = row as PhoneAttach
+    const path = String(rec.path || '')
+    if (!path || !underDir(root, path)) continue
+    let real = path
+    try {
+      real = realpathSync(path)
+    } catch {
+      continue
+    }
+    if (!stashed.has(real)) continue
+    out.push({
+      path: real,
+      name: String(rec.name || basename(real) || 'file'),
+      mime: String(rec.mime || '')
+    })
+  }
+  return out
+}
+
+function sendFromPhone(
+  text: string,
+  tabId?: string,
+  files?: PhoneAttach[],
+  forceQueue?: boolean
+): { ok: boolean; detail?: string; queued?: boolean; tabId?: string } {
   const line = String(text || '').trim()
-  if (!line) return { ok: false, detail: 'Type something first.' }
-  const snap = snapshot()
-  const tab = pickChatTab(snap.tabs, snap.active, tabId)
+  const attached = files || []
+  if (!line && !attached.length) return { ok: false, detail: 'Type something or attach a file.' }
+  const chats = rawChats()
+  const tab = pickChatTab(chats?.tabs || [], chats?.active || '', tabId)
   if (!tab) return { ok: false, detail: 'Open a chat tab in Brain on this Mac first.' }
-  if (isChatBusy(tab.id)) return { ok: false, detail: 'That chat is already working. Wait, or stop it on the computer.' }
   const watching = readWatching()
-  const cwd = currentBrainFolder() || watching.brainPath || live.chats?.cwd || ''
+  const cwd = currentBrainFolder() || watching.brainPath || live.chats?.cwd || chats?.cwd || ''
   if (!cwd) return { ok: false, detail: 'No brain folder on this computer to talk against.' }
+  const shown = shownPhoneLine(line, attached)
+  if (forceQueue || isChatBusy(tab.id)) {
+    const item: PhoneQueueItem = {
+      id: randomUUID(),
+      text: line,
+      names: attached.map((f) => f.name)
+    }
+    queues[tab.id] = [...(queues[tab.id] || []), item]
+    sendIncoming(tab.id, line, { files: attached, queued: true, queueId: item.id })
+    return { ok: true, queued: true, tabId: tab.id }
+  }
   const kind = (tab.kind || 'grok') as AiKind
   markChatBusy(tab.id, true)
-  sendIncoming(tab.id, line)
-  sseBroadcast({ type: 'incoming', tabId: tab.id, text: line })
-  const nextMsgs = [...(snap.messages[tab.id] || []), { who: 'me' as const, text: line }]
+  sendIncoming(tab.id, shown, { files: attached })
+  const nextMsgs = [...(chats?.messages[tab.id] || []), { who: 'me' as const, text: shown }]
   if (live.chats) {
     live.chats = {
       ...live.chats,
@@ -279,8 +498,8 @@ async function sendFromPhone(text: string, tabId?: string): Promise<{ ok: boolea
     live.chats = {
       cwd,
       active: tab.id,
-      tabs: snap.tabs,
-      messages: { ...snap.messages, [tab.id]: nextMsgs }
+      tabs: chats?.tabs || [],
+      messages: { ...(chats?.messages || {}), [tab.id]: nextMsgs }
     }
   }
   void (async () => {
@@ -290,6 +509,7 @@ async function sendFromPhone(text: string, tabId?: string): Promise<{ ok: boolea
         tabId: tab.id,
         cwd,
         text: line,
+        attachments: attached,
         model: tab.model,
         effort: tab.effort,
         agentMode: tab.agentMode,
@@ -303,7 +523,68 @@ async function sendFromPhone(text: string, tabId?: string): Promise<{ ok: boolea
       emitChat({ tabId: tab.id, cli: kind, sessionId: tab.cliSessionId, ev: { kind: 'done' } })
     }
   })()
+  return { ok: true, tabId: tab.id }
+}
+
+function stopFromPhone(tabId?: string): { ok: boolean } {
+  const chats = rawChats()
+  const tab = pickChatTab(chats?.tabs || [], chats?.active || '', tabId)
+  if (tab) {
+    sendPhoneStop(tab.id)
+    cancelWarm(tab.id)
+    stopPrompt(tab.id)
+    markChatBusy(tab.id, false)
+  }
   return { ok: true }
+}
+
+function queueFromPhone(op: string, tabId?: string, id?: string): { ok: boolean; detail?: string } {
+  const chats = rawChats()
+  const tab = pickChatTab(chats?.tabs || [], chats?.active || '', tabId)
+  if (!tab) return { ok: false, detail: 'No chat.' }
+  const qid = String(id || '')
+  if (!qid) return { ok: false, detail: 'Missing queue item.' }
+  if (op === 'drop') {
+    queues[tab.id] = (queues[tab.id] || []).filter((x) => x.id !== qid)
+    sendPhoneQueue({ op: 'drop', tabId: tab.id, id: qid })
+    return { ok: true }
+  }
+  if (op === 'now') {
+    queues[tab.id] = (queues[tab.id] || []).filter((x) => x.id !== qid)
+    sendPhoneQueue({ op: 'now', tabId: tab.id, id: qid })
+    return { ok: true }
+  }
+  return { ok: false, detail: 'Unknown queue action.' }
+}
+
+async function attachFromPhone(req: IncomingMessage): Promise<{ ok: boolean; detail?: string } & Partial<Attach>> {
+  const parsed = (await readSealed(req, MAX_ATTACH * 2 + 8192)) as {
+    name?: string
+    mime?: string
+    bytes?: string
+  }
+  let name = 'drop'
+  try {
+    name = basename(String(parsed?.name || 'drop')) || 'drop'
+  } catch {
+    name = 'drop'
+  }
+  const mime = String(parsed?.mime || '')
+  let buf: Buffer
+  try {
+    buf = Buffer.from(String(parsed?.bytes || ''), 'base64url')
+  } catch {
+    return { ok: false, detail: 'Could not attach that file.' }
+  }
+  if (!buf.length) return { ok: false, detail: 'That file was empty.' }
+  if (buf.length > MAX_ATTACH) return { ok: false, detail: 'That file is larger than 20 MB.' }
+  const row = stashBytes(name, buf, mime)
+  try {
+    stashed.add(realpathSync(row.path))
+  } catch {
+    stashed.add(row.path)
+  }
+  return { ok: true, ...row }
 }
 
 function handle(req: IncomingMessage, res: ServerResponse): void {
@@ -325,83 +606,101 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     return
   }
   if (url.pathname === '/' && (req.method === 'GET' || req.method === 'HEAD')) {
-    if (!authed(req, url)) {
-      res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
-      res.end('This link needs the pairing code from Brain Settings on the computer.')
-      return
-    }
     const html = phonePageHtml()
     res.writeHead(200, {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
-      'referrer-policy': 'no-referrer'
+      'referrer-policy': 'no-referrer',
+      'content-security-policy':
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self'"
     })
     if (req.method === 'HEAD') res.end()
     else res.end(html)
     return
   }
+  if (url.pathname.startsWith('/font/') && (req.method === 'GET' || req.method === 'HEAD')) {
+    sendFont(res, basename(url.pathname))
+    return
+  }
+  const now = Date.now()
+  const api = rateHit(now, apiHits, 60_000, 120)
+  apiHits = api.next
+  if (!api.ok) {
+    sendJson(res, 429, { ok: false, detail: 'Wait a moment.' })
+    return
+  }
   if (!authed(req, url)) {
+    const bad = rateHit(now, badHits, 60_000, 20)
+    badHits = bad.next
     sendJson(res, 401, { ok: false, detail: 'Not paired.' })
     return
   }
   if (url.pathname === '/api/state' && req.method === 'GET') {
-    sendJson(res, 200, snapshot())
-    return
-  }
-  if (url.pathname === '/api/events' && req.method === 'GET') {
-    res.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-store',
-      connection: 'keep-alive'
-    })
-    sse.push(res)
-    sseWrite(res, { type: 'state', ...snapshot() })
-    if (!pingTimer) {
-      pingTimer = setInterval(() => {
-        sse = sse.filter((c) => !c.writableEnded)
-        for (const c of sse) c.write(': ping\n\n')
-      }, 15_000)
-    }
-    req.on('close', () => {
-      sse = sse.filter((c) => c !== res)
-    })
+    sendSealed(res, 200, snapshot())
     return
   }
   if (url.pathname === '/api/send' && req.method === 'POST') {
-    void readBody(req)
-      .then((raw) => {
-        let body: { text?: string; tabId?: string } = {}
-        try {
-          body = JSON.parse(raw || '{}') as { text?: string; tabId?: string }
-        } catch {
-          sendJson(res, 400, { ok: false, detail: 'Bad request.' })
-          return
+    void readSealed(req, 400_000)
+      .then((parsed) => {
+        const body = (parsed || {}) as { text?: string; tabId?: string; files?: PhoneAttach[]; queue?: boolean }
+        const wanted = Array.isArray(body.files) ? body.files.length : 0
+        const attached = asFiles(body.files)
+        if (wanted && !attached.length) {
+          return { ok: false, detail: 'Those files are not from this Phone session.' }
         }
-        return sendFromPhone(String(body.text || ''), body.tabId)
+        return sendFromPhone(String(body.text || ''), body.tabId, attached, Boolean(body.queue))
       })
       .then((r) => {
         if (!r) return
-        const code = r.ok ? 200 : /already working/.test(r.detail || '') ? 409 : 400
-        sendJson(res, code, r)
+        sendSealed(res, r.ok ? 200 : 400, r)
       })
-      .catch(() => sendJson(res, 400, { ok: false, detail: 'Bad request.' }))
+      .catch(() => sendSealed(res, 400, { ok: false, detail: 'Bad request.' }))
     return
   }
   if (url.pathname === '/api/stop' && req.method === 'POST') {
-    void readBody(req)
-      .then((raw) => {
-        let body: { tabId?: string } = {}
-        try {
-          body = JSON.parse(raw || '{}') as { tabId?: string }
-        } catch {
-          body = {}
-        }
-        const snap = snapshot()
-        const tab = pickChatTab(snap.tabs, snap.active, body.tabId)
-        if (tab) cancelWarm(tab.id)
-        sendJson(res, 200, { ok: true })
+    void readSealed(req)
+      .then((parsed) => {
+        const body = (parsed || {}) as { tabId?: string }
+        sendSealed(res, 200, stopFromPhone(body.tabId))
       })
-      .catch(() => sendJson(res, 200, { ok: true }))
+      .catch(() => sendSealed(res, 200, { ok: true }))
+    return
+  }
+  if (url.pathname === '/api/tab' && req.method === 'POST') {
+    void readSealed(req)
+      .then((parsed) => {
+        const body = (parsed || {}) as { op?: string; tabId?: string; kind?: string }
+        if (body.op === 'close') {
+          const r = closeTabFromPhone(body.tabId)
+          sendSealed(res, r.ok ? 200 : 400, r)
+          return
+        }
+        const r = newTabFromPhone(body.kind)
+        sendSealed(res, r.ok ? 200 : 400, r)
+      })
+      .catch(() => sendSealed(res, 400, { ok: false, detail: 'Bad request.' }))
+    return
+  }
+  if (url.pathname === '/api/queue' && req.method === 'POST') {
+    void readSealed(req)
+      .then((parsed) => {
+        const body = (parsed || {}) as { op?: string; tabId?: string; id?: string }
+        const r = queueFromPhone(String(body.op || ''), body.tabId, body.id)
+        sendSealed(res, r.ok ? 200 : 400, r)
+      })
+      .catch(() => sendSealed(res, 400, { ok: false, detail: 'Bad request.' }))
+    return
+  }
+  if (url.pathname === '/api/attach' && req.method === 'POST') {
+    void attachFromPhone(req)
+      .then((r) => sendSealed(res, r.ok ? 200 : 400, r))
+      .catch((err) => {
+        const msg = String((err as Error).message || err)
+        sendSealed(res, 400, {
+          ok: false,
+          detail: /too large/i.test(msg) ? 'That file is larger than 20 MB.' : 'Could not attach that file.'
+        })
+      })
     return
   }
   res.writeHead(404)
@@ -440,19 +739,8 @@ export async function stopPhone(): Promise<PhoneStatus> {
   origin = ''
   localPort = 0
   detail = ''
-  sseBroadcast({ type: 'off' })
-  for (const res of sse) {
-    try {
-      res.end()
-    } catch {
-      /* */
-    }
-  }
-  sse = []
-  if (pingTimer) {
-    clearInterval(pingTimer)
-    pingTimer = null
-  }
+  lastSeen = 0
+  stashed.clear()
   killProc(tunnel)
   tunnel = null
   killProc(caffeine)
@@ -479,8 +767,9 @@ export async function startPhone(): Promise<PhoneStatus> {
   const mine = boot
   detail = 'Starting the tunnel…'
   on = true
+  lastSeen = 0
   pushStatus()
-  loadToken()
+  saveToken(mintToken())
   try {
     localPort = await listenLocal()
     if (mine !== boot) return status()
@@ -515,7 +804,6 @@ export function rotatePhoneToken(): PhoneStatus {
 export function registerPhoneIpc(): void {
   addChatFan((ev) => {
     applyLiveEvent(ev)
-    sseBroadcast({ type: 'event', ...ev })
   })
   ipcMain.handle('phone:start', async () => startPhone())
   ipcMain.handle('phone:stop', async () => stopPhone())
@@ -526,5 +814,16 @@ export function registerPhoneIpc(): void {
     if (!s.url) return { ok: false }
     clipboard.writeText(s.url)
     return { ok: true }
+  })
+  ipcMain.on('phone:reportQueue', (_e, tabId: string, items: PhoneQueueItem[]) => {
+    const id = String(tabId || '')
+    if (!id) return
+    queues[id] = Array.isArray(items)
+      ? items.map((row) => ({
+          id: String(row?.id || ''),
+          text: String(row?.text || ''),
+          names: Array.isArray(row?.names) ? row.names.map((n) => String(n || '')).filter(Boolean) : []
+        }))
+      : []
   })
 }

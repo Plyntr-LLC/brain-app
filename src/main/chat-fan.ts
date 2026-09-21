@@ -76,8 +76,41 @@ export function emitChat(opts: {
   return payload
 }
 
-export function sendIncoming(tabId: string, text: string): void {
+export function sendIncoming(
+  tabId: string,
+  text: string,
+  extra?: {
+    files?: { path: string; name: string; mime: string }[]
+    queued?: boolean
+    queueId?: string
+  }
+): void {
+  const payload = {
+    tabId,
+    text,
+    files: extra?.files || [],
+    queued: Boolean(extra?.queued),
+    queueId: extra?.queueId || ''
+  }
   for (const w of BrowserWindow.getAllWindows()) {
-    if (!w.isDestroyed()) w.webContents.send('phone:incoming', { tabId, text })
+    if (!w.isDestroyed()) w.webContents.send('phone:incoming', payload)
+  }
+}
+
+export function sendPhoneTab(ev: { op: 'new' | 'close'; id: string; kind?: string }): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send('phone:tab', ev)
+  }
+}
+
+export function sendPhoneStop(tabId: string): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send('phone:stop', { tabId })
+  }
+}
+
+export function sendPhoneQueue(ev: { op: 'drop' | 'now'; tabId: string; id: string }): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send('phone:queue', ev)
   }
 }

@@ -126,7 +126,8 @@ export function SettingsPanel({
     origin: string
     detail: string
     platform: string
-  }>({ on: false, url: '', origin: '', detail: '', platform: '' })
+    watching: boolean
+  }>({ on: false, url: '', origin: '', detail: '', platform: '', watching: false })
   const [phoneBusy, setPhoneBusy] = useState(false)
   const [copied, setCopied] = useState(false)
   const joe = email === 'joe@plyntr.com'
@@ -163,7 +164,8 @@ export function SettingsPanel({
           url: '',
           origin: '',
           detail: '',
-          platform: ''
+          platform: '',
+          watching: false
         }))
       ])
       const local = roster.length ? roster : await window.brain.settings.team().catch(() => [])
@@ -211,6 +213,14 @@ export function SettingsPanel({
       offPhone()
     }
   }, [])
+
+  useEffect(() => {
+    if (!phone.on) return
+    const t = window.setInterval(() => {
+      void window.brain.phone.status().then(setPhone)
+    }, 2000)
+    return () => window.clearInterval(t)
+  }, [phone.on])
 
   if (!loaded) {
     return (
@@ -281,6 +291,13 @@ export function SettingsPanel({
           Works on cellular or any wifi. This Mac has to stay on, with Brain.app open, and plugged in. Closing the lid
           on battery will sleep.
         </p>
+        <p>
+          The copied link is the key. Anyone who has it, while Phone is on, can read every chat on this Mac and send
+          into Grok, Claude, Cursor, or ChatGPT as you. Do not screenshot it, paste it into chat, or share this
+          Settings screen. Turning Phone on makes a new code. The code dies after 12 hours, or when you turn Phone off
+          or tap New code. Chats on the wire are encrypted with a separate key that stays in the hash on your phone
+          and is never sent as a header. Cloudflare can still see that Phone is on.
+        </p>
         <label className="set-row">
           <span>Phone</span>
           <button
@@ -301,8 +318,10 @@ export function SettingsPanel({
         {phone.detail ? <p className="tiny">{phone.detail}</p> : null}
         {phone.on && phone.url ? (
           <>
-            <p className="tiny">Open this on your phone. Add to Home Screen if you want. The address changes each time you turn Phone on.</p>
-            <p className="set-url">{phone.url}</p>
+            <p className="tiny">
+              {phone.watching ? 'A phone is using this Mac.' : 'Waiting for the phone. Copy the secret link and open it in Safari.'}
+            </p>
+            <p className="tiny">{phone.origin.replace(/^https:\/\//, '')}</p>
             <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
               <button
                 type="button"
@@ -316,7 +335,7 @@ export function SettingsPanel({
                   })
                 }}
               >
-                {copied ? 'Copied' : 'Copy link'}
+                {copied ? 'Copied' : 'Copy secret link'}
               </button>
               <button
                 type="button"

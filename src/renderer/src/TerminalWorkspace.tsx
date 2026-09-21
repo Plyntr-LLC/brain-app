@@ -480,12 +480,19 @@ function ChatPane({
   const pinBottom = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
   const skipDrain = useRef(0)
+  const busyRef = useRef(false)
   const onFilesRef = useRef(onFiles)
   const onContextRef = useRef(onContext)
   const skinOnRef = useRef(skinOn)
   onFilesRef.current = onFiles
   onContextRef.current = onContext
   skinOnRef.current = skinOn
+  busyRef.current = busy
+
+  function markBusy(next: boolean) {
+    busyRef.current = next
+    setBusy(next)
+  }
 
   useEffect(() => {
     if (sentOnce) onPowerPickers?.()
@@ -506,17 +513,33 @@ function ChatPane({
   function writeQueue(next: Queued[]) {
     queueRef.current = next
     setQueue(next)
+    window.brain.phone.reportQueue(
+      id,
+      next.map((q) => ({
+        id: q.id,
+        text: q.text,
+        names: (q.files || []).map((f) => f.name)
+      }))
+    )
   }
 
   useEffect(() => {
     return window.brain.phone.onIncoming((ev) => {
       if (ev.tabId !== id) return
-      setBusy(true)
+      const files = ev.files || []
+      if (ev.queued) {
+        writeQueue([
+          ...queueRef.current,
+          { id: ev.queueId || crypto.randomUUID(), text: ev.text, files: files.length ? files : undefined }
+        ])
+        return
+      }
+      markBusy(true)
       setWaitLabel('Working')
       turn.current = { think: false, answer: false }
       pinBottom.current = true
       setAtBottom(true)
-      setMessages((m) => [...m, { who: 'me', text: ev.text, at: Date.now() }])
+      setMessages((m) => [...m, { who: 'me', text: ev.text, files: files.length ? files : undefined, at: Date.now() }])
     })
   }, [id])
 
@@ -659,7 +682,7 @@ function ChatPane({
           void sendTextRef.current(nxt.text, { fromQueue: true, files: nxt.files })
           return
         }
-        setBusy(false)
+        markBusy(false)
       }
       const known = new Set([
         'thought',
@@ -695,6 +718,22 @@ function ChatPane({
     return () => {
       off()
     }
+  }, [id])
+
+  useEffect(() => {
+    return window.brain.phone.onStop((ev) => {
+      if (ev.tabId !== id) return
+      skipDrain.current += 1
+      markBusy(false)
+    })
+  }, [id])
+
+  useEffect(() => {
+    return window.brain.phone.onQueue((ev) => {
+      if (ev.tabId !== id) return
+      if (ev.op === 'drop') writeQueue(queueRef.current.filter((x) => x.id !== ev.id))
+      if (ev.op === 'now') void sendNow(ev.id)
+    })
   }, [id])
 
   useEffect(() => {
@@ -1186,7 +1225,7 @@ function ChatPane({
     }
     skipDrain.current += 1
     await window.brain.chat.stop(id)
-    setBusy(false)
+    markBusy(false)
   }
 
   async function send() {
@@ -1228,10 +1267,10 @@ function ChatPane({
     if (!item) return
     writeQueue(queueRef.current.filter((q) => q.id !== qid))
     if (justStop(item.text)) {
-      if (busy) await stop()
+      if (busyRef.current) await stop()
       return
     }
-    await sendText(item.text, { fromQueue: true, files: item.files || [], cancel: busy })
+    await sendTextRef.current(item.text, { fromQueue: true, files: item.files || [], cancel: busyRef.current })
   }
 
   function editQueued(qid: string) {
@@ -1246,11 +1285,11 @@ function ChatPane({
   }
 
   async function sendQuiet(t: string) {
-    if (busy) {
+    if (busyRef.current) {
       writeQueue([...queueRef.current, { id: crypto.randomUUID(), text: t }])
       return
     }
-    setBusy(true)
+    markBusy(true)
     setWaitLabel('Working')
     turn.current = { think: false, answer: false }
     try {
@@ -1269,7 +1308,7 @@ function ChatPane({
           'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
       })
     } catch (e) {
-      setBusy(false)
+      markBusy(false)
       setCompacting(false)
       setMessages((m) => [...m, { who: 'brain', text: String((e as Error).message || e) }])
     }
@@ -1365,14 +1404,14 @@ function ChatPane({
       if (shown) await window.brain.pty.write(skinPtyId(id), shown + '\r')
       return
     }
-    if (opts?.cancel && busy) await stop()
-    if (busy && !opts?.fromQueue && !opts?.cancel) {
+    if (opts?.cancel && busyRef.current) await stop()
+    if (busyRef.current && !opts?.fromQueue && !opts?.cancel) {
       writeQueue([...queueRef.current, { id: crypto.randomUUID(), text: t, files: opts?.files }])
       return
     }
     filesRef.current = []
     onFiles(id, [])
-    setBusy(true)
+    markBusy(true)
     setWaitLabel('Working')
     turn.current = { think: false, answer: false }
     if (!opts?.fromQueue) {
@@ -1404,7 +1443,7 @@ function ChatPane({
           'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
       })
     } catch (e) {
-      setBusy(false)
+      markBusy(false)
       setMessages((m) => [...m, { who: 'brain', text: String((e as Error).message || e) }])
     }
   }
@@ -1815,6 +1854,10 @@ export function TerminalWorkspace({
   }
   const [tabs, setTabs] = useState<Tab[]>([])
   const [active, setActive] = useState('')
+  const tabsRef = useRef<Tab[]>([])
+  const activeRef = useRef('')
+  tabsRef.current = tabs
+  activeRef.current = active
   const [filesByTab, setFilesByTab] = useState<Record<string, FileHit[]>>({})
   const [filesOpen, setFilesOpen] = useState(true)
   const [picker, setPicker] = useState(false)
@@ -2091,16 +2134,13 @@ export function TerminalWorkspace({
     setTabs((all) => all.map((t) => (t.id === active ? { ...t, mode } : t)))
   }
 
-  function addTerm() {
-    const id = nid()
-    const n = tabs.filter((t) => t.type === 'term').length + 1
-    setTabs((t) => [...t, { id, type: 'term', title: n === 1 ? 'Terminal' : `Terminal ${n}` }])
-    setActive(id)
-    setPicker(false)
-  }
-
-  function addTab(kind: AiKind, copied?: Msg[], resumeId?: string) {
-    const id = nid()
+  function addTab(kind: AiKind, copied?: Msg[], resumeId?: string, tabId?: string) {
+    const id = tabId || nid()
+    if (tabId && tabsRef.current.some((t) => t.id === tabId)) {
+      setActive(tabId)
+      setPicker(false)
+      return
+    }
     setTabs((t) => [
       ...t,
       {
@@ -2121,6 +2161,24 @@ export function TerminalWorkspace({
     setPicker(false)
   }
 
+  function addTerm() {
+    const id = nid()
+    const n = tabsRef.current.filter((t) => t.type === 'term').length + 1
+    setTabs((t) => [...t, { id, type: 'term', title: n === 1 ? 'Terminal' : `Terminal ${n}` }])
+    setActive(id)
+    setPicker(false)
+  }
+
+  function dropTab(id: string) {
+    setClosingId(null)
+    const next = tabsRef.current.filter((t) => t.id !== id)
+    setTabs(next)
+    if (next.length === 0) setActive('')
+    else if (activeRef.current === id) setActive(next[next.length - 1].id)
+    void window.brain.pty.kill(id)
+    void window.brain.chat.close(id)
+  }
+
   function closeTab(id: string) {
     setClosingId(id)
   }
@@ -2130,16 +2188,17 @@ export function TerminalWorkspace({
   }
 
   function confirmCloseTab() {
-    const id = closingId
-    if (!id) return
-    setClosingId(null)
-    const next = tabs.filter((t) => t.id !== id)
-    setTabs(next)
-    if (next.length === 0) setActive('')
-    else if (active === id) setActive(next[next.length - 1].id)
-    void window.brain.pty.kill(id)
-    void window.brain.chat.close(id)
+    if (closingId) dropTab(closingId)
   }
+
+  useEffect(() => {
+    return window.brain.phone.onTab((ev) => {
+      const kind: AiKind =
+        ev.kind === 'claude' || ev.kind === 'gpt' || ev.kind === 'cursor' || ev.kind === 'grok' ? ev.kind : 'grok'
+      if (ev.op === 'new' && ev.id) addTab(kind, undefined, undefined, ev.id)
+      if (ev.op === 'close' && ev.id) dropTab(ev.id)
+    })
+  }, [])
 
   function onFiles(id: string, files: FileHit[]) {
     setFilesByTab((m) => ({ ...m, [id]: files }))

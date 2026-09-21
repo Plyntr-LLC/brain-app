@@ -13,6 +13,8 @@ asarUnpack:
 extraResources:
   - from: vendor/brain-sync
     to: hq-sync
+  - from: src/main/phone-fonts
+    to: phone-fonts
 mac:
   category: public.app-category.productivity
   target:

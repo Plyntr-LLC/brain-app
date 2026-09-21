@@ -1,4 +1,8 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { realpathSync, statSync } from 'node:fs'
+import { isAbsolute, relative, resolve } from 'node:path'
+
+export const PHONE_TOKEN_MS = 12 * 60 * 60 * 1000
 
 export function mintToken(): string {
   return randomBytes(24).toString('base64url')
@@ -14,30 +18,104 @@ export function tokenOk(got: string, want: string): boolean {
   return timingSafeEqual(a, b)
 }
 
+export function tokenFresh(at: number, now = Date.now()): boolean {
+  const n = Number(at) || 0
+  if (n <= 0) return false
+  return now - n < PHONE_TOKEN_MS
+}
+
 export function parseTunnelUrl(text: string): string | null {
   const m = String(text || '').match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i)
   return m ? m[0].replace(/\/$/, '').toLowerCase() : null
 }
 
-export function phoneUrl(origin: string, token: string): string {
+export function phoneUrl(origin: string, token: string, key?: string): string {
   const base = String(origin || '').replace(/\/$/, '')
   const t = String(token || '')
-  if (!base || !t) return ''
-  return `${base}/?t=${encodeURIComponent(t)}`
+  const k = String(key || '')
+  if (!base || !t || !k) return ''
+  return `${base}/#t=${encodeURIComponent(t)}&k=${encodeURIComponent(k)}`
 }
 
 export function tokenFromRequest(search: string, authorization: string): string {
-  let q = ''
-  try {
-    const raw = String(search || '')
-    const sp = new URLSearchParams(raw.startsWith('?') ? raw.slice(1) : raw)
-    q = String(sp.get('t') || '')
-  } catch {
-    q = ''
-  }
   const h = String(authorization || '')
   const bearer = /^bearer\s+/i.test(h) ? h.replace(/^bearer\s+/i, '').trim() : ''
-  return q || bearer
+  return bearer
+}
+
+export function tokenFromHash(hash: string): string {
+  const raw = String(hash || '').replace(/^#/, '')
+  try {
+    return String(new URLSearchParams(raw).get('t') || '')
+  } catch {
+    return ''
+  }
+}
+
+export function keyFromHash(hash: string): string {
+  const raw = String(hash || '').replace(/^#/, '')
+  try {
+    return String(new URLSearchParams(raw).get('k') || '')
+  } catch {
+    return ''
+  }
+}
+
+export type Sealed = { v: 1; iv: string; tag: string; data: string }
+
+function keyFromToken(token: string): Buffer {
+  return createHash('sha256').update(String(token || ''), 'utf8').digest()
+}
+
+export function isSealed(raw: unknown): raw is Sealed {
+  if (!raw || typeof raw !== 'object') return false
+  const row = raw as Sealed
+  return row.v === 1 && Boolean(row.iv && row.tag && row.data)
+}
+
+export function sealJson(token: string, obj: unknown): Sealed {
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', keyFromToken(token), iv)
+  const enc = Buffer.concat([cipher.update(Buffer.from(JSON.stringify(obj), 'utf8')), cipher.final()])
+  return {
+    v: 1,
+    iv: iv.toString('base64url'),
+    tag: cipher.getAuthTag().toString('base64url'),
+    data: enc.toString('base64url')
+  }
+}
+
+export function openJson(token: string, sealed: Sealed): unknown {
+  if (!isSealed(sealed)) throw new Error('bad')
+  const decipher = createDecipheriv('aes-256-gcm', keyFromToken(token), Buffer.from(sealed.iv, 'base64url'))
+  decipher.setAuthTag(Buffer.from(sealed.tag, 'base64url'))
+  const pt = Buffer.concat([decipher.update(Buffer.from(sealed.data, 'base64url')), decipher.final()])
+  return JSON.parse(pt.toString('utf8'))
+}
+
+export function sealBytes(token: string, buf: Buffer): Buffer {
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', keyFromToken(token), iv)
+  const enc = Buffer.concat([cipher.update(buf), cipher.final()])
+  const tag = cipher.getAuthTag()
+  return Buffer.concat([iv, enc, tag])
+}
+
+export function openBytes(token: string, buf: Buffer): Buffer {
+  if (!buf || buf.length < 29) throw new Error('bad')
+  const iv = buf.subarray(0, 12)
+  const tag = buf.subarray(buf.length - 16)
+  const data = buf.subarray(12, buf.length - 16)
+  const decipher = createDecipheriv('aes-256-gcm', keyFromToken(token), iv)
+  decipher.setAuthTag(tag)
+  return Buffer.concat([decipher.update(data), decipher.final()])
+}
+
+export function rateHit(now: number, stamps: number[], windowMs: number, max: number): { ok: boolean; next: number[] } {
+  const next = stamps.filter((t) => now - t < windowMs)
+  if (next.length >= max) return { ok: false, next }
+  next.push(now)
+  return { ok: true, next }
 }
 
 export function pinChatId(chatIds: string[], current: string, macActive: string): string {
@@ -76,4 +154,26 @@ export function chatTransport(kind: string): 'acp' | 'stream-json' | 'app-server
   if (kind === 'claude') return 'stream-json'
   if (kind === 'gpt') return 'app-server'
   return 'acp'
+}
+
+export type PhoneAttach = { path: string; name: string; mime: string }
+export type PhoneQueueItem = { id: string; text: string; names: string[] }
+
+export function shownPhoneLine(text: string, files?: { name: string }[]): string {
+  const line = String(text || '').trim()
+  const names = (files || []).map((f) => f.name).filter(Boolean)
+  if (!names.length) return line
+  return `${line}${line ? '\n' : ''}${names.join(', ')}`
+}
+
+export function underDir(root: string, file: string): boolean {
+  try {
+    const base = realpathSync(resolve(root))
+    const real = realpathSync(file)
+    if (!statSync(real).isFile()) return false
+    const rel = relative(base, real)
+    return Boolean(rel) && !rel.startsWith('..') && !isAbsolute(rel)
+  } catch {
+    return false
+  }
 }
