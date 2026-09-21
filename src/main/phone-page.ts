@@ -293,7 +293,7 @@ export function phonePageHtml(): string {
       let s = ''
       const arr = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8)
       for (let i = 0; i < arr.length; i++) s += String.fromCharCode(arr[i])
-      return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+      return btoa(s).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/g, '')
     }
     function unb64(s) {
       const pad = s.length % 4 === 2 ? '==' : s.length % 4 === 3 ? '=' : ''

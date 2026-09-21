@@ -227,6 +227,11 @@ test('phone page uses Schibsted Grotesk and Source Serif 4, never Inter', () => 
   assert.match(html, /Ask about this folder/)
   assert.match(html, /stopBtn.hidden/)
   assert.match(html, /No chats yet\. Tap New/)
+  assert.doesNotThrow(() => {
+    new Function(html.split('<script>')[1].split('</script>')[0])
+  })
+  assert.equal(html.includes('replace(/+/g'), false)
+  assert.match(html, /replaceAll\('\+'/ )
   assert.equal(/fonts\.googleapis|fonts\.gstatic/.test(html), false)
   assert.match(html, /\/font\/schibsted\.woff2/)
   assert.match(html, /Bearer/)
