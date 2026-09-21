@@ -4,8 +4,10 @@ import { dirname } from 'node:path'
 import { binEnv } from './ai-cli'
 
 function git(cwd: string, args: string[], timeoutMs = 120_000): Promise<{ code: number; out: string }> {
+  const env = { ...binEnv(), GIT_TERMINAL_PROMPT: '0' }
+  const safe = ['-c', 'credential.helper=', ...args]
   return new Promise((resolve) => {
-    const child = spawn('git', args, { cwd, env: binEnv(), stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn('git', safe, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
     let out = ''
     const t = setTimeout(() => {
       child.kill()
@@ -41,9 +43,18 @@ export async function cloneBrain(opts: {
   if (existsSync(opts.dest)) {
     const probe = await git(opts.dest, ['rev-parse', '--is-inside-work-tree'])
     if (probe.code === 0) {
-      await git(opts.dest, ['config', 'user.email', opts.email])
-      await git(opts.dest, ['config', 'user.name', opts.name || opts.email.split('@')[0]])
-      return { ok: true, dest: opts.dest, detail: 'Folder already has git. Using it.' }
+      const origin = await originHttps(opts.dest)
+      const want = opts.cloneUrl.replace(/https:\/\/x-access-token:[^@]+@/i, 'https://').replace(/https:\/\/[^:]+:[^@]+@/i, 'https://')
+      if (origin && want && origin.replace(/\.git$/, '') === want.replace(/\.git$/, '')) {
+        await git(opts.dest, ['config', 'user.email', opts.email])
+        await git(opts.dest, ['config', 'user.name', opts.name || opts.email.split('@')[0]])
+        return { ok: true, dest: opts.dest, detail: 'Folder already has this brain. Using it.' }
+      }
+      return {
+        ok: false,
+        dest: opts.dest,
+        detail: 'That folder is already a different git repo. Pick another place or remove it, then try again.'
+      }
     }
   }
   mkdirSync(dirname(opts.dest), { recursive: true })
@@ -55,7 +66,10 @@ export async function cloneBrain(opts: {
     .trim()
     .replace(/https:\/\/x-access-token:[^@]+@/i, 'https://')
     .replace(/https:\/\/[^:]+:[^@]+@/i, 'https://')
-  if (clean.startsWith('https://')) await git(opts.dest, ['remote', 'set-url', 'origin', clean])
+  if (clean.startsWith('https://')) {
+    const set = await git(opts.dest, ['remote', 'set-url', 'origin', clean])
+    if (set.code !== 0) return { ok: false, dest: opts.dest, detail: redact(set.out).slice(-400) }
+  }
   await git(opts.dest, ['config', 'user.email', opts.email])
   await git(opts.dest, ['config', 'user.name', opts.name || opts.email.split('@')[0]])
   return { ok: true, dest: opts.dest, detail: 'Cloned the shared brain onto this computer.' }
@@ -111,12 +125,15 @@ export async function gitSyncAuthed(cwd: string, token: string): Promise<{ ok: b
     return gitPushIfDirty(cwd)
   }
   const branch = await currentBranch(cwd)
-  const pull = await git(cwd, ['pull', '--ff-only', authed, branch])
-  if (pull.code !== 0) return { ok: false, detail: redact(pull.out).slice(-400) }
+  const fetch = await git(cwd, ['fetch', authed, `+refs/heads/${branch}:refs/remotes/origin/${branch}`])
+  if (fetch.code !== 0) return { ok: false, detail: redact(fetch.out).slice(-400) }
+  const merge = await git(cwd, ['merge', '--ff-only', `origin/${branch}`])
+  if (merge.code !== 0) return { ok: false, detail: redact(merge.out).slice(-400) }
   const ahead = await git(cwd, ['rev-list', '--count', `origin/${branch}..HEAD`])
-  const sb = await git(cwd, ['status', '-sb'])
-  const needPush = /ahead/.test(sb.out) || (ahead.code === 0 && Number(ahead.out.trim()) > 0)
-  if (!needPush && !st.out.trim()) return { ok: true, detail: 'clean' }
-  const p = await git(cwd, ['push', authed, `HEAD:${branch}`])
+  if (ahead.code !== 0) return { ok: false, detail: redact(ahead.out).slice(-400) || 'Could not tell if this folder is ahead of GitHub.' }
+  const n = Number(ahead.out.trim())
+  if (!Number.isFinite(n)) return { ok: false, detail: 'Could not tell if this folder is ahead of GitHub.' }
+  if (n === 0) return { ok: true, detail: 'clean' }
+  const p = await git(cwd, ['push', authed, `HEAD:refs/heads/${branch}`])
   return { ok: p.code === 0, detail: redact(p.out).slice(-400) }
 }

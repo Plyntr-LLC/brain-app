@@ -38,7 +38,7 @@ function runHook(cwd: string, script: string, args: string[], stdin: string, tim
     timeout,
     maxBuffer: 2 * 1024 * 1024
   })
-  if (r.status !== 0 && r.status !== null) return ''
+  if (r.status !== 0) return ''
   return extraFromStdout(r.stdout || '')
 }
 
@@ -111,21 +111,19 @@ export function toolCaptureFromUpdate(update: Record<string, unknown>): {
   const toolId = String(update.toolCallId || update.tool_call_id || update.id || '')
   const toolName = String(update.title || update.kind || update.tool || 'tool').slice(0, 80)
   const toolInput = typeof update.rawInput === 'string' ? update.rawInput : JSON.stringify(update.rawInput || update.raw_input || {})
-  let toolOutput = ''
-  if (typeof update.rawOutput === 'string') toolOutput = update.rawOutput
-  else if (typeof update.content === 'string') toolOutput = update.content
-  else toolOutput = asText(update.content) || JSON.stringify(update.content || update.rawOutput || '')
-  if (Array.isArray(update.content) && !toolOutput) {
-    toolOutput = (update.content as unknown[])
-      .map((row) => {
-        const r = asRecord(row)
-        const inner = asRecord(r.content)
-        return asText(r) || asText(inner) || asText(r.text)
-      })
-      .filter(Boolean)
-      .join('\n')
+  const chunks: string[] = []
+  const push = (value: unknown) => {
+    if (typeof value === 'string' && value.trim()) chunks.push(value)
+    else if (Array.isArray(value)) value.forEach(push)
+    else {
+      const row = asRecord(value)
+      const bit = asText(row) || asText(row.content) || asText(row.text)
+      if (bit) chunks.push(bit)
+    }
   }
-  if (toolOutput.length < 200 && !status) return null
+  push(update.rawOutput)
+  push(update.content)
+  const toolOutput = chunks.join('\n')
   if (toolOutput.length < 200) return null
   return { toolName, toolInput, toolOutput, toolId }
 }

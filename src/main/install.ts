@@ -102,8 +102,8 @@ export function listNeeds(): { ready: boolean; watching: boolean; brainPath: str
       label: 'Homebrew',
       line: 'Lets this Mac install the other tools.',
       present: Boolean(brewBin()),
-      warn: 'A Terminal window will open. macOS will ask for your computer password so Homebrew can install. Type it (you will not see dots) and press Return.',
-      accept: 'Type your Mac password in Terminal, then press Return.'
+      warn: 'A password window will open, with dots and Cancel. Terminal stays open so you can watch the install.',
+      accept: 'Type your Mac password in the window. Dots show as you type. Cancel stops the install.'
     })
   }
   items.push({
@@ -152,7 +152,7 @@ export function listNeeds(): { ready: boolean; watching: boolean; brainPath: str
   const folderPath = currentBrainFolder() || watchingInfo.brainPath || loadAccount()?.folder || null
   const folder = Boolean(folderPath)
   return {
-    ready: folder && hasCli && gitPresent(),
+    ready: folder && hasCli && gitPresent() && cloudflaredPresent(),
     watching,
     brainPath: folderPath,
     items
@@ -354,8 +354,16 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
       [
         '#!/bin/bash',
         'set -e',
-        'echo "Homebrew installer. Type your Mac password when asked (you will not see dots), then press Return."',
+        'ASK=$(mktemp)',
+        'cat > "$ASK" << \'EOF\'',
+        '#!/bin/bash',
+        'osascript -e \'display dialog "Brain needs your Mac password to install Homebrew." default answer "" with hidden answer with title "Brain" buttons {"Cancel", "OK"} default button "OK"\' -e \'text returned of result\'',
+        'EOF',
+        'chmod 700 "$ASK"',
+        'export SUDO_ASKPASS="$ASK"',
+        'echo "Installing Homebrew. A password window will open. Dots show as you type. Cancel stops the install."',
         '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"',
+        'rm -f "$ASK"',
         'echo "Done. You can close this window."'
       ].join('\n'),
       { mode: 0o755 }
@@ -365,7 +373,7 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
       ok: !opened,
       detail:
         opened ||
-        'Homebrew’s installer is in Terminal. Type your Mac password there. We will continue when it finishes.',
+        'Homebrew’s installer is in Terminal. A password window will open, with dots. Cancel stops it. We continue when it finishes.',
       wait: 'present'
     }
   }
@@ -410,18 +418,20 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
       const r = await win(
         'winget install --id Cloudflare.cloudflared -e --accept-source-agreements --accept-package-agreements'
       )
+      const here = cloudflaredPresent()
       return {
-        ok: cloudflaredPresent() || r.code === 0,
-        detail: r.out.slice(-800) || 'Cloudflare Tunnel installer finished.',
+        ok: here,
+        detail: here ? 'Cloudflare Tunnel is installed.' : r.out.slice(-800) || 'Cloudflare Tunnel did not install.',
         wait: 'none'
       }
     }
     const brew = brewBin()
     if (!brew) return { ok: false, detail: 'Homebrew first, then Cloudflare Tunnel.', wait: 'none' }
     const r = await run(brew, ['install', 'cloudflared'])
+    const here = cloudflaredPresent()
     return {
-      ok: cloudflaredPresent() || r.code === 0,
-      detail: r.out.slice(-800) || 'Cloudflare Tunnel is installed.',
+      ok: here,
+      detail: here ? 'Cloudflare Tunnel is installed.' : r.out.slice(-800) || 'Cloudflare Tunnel did not install.',
       wait: 'none'
     }
   }

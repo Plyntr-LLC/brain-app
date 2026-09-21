@@ -166,10 +166,18 @@ const phoneClosed = new Set<string>()
 function persistLiveChats(): void {
   const cwd = currentBrainFolder() || readWatching().brainPath || ''
   if (!live.chats || !cwd) return
+  if (live.chats.cwd && live.chats.cwd !== cwd) {
+    live.chats = null
+    return
+  }
   saveChats({ ...live.chats, cwd })
 }
 
 export function rememberPhoneChats(state: SavedChats): SavedChats {
+  if (live.chats?.cwd && state.cwd && live.chats.cwd !== state.cwd) {
+    live.chats = state
+    return state
+  }
   const disk = loadAnyChats(state.cwd || currentBrainFolder())
   const known = (disk?.tabs || []).filter(isPhoneChatTab).map((t) => t.id)
   const incoming = (state.tabs || []).filter(isPhoneChatTab)
@@ -558,8 +566,9 @@ function startQuickTunnel(bin: string, port: number): Promise<string> {
     })
     const tryParse = (chunk: Buffer) => {
       buf.push(chunk.toString('utf8'))
-      const hit = parseTunnelUrl(buf.join(''))
-      if (hit && !settled) {
+      const text = buf.join('')
+      const hit = parseTunnelUrl(text)
+      if (hit && /Registered tunnel connection|Connected to/i.test(text) && !settled) {
         settled = true
         resolve(hit)
       }

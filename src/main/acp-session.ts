@@ -662,20 +662,20 @@ async function applyConfig(
     try {
       const res = await setOption(pool.rpc, tab.sessionId, 'reasoning_effort', effort)
       const next = readLive(res)
-      live = { ...live, ...next, effort: next.effort || effort }
+      live = { ...live, ...next, effort: next.effort || tab.effort }
     } catch {
-      live.effort = effort
+      live.effort = tab.effort
     }
   } else if (pool.kind === 'cursor' && effort && effort !== tab.effort && configIds.has('effort')) {
     try {
       const res = await setOption(pool.rpc, tab.sessionId, 'effort', effort)
       const next = readLive(res)
-      live = { ...live, ...next, effort: next.effort || effort }
+      live = { ...live, ...next, effort: next.effort || tab.effort }
     } catch {
       live.effort = tab.effort
     }
-  } else if (effort && (live.efforts?.length || configIds.has('effort') || configIds.has('reasoning_effort'))) {
-    live.effort = effort
+  } else if (effort && effort === tab.effort) {
+    live.effort = tab.effort
   }
   if (agentMode && agentMode !== tab.agentMode) {
     const allowed = tab.agentModes?.some((m) => m.id === agentMode)

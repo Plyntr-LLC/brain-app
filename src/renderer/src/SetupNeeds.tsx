@@ -155,7 +155,7 @@ export function SetupNeeds({
         return
       }
       const missing = first.items.filter((i) => !i.present)
-      const required = new Set(['brew', 'git'])
+      const required = new Set(['brew', 'git', 'cloudflared'])
       for (const item of missing) {
         if (stop.current) {
           setPhase('review')

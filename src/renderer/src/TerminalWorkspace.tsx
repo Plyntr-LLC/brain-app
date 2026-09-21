@@ -656,16 +656,13 @@ function ChatPane({
       if (ev.kind === 'done' || ev.kind === 'error') {
         setWaitLabel('Working')
         if (compactingRef.current && ev.kind === 'done') {
-          setMessages((m) => {
-            if (m.some((x) => x.who === 'sys' && x.text.startsWith('Older turns were summarized'))) return m
-            return [
-              ...m,
-              {
-                who: 'sys',
-                text: 'Older turns were summarized for the model. The thread on screen is unchanged.'
-              }
-            ]
-          })
+          setMessages((m) => [
+            ...m,
+            {
+              who: 'sys',
+              text: 'This CLI did not compact this session. The thread is unchanged.'
+            }
+          ])
         }
         compactingRef.current = false
         setCompacting(false)
