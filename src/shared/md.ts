@@ -17,8 +17,10 @@ export function escapeHtml(s: string): string {
 }
 
 function inlineMd(t: string): string {
-  t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
   t = t.replace(/`([^`]+)`/g, '<code>$1</code>')
+  t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  t = t.replace(/__([^_]+)__/g, '<strong>$1</strong>')
+  t = t.replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
   t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, href) => {
     if (!/^(https?:\/\/|\/|#|mailto:)/i.test(String(href))) return String(label)
     return `<a href="${href}">${label}</a>`
@@ -177,6 +179,9 @@ export function cleanThink(raw: string): string {
 
 export function phonePaintHtml(who: string, text: string): string {
   if (who === 'think') return mdToHtml(cleanThink(text))
-  if (who === 'me') return escapeHtml(text)
-  return mdToHtml(stripAnsi(text))
+  if (who === 'me' || who === 'sys') return escapeHtml(text)
+  const raw = stripAnsi(text)
+  const t = raw.trim()
+  if (/^\{"(?:jsonrpc|method|id)"/.test(t) && t.length < 400 && !/\n/.test(t)) return ''
+  return mdToHtml(raw)
 }

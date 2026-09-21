@@ -210,6 +210,11 @@ test('phone page uses Schibsted Grotesk and Source Serif 4, never Inter', () => 
   assert.match(html, /data-tab/)
   assert.match(html, /paintTabs/)
   assert.match(html, /createElement\('button'\)/)
+  assert.match(html, /pinBottom/)
+  assert.match(html, /lastThread/)
+  assert.match(html, /data-files/)
+  assert.match(html, /isFileSys/)
+  assert.match(html, /stickThread/)
   assert.equal(/tabsEl\.innerHTML/.test(html), false)
   assert.match(html, /\/api\/pair/)
   assert.match(html, /\/api\/tab/)
@@ -253,9 +258,11 @@ test('phone page uses Schibsted Grotesk and Source Serif 4, never Inter', () => 
 })
 
 test('phone paint uses the same markdown as Skin', () => {
-  const html = phonePaintHtml('brain', '## Hello\n\n- one\n- two')
+  const html = phonePaintHtml('brain', '## Hello\n\n- one\n- two\n\n**bold** and *italic*')
   assert.match(html, /<h2>/)
   assert.match(html, /<ul>/)
+  assert.match(html, /<strong>bold<\/strong>/)
+  assert.match(html, /<em>italic<\/em>/)
   assert.equal(phonePaintHtml('me', '<script>x</script>').includes('<script>'), false)
 })
 

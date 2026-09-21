@@ -133,7 +133,11 @@ export function phonePageHtml(): string {
     .bubble.md h1 { font-size: 1.15rem; }
     .bubble.md h2 { font-size: 1.05rem; }
     .bubble.md h3 { font-size: 0.95rem; }
+    .bubble.md a { color: var(--orange-deep); }
+    .bubble.md em { font-style: italic; }
     .bubble.think { color: var(--muted); font-size: 0.9rem; max-width: 40rem; }
+    .filefold { max-width: 40rem; }
+    .filefold .skin-tool { margin-top: 0.35rem; }
     .think-label {
       font-size: 0.72rem;
       font-weight: 600;
@@ -160,7 +164,7 @@ export function phonePageHtml(): string {
       padding: 0.05rem 0.25rem;
       border-radius: 2px;
     }
-    .bubble strong { font-weight: 700; }
+    .bubble strong { font-weight: 600; }
     .skin-tool {
       font-family: "Schibsted Grotesk", sans-serif;
       font-size: 0.78rem;
@@ -356,20 +360,31 @@ export function phonePageHtml(): string {
     let pending = null
     let eventsOn = false
     let openThink = {}
+    let openFiles = {}
+    let pinBottom = true
+    let lastThread = ''
     let drops = []
 
+    function stickThread() {
+      if (!thread) return
+      if (pinBottom) thread.scrollTop = thread.scrollHeight
+    }
     function pinChrome() {
       const vv = window.visualViewport
       const top = vv ? vv.offsetTop : 0
       const h = vv ? vv.height : window.innerHeight
       app.style.top = top + 'px'
       app.style.height = h + 'px'
+      stickThread()
     }
     pinChrome()
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', pinChrome)
       window.visualViewport.addEventListener('scroll', pinChrome)
     }
+    thread.addEventListener('scroll', function () {
+      pinBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80
+    }, { passive: true })
 
     function esc(s) {
       return String(s || '').replace(/[&<>"']/g, function (c) {
@@ -413,11 +428,37 @@ export function phonePageHtml(): string {
           }).join(''))
         : ''
     }
+    function isFileSys(m) {
+      return m && m.who === 'sys' && m.text && m.text.indexOf('Older turns') !== 0
+    }
     function paint() {
       const list = msgs(active)
       const bits = []
       for (let i = 0; i < list.length; i++) {
         const m = list[i]
+        if (isFileSys(m)) {
+          const start = i
+          const files = []
+          while (i < list.length && isFileSys(list[i])) {
+            files.push(list[i])
+            i += 1
+          }
+          i -= 1
+          const key = active + '-f-' + start
+          const open = openFiles[key] === true
+          const label = files.length === 1 ? '1 file' : files.length + ' files'
+          bits.push(
+            '<div class="filefold"><button type="button" class="think-label" data-files="' + esc(key) + '">' +
+              esc(label) + (open ? '' : ' · show') + '</button>' +
+              (open
+                ? files.map(function (f) {
+                    return '<div class="skin-tool"><span class="k">file</span><span class="p">' + esc(f.text) + '</span></div>'
+                  }).join('')
+                : '') +
+            '</div>'
+          )
+          continue
+        }
         if (m.who === 'think') {
           if (!m.html) continue
           const live = thinkLive(list, i)
@@ -436,14 +477,21 @@ export function phonePageHtml(): string {
           continue
         }
         if (m.who === 'sys') {
-          bits.push('<div class="skin-tool"><span class="k">file</span><span class="p">' + esc(m.text) + '</span></div>')
+          bits.push('<div class="tiny">' + esc(m.text) + '</div>')
           continue
         }
-        bits.push('<div class="bubble md"><div class="mdbody">' + (m.html || esc(m.text)) + '</div></div>')
+        if (!m.html) continue
+        bits.push('<div class="bubble md"><div class="mdbody">' + m.html + '</div></div>')
       }
       if (busy()) bits.push('<p class="pulse">Working</p>')
-      thread.innerHTML = bits.join('')
-      thread.scrollTop = thread.scrollHeight
+      const next = bits.join('')
+      if (next !== lastThread) {
+        const fromBottom = thread.scrollHeight - thread.scrollTop
+        thread.innerHTML = next
+        lastThread = next
+        if (pinBottom) thread.scrollTop = thread.scrollHeight
+        else thread.scrollTop = Math.max(0, thread.scrollHeight - fromBottom)
+      }
       const tab = tabs.find(function (t) { return t.id === active })
       title.textContent = tab ? (tab.title || 'Chat') : 'This Mac'
       const queued = (queueBy[active] || []).length
@@ -613,6 +661,7 @@ export function phonePageHtml(): string {
       return open
     }
     async function send(queue) {
+      pinBottom = true
       let tabId = active
       if (!tabId) {
         try {
@@ -706,6 +755,8 @@ export function phonePageHtml(): string {
       const btn = e.target.closest('[data-tab]')
       if (!btn) return
       active = btn.getAttribute('data-tab') || ''
+      pinBottom = true
+      lastThread = ''
       paint()
     })
     sendBtn.addEventListener('click', function () { void send(false) })
@@ -733,6 +784,8 @@ export function phonePageHtml(): string {
           if (!tabs.some(function (t) { return t.id === r.tabId })) {
             tabs.push({ id: r.tabId, type: 'chat', title: tabName({ kind: kind }), kind: kind })
           }
+          pinBottom = true
+          lastThread = ''
           paint()
         }
         return pullState()
@@ -750,11 +803,20 @@ export function phonePageHtml(): string {
       }).catch(function (e) { showBanner(String(e.message || e)) })
     })
     thread.addEventListener('click', function (e) {
+      const filesBtn = e.target.closest('[data-files]')
+      if (filesBtn) {
+        const key = filesBtn.getAttribute('data-files')
+        openFiles[key] = !openFiles[key]
+        lastThread = ''
+        paint()
+        return
+      }
       const btn = e.target.closest('[data-think]')
       if (!btn) return
       const key = btn.getAttribute('data-think')
       const openNow = Boolean(btn.parentNode && btn.parentNode.querySelector('.think-body'))
       openThink[key] = !openNow
+      lastThread = ''
       paint()
     })
     qbox.addEventListener('click', function (e) {
