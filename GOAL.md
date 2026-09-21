@@ -21,7 +21,7 @@ Skin paints catalog cards over a live CLI PTY. Chat keeps one warm ACP (or strea
 | Face | Transport |
 | --- | --- |
 | Skin | Catalog thread is ACP. **Show terminal** is a separate CLI TUI (accepted). Skin `/` except app commands goes into that TUI. |
-| Chat / Grok | `grok agent --always-approve --leader --leader-socket ~/.grok/leader-brain-app.sock stdio` (ACP). Isolated from the default `~/.grok/leader.sock`. Falls back to `--no-leader` if that leader does not start. |
+| Chat / Grok | `grok --cwd <folder> --trust agent --always-approve --leader --leader-socket ~/.grok/leader-brain-app.sock stdio` (ACP). `--trust` loads project `.grok/hooks/`. Isolated from the default `~/.grok/leader.sock`. Falls back to `--no-leader` if that leader does not start. |
 | Cursor | `cursor-agent --trust --workspace <cwd> acp` (ACP). Model ids look like `composer-2.5[fast=true]`. No `reasoning_effort` config option. Modes: ask / plan / agent. |
 | Claude | `claude -p --input-format stream-json --output-format stream-json` (process stays up) |
 | Codex | `codex app-server --listen stdio://` |
@@ -59,7 +59,7 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
 - Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, one setup screen lists them, pre-warns every permission dialog, then **Start setup** (one click) runs official installers in order and waits. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.
 - Long runs show a live Working strip (wheel, phase, elapsed time) plus a pulse on the chat tab. Tools update the phase. Setup polls use the same strip. The thread does not sit on a frozen Thinking label.
-- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.28**. Developer ID Application: Plyntr LLC.
+- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.29**. Developer ID Application: Plyntr LLC.
 - Phone: Settings → Phone starts a loopback listener, `caffeinate -dims`, and a Cloudflare tunnel (named host `brain-phone.plyntr.com` when configured). Scan the QR or type the 6-digit code to link a phone. Linked phones stay until Remove.
 
 ## How Joe runs Inbox

@@ -21,12 +21,20 @@ export function extraPath(): string {
   return dirs.filter(Boolean).join(delimiter)
 }
 
-export function binEnv(): NodeJS.ProcessEnv {
-  return {
+export function binEnv(cwd?: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: homedir(),
     PATH: `${extraPath()}${delimiter}${process.env.PATH || ''}`
   }
+  const root = String(cwd || '').trim()
+  if (root) {
+    env.CLAUDE_PROJECT_DIR = root
+    env.CURSOR_PROJECT_DIR = root
+    env.GROK_WORKSPACE_ROOT = root
+    env.CODEX_PROJECT_DIR = root
+  }
+  return env
 }
 
 function winNames(base: string): string[] {
@@ -201,7 +209,7 @@ export function promptStream(opts: {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
       cwd: opts.cwd,
-      env: binEnv(),
+      env: binEnv(opts.cwd),
       stdio: ['ignore', 'pipe', 'pipe']
     })
     if (opts.tabId) {

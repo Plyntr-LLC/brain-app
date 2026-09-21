@@ -179,7 +179,7 @@ async function bootPoolNow(cwd: string): Promise<Pool> {
   if (again && !again.rpc.dead) return again
   const bin = resolveBin('gpt')
   if (!bin) throw new Error('Codex is not installed on this computer')
-  const proc = spawnBin(bin, ['app-server', '--listen', 'stdio://'], cwd, binEnv())
+  const proc = spawnBin(bin, ['app-server', '--listen', 'stdio://'], cwd, binEnv(cwd))
   const pool: Pool = {
     cwd,
     rpc: null as unknown as LineRpc,

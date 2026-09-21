@@ -560,7 +560,7 @@ async function bootPoolNow(kind: 'grok' | 'cursor', cwd: string, key: string): P
   if (again && !again.rpc.dead) return again
   const bin = resolveBin(kind)
   if (!bin) throw new Error(`${kind} is not installed on this computer`)
-  const proc = spawnBin(bin, await spawnArgs(kind, cwd), cwd, binEnv())
+  const proc = spawnBin(bin, await spawnArgs(kind, cwd), cwd, binEnv(cwd))
   const pool: Pool = {
     kind,
     cwd,

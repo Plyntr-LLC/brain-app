@@ -12,13 +12,20 @@ type Sess = { proc: IPty; sender: WebContents }
 
 const sessions = new Map<string, Sess>()
 
-function env(): Record<string, string> {
+function env(cwd?: string): Record<string, string> {
   const e: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (typeof v === 'string') e[k] = v
   e.HOME = homedir()
   e.TERM = 'xterm-256color'
   e.COLORTERM = 'truecolor'
   e.PATH = `${extraPath()}${delimiter}${e.PATH || ''}`
+  const root = String(cwd || '').trim()
+  if (root) {
+    e.CLAUDE_PROJECT_DIR = root
+    e.CURSOR_PROJECT_DIR = root
+    e.GROK_WORKSPACE_ROOT = root
+    e.CODEX_PROJECT_DIR = root
+  }
   return e
 }
 
@@ -101,7 +108,7 @@ export function registerPtyIpc(): void {
           cols: Math.max(20, opts.cols || 80),
           rows: Math.max(8, opts.rows || 24),
           cwd: opts.cwd || homedir(),
-          env: env()
+          env: env(opts.cwd)
         })
       } catch (err) {
         throw new Error(`Could not start the terminal: ${String((err as Error).message || err)}`)

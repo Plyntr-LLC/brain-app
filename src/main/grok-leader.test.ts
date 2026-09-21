@@ -13,6 +13,7 @@ test('ACP args use custom socket when leader is up', () => {
   assert.equal(args.includes('--no-leader'), false)
   assert.ok(args.includes('--leader'))
   assert.ok(args.includes('--leader-socket'))
+  assert.ok(args.includes('--trust'))
   assert.ok(args.includes(grokLeaderSocket()))
   assert.equal(args.at(-1), 'stdio')
 })
@@ -20,6 +21,7 @@ test('ACP args use custom socket when leader is up', () => {
 test('ACP args stay --no-leader if leader did not start', () => {
   const args = grokAcpArgs('/tmp/lab', false)
   assert.ok(args.includes('--no-leader'))
+  assert.ok(args.includes('--trust'))
   assert.equal(args.includes('--leader'), false)
 })
 
@@ -27,6 +29,7 @@ test('TUI args resume a session on the isolated socket', () => {
   const args = grokTuiArgs('/tmp/lab', 'sess-1', true)
   assert.ok(args.includes('--leader'))
   assert.ok(args.includes('--leader-socket'))
+  assert.ok(args.includes('--trust'))
   assert.ok(args.includes('--resume'))
   assert.ok(args.includes('sess-1'))
   assert.equal(args.includes('-l'), false)

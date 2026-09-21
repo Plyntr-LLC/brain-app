@@ -160,7 +160,7 @@ async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string;
     '--effort',
     run.effort
   ]
-  const proc = spawnBin(bin, args, opts.cwd, binEnv())
+  const proc = spawnBin(bin, args, opts.cwd, binEnv(opts.cwd))
   const s: Sess = {
     tabId: opts.tabId,
     cwd: opts.cwd,
