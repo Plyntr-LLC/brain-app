@@ -3,7 +3,8 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import type { AiKind, Session } from '@shared/contracts'
-import { CLAUDE_DEFAULT_EFFORT, CLAUDE_DEFAULT_MODEL, keepClaudeModel } from '../../shared/claude-defaults'
+import { CLAUDE_DEFAULT_MODEL, keepClaudeModel } from '../../shared/claude-defaults'
+import { defaultEffort, hydrateEffort, normalizeEffort, prettyEffort } from '../../shared/effort'
 import { mdToHtml, tidy, outsideProject, type FileHit } from './ptyChat'
 import { sameCwd } from '../../shared/paths'
 import { WorldClocks } from './WorldClocks'
@@ -12,7 +13,7 @@ import { SkinPane } from './skin/SkinPane'
 import { SkinCard } from './skin/Registry'
 import { skinPtyId } from './skin/SkinTerm'
 import { specFromStreamEvent } from '../../shared/skin/from-events'
-import { isHiddenStreamKind } from '../../shared/skin/hidden-kinds'
+import { isHiddenStreamKind, isProtocolNoise } from '../../shared/skin/hidden-kinds'
 
 type Mode = 'chat' | 'term'
 type Attach = { path: string; name: string; mime: string; preview?: string }
@@ -198,27 +199,6 @@ function modelOnList(id: string | undefined, list: Cap[]): string | undefined {
 
 function claudeModelOnList(id: string | undefined, list: Cap[]): string {
   return keepClaudeModel(id, list)
-}
-
-function normalizeEffort(id?: string): string | undefined {
-  if (!id) return undefined
-  const k = id.toLowerCase().replace(/_/g, '-').replace(/\s+/g, '-')
-  if (k === 'extra-high' || k === 'x-high' || k === 'extra') return 'xhigh'
-  return k
-}
-
-function prettyEffort(id?: string): string {
-  const k = normalizeEffort(id)
-  if (!k) return 'Default'
-  const map: Record<string, string> = {
-    minimal: 'Minimal',
-    low: 'Low',
-    medium: 'Medium',
-    high: 'High',
-    xhigh: 'Extra high',
-    max: 'Max'
-  }
-  return map[k] || k
 }
 
 function fallbackEfforts(kind?: AiKind): Cap[] {
@@ -1623,7 +1603,7 @@ function ChatPane({
                 </li>
               ))}
             </ol>
-          ) : m.who === 'raw' && m.text && m.skinLabel !== 'ignore' ? (
+          ) : m.who === 'raw' && m.text && m.skinLabel !== 'ignore' && !isHiddenStreamKind(m.rawKind || '') && !isProtocolNoise(m.text) ? (
             <div className="bubble" key={i}>
               {m.text}
             </div>
@@ -1849,7 +1829,7 @@ export function TerminalWorkspace({
       title: label(setupKind),
       sessionId: crypto.randomUUID(),
       model: setupKind === 'claude' ? CLAUDE_DEFAULT_MODEL : undefined,
-      effort: setupKind === 'claude' ? CLAUDE_DEFAULT_EFFORT : undefined,
+      effort: defaultEffort(setupKind),
       agentMode: setupKind === 'cursor' ? 'agent' : undefined
     }
   }
@@ -1935,14 +1915,7 @@ export function TerminalWorkspace({
             saved.tabs.map((t) => ({
               ...t,
               model: t.kind === 'claude' ? t.model || CLAUDE_DEFAULT_MODEL : t.model,
-              effort:
-                t.kind === 'cursor'
-                  ? undefined
-                  : t.kind === 'claude'
-                    ? t.effort || CLAUDE_DEFAULT_EFFORT
-                    : t.effort === 'high'
-                      ? undefined
-                      : t.effort
+              effort: hydrateEffort(t.kind, t.effort)
             }))
           )
           setActive(saved.active || saved.tabs[0].id)
@@ -2164,7 +2137,7 @@ export function TerminalWorkspace({
         sessionId: crypto.randomUUID(),
         cliSessionId: resumeId,
         model: kind === 'claude' ? CLAUDE_DEFAULT_MODEL : undefined,
-        effort: kind === 'claude' ? CLAUDE_DEFAULT_EFFORT : undefined,
+        effort: defaultEffort(kind),
         agentMode: kind === 'cursor' ? 'agent' : undefined
       }
     ])
@@ -2477,15 +2450,14 @@ export function TerminalWorkspace({
                                   : modelOnList(c.model || x.model, cliModels(x.kind, c.models ?? x.models)) ||
                                     modelOnList(x.model, cliModels(x.kind, c.models ?? x.models)),
                               effort:
-                                x.kind === 'claude'
-                                  ? normalizeEffort(c.effort) || x.effort || CLAUDE_DEFAULT_EFFORT
-                                  : c.efforts && c.efforts.length === 0
-                                    ? undefined
-                                    : normalizeEffort(c.effort) || (c.efforts?.length ? x.effort : undefined),
+                                normalizeEffort(c.effort) ||
+                                hydrateEffort(x.kind, x.effort) ||
+                                defaultEffort(x.kind),
+                              efforts:
+                                c.efforts && c.efforts.length ? c.efforts : x.efforts && x.efforts.length ? x.efforts : fallbackEfforts(x.kind),
                               agentMode: c.agentMode || x.agentMode,
                               cliSessionId: c.sessionId || x.cliSessionId,
                               models: cliModels(x.kind, c.models ?? x.models),
-                              efforts: c.efforts,
                               agentModes: c.agentModes ?? x.agentModes
                             }
                           : x
@@ -2619,7 +2591,7 @@ export function TerminalWorkspace({
               <>
                 <div className="runmeta-k">Effort</div>
                 <button type="button" className="runmeta-v" onClick={() => setPick((p) => (p === 'effort' ? null : 'effort'))}>
-                  {prettyEffort(chatTab?.effort)}
+                  {prettyEffort(chatTab?.effort, chatTab?.kind)}
                 </button>
               </>
             ) : null}

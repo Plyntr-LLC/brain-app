@@ -10,6 +10,7 @@ import { underRoot } from './files'
 import { grokAcpArgs, ensureGrokLeader, killGrokLeader } from './grok-leader'
 import { asRecord, asText, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 import { captureEvent, skinHint } from './skin/capture'
+import { GROK_DEFAULT_EFFORT } from '../shared/effort'
 
 const RULES =
   'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
@@ -228,6 +229,11 @@ async function setOption(rpc: LineRpc, sessionId: string, configId: string, valu
   ]
   if (configId === 'model') {
     attempts.push(() => rpc.request('session/set_model', { sessionId, modelId: value }, 10_000))
+  }
+  if (configId === 'reasoning_effort') {
+    attempts.push(() =>
+      rpc.request('session/set_config_option', { sessionId, configId: 'effort', value }, 10_000)
+    )
   }
   let last = new Error('could not set ' + configId)
   for (const run of attempts) {
@@ -668,7 +674,15 @@ async function applyConfig(
     live.efforts,
     configIds.has('effort') || configIds.has('reasoning_effort')
   )
-  if (!live.efforts.length) live.effort = undefined
+  if (!live.efforts.length && pool.kind === 'grok') {
+    live.efforts = [
+      { id: 'low', label: 'Low' },
+      { id: 'medium', label: 'Medium' },
+      { id: 'high', label: 'High' },
+      { id: 'xhigh', label: 'Extra high' }
+    ]
+  }
+  if (effort) live.effort = live.effort || effort
   return live
 }
 
@@ -710,6 +724,7 @@ export async function acpWarm(opts: {
   resumeId?: string
 }): Promise<LiveRun> {
   return withTabLock(opts.tabId, async () => {
+    if (opts.kind === 'grok' && !opts.effort) opts = { ...opts, effort: GROK_DEFAULT_EFFORT }
     const pool = await bootPool(opts.kind, opts.cwd)
     tabPool.set(opts.tabId, poolKey(opts.kind, opts.cwd))
     const have = pool.tabs.get(opts.tabId)
@@ -801,6 +816,7 @@ export async function acpWarm(opts: {
     if (opts.kind === 'cursor' && !opts.agentMode && tab.agentModes?.some((m) => m.id === 'agent')) {
       opts = { ...opts, agentMode: 'agent' }
     }
+    if (opts.kind === 'grok' && !opts.effort) opts = { ...opts, effort: GROK_DEFAULT_EFFORT }
     if (opts.model || opts.effort || opts.agentMode) {
       const applied = await applyConfig(pool, tab, opts.model, opts.effort, opts.agentMode)
       assignLive(tab, applied)

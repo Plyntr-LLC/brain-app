@@ -183,5 +183,8 @@ export function phonePaintHtml(who: string, text: string): string {
   const raw = stripAnsi(text)
   const t = raw.trim()
   if (/^\{"(?:jsonrpc|method|id)"/.test(t) && t.length < 400 && !/\n/.test(t)) return ''
+  if (t && !/\s/.test(t) && (/^(hook_|response_|turn_|agent_)/.test(t) || /_(started|completed|finished|cancelled)$/.test(t))) {
+    return ''
+  }
   return mdToHtml(raw)
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { specFromStreamEvent, userMessageSpec } from '../../../shared/skin/from-events'
-import { isHiddenStreamKind } from '../../../shared/skin/hidden-kinds'
+import { isHiddenStreamKind, isProtocolNoise } from '../../../shared/skin/hidden-kinds'
 import { isSkinComponent } from '../../../shared/skin/catalog'
 import type { SkinSpec } from '../../../shared/skin/spec'
 import type { AiKind } from '@shared/contracts'
@@ -12,10 +12,7 @@ import type { RefObject, UIEventHandler } from 'react'
 type Msg = { who: string; text: string; steps?: { title: string; status?: string }[]; rawKind?: string; skinLabel?: string | null }
 
 function protocolJunk(text: string): boolean {
-  const t = text.trim()
-  if (!t) return true
-  if (/^\{"(?:jsonrpc|method|id)"/.test(t) && t.length < 400 && !/\n/.test(t)) return true
-  return false
+  return isProtocolNoise(text)
 }
 
 function thinkIsLive(messages: Msg[], idx: number, busy: boolean): boolean {

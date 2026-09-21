@@ -34,7 +34,11 @@ function isSkinComponent(id: string): id is SkinComponentId {
 }
 
 function isHiddenStreamKind(kind: string): boolean {
-  return HIDDEN.has(kind)
+  const k = String(kind || '')
+  if (HIDDEN.has(k)) return true
+  if (/^(hook_|response_|turn_|agent_)/.test(k)) return true
+  if (/_(started|completed|finished|cancelled)$/.test(k)) return true
+  return false
 }
 
 /** Conservative. Unmatched stays Raw unless Jev is this sure. */

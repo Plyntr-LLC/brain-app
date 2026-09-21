@@ -26,6 +26,8 @@
     "src/main/agency-config.test.ts",
     "src/main/login-identity.test.ts",
     "src/main/cli-auth.test.ts",
-    "src/main/phone-lib.test.ts"
+    "src/main/phone-lib.test.ts",
+    "src/shared/effort.test.ts",
+    "src/shared/skin/hidden-kinds.test.ts"
   ]
 }

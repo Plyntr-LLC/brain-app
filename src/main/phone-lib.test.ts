@@ -264,6 +264,8 @@ test('phone paint uses the same markdown as Skin', () => {
   assert.match(html, /<strong>bold<\/strong>/)
   assert.match(html, /<em>italic<\/em>/)
   assert.equal(phonePaintHtml('me', '<script>x</script>').includes('<script>'), false)
+  assert.equal(phonePaintHtml('brain', 'response_completed'), '')
+  assert.equal(phonePaintHtml('brain', 'hook_run_started'), '')
 })
 
 test('markdown links cannot break out of href with quotes', () => {
