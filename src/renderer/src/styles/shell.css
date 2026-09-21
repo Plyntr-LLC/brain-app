@@ -338,7 +338,7 @@
   padding-bottom: 0.8rem;
 }
 .bubble {
-  max-width: 34rem;
+  max-width: 96%;
   padding: 0.7rem 0.85rem;
   border-radius: 2px;
   background: var(--paper);
@@ -562,7 +562,7 @@
   padding: 0.75rem 1rem 1rem;
   background: var(--card);
 }
-.bubble.think { color: var(--muted); font-size: 0.9rem; max-width: 40rem; }
+.bubble.think { color: var(--muted); font-size: 0.9rem; max-width: 96%; }
 .when {
   font-size: 0.68rem;
   font-weight: 600;
@@ -617,7 +617,7 @@ button.think-label:disabled { cursor: default; }
 .mdview pre, .mdcode { background: var(--paper); padding: 0.7rem; overflow: auto; font-size: 0.85rem; }
 .fileweb { flex: 1; min-height: 0; width: 100%; border: 0; }
 .bubble strong { font-weight: 700; }
-.bubble.md { max-width: min(46rem, 100%); }
+.bubble.md { max-width: 96%; }
 .bubble.md .mdbody > :last-child { margin-bottom: 0; }
 .bubble.md p { margin: 0 0 0.55rem; }
 .bubble.md ul, .bubble.md ol { margin: 0 0 0.55rem; padding-left: 1.2rem; }

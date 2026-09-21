@@ -114,14 +114,14 @@ export function phonePageHtml(): string {
       gap: 0.75rem;
     }
     .bubble {
-      max-width: 92%;
+      max-width: 96%;
       padding: 0.7rem 0.85rem;
       border-radius: 2px;
       background: var(--paper);
       border: 1px solid var(--line);
     }
     .bubble.me { align-self: flex-end; background: #fff; border-color: #cfc4b6; }
-    .bubble.md { max-width: min(46rem, 100%); }
+    .bubble.md { max-width: 96%; }
     .bubble.md .mdbody > :last-child { margin-bottom: 0; }
     .bubble.md p { margin: 0 0 0.55rem; }
     .bubble.md ul, .bubble.md ol { margin: 0 0 0.55rem; padding-left: 1.2rem; }
@@ -135,8 +135,8 @@ export function phonePageHtml(): string {
     .bubble.md h3 { font-size: 0.95rem; }
     .bubble.md a { color: var(--orange-deep); }
     .bubble.md em { font-style: italic; }
-    .bubble.think { color: var(--muted); font-size: 0.9rem; max-width: 40rem; }
-    .filefold { max-width: 40rem; }
+    .bubble.think { color: var(--muted); font-size: 0.9rem; max-width: 96%; }
+    .filefold { max-width: 96%; }
     .filefold .skin-tool { margin-top: 0.35rem; }
     .think-label {
       font-size: 0.72rem;
