@@ -188,8 +188,13 @@ function prettyModel(id?: string, kind?: AiKind, models?: Cap[]): string {
 
 function cliModels(kind: AiKind | undefined, list?: Cap[] | null): Cap[] {
   const raw = Array.isArray(list) ? list : []
-  if (!kind || kind === 'grok') return raw
-  return raw.filter((m) => !/^grok[-_]/i.test(String(m.id || '')) && !/^grok\s/i.test(String(m.label || '')))
+  if (!kind || kind === 'grok' || kind === 'cursor') return raw
+  return raw.filter((m) => {
+    const id = String(m.id || '')
+    const lab = String(m.label || '')
+    if (/^cursor-grok/i.test(id) || /cursor grok/i.test(lab)) return true
+    return !/^grok[-_]/i.test(id) && !/^grok\s/i.test(lab)
+  })
 }
 
 function modelOnList(id: string | undefined, list: Cap[]): string | undefined {

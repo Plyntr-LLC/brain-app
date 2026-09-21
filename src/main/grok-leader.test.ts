@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { grokAcpArgs, grokLeaderSocket, grokTuiArgs } from './grok-args.ts'
 
@@ -41,6 +42,12 @@ test('TUI without resume still uses the isolated leader', () => {
   assert.ok(args.includes('--leader-socket'))
   assert.equal(args.includes('--resume'), false)
   assert.equal(args.includes('--no-leader'), false)
+})
+
+test('Cursor picker keeps live Grok models instead of stripping grok-*', () => {
+  const src = readFileSync(new URL('../renderer/src/TerminalWorkspace.tsx', import.meta.url), 'utf8')
+  assert.match(src, /kind === 'grok' \|\| kind === 'cursor'/)
+  assert.match(src, /cursor-grok/)
 })
 
 test('TUI stays --no-leader if the isolated leader did not start', () => {
