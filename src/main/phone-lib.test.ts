@@ -11,7 +11,7 @@ import {
   openBytes,
   openJson,
   parseTunnelUrl,
-  phoneUrl,
+  phonePairUrl,
   pickChatTab,
   pinChatId,
   pendingLanded,
@@ -24,13 +24,19 @@ import {
   sealJson,
   shownPhoneLine,
   tokenFresh,
-  tokenFromHash,
-  keyFromHash,
+  pairFromHash,
+  tokenFromCookie,
   tokenFromRequest,
   tokenOk,
+  mintPin,
+  deviceLabel,
+  findDevice,
+  offerFresh,
+  PHONE_PAIR_MS,
   underDir
 } from './phone-lib.ts'
 import { phonePageHtml } from './phone-page.ts'
+import { phoneQrSvg } from './phone-qr.ts'
 import { escapeHtml, mdToHtml, phonePaintHtml } from '../shared/md.ts'
 import { outsideProject, sameCwd } from '../shared/paths.ts'
 
@@ -50,21 +56,42 @@ INF Thank you for trying Cloudflare Tunnel`
   assert.equal(parseTunnelUrl('no url here'), null)
 })
 
-test('phoneUrl puts token and seal key in the hash and APIs only read Bearer', () => {
-  const origin = 'https://random-words-1234.trycloudflare.com'
-  const t = 'abc_TOKEN-1'
-  const k = 'seal_KEY-9'
-  const url = phoneUrl(origin, t, k)
-  assert.equal(url, `${origin}/#t=abc_TOKEN-1&k=seal_KEY-9`)
-  assert.equal(phoneUrl(origin, t), '')
+test('phonePairUrl puts a one-time offer in the hash and APIs only read Bearer or cookie', async () => {
+  const origin = 'https://brain-phone.plyntr.com'
+  const p = 'pair_OFFER-1'
+  const url = phonePairUrl(origin, p)
+  assert.equal(url, `${origin}/#p=pair_OFFER-1`)
+  assert.equal(phonePairUrl(origin, ''), '')
   const u = new URL(url)
   assert.equal(u.search, '')
-  assert.equal(tokenFromHash(u.hash), t)
-  assert.equal(keyFromHash(u.hash), k)
+  assert.equal(pairFromHash(u.hash), p)
   assert.equal(tokenFromRequest(u.search, ''), '')
   assert.equal(tokenFromRequest('?t=leaked', ''), '')
-  assert.equal(tokenFromRequest('', `Bearer ${t}`), t)
+  assert.equal(tokenFromRequest('', 'Bearer abc_TOKEN-1'), 'abc_TOKEN-1')
+  assert.equal(tokenFromRequest('', '', 'brain_phone=abc_TOKEN-1'), 'abc_TOKEN-1')
+  assert.equal(tokenFromCookie('foo=1; brain_phone=abc_TOKEN-1; x=2'), 'abc_TOKEN-1')
   assert.equal(tokenFromRequest('', ''), '')
+  const pin = mintPin()
+  assert.match(pin, /^\d{6}$/)
+  assert.equal(deviceLabel('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)', []), 'iPhone')
+  assert.equal(deviceLabel('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)', ['iPhone']), 'iPhone 2')
+  const t = mintToken()
+  assert.equal(findDevice([{ token: t, id: 'a' }], t)?.id, 'a')
+  assert.equal(findDevice([{ token: t, id: 'a' }], 'nope'), null)
+  assert.equal(offerFresh(Date.now()), true)
+  assert.equal(offerFresh(Date.now() - PHONE_PAIR_MS - 1), false)
+  const svg = phoneQrSvg(url)
+  assert.match(svg, /<svg /)
+  assert.match(svg, /<rect /)
+  assert.equal(svg.includes(p), false)
+  const qr = (await import('qrcode')).default.create(url, { errorCorrectionLevel: 'M' })
+  const n = qr.modules.size
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const dark = Boolean(qr.modules.data[y * n + x])
+      assert.equal(svg.includes(`<rect x="${x}" y="${y}" width="1" height="1"/>`), dark)
+    }
+  }
 })
 
 test('keepPhoneTabs keeps a phone New that a stale Mac save has not caught yet', () => {
@@ -77,6 +104,10 @@ test('keepPhoneTabs keeps a phone New that a stale Mac save has not caught yet',
   assert.deepEqual(
     keepPhoneTabs(mac, live, ['phone-new'], ['phone-new']).map((t) => t.id),
     ['a']
+  )
+  assert.deepEqual(
+    keepPhoneTabs([], [{ id: 'phone-new' }, { id: 'mac-old' }], ['phone-new'], []).map((t) => t.id),
+    ['phone-new']
   )
   assert.equal(isPhoneChatTab({ type: 'chat' }), true)
   assert.equal(isPhoneChatTab({}), true)
@@ -170,6 +201,12 @@ test('phone page uses Schibsted Grotesk and Source Serif 4, never Inter', () => 
   assert.match(html, /visibility: hidden/)
   assert.match(html, /id="new"/)
   assert.match(html, /id="close"/)
+  assert.match(html, /id="kind"/)
+  assert.match(html, /id="pair"/)
+  assert.match(html, /id="pin"/)
+  assert.match(html, /ChatGPT/)
+  assert.match(html, /Open chats/)
+  assert.match(html, /\/api\/pair/)
   assert.match(html, /\/api\/tab/)
   assert.match(html, /\/api\/attach/)
   assert.match(html, /\/api\/queue/)
@@ -190,15 +227,19 @@ test('phone page uses Schibsted Grotesk and Source Serif 4, never Inter', () => 
   assert.match(html, /Bearer/)
   assert.match(html, /function seal/)
   assert.match(html, /history\.replaceState/)
-  assert.match(html, /pathname \+ location.hash/)
+  assert.match(html, /location\.pathname/)
   assert.match(html, /localStorage/)
-  assert.equal(/replaceState\(\{\}, '', location\.pathname\)/.test(html), false)
+  assert.match(html, /pairWith/)
+  assert.match(html, /eventsOn = false/)
+  assert.match(html, /kindEl\.value/)
   assert.match(html, /1200 : 4000/)
   assert.match(html, /brain-phone-k/)
   assert.match(html, /encode\(sealSecret\)/)
   assert.match(html, /if \(!m\.html\) continue/)
   assert.equal(/x-file-name/.test(html), false)
   assert.equal(/\?t=/.test(html), false)
+  assert.equal(/email code/.test(html), false)
+  assert.equal(/#t=/.test(html), false)
 })
 
 test('phone paint uses the same markdown as Skin', () => {
@@ -235,10 +276,14 @@ test('phone server binds loopback only and does not log the token', () => {
   assert.match(src, /stashBytes/)
   assert.match(src, /sendPhoneStop/)
   assert.match(src, /forceQueue \|\| isChatBusy/)
-  assert.match(src, /saveToken\(mintToken\(\)\)/)
+  assert.equal(/saveToken\(mintToken\(\)\)/.test(src), false)
+  assert.match(src, /mintOffer\(\)/)
+  assert.match(src, /\/api\/pair/)
+  assert.match(src, /offer = null/)
+  assert.match(src, /tokenOk\(p, offer\.p\)/)
+  assert.match(src, /phone-devices\.json/)
   assert.match(src, /sendSealed/)
-  assert.match(src, /currentSealKey/)
-  assert.match(src, /phoneUrl\(origin, token, sealKey\)/)
+  assert.match(src, /phonePairUrl/)
   assert.match(src, /keepPhoneTabs/)
   assert.match(src, /loadAnyChats/)
   assert.match(src, /persistLiveChats/)
@@ -247,6 +292,7 @@ test('phone server binds loopback only and does not log the token', () => {
   assert.match(src, /newTabFromPhone\('grok'\)/)
   assert.match(src, /phoneOwned.delete/)
   assert.match(src, /saveChats\(\{ \.\.\.live.chats, cwd \}\)/)
+  assert.match(src, /if \(!incoming\.length\)/)
   const ipc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ipc-stubs.ts'), 'utf8')
   assert.match(ipc, /saveChats\(rememberPhoneChats\(state\)\)/)
   assert.match(ipc, /loadAnyChats\(cwd\)/)
@@ -261,7 +307,17 @@ test('phone server binds loopback only and does not log the token', () => {
   assert.match(src, /stashed\.has\(real\)/)
   assert.match(src, /Those files are not from this Phone session/)
   assert.match(src, /stashed\.clear\(\)/)
-  assert.match(src, /clipboard\.writeText\(s\.url\)/)
+  assert.equal(/clipboard\.writeText/.test(src), false)
+  const settings = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/SettingsPanel.tsx'),
+    'utf8'
+  )
+  assert.match(settings, /phone\.pairQr/)
+  assert.match(settings, /phone\.pairPin/)
+  assert.match(settings, /Linked phones/)
+  assert.equal(/email code/.test(settings), false)
+  assert.equal(/Copy secret link/.test(settings), false)
+  assert.equal(/joewine2@gmail\.com/.test(settings), false)
 })
 
 test('underDir only allows real files inside the drop folder', () => {

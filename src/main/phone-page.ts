@@ -89,7 +89,12 @@ export function phonePageHtml(): string {
       overflow: hidden;
       pointer-events: none;
     }
-    .tabrow { display: grid; grid-template-columns: 1fr auto auto; gap: 0.35rem; margin-top: 0.45rem; }
+    .tabrow { display: grid; grid-template-columns: 1fr; gap: 0.35rem; margin-top: 0.45rem; }
+    .tabtools { display: grid; grid-template-columns: 1fr auto auto; gap: 0.35rem; }
+    #tabs { min-height: 2.5rem; font-size: 1rem; }
+    .pairbox { display: flex; gap: 0.35rem; margin-top: 0.45rem; }
+    .pairbox.hidden { display: none; }
+    #pin { width: 7rem; padding: 0.4rem 0.5rem; border: 1px solid var(--line); letter-spacing: 0.2em; font-size: 1.05rem; }
     select { width: 100%; padding: 0.4rem 0.5rem; border: 1px solid var(--line); background: #fff; color: var(--ink); }
     .thread {
       min-height: 0;
@@ -220,9 +225,21 @@ export function phonePageHtml(): string {
       <h1 id="title">This Mac</h1>
       <p class="tiny">Plug the computer in. Closing the lid on battery will sleep.</p>
       <div class="tabrow">
-        <select id="tabs" aria-label="Chat"></select>
-        <button type="button" id="new" class="ghost">New</button>
-        <button type="button" id="close" class="ghost">Close</button>
+        <select id="tabs" aria-label="Open chats"></select>
+        <div class="tabtools">
+          <select id="kind" aria-label="CLI">
+            <option value="grok">Grok</option>
+            <option value="claude">Claude</option>
+            <option value="cursor">Cursor</option>
+            <option value="gpt">ChatGPT</option>
+          </select>
+          <button type="button" id="new" class="ghost">New</button>
+          <button type="button" id="close" class="ghost">Close</button>
+        </div>
+      </div>
+      <div id="pairbox" class="pairbox hidden">
+        <input id="pin" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000" />
+        <button type="button" id="pair" class="ghost">Link</button>
       </div>
     </header>
     <p id="banner" class="note hidden"></p>
@@ -238,22 +255,13 @@ export function phonePageHtml(): string {
     </footer>
   </div>
   <script>
-    function tokenFromHash(hash) {
+    function pairFromHash(hash) {
       try {
-        return String(new URLSearchParams(String(hash || '').replace(/^#/, '')).get('t') || '')
+        return String(new URLSearchParams(String(hash || '').replace(/^#/, '')).get('p') || '')
       } catch (e) {
         return ''
       }
     }
-    function keyFromHash(hash) {
-      try {
-        return String(new URLSearchParams(String(hash || '').replace(/^#/, '')).get('k') || '')
-      } catch (e) {
-        return ''
-      }
-    }
-    let token = tokenFromHash(location.hash)
-    let sealSecret = keyFromHash(location.hash)
     function readStore(name) {
       try { return localStorage.getItem(name) || sessionStorage.getItem(name) || '' } catch (e) { return '' }
     }
@@ -263,8 +271,8 @@ export function phonePageHtml(): string {
         sessionStorage.setItem(name, value)
       } catch (e) {}
     }
-    if (!token) token = readStore('brain-phone')
-    if (!sealSecret) sealSecret = readStore('brain-phone-k')
+    let token = readStore('brain-phone')
+    let sealSecret = readStore('brain-phone-k')
     if (token && !sealSecret) {
       token = ''
       try {
@@ -272,14 +280,7 @@ export function phonePageHtml(): string {
         sessionStorage.removeItem('brain-phone')
       } catch (e) {}
     }
-    if (token && sealSecret) {
-      writeStore('brain-phone', token)
-      writeStore('brain-phone-k', sealSecret)
-      if (location.search) {
-        history.replaceState({}, '', location.pathname + location.hash)
-      }
-    }
-    const auth = { authorization: 'Bearer ' + token }
+    const auth = { authorization: token ? ('Bearer ' + token) : '' }
     function b64(u8) {
       let s = ''
       const arr = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8)
@@ -324,6 +325,10 @@ export function phonePageHtml(): string {
     const app = document.getElementById('app')
     const thread = document.getElementById('thread')
     const tabsEl = document.getElementById('tabs')
+    const kindEl = document.getElementById('kind')
+    const pairbox = document.getElementById('pairbox')
+    const pinEl = document.getElementById('pin')
+    const pairBtn = document.getElementById('pair')
     const say = document.getElementById('say')
     const sendBtn = document.getElementById('send')
     const stopBtn = document.getElementById('stop')
@@ -440,6 +445,8 @@ export function phonePageHtml(): string {
       stopBtn.hidden = !busy()
       stopBtn.disabled = !token || !sealSecret || !busy()
       closeBtn.disabled = !token || !sealSecret || !active
+      newBtn.disabled = !token || !sealSecret
+      kindEl.disabled = !token || !sealSecret
       say.placeholder = busy()
         ? (queued ? 'Enter queues. Empty Enter sends the next one.' : 'Working. Enter queues a follow-up.')
         : 'Ask about this folder'
@@ -476,15 +483,44 @@ export function phonePageHtml(): string {
       queueBy = s.queue || {}
       tabsEl.innerHTML = tabs.length
         ? tabs.map(function (t) {
-            return '<option value="' + esc(t.id) + '"' + (t.id === active ? ' selected' : '') + '>' + esc(t.title || t.kind || 'Chat') + '</option>'
+            const name = t.title || (t.kind === 'claude' ? 'Claude' : t.kind === 'gpt' ? 'ChatGPT' : t.kind === 'cursor' ? 'Cursor' : 'Grok')
+            return '<option value="' + esc(t.id) + '"' + (t.id === active ? ' selected' : '') + '>' + esc(name) + '</option>'
           }).join('')
         : '<option value="">No chats yet</option>'
+      const cur = tabs.find(function (t) { return t.id === active })
+      if (cur && cur.kind) kindEl.value = cur.kind === 'claude' || cur.kind === 'gpt' || cur.kind === 'cursor' ? cur.kind : 'grok'
       paint()
     }
+    function showPair(show) {
+      pairbox.classList.toggle('hidden', !show)
+    }
+    function setCreds(nextToken, nextKey) {
+      token = nextToken
+      sealSecret = nextKey
+      auth.authorization = token ? ('Bearer ' + token) : ''
+      if (token && sealSecret) {
+        writeStore('brain-phone', token)
+        writeStore('brain-phone-k', sealSecret)
+      }
+    }
+    async function pairWith(body) {
+      const r = await fetch('/api/pair', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      const open = await r.json().catch(function () { return {} })
+      if (!r.ok || !open.ok || !open.token || !open.key) throw new Error(open.detail || 'Could not link this phone.')
+      setCreds(open.token, open.key)
+      try { history.replaceState({}, '', location.pathname) } catch (e) {}
+    }
     async function pullState() {
-      const r = await fetch('/api/state', { headers: auth })
+      const r = await fetch('/api/state', { credentials: 'include', headers: auth })
       if (r.status === 401) {
-        showBanner('This link is not paired. Turn Phone on in Brain Settings and open the new link.')
+        eventsOn = false
+        showBanner('This phone is not linked. Scan the QR in Brain Settings, or type the 6-digit code.')
+        showPair(true)
         return false
       }
       if (!r.ok) throw new Error('bad')
@@ -512,10 +548,22 @@ export function phonePageHtml(): string {
       void tick()
     }
     async function load() {
+      const offer = pairFromHash(location.hash)
+      if (offer) {
+        try {
+          await pairWith({ p: offer })
+        } catch (e) {
+          showBanner(String(e.message || e))
+          showPair(true)
+          return
+        }
+      }
       if (!token || !sealSecret) {
-        showBanner('This link needs the pairing code from Brain Settings on the computer.')
+        showBanner('On the Mac: Settings → Phone. Scan the QR, or type the 6-digit code.')
+        showPair(true)
         return
       }
+      showPair(false)
       try {
         const ok = await pullState()
         if (!ok) return
@@ -528,11 +576,12 @@ export function phonePageHtml(): string {
     async function postJson(path, body) {
       const r = await fetch(path, {
         method: 'POST',
+        credentials: 'include',
         headers: Object.assign({ 'content-type': 'application/json' }, auth),
         body: JSON.stringify(await seal(body))
       })
       const data = await r.json().catch(function () { return {} })
-      if (r.status === 401) throw new Error('This link is not paired. Turn Phone on in Brain Settings and open the new link.')
+      if (r.status === 401) throw new Error('This phone is not linked. Scan the QR in Brain Settings.')
       const open = data && data.v === 1 ? await unseal(data) : data
       if (!r.ok || open.ok === false) throw new Error(open.detail || 'Could not do that.')
       return open
@@ -541,7 +590,7 @@ export function phonePageHtml(): string {
       let tabId = active
       if (!tabId) {
         try {
-          const r = await postJson('/api/tab', { op: 'new', kind: 'grok' })
+          const r = await postJson('/api/tab', { op: 'new', kind: kindEl.value || 'grok' })
           if (r.tabId) {
             tabId = r.tabId
             active = r.tabId
@@ -610,6 +659,23 @@ export function phonePageHtml(): string {
       if (skipped.length) showBanner(skipped.join('. '))
       paint()
     }
+    pairBtn.addEventListener('click', function () {
+      const pin = String(pinEl.value || '').replace(/\D/g, '')
+      if (pin.length !== 6) {
+        showBanner('Type the 6-digit code from Settings on the Mac.')
+        return
+      }
+      void pairWith({ pin: pin }).then(function () { return load() }).catch(function (e) {
+        showBanner(String(e.message || e))
+        showPair(true)
+      })
+    })
+    pinEl.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        pairBtn.click()
+      }
+    })
     tabsEl.addEventListener('change', function () {
       active = tabsEl.value
       paint()
@@ -632,11 +698,10 @@ export function phonePageHtml(): string {
     newBtn.addEventListener('click', function () {
       if (newBtn.disabled) return
       newBtn.disabled = true
-      const tab = tabs.find(function (t) { return t.id === active })
-      void postJson('/api/tab', { op: 'new', kind: tab ? tab.kind : 'grok' }).then(function (r) {
+      void postJson('/api/tab', { op: 'new', kind: kindEl.value || 'grok' }).then(function (r) {
         if (r.tabId) active = r.tabId
         return pullState()
-      }).catch(function (e) { showBanner(String(e.message || e)) }).finally(function () {
+      }).then(function () { say.focus() }).catch(function (e) { showBanner(String(e.message || e)) }).finally(function () {
         newBtn.disabled = false
         paint()
       })

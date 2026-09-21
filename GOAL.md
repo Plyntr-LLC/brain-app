@@ -60,7 +60,7 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, one setup screen lists them, pre-warns every permission dialog, then **Start setup** (one click) runs official installers in order and waits. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.
 - Long runs show a live Working strip (wheel, phase, elapsed time) plus a pulse on the chat tab. Tools update the phase. Setup polls use the same strip. The thread does not sit on a frozen Thinking label.
 - Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.22**. Developer ID Application: Plyntr LLC.
-- Phone: Settings → Phone starts a loopback listener, pairing token, `caffeinate -dims`, and a Cloudflare quick tunnel. Safari on cellular talks to the live chat on this Mac. URL changes each time Phone is turned on.
+- Phone: Settings → Phone starts a loopback listener, `caffeinate -dims`, and a Cloudflare tunnel (named host `brain-phone.plyntr.com` when configured). Scan the QR or type the 6-digit code to link a phone. Linked phones stay until Remove.
 
 ## How Joe runs Inbox
 
@@ -95,6 +95,8 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 ## Now
 
 Skin is the face. Chat stays in the code, hidden. Terminal is a top tab only. Last tab can close after a confirm. Empty stage is the card color, not black. Claude tabs start on Opus 5 at low effort. Settings → Phone is a Cloudflare Tunnel remote of this Mac.
+
+- [x] 2026-09-21 Joe: Phone WhatsApp-style pairing (QR, no email), named host stays, CLI picker on New, session list actually shows open chats. In source, not packed. Done: 2026-09-21. Grok 4.6 xhigh APPROVE (cycle 2). Evidence: `phone-devices.json` + `/api/pair`, Settings QR/PIN, `#kind` New, full-width Open chats.
 
 - [x] 2026-09-21 Joe: Phone picker empty, New blinks, composer should match the Mac, show files being touched outside the Brain folder. New tab focuses the composer. No starter chips above the box. Restart to install must actually relaunch. Done: 2026-09-21. Grok 4.6 xhigh APPROVE (cycle 4). Evidence: v0.1.22.
 

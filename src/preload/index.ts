@@ -1,6 +1,19 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AiKind } from '../shared/contracts'
 
+type PhoneRemoteStatus = {
+  on: boolean
+  url: string
+  origin: string
+  detail: string
+  platform: string
+  watching: boolean
+  pairPin: string
+  pairQr: string
+  pairUntil: number
+  devices: { id: string; label: string; lastSeen: number }[]
+}
+
 const brain = {
   quit: () => ipcRenderer.invoke('app:quit'),
   version: () => ipcRenderer.invoke('app:version') as Promise<string>,
@@ -565,50 +578,15 @@ const brain = {
     }
   },
   phone: {
-    start: () =>
-      ipcRenderer.invoke('phone:start') as Promise<{
-        on: boolean
-        url: string
-        origin: string
-        detail: string
-        platform: string
-        watching: boolean
-      }>,
-    stop: () =>
-      ipcRenderer.invoke('phone:stop') as Promise<{
-        on: boolean
-        url: string
-        origin: string
-        detail: string
-        platform: string
-        watching: boolean
-      }>,
-    status: () =>
-      ipcRenderer.invoke('phone:status') as Promise<{
-        on: boolean
-        url: string
-        origin: string
-        detail: string
-        platform: string
-        watching: boolean
-      }>,
-    rotate: () =>
-      ipcRenderer.invoke('phone:rotate') as Promise<{
-        on: boolean
-        url: string
-        origin: string
-        detail: string
-        platform: string
-        watching: boolean
-      }>,
+    start: () => ipcRenderer.invoke('phone:start') as Promise<PhoneRemoteStatus>,
+    stop: () => ipcRenderer.invoke('phone:stop') as Promise<PhoneRemoteStatus>,
+    status: () => ipcRenderer.invoke('phone:status') as Promise<PhoneRemoteStatus>,
+    rotate: () => ipcRenderer.invoke('phone:rotate') as Promise<PhoneRemoteStatus>,
+    link: () => ipcRenderer.invoke('phone:link') as Promise<PhoneRemoteStatus>,
+    unlink: (id: string) => ipcRenderer.invoke('phone:unlink', id) as Promise<PhoneRemoteStatus>,
     copy: () => ipcRenderer.invoke('phone:copy') as Promise<{ ok: boolean }>,
-    onStatus: (
-      fn: (ev: { on: boolean; url: string; origin: string; detail: string; platform: string; watching: boolean }) => void
-    ) => {
-      const h = (
-        _e: unknown,
-        payload: { on: boolean; url: string; origin: string; detail: string; platform: string; watching: boolean }
-      ) => fn(payload)
+    onStatus: (fn: (ev: PhoneRemoteStatus) => void) => {
+      const h = (_e: unknown, payload: PhoneRemoteStatus) => fn(payload)
       ipcRenderer.on('phone:status', h)
       return () => {
         ipcRenderer.removeListener('phone:status', h)

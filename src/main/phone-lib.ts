@@ -3,9 +3,14 @@ import { realpathSync, statSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 
 export const PHONE_TOKEN_MS = 12 * 60 * 60 * 1000
+export const PHONE_PAIR_MS = 2 * 60 * 1000
 
 export function mintToken(): string {
   return randomBytes(24).toString('base64url')
+}
+
+export function mintPin(): string {
+  return String(randomBytes(4).readUInt32BE(0) % 1_000_000).padStart(6, '0')
 }
 
 export function tokenOk(got: string, want: string): boolean {
@@ -29,36 +34,64 @@ export function parseTunnelUrl(text: string): string | null {
   return m ? m[0].replace(/\/$/, '').toLowerCase() : null
 }
 
-export function phoneUrl(origin: string, token: string, key?: string): string {
+export function phonePairUrl(origin: string, p: string): string {
   const base = String(origin || '').replace(/\/$/, '')
-  const t = String(token || '')
-  const k = String(key || '')
-  if (!base || !t || !k) return ''
-  return `${base}/#t=${encodeURIComponent(t)}&k=${encodeURIComponent(k)}`
+  const offer = String(p || '')
+  if (!base || !offer) return ''
+  return `${base}/#p=${encodeURIComponent(offer)}`
 }
 
-export function tokenFromRequest(search: string, authorization: string): string {
+export function offerFresh(at: number, now = Date.now()): boolean {
+  const n = Number(at) || 0
+  if (n <= 0) return false
+  return now - n < PHONE_PAIR_MS
+}
+
+export function tokenFromCookie(cookie: string): string {
+  for (const part of String(cookie || '').split(';')) {
+    const [k, ...rest] = part.trim().split('=')
+    if (k === 'brain_phone') return decodeURIComponent(rest.join('=') || '')
+  }
+  return ''
+}
+
+export function tokenFromRequest(search: string, authorization: string, cookie = ''): string {
   const h = String(authorization || '')
   const bearer = /^bearer\s+/i.test(h) ? h.replace(/^bearer\s+/i, '').trim() : ''
-  return bearer
+  if (bearer) return bearer
+  return tokenFromCookie(cookie)
 }
 
-export function tokenFromHash(hash: string): string {
+export function pairFromHash(hash: string): string {
   const raw = String(hash || '').replace(/^#/, '')
   try {
-    return String(new URLSearchParams(raw).get('t') || '')
+    return String(new URLSearchParams(raw).get('p') || '')
   } catch {
     return ''
   }
 }
 
-export function keyFromHash(hash: string): string {
-  const raw = String(hash || '').replace(/^#/, '')
-  try {
-    return String(new URLSearchParams(raw).get('k') || '')
-  } catch {
-    return ''
+export function deviceLabel(ua: string, used: string[]): string {
+  let base = 'Phone'
+  if (/iPhone/i.test(ua)) base = 'iPhone'
+  else if (/iPad/i.test(ua)) base = 'iPad'
+  else if (/Android/i.test(ua)) base = 'Android'
+  const have = new Set(used)
+  if (!have.has(base)) return base
+  for (let i = 2; i < 40; i++) {
+    const n = `${base} ${i}`
+    if (!have.has(n)) return n
   }
+  return `${base} ${used.length + 1}`
+}
+
+export function findDevice<T extends { token: string }>(devices: T[], got: string): T | null {
+  const want = String(got || '')
+  if (!want) return null
+  for (const row of devices || []) {
+    if (tokenOk(want, String(row?.token || ''))) return row
+  }
+  return null
 }
 
 export type Sealed = { v: 1; iv: string; tag: string; data: string }

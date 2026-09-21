@@ -121,6 +121,30 @@
   padding: 0.5rem 0.6rem;
   margin: 0 0 0.55rem;
 }
+.phone-qr {
+  width: 11rem;
+  height: 11rem;
+  background: #fff;
+  padding: 0.45rem;
+  border: 1px solid var(--line);
+  margin: 0.4rem 0 0.55rem;
+}
+.phone-qr svg { display: block; width: 100%; height: 100%; }
+.phone-pin {
+  font-family: "Schibsted Grotesk", sans-serif;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  margin: 0 0 0.45rem;
+}
+.phone-dev {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.35rem;
+  font-size: 0.88rem;
+}
 .sync-pill {
   margin-left: auto;
   font-size: 0.72rem;

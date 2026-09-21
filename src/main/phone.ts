@@ -5,7 +5,7 @@ import { basename, dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import { app, BrowserWindow, clipboard, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import type { AiKind } from '../shared/contracts'
 import { phonePaintHtml } from '../shared/md'
 import { readWatching } from './agency-brain'
@@ -27,19 +27,22 @@ import {
 import { loadAnyChats, saveChats, type SavedChats, type SavedMsg, type SavedTab } from './persist'
 import { phonePageHtml } from './phone-page'
 import {
+  deviceLabel,
+  findDevice,
   isPhoneChatTab,
   isSealed,
   keepPhoneTabs,
+  mintPin,
   mintToken,
+  offerFresh,
   openJson,
   parseTunnelUrl,
-  phoneUrl,
+  phonePairUrl,
   pickChatTab,
   pinChatId,
   rateHit,
   sealJson,
   shownPhoneLine,
-  tokenFresh,
   unknownEmptyChats,
   tokenFromRequest,
   tokenOk,
@@ -48,7 +51,10 @@ import {
   type PhoneQueueItem,
   type Sealed
 } from './phone-lib'
+import { phoneQrSvg } from './phone-qr'
 import { cancelWarm, closeWarm, promptWarm } from './warm'
+
+export type PhoneDeviceView = { id: string; label: string; lastSeen: number }
 
 export type PhoneStatus = {
   on: boolean
@@ -57,6 +63,19 @@ export type PhoneStatus = {
   detail: string
   platform: NodeJS.Platform
   watching: boolean
+  pairPin: string
+  pairQr: string
+  pairUntil: number
+  devices: PhoneDeviceView[]
+}
+
+type PhoneDevice = {
+  id: string
+  token: string
+  key: string
+  label: string
+  at: number
+  lastSeen: number
 }
 
 let server: Server | null = null
@@ -71,54 +90,66 @@ let detail = ''
 const live: { chats: SavedChats | null } = { chats: null }
 const queues: Record<string, PhoneQueueItem[]> = {}
 const stashed = new Set<string>()
-let tokenAt = 0
-let sealKey = ''
 let lastSeen = 0
 let apiHits: number[] = []
 let badHits: number[] = []
+let pairHits: number[] = []
+let devices: PhoneDevice[] = []
+let offer: { p: string; pin: string; at: number } | null = null
 
-function tokenFile(): string {
-  return join(app.getPath('userData'), 'phone.json')
+function devicesFile(): string {
+  return join(app.getPath('userData'), 'phone-devices.json')
 }
 
-function loadToken(): string {
+function loadDevices(): PhoneDevice[] {
   try {
-    const raw = JSON.parse(readFileSync(tokenFile(), 'utf8')) as { token?: string; key?: string; at?: number }
-    if (raw.token && String(raw.token).length >= 16 && raw.key && String(raw.key).length >= 16) {
-      tokenAt = Number(raw.at) || tokenAt
-      sealKey = String(raw.key)
-      return String(raw.token)
-    }
+    const raw = JSON.parse(readFileSync(devicesFile(), 'utf8')) as { devices?: PhoneDevice[] }
+    const list = Array.isArray(raw.devices) ? raw.devices : []
+    devices = list.filter(
+      (d) =>
+        d &&
+        String(d.id || '').length >= 8 &&
+        String(d.token || '').length >= 16 &&
+        String(d.key || '').length >= 16
+    )
   } catch {
-    /* */
+    devices = []
   }
-  return saveToken(mintToken(), mintToken())
+  return devices
 }
 
-function saveToken(token: string, key = mintToken()): string {
+function persistDevices(): void {
   const dir = app.getPath('userData')
   mkdirSync(dir, { recursive: true })
-  const dest = tokenFile()
-  tokenAt = Date.now()
-  sealKey = key
-  writeFileSync(dest, JSON.stringify({ token, key, at: tokenAt }), { mode: 0o600 })
+  const dest = devicesFile()
+  writeFileSync(dest, JSON.stringify({ devices }), { mode: 0o600 })
   try {
     chmodSync(dest, 0o600)
   } catch {
     /* */
   }
-  return token
+}
+
+function mintOffer(): void {
+  offer = { p: mintToken(), pin: mintPin(), at: Date.now() }
 }
 
 function status(): PhoneStatus {
-  const token = on ? loadToken() : ''
+  if (on && origin && !offerFresh(offer?.at || 0)) mintOffer()
+  const pairUrl = on && origin && offer ? phonePairUrl(origin, offer.p) : ''
   return {
     on,
-    url: on && origin ? phoneUrl(origin, token, sealKey) : '',
+    url: '',
     origin: on ? origin : '',
     detail,
     platform: process.platform,
-    watching: on && lastSeen > 0 && Date.now() - lastSeen < 5000
+    watching: on && lastSeen > 0 && Date.now() - lastSeen < 5000,
+    pairPin: on && offerFresh(offer?.at || 0) ? offer?.pin || '' : '',
+    pairQr: pairUrl ? phoneQrSvg(pairUrl) : '',
+    pairUntil: on && offer ? offer.at : 0,
+    devices: on
+      ? devices.map((d) => ({ id: d.id, label: d.label, lastSeen: d.lastSeen }))
+      : []
   }
 }
 
@@ -154,6 +185,17 @@ export function rememberPhoneChats(state: SavedChats): SavedChats {
   }
   const cur = live.chats
   for (const t of incoming) phoneOwned.delete(t.id)
+  if (!incoming.length) {
+    const tabs = keepPhoneTabs(cur.tabs || [], cur.tabs || [], [...phoneOwned], [...phoneClosed])
+    if (tabs.some(isPhoneChatTab)) {
+      live.chats = {
+        ...cur,
+        tabs,
+        active: pinChatId(tabs.filter(isPhoneChatTab).map((t) => t.id), cur.active, '')
+      }
+      return live.chats
+    }
+  }
   if (freshUnknown && disk && (disk.tabs || []).some(isPhoneChatTab)) {
     const tabs = keepPhoneTabs(disk.tabs || [], cur.tabs || [], [...phoneOwned], [...phoneClosed])
     live.chats = {
@@ -179,10 +221,21 @@ export function rememberPhoneChats(state: SavedChats): SavedChats {
 }
 
 function rawChats(): SavedChats | null {
-  if (live.chats) return live.chats
   const watching = readWatching()
   const cwd = currentBrainFolder() || watching.brainPath || ''
-  return loadAnyChats(cwd)
+  const disk = loadAnyChats(cwd)
+  if (!live.chats) return disk
+  if ((live.chats.tabs || []).some(isPhoneChatTab)) return live.chats
+  if (disk && (disk.tabs || []).some(isPhoneChatTab)) {
+    const tabs = keepPhoneTabs(disk.tabs || [], live.chats.tabs || [], [...phoneOwned], [...phoneClosed])
+    return {
+      ...disk,
+      tabs,
+      messages: { ...(disk.messages || {}), ...(live.chats.messages || {}) },
+      active: pinChatId(tabs.filter(isPhoneChatTab).map((t) => t.id), live.chats.active, disk.active)
+    }
+  }
+  return live.chats
 }
 
 function paintMessages(all: Record<string, SavedMsg[]>): Record<string, { who: string; text: string; html: string }[]> {
@@ -216,13 +269,18 @@ function snapshot(): {
   }
 }
 
-function authed(req: IncomingMessage, url: URL): boolean {
-  const want = loadToken()
-  if (!tokenFresh(tokenAt)) return false
-  const got = tokenFromRequest(url.search, String(req.headers.authorization || ''))
-  const ok = tokenOk(got, want)
-  if (ok) lastSeen = Date.now()
-  return ok
+function authed(req: IncomingMessage, url: URL): PhoneDevice | null {
+  const got = tokenFromRequest(
+    url.search,
+    String(req.headers.authorization || ''),
+    String(req.headers.cookie || '')
+  )
+  const device = findDevice(devices, got)
+  if (device) {
+    device.lastSeen = Date.now()
+    lastSeen = device.lastSeen
+  }
+  return device
 }
 
 function sendJson(res: ServerResponse, code: number, body: unknown): void {
@@ -235,16 +293,11 @@ function sendJson(res: ServerResponse, code: number, body: unknown): void {
   res.end(raw)
 }
 
-function currentSealKey(): string {
-  loadToken()
-  return sealKey
+function sendSealed(res: ServerResponse, code: number, body: unknown, key: string): void {
+  sendJson(res, code, sealJson(key, body))
 }
 
-function sendSealed(res: ServerResponse, code: number, body: unknown): void {
-  sendJson(res, code, sealJson(currentSealKey(), body))
-}
-
-function readSealed(req: IncomingMessage, max = 400_000): Promise<unknown> {
+function readSealed(req: IncomingMessage, key: string, max = 400_000): Promise<unknown> {
   return readBody(req, max).then((raw) => {
     let parsed: unknown = {}
     try {
@@ -253,8 +306,66 @@ function readSealed(req: IncomingMessage, max = 400_000): Promise<unknown> {
       throw new Error('bad')
     }
     if (!isSealed(parsed)) throw new Error('bad')
-    return openJson(currentSealKey(), parsed as Sealed)
+    return openJson(key, parsed as Sealed)
   })
+}
+
+function pairCookie(token: string): string {
+  return `brain_phone=${encodeURIComponent(token)}; Path=/; Secure; SameSite=Lax; Max-Age=31536000`
+}
+
+function pairFromPhone(req: IncomingMessage, res: ServerResponse): void {
+  const now = Date.now()
+  const hit = rateHit(now, pairHits, 60_000, 20)
+  pairHits = hit.next
+  if (!hit.ok) {
+    sendJson(res, 429, { ok: false, detail: 'Wait a moment.' })
+    return
+  }
+  void readBody(req, 4000)
+    .then((raw) => {
+      let parsed: { p?: string; pin?: string } = {}
+      try {
+        parsed = JSON.parse(raw || '{}') as { p?: string; pin?: string }
+      } catch {
+        sendJson(res, 400, { ok: false, detail: 'Bad request.' })
+        return
+      }
+      if (!on || !offer || !offerFresh(offer.at, now)) {
+        sendJson(res, 401, { ok: false, detail: 'Scan the new QR in Settings.' })
+        return
+      }
+      const p = String(parsed.p || '')
+      const pin = String(parsed.pin || '').replace(/\D/g, '')
+      const match = tokenOk(p, offer.p) || (pin.length === 6 && tokenOk(pin, offer.pin))
+      if (!match) {
+        sendJson(res, 401, { ok: false, detail: 'Scan the new QR in Settings.' })
+        return
+      }
+      offer = null
+      loadDevices()
+      const id = randomUUID()
+      const token = mintToken()
+      const key = mintToken()
+      const label = deviceLabel(String(req.headers['user-agent'] || ''), devices.map((d) => d.label))
+      const row: PhoneDevice = { id, token, key, label, at: now, lastSeen: now }
+      devices.push(row)
+      persistDevices()
+      lastSeen = now
+      mintOffer()
+      pushStatus()
+      res.setHeader('Set-Cookie', pairCookie(token))
+      sendJson(res, 200, { ok: true, token, key, id, label })
+    })
+    .catch(() => sendJson(res, 400, { ok: false, detail: 'Bad request.' }))
+}
+
+function unlinkDevice(id: string): PhoneStatus {
+  const want = String(id || '')
+  devices = devices.filter((d) => d.id !== want)
+  persistDevices()
+  pushStatus()
+  return status()
 }
 
 function fontDir(): string {
@@ -699,8 +810,11 @@ function queueFromPhone(op: string, tabId?: string, id?: string): { ok: boolean;
   return { ok: false, detail: 'Unknown queue action.' }
 }
 
-async function attachFromPhone(req: IncomingMessage): Promise<{ ok: boolean; detail?: string } & Partial<Attach>> {
-  const parsed = (await readSealed(req, MAX_ATTACH * 2 + 8192)) as {
+async function attachFromPhone(
+  req: IncomingMessage,
+  key: string
+): Promise<{ ok: boolean; detail?: string } & Partial<Attach>> {
+  const parsed = (await readSealed(req, key, MAX_ATTACH * 2 + 8192)) as {
     name?: string
     mime?: string
     bytes?: string
@@ -771,18 +885,24 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     sendJson(res, 429, { ok: false, detail: 'Wait a moment.' })
     return
   }
-  if (!authed(req, url)) {
+  if (url.pathname === '/api/pair' && req.method === 'POST') {
+    pairFromPhone(req, res)
+    return
+  }
+  const device = authed(req, url)
+  if (!device) {
     const bad = rateHit(now, badHits, 60_000, 20)
     badHits = bad.next
     sendJson(res, 401, { ok: false, detail: 'Not paired.' })
     return
   }
+  const key = device.key
   if (url.pathname === '/api/state' && req.method === 'GET') {
-    sendSealed(res, 200, snapshot())
+    sendSealed(res, 200, snapshot(), key)
     return
   }
   if (url.pathname === '/api/send' && req.method === 'POST') {
-    void readSealed(req, 400_000)
+    void readSealed(req, key, 400_000)
       .then((parsed) => {
         const body = (parsed || {}) as { text?: string; tabId?: string; files?: PhoneAttach[]; queue?: boolean }
         const wanted = Array.isArray(body.files) ? body.files.length : 0
@@ -794,54 +914,59 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
       })
       .then((r) => {
         if (!r) return
-        sendSealed(res, r.ok ? 200 : 400, r)
+        sendSealed(res, r.ok ? 200 : 400, r, key)
       })
-      .catch(() => sendSealed(res, 400, { ok: false, detail: 'Bad request.' }))
+      .catch(() => sendSealed(res, 400, { ok: false, detail: 'Bad request.' }, key))
     return
   }
   if (url.pathname === '/api/stop' && req.method === 'POST') {
-    void readSealed(req)
+    void readSealed(req, key)
       .then((parsed) => {
         const body = (parsed || {}) as { tabId?: string }
-        sendSealed(res, 200, stopFromPhone(body.tabId))
+        sendSealed(res, 200, stopFromPhone(body.tabId), key)
       })
-      .catch(() => sendSealed(res, 200, { ok: true }))
+      .catch(() => sendSealed(res, 200, { ok: true }, key))
     return
   }
   if (url.pathname === '/api/tab' && req.method === 'POST') {
-    void readSealed(req)
+    void readSealed(req, key)
       .then((parsed) => {
         const body = (parsed || {}) as { op?: string; tabId?: string; kind?: string }
         if (body.op === 'close') {
           const r = closeTabFromPhone(body.tabId)
-          sendSealed(res, r.ok ? 200 : 400, r)
+          sendSealed(res, r.ok ? 200 : 400, r, key)
           return
         }
         const r = newTabFromPhone(body.kind)
-        sendSealed(res, r.ok ? 200 : 400, r)
+        sendSealed(res, r.ok ? 200 : 400, r, key)
       })
-      .catch(() => sendSealed(res, 400, { ok: false, detail: 'Bad request.' }))
+      .catch(() => sendSealed(res, 400, { ok: false, detail: 'Bad request.' }, key))
     return
   }
   if (url.pathname === '/api/queue' && req.method === 'POST') {
-    void readSealed(req)
+    void readSealed(req, key)
       .then((parsed) => {
         const body = (parsed || {}) as { op?: string; tabId?: string; id?: string }
         const r = queueFromPhone(String(body.op || ''), body.tabId, body.id)
-        sendSealed(res, r.ok ? 200 : 400, r)
+        sendSealed(res, r.ok ? 200 : 400, r, key)
       })
-      .catch(() => sendSealed(res, 400, { ok: false, detail: 'Bad request.' }))
+      .catch(() => sendSealed(res, 400, { ok: false, detail: 'Bad request.' }, key))
     return
   }
   if (url.pathname === '/api/attach' && req.method === 'POST') {
-    void attachFromPhone(req)
-      .then((r) => sendSealed(res, r.ok ? 200 : 400, r))
+    void attachFromPhone(req, key)
+      .then((r) => sendSealed(res, r.ok ? 200 : 400, r, key))
       .catch((err) => {
         const msg = String((err as Error).message || err)
-        sendSealed(res, 400, {
-          ok: false,
-          detail: /too large/i.test(msg) ? 'That file is larger than 20 MB.' : 'Could not attach that file.'
-        })
+        sendSealed(
+          res,
+          400,
+          {
+            ok: false,
+            detail: /too large/i.test(msg) ? 'That file is larger than 20 MB.' : 'Could not attach that file.'
+          },
+          key
+        )
       })
     return
   }
@@ -882,6 +1007,7 @@ export async function stopPhone(): Promise<PhoneStatus> {
   localPort = 0
   detail = ''
   lastSeen = 0
+  offer = null
   stashed.clear()
   killProc(tunnel)
   tunnel = null
@@ -910,8 +1036,8 @@ export async function startPhone(): Promise<PhoneStatus> {
   detail = 'Starting the tunnel…'
   on = true
   lastSeen = 0
+  loadDevices()
   pushStatus()
-  saveToken(mintToken())
   try {
     localPort = await listenLocal(namedPhone()?.port || 0)
     if (mine !== boot) return status()
@@ -923,7 +1049,8 @@ export async function startPhone(): Promise<PhoneStatus> {
       origin = ''
       return status()
     }
-    detail = 'Plug this Mac in. Closing the lid on battery will sleep.'
+    mintOffer()
+    detail = 'Plug this Mac in. Closing the lid on battery will sleep. Scan the QR on your phone.'
     pushStatus()
     return status()
   } catch (err) {
@@ -938,9 +1065,8 @@ export async function startPhone(): Promise<PhoneStatus> {
 }
 
 export function rotatePhoneToken(): PhoneStatus {
-  saveToken(mintToken())
+  if (on) mintOffer()
   const s = status()
-  if (s.url) clipboard.writeText(s.url)
   pushStatus()
   return s
 }
@@ -953,12 +1079,9 @@ export function registerPhoneIpc(): void {
   ipcMain.handle('phone:stop', async () => stopPhone())
   ipcMain.handle('phone:status', async () => status())
   ipcMain.handle('phone:rotate', async () => rotatePhoneToken())
-  ipcMain.handle('phone:copy', async () => {
-    const s = status()
-    if (!s.url) return { ok: false }
-    clipboard.writeText(s.url)
-    return { ok: true }
-  })
+  ipcMain.handle('phone:link', async () => rotatePhoneToken())
+  ipcMain.handle('phone:unlink', async (_e, id: string) => unlinkDevice(String(id || '')))
+  ipcMain.handle('phone:copy', async () => ({ ok: false }))
   ipcMain.on('phone:reportQueue', (_e, tabId: string, items: PhoneQueueItem[]) => {
     const id = String(tabId || '')
     if (!id) return

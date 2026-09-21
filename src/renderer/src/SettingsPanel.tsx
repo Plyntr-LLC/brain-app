@@ -127,9 +127,23 @@ export function SettingsPanel({
     detail: string
     platform: string
     watching: boolean
-  }>({ on: false, url: '', origin: '', detail: '', platform: '', watching: false })
+    pairPin: string
+    pairQr: string
+    pairUntil: number
+    devices: { id: string; label: string; lastSeen: number }[]
+  }>({
+    on: false,
+    url: '',
+    origin: '',
+    detail: '',
+    platform: '',
+    watching: false,
+    pairPin: '',
+    pairQr: '',
+    pairUntil: 0,
+    devices: []
+  })
   const [phoneBusy, setPhoneBusy] = useState(false)
-  const [copied, setCopied] = useState(false)
   const [phoneNote, setPhoneNote] = useState('')
   const joe = email === 'joe@plyntr.com'
   const canAddUsers = joe || !isTeamSeat(seat || role)
@@ -166,7 +180,11 @@ export function SettingsPanel({
           origin: '',
           detail: '',
           platform: '',
-          watching: false
+          watching: false,
+          pairPin: '',
+          pairQr: '',
+          pairUntil: 0,
+          devices: []
         }))
       ])
       const local = roster.length ? roster : await window.brain.settings.team().catch(() => [])
@@ -287,18 +305,12 @@ export function SettingsPanel({
 
       <section className="set-block" style={{ borderTop: 0, paddingTop: 0 }}>
         <p className="kicker">Phone</p>
-        <h3 className="set-h">Use Brain from Safari</h3>
+        <h3 className="set-h">Use Brain from your phone</h3>
         <p>
           Works on cellular or any wifi. This Mac has to stay on, with Brain.app open, and plugged in. Closing the lid
-          on battery will sleep. Safari may ask for a one-time email code (joe@plyntr.com or joewine2@gmail.com). If
-          the page is blank after that, copy the secret link again and open it a second time.
-        </p>
-        <p>
-          The copied link is the key. Anyone who has it, while Phone is on, can read every chat on this Mac and send
-          into Grok, Claude, Cursor, or ChatGPT as you. Do not screenshot it, paste it into chat, or share this
-          Settings screen. Turning Phone on makes a new code. The code dies after 12 hours, or when you turn Phone off
-          or tap New code. Chats on the wire are encrypted with a separate key that stays in the hash on your phone
-          and is never sent as a header. Cloudflare can still see that Phone is on.
+          on battery will sleep. Scan the QR with the phone camera, like linking a WhatsApp device. Only a phone that
+          scanned that QR can read chats on this Mac and send into Grok, Claude, Cursor, or ChatGPT as you. Remove a
+          phone here to kick it off. Turning Phone on does not unlink phones you already linked.
         </p>
         <label className="set-row">
           <span>Phone</span>
@@ -322,56 +334,54 @@ export function SettingsPanel({
         {phone.on ? (
           <>
             <p className="tiny">
-              {phone.watching ? 'A phone is using this Mac.' : 'Waiting for the phone. Copy the secret link and open it in Safari.'}
+              {phone.watching
+                ? 'A linked phone is using this Mac.'
+                : 'Waiting for a phone. Scan the QR, or type the code on the phone.'}
             </p>
             {phone.origin ? <p className="tiny">{phone.origin.replace(/^https:\/\//, '')}</p> : null}
+            {phone.pairQr ? (
+              <div className="phone-qr" dangerouslySetInnerHTML={{ __html: phone.pairQr }} />
+            ) : (
+              <p className="tiny">QR is ready after the tunnel comes up.</p>
+            )}
+            {phone.pairPin ? <p className="phone-pin">{phone.pairPin}</p> : null}
+            <p className="tiny">The QR and code last two minutes, then this screen makes a new one. Each scan links one phone.</p>
             <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
               <button
                 type="button"
                 className="ghost"
-                disabled={!phone.url}
                 onClick={() => {
                   void window.brain.phone
-                    .copy()
-                    .then((r) => {
-                      if (r.ok) {
-                        setCopied(true)
-                        setPhoneNote('Secret link copied. Open it in Safari on the phone.')
-                        window.setTimeout(() => setCopied(false), 1500)
-                      } else {
-                        setPhoneNote('Could not copy. Wait until Phone is fully on.')
-                      }
-                    })
+                    .link()
+                    .then(setPhone)
                     .catch((err) => setPhoneNote(String((err as Error).message || err)))
                 }}
               >
-                {copied ? 'Copied' : 'Copy secret link'}
-              </button>
-              <button
-                type="button"
-                className="ghost"
-                onClick={() => {
-                  void window.brain.phone
-                    .rotate()
-                    .then((s) => {
-                      setPhone(s)
-                      return window.brain.phone.copy()
-                    })
-                    .then((r) => {
-                      if (r?.ok) {
-                        setCopied(true)
-                        setPhoneNote('New link copied. Open it on the phone. The old one is dead.')
-                        window.setTimeout(() => setCopied(false), 2000)
-                      } else {
-                        setPhoneNote('Made a new code. Copy the secret link and open it on the phone.')
-                      }
-                    })
-                    .catch((err) => setPhoneNote(String((err as Error).message || err)))
-                }}
-              >
-                New code
+                New QR
               </button>
             </div>
+            {phone.devices.length ? (
+              <div style={{ marginTop: '0.6rem' }}>
+                <p className="tiny">Linked phones</p>
+                {phone.devices.map((d) => (
+                  <div key={d.id} className="phone-dev">
+                    <span>{d.label}</span>
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() => {
+                        void window.brain.phone
+                          .unlink(d.id)
+                          .then(setPhone)
+                          .catch((err) => setPhoneNote(String((err as Error).message || err)))
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </>
         ) : null}
       </section>
