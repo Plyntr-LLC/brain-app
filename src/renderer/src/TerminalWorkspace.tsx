@@ -1856,7 +1856,8 @@ export function TerminalWorkspace({
   const [editTitle, setEditTitle] = useState('')
   const refsList = useRef<HTMLUListElement>(null)
   const [lastChatId, setLastChatId] = useState('')
-  const [powerPickers, setPowerPickers] = useState(false)
+  /** Always true. Model and Effort stay visible. Do not hide them. */
+  const [powerPickers, setPowerPickers] = useState(true)
   const [transcripts, setTranscripts] = useState<Record<string, Msg[]>>({})
   const [contextByTab, setContextByTab] = useState<Record<string, { used?: number; total?: number; percent?: number }>>({})
   const [hydrated, setHydrated] = useState(false)
