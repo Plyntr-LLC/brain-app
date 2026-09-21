@@ -107,6 +107,16 @@ export function listNeeds(): { ready: boolean; watching: boolean; brainPath: str
     })
   }
   items.push({
+    id: 'ab',
+    label: 'Agency Brain',
+    line: 'Mike Rhodes’ watcher. This app installs it. When the folder is copied here, this app writes his setup too. If it is not installed, this app syncs the folder itself.',
+    present: detectApp().installed,
+    warn: win32
+      ? 'Windows may ask to allow the installer. Click Yes.'
+      : 'The Agency Brain installer may open. Finish it in that window.',
+    accept: 'Finish the Agency Brain installer if it opens.'
+  })
+  items.push({
     id: 'cloudflared',
     label: 'Cloudflare Tunnel',
     line: 'Lets Phone work from a phone on cellular. Installed with Homebrew (or winget on Windows).',
@@ -393,23 +403,20 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
   }
   if (id === 'ab') {
     if (detectApp().installed) {
-      await openAb()
-      if (readWatching().brainPath) {
-        return { ok: true, detail: 'Agency Brain is already watching a folder.', wait: 'none' }
-      }
       return {
         ok: true,
-        detail: 'Opened Agency Brain. Sign in and pick the shared folder. We will continue when it is watching.',
-        wait: 'watching'
+        detail: 'Agency Brain is installed. This app writes its setup when the folder is on this computer.',
+        wait: 'none'
       }
     }
     const put = await installAgencyBrainApp()
     if (!put.ok) return put
-    if (readWatching().brainPath) return { ...put, wait: 'none' }
     return {
-      ok: true,
-      detail: 'Opened Agency Brain. Sign in and pick the shared folder. We will continue when it is watching.',
-      wait: 'watching'
+      ok: detectApp().installed,
+      detail: detectApp().installed
+        ? 'Agency Brain is installed. This app writes its setup when the folder is on this computer.'
+        : put.detail || 'Agency Brain did not install. This app can still sync the folder.',
+      wait: detectApp().installed ? 'none' : 'present'
     }
   }
   if (id === 'cloudflared') {

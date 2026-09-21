@@ -18,8 +18,9 @@ import {
   upsertTeamMember
 } from './agency-brain'
 import { helloName } from './login-identity'
-import { cloneBrain } from './clone'
-import { githubAppInstallUrl, githubInstallReady, reuseExistingFolder } from './setup-folder'
+import { cloneBrain, hasBrainMarker } from './clone'
+import { takeFirstWelcome } from './first-chat'
+import { bridgeInstallUrl, githubAppInstallUrl, githubInstallReady, reuseExistingFolder } from './setup-folder'
 import { currentBrainFolder, folderForSlug, listBrains, rememberBrain, switchBrain } from './brains'
 import { clearPendingJoin, getPendingJoin, setPendingJoin } from './join-pending'
 import { bringAppFront, clipOrgLogin, stopClipboardOrgWatch, watchClipboardOrg } from './bring-front'
@@ -32,6 +33,7 @@ import {
   isHqMiniFolder,
   joinProject,
   openExistingSeat,
+  HQ_SYNC_ORIGIN,
   hqRepoFromFolder,
   ownerBindUntilReady,
   ownerLogin,
@@ -290,8 +292,7 @@ export function registerStubIpc(): void {
       }
     }
     const st = await ads2ai.installStatus(slug).catch(() => null)
-    const setup = !githubInstallReady(st) && !String(res.repoUrl || '').trim()
-    if (setup) {
+    if (!githubInstallReady(st)) {
       return { ok: true, slug, name, setup: true }
     }
     const applied = await applyFolderImpl({ teamSlug: slug })
@@ -600,7 +601,56 @@ export function registerStubIpc(): void {
       await new Promise((r) => setTimeout(r, 2000))
     }
     bringAppFront()
-    return { ok: false, detail: 'GitHub is not finished. Click Install in the browser, then try again.' }
+    return { ok: false, detail: 'The app is not installed on GitHub yet. In the browser, click Install, then Only select repositories, and try again.' }
+  })
+  async function bridgeInstalled(repo: string): Promise<boolean> {
+    const r = await fetch(`${HQ_SYNC_ORIGIN}/github/installed?repo=${encodeURIComponent(repo)}`)
+    const body = (await r.json().catch(() => null)) as { installed?: boolean } | null
+    return r.ok && body?.installed === true
+  }
+
+  ipcMain.handle('setup:bridgeStatus', async (_e, folder: string) => {
+    if (dryRun()) return { ok: true, installed: true, skipped: true, repo: '' }
+    const repo = hqRepoFromFolder(String(folder || ''))
+    if (!repo) return { ok: false, installed: false, repo: '', detail: 'This folder has no GitHub repo yet.' }
+    try {
+      const installed = await bridgeInstalled(repo)
+      return {
+        ok: true,
+        installed,
+        repo,
+        detail: installed ? '' : 'Brain Bridge is not on this repo yet.'
+      }
+    } catch {
+      return { ok: false, installed: false, repo, detail: 'Could not check Brain Bridge.' }
+    }
+  })
+  ipcMain.handle('setup:openBridge', async (_e, folder: string) => {
+    const repo = hqRepoFromFolder(String(folder || ''))
+    if (!repo) throw new Error('This folder has no GitHub repo yet.')
+    openInApp(bridgeInstallUrl(repo), 'Install Brain Bridge')
+    return { ok: true, repo }
+  })
+  ipcMain.handle('setup:waitBridge', async (_e, folder: string) => {
+    if (dryRun()) return { ok: true, installed: true, skipped: true, repo: '' }
+    const repo = hqRepoFromFolder(String(folder || ''))
+    if (!repo) return { ok: false, installed: false, detail: 'This folder has no GitHub repo yet.' }
+    const until = Date.now() + 180000
+    while (Date.now() < until) {
+      const installed = await bridgeInstalled(repo).catch(() => false)
+      if (installed) {
+        bringAppFront()
+        return { ok: true, installed: true, repo }
+      }
+      await new Promise((r) => setTimeout(r, 2000))
+    }
+    bringAppFront()
+    return {
+      ok: false,
+      installed: false,
+      repo,
+      detail: 'Brain Bridge is not installed on this repo yet. In the browser, click Install, choose Only select repositories, pick this repo, then try again.'
+    }
   })
   ipcMain.handle('setup:bringFront', () => {
     bringAppFront()
@@ -612,6 +662,15 @@ export function registerStubIpc(): void {
     if (!id) throw new Error('No GitHub team.')
     return ads2ai.ensureBrainRepo(tokenForSlug(id), id)
   })
+
+  async function settleSync(folder: string): Promise<void> {
+    if (detectApp().installed) {
+      const watched = await activateWatching(folder)
+      if (!watched.ok) throw new Error(watched.detail || 'Agency Brain is installed, but its setup did not finish.')
+      if (readWatching().brainPath === folder) return
+    }
+    startBrainSync(folder)
+  }
 
   async function applyFolderImpl(opts?: { teamSlug?: string; dest?: string }): Promise<{
     ok: boolean
@@ -633,10 +692,10 @@ export function registerStubIpc(): void {
         accountFolder: acct?.folder && existsSync(acct.folder) ? acct.folder : null,
         accountSlug: acctIdent?.slug || null
       }) || folderForSlug(slug)
-    if (reuse) {
+    if (reuse && hasBrainMarker(reuse)) {
       switchBrain(reuse)
       applyAccountForFolder(reuse)
-      startBrainSync(reuse)
+      await settleSync(reuse)
       rememberBrain({ path: reuse, slug, name: readTeamIdentity(reuse)?.name || slug })
       return { ok: true, skipped: true, brainPath: reuse, reason: 'already-on-this-computer', detail: reuse }
     }
@@ -664,7 +723,7 @@ export function registerStubIpc(): void {
     switchBrain(cloned.dest)
     applyAccountForFolder(cloned.dest)
     rememberBrain({ path: cloned.dest, slug, name: readTeamIdentity(cloned.dest)?.name || slug })
-    startBrainSync(cloned.dest)
+    await settleSync(cloned.dest)
     return { ok: true, brainPath: cloned.dest, detail: cloned.detail }
   }
 
@@ -682,6 +741,14 @@ export function registerStubIpc(): void {
         const msg = String((e as Error).message || e)
         if (!/404|not found/i.test(msg)) throw e
       })
+    }
+    const st = (await ads2ai.installStatus(slug).catch(() => null)) as {
+      installed?: boolean
+      repoUrl?: string
+      repo?: string
+    } | null
+    if (!githubInstallReady(st)) {
+      throw new Error('The app is not installed on GitHub yet. Click Install in the browser, then try again.')
     }
     await ads2ai.ensureBrainRepo(token, slug)
     return applyFolderImpl({ teamSlug: slug })
@@ -928,6 +995,12 @@ export function registerStubIpc(): void {
     }
   })
   ipcMain.handle('chat:needs', async () => ({ filled: {}, remaining: [] }))
+  ipcMain.handle('chat:firstWelcome', (_e, cwd?: string) => {
+    const watching = readWatching()
+    const folder = String(cwd || currentBrainFolder() || watching.brainPath || '')
+    const place = folder.split(/[/\\]/).filter(Boolean).pop() || 'this brain'
+    return takeFirstWelcome(folder, place)
+  })
   ipcMain.handle('slash:list', async (_e, cwd?: string, kind?: string) => {
     const watching = readWatching()
     return listSlash(cwd || watching.brainPath || process.cwd(), kind || 'grok')

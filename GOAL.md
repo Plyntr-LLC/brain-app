@@ -6,13 +6,25 @@ This file is the working set. Open this repo, read this file, work **Inbox** the
 **Start:** `npm run dev` (dry-run is on). `npm run typecheck` after edits.  
 **Owner:** Joe Wine. First other user in mind: Jeen, on a Mac, not a terminal person.
 
+## North star
+
+Joe, 2026-09-22. This is the product. Do not ship a setup that walks away from it.
+
+Someone downloads Brain.app. That wizard is the only setup they do. It walks every install they need, and the ones they might need: Homebrew, Git, Cloudflare Tunnel, Grok, Claude, Cursor, ChatGPT, Mike Rhodes’ Agency Brain app, the Agency Brain Sync GitHub app (`agency-brain-sync`), and the Brain Bridge GitHub app (`plyntr-brain-bridge`). Chat stays closed until the required steps are actually finished. A repo address is not a finished GitHub install. Only select repositories. Never All repositories.
+
+Brain.app copies the repo onto the computer. The person does not run Mike’s setup wizard to get that clone.
+
+Both sync paths have to work. If Agency Brain.app is not on the machine, Brain.app syncs the folder itself. If Agency Brain.app is on the machine, this same wizard writes its config and leaves it watching that folder, so finishing our wizard means his app is set up too. Do not start a second watcher on a folder his app is already watching.
+
+The first time a new brain reaches chat, the folder on disk is the real repo, and the thread tells them how to start filling in the business.
+
 ## Product
 
 One downloadable window that feels like Slack and has the power of the local AI CLIs (Grok, Claude, Cursor, Codex). **Skin is the default face:** Brain catalog paint over the live CLI. Chat is the ACP bubble toggle. **Show terminal** peels the skin to the real CLI TUI in a PTY (not a login shell). Terminal (`+` → Terminal) is a login shell, optional and hidden by default.
 
-A teammate installs this app and one AI CLI they already pay for. They sign into that CLI as themselves. Brain.app copies their GitHub repo (`org/slug-brain`) and keeps it in sync. They land in Skin against that folder. Agency Brain.app is optional: if it is already watching this folder, Brain.app does not start a second watcher. **Show terminal is its own CLI session** (accepted). App `/` commands stay in Brain; other `/` commands are typed into that CLI. They never scrape the TUI into bubbles, and they never share Joe’s login.
+A teammate installs this app and one AI CLI they already pay for. They sign into that CLI as themselves. Brain.app copies their GitHub repo (`org/slug-brain`) and keeps it in sync. They land in Skin against that folder. **Show terminal is its own CLI session** (accepted). App `/` commands stay in Brain; other `/` commands are typed into that CLI. They never scrape the TUI into bubbles, and they never share Joe’s login.
 
-HQ seats use ads2ai git-token + `agency-brain-sync` (Only select repositories). Project seats use hq-sync / Brain Bridge. Switching brains (Joe superadmin) uses `switchBrain` and `startBrainSync` (or hq-sync). `activateWatching` only when Agency Brain is present and the target is already in its profiles. Tokens are never logged or sent to the renderer.
+HQ seats use ads2ai git-token + `agency-brain-sync` (Only select repositories). Project seats use hq-sync / Brain Bridge (`plyntr-brain-bridge`). Switching brains (Joe superadmin) uses `switchBrain`. Sync is `startBrainSync` when Agency Brain is not watching, and `activateWatching` when that app is installed (this wizard writes the profile, including the first one). Tokens are never logged or sent to the renderer.
 
 ## How it talks to the CLIs
 
@@ -57,9 +69,9 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Settings: one company at the top (You are working on this company). Joe superadmin: Switch brain retargets Agency Brain and Plyntr project sync. Add a company brain: paste the Ads2AI code. Setup if GitHub is missing, clone if the repo exists. Add users and Catalog school stay collapsed. Other people do not get the switcher.
 - Drag/drop, paste (including screenshots), and Attach on Chat for images and docs. Grok/Cursor: ACP image + embedded resource. Claude: image + PDF document. Codex: localImage + inlined text docs. Pathless clipboard files stash under userData/drops. 20 MB cap.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
-- Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, one setup screen lists them, pre-warns every permission dialog, then **Start setup** (one click) runs official installers in order and waits. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.
+- Auto-install: if Homebrew, Git, Agency Brain, Cloudflare Tunnel, or a CLI is missing, one setup screen lists them, pre-warns every permission dialog, then **Start setup** (one click) runs official installers in order and waits. Chat opens only after the North star gate (folder cloned by this app, Git, Cloudflare Tunnel, one signed-in CLI, GitHub app actually installed). A Mac that already has that folder skips to Chat.
 - Long runs show a live Working strip (wheel, phase, elapsed time) plus a pulse on the chat tab. Tools update the phase. Setup polls use the same strip. The thread does not sit on a frozen Thinking label.
-- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.35**. Developer ID Application: Plyntr LLC.
+- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.36**. Developer ID Application: Plyntr LLC.
 - Phone: Settings → Phone starts a loopback listener, `caffeinate -dims`, and a Cloudflare tunnel (named host `brain-phone.plyntr.com` when configured). Scan the QR or type the 6-digit code to link a phone. Linked phones stay until Remove.
 
 ## How Joe runs Inbox
@@ -94,6 +106,14 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 8. Never hide Model or Effort. Those stay on screen. Do not gate them behind first-send, Jeen, or a “power UI” flag.
 
 ## Now
+
+- [x] 2026-09-22 Joe: Brain Bridge (`plyntr-brain-bridge`) is a hard stop before chat. The wizard opens the install page and waits until `GET /github/installed` says that repo has the app. Only select repositories. Project seats skip it. Dry-run skips it.
+
+- [x] 2026-09-22 Joe: If Agency Brain.app is on the machine, the clone writes its config (even the first profile) and does not also start our watcher. The tool list installs his app from this wizard. Chat still opens on our sync when his app is absent.
+
+- [x] 2026-09-22 Joe: Setup does not treat a repo address as a GitHub install. The app stays on Install until GitHub says the app is installed, then it copies the folder.
+
+- [x] 2026-09-22 Joe: Setup code clones when GitHub already has the repo. If it does not, the app opens GitHub to create the short name instead of asking for one. An empty folder is not opened as the brain. The name on screen is the folder name. A brand-new brain gets one welcome in chat that asks what the business does.
 
 - [x] 2026-09-21 Joe: One app for all users. No Agency Brain.app required. Brain.app clones org/slug-brain and ff-only syncs. Project seats stay hq-sync. Done: 2026-09-21. Grok 4.6 xhigh APPROVE (cycle 3). Packed 0.1.32.
 

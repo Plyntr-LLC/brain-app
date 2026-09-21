@@ -44,6 +44,7 @@ export type Session = {
   orgLogin?: string
   ai?: AiKind
   brainPath?: string
+  bridgeOk?: boolean
   abWatching: boolean
   dryRun: boolean
   filled: Partial<Record<NeedId, boolean>>

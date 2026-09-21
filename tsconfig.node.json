@@ -19,6 +19,7 @@
     "src/main/grok-leader.test.ts",
     "src/main/github-repo.test.ts",
     "src/main/setup-folder.test.ts",
+    "src/main/first-chat.test.ts",
     "src/main/super-admin.test.ts",
     "src/main/sync-health.test.ts",
     "src/main/cli-folder.test.ts",

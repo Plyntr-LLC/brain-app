@@ -27,12 +27,18 @@ function prettyName(raw: string): string {
   return s.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ')
 }
 
+function placeName(path: string, fallback = ''): string {
+  const seg = String(path || '').split(/[/\\]/).filter(Boolean).pop() || ''
+  return seg || fallback
+}
+
 function nowIn(row: {
+  path?: string
   name: string
   agency?: { ok: boolean; detail: string }
   hq?: { ok: boolean; detail: string }
 }): string {
-  const name = prettyName(row.name) || 'this brain'
+  const name = placeName(row.path || '', prettyName(row.name)) || 'this brain'
   if (row.agency?.ok) return `Now in ${name}. Sync follows this brain.`
   if (row.agency?.detail) return `Now in ${name}. ${row.agency.detail}`
   return `Now in ${name}.`
@@ -72,6 +78,7 @@ export function SettingsPanel({
   const [email, setEmail] = useState('')
   const [helloName, setHelloName] = useState('')
   const [brainName, setBrainName] = useState('')
+  const [brainPath, setBrainPath] = useState('')
   const [seat, setSeat] = useState('')
   const [people, setPeople] = useState<Person[]>([])
   const [draft, setDraft] = useState<Person>({ name: '', email: '', role: 'team', brain: '', brains: [] })
@@ -157,7 +164,8 @@ export function SettingsPanel({
       setSuper(s.superAdmin)
       setEmail(s.email)
       setHelloName(String(s.name || '').trim())
-      setBrainName(prettyName(String(s.brainName || '')))
+      setBrainPath(String(s.brainPath || ''))
+      setBrainName(placeName(String(s.brainPath || ''), prettyName(String(s.brainName || ''))))
       setSeat(String(s.role || ''))
       setBrains(list)
       setLoaded(true)
@@ -256,7 +264,7 @@ export function SettingsPanel({
   }
 
   const who = helloName || (email ? email.split('@')[0] : 'there')
-  const here = brainName || 'this brain'
+  const here = placeName(brainPath, brainName) || 'this brain'
 
   return (
     <div className="settings">
@@ -281,8 +289,9 @@ export function SettingsPanel({
                 try {
                   const row = await window.brain.brains.switch(path)
                   setBrains(await window.brain.brains.list())
-                  setBrainName(prettyName(row.name))
-                  onSwitchBrain?.(row)
+                  setBrainPath(row.path)
+                  setBrainName(placeName(row.path, prettyName(row.name)))
+                  onSwitchBrain?.({ path: row.path, name: placeName(row.path, row.name) })
                   const bridge = await window.brain.hqSync.ownerStatus().catch(() => null)
                   setHq(bridge)
                   setFolderRepo(await window.brain.hqSync.watchedRepo().catch(() => ''))
@@ -294,7 +303,7 @@ export function SettingsPanel({
             >
               {brains.map((b) => (
                 <option key={b.path} value={b.path}>
-                  {prettyName(b.name || b.slug || b.path)}
+                  {placeName(b.path, prettyName(b.name || b.slug || ''))}
                   {b.watching ? ' · Agency Brain watching' : ''}
                 </option>
               ))}
@@ -441,8 +450,8 @@ export function SettingsPanel({
               {pending ? (
                 <>
                   <p>
-                    Finish GitHub so this company has a shared folder. A browser will open. Sign in if GitHub asks. A
-                    passkey works there.
+                    The app is not installed on GitHub for this company yet. Open GitHub, create the short name if you
+                    do not have one, then install. Click Install, then Only select repositories.
                   </p>
                   <label className="field">
                     GitHub short name
@@ -453,7 +462,11 @@ export function SettingsPanel({
                     <button
                       className="ghost"
                       type="button"
-                      onClick={() => window.brain.setup.openCreateOrg()}
+                      onClick={async () => {
+                        const r = await window.brain.setup.openCreateOrg().catch(() => null)
+                        const login = String(r?.org || '').trim()
+                        if (login) setOrg(login)
+                      }}
                     >
                       Open GitHub
                     </button>
@@ -463,7 +476,7 @@ export function SettingsPanel({
                       disabled={bizBusy || org.trim().length < 2}
                       onClick={async () => {
                         if (org.trim().length < 2) {
-                          setNote('Paste the GitHub short name first. Open GitHub if you do not have it yet.')
+                          setNote('Create the short name on GitHub, then paste it here.')
                           return
                         }
                         try {
@@ -489,6 +502,16 @@ export function SettingsPanel({
                             setNote(applied?.detail || 'Could not copy the shared folder.')
                             return
                           }
+                          const bridge = await window.brain.setup.bridgeStatus(path)
+                          if (!bridge.installed) {
+                            setNote('Install Brain Bridge on this repo. Choose Only select repositories, then pick this repo.')
+                            await window.brain.setup.openBridge(path)
+                            const waited = await window.brain.setup.waitBridge(path)
+                            if (!waited.ok) {
+                              setNote(waited.detail || 'Brain Bridge is not installed on this repo yet.')
+                              return
+                            }
+                          }
                           await window.brain.brains.remember({
                             path,
                             name: pending.name,
@@ -496,8 +519,9 @@ export function SettingsPanel({
                           })
                           const row = await window.brain.brains.switch(path)
                           setBrains(await window.brain.brains.list())
-                          setBrainName(prettyName(row.name))
-                          onSwitchBrain?.(row)
+                          setBrainPath(row.path)
+                          setBrainName(placeName(row.path, prettyName(row.name)))
+                          onSwitchBrain?.({ path: row.path, name: placeName(row.path, row.name) })
                           setPending(null)
                           setOpenAdd(false)
                           setAdsCode('')
@@ -510,7 +534,7 @@ export function SettingsPanel({
                         }
                       }}
                     >
-                      {bizBusy ? 'Setting up…' : 'Continue with GitHub'}
+                      {bizBusy ? 'Installing…' : 'Install on GitHub'}
                     </button>
                   </div>
                 </>
@@ -542,16 +566,17 @@ export function SettingsPanel({
                           const res = await window.brain.brains.add({ code })
                           if (res.setup) {
                             setPending({ slug: String(res.slug || ''), name: String(res.name || 'this company') })
-                            setNote('GitHub is not on this brain yet. Open GitHub, paste the short name, then Continue.')
+                            setNote('The app is not installed on GitHub yet. Open GitHub, create the short name if you need one, then click Install on GitHub.')
                             return
                           }
                           if (res.brainPath) {
                             setBrains(await window.brain.brains.list())
-                            setBrainName(prettyName(String(res.name || '')))
-                            onSwitchBrain?.({ path: res.brainPath, name: String(res.name || '') })
+                            setBrainPath(res.brainPath)
+                            setBrainName(placeName(res.brainPath, prettyName(String(res.name || ''))))
+                            onSwitchBrain?.({ path: res.brainPath, name: placeName(res.brainPath, String(res.name || '')) })
                             setOpenAdd(false)
                             setAdsCode('')
-                            setNote(nowIn({ name: String(res.name || ''), agency: res.agency }))
+                            setNote(nowIn({ path: res.brainPath, name: String(res.name || ''), agency: res.agency }))
                             return
                           }
                           setNote(res.detail || 'That code did not finish.')

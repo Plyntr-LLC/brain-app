@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { binEnv } from './ai-cli'
+import { clonePlan } from './setup-folder'
 
 function git(cwd: string, args: string[], timeoutMs = 120_000): Promise<{ code: number; out: string }> {
   const env = { ...binEnv(), GIT_TERMINAL_PROMPT: '0' }
@@ -34,6 +35,33 @@ export function redact(s: string): string {
   return s.replace(/x-access-token:[^@]+@/g, 'x-access-token:***@').replace(/\/\/[^:]+:[^@]+@/g, '//***@').replace(/Bearer\s+[A-Za-z0-9._\-=]+/gi, 'Bearer ***')
 }
 
+export function hasBrainMarker(dest: string): boolean {
+  return (
+    existsSync(join(dest, 'AGENTS.md')) ||
+    existsSync(join(dest, 'CLAUDE.md')) ||
+    existsSync(join(dest, '.team-config', 'roles.json'))
+  )
+}
+
+function dirIsEmpty(dest: string): boolean {
+  try {
+    return readdirSync(dest).filter((name) => name !== '.DS_Store').length === 0
+  } catch {
+    return false
+  }
+}
+
+const EMPTY_BRAIN = 'GitHub copied an empty folder. The brain files are not in the repo yet. Finish GitHub, then try again.'
+
+async function fillEmptyCheckout(dest: string, cloneUrl: string): Promise<boolean> {
+  const branch = await currentBranch(dest)
+  const fetch = await git(dest, ['fetch', cloneUrl, branch])
+  if (fetch.code !== 0) return false
+  const merge = await git(dest, ['merge', '--ff-only', 'FETCH_HEAD'])
+  if (merge.code !== 0) return false
+  return hasBrainMarker(dest)
+}
+
 export async function cloneBrain(opts: {
   cloneUrl: string
   dest: string
@@ -42,20 +70,46 @@ export async function cloneBrain(opts: {
 }): Promise<{ ok: boolean; dest: string; detail: string }> {
   if (existsSync(opts.dest)) {
     const probe = await git(opts.dest, ['rev-parse', '--is-inside-work-tree'])
-    if (probe.code === 0) {
-      const origin = await originHttps(opts.dest)
-      const want = opts.cloneUrl.replace(/https:\/\/x-access-token:[^@]+@/i, 'https://').replace(/https:\/\/[^:]+:[^@]+@/i, 'https://')
-      if (origin && want && origin.replace(/\.git$/, '') === want.replace(/\.git$/, '')) {
+    const isGit = probe.code === 0
+    const origin = isGit ? await originHttps(opts.dest) : ''
+    const want = opts.cloneUrl.replace(/https:\/\/x-access-token:[^@]+@/i, 'https://').replace(/https:\/\/[^:]+:[^@]+@/i, 'https://')
+    const same = Boolean(origin && want && origin.replace(/\.git$/, '') === want.replace(/\.git$/, ''))
+    const plan = clonePlan({
+      destExists: true,
+      isGit,
+      sameOrigin: same,
+      hasMarker: hasBrainMarker(opts.dest),
+      empty: !isGit && dirIsEmpty(opts.dest)
+    })
+    if (plan === 'reuse') {
+      await git(opts.dest, ['config', 'user.email', opts.email])
+      await git(opts.dest, ['config', 'user.name', opts.name || opts.email.split('@')[0]])
+      return { ok: true, dest: opts.dest, detail: 'Folder already has this brain. Using it.' }
+    }
+    if (plan === 'refuse-empty-brain') {
+      const filled = await fillEmptyCheckout(opts.dest, opts.cloneUrl).catch(() => false)
+      if (filled) {
         await git(opts.dest, ['config', 'user.email', opts.email])
         await git(opts.dest, ['config', 'user.name', opts.name || opts.email.split('@')[0]])
-        return { ok: true, dest: opts.dest, detail: 'Folder already has this brain. Using it.' }
+        return { ok: true, dest: opts.dest, detail: 'Copied the brain files into the folder.' }
       }
+      return { ok: false, dest: opts.dest, detail: EMPTY_BRAIN }
+    }
+    if (plan === 'refuse-other-repo') {
       return {
         ok: false,
         dest: opts.dest,
         detail: 'That folder is already a different git repo. Pick another place or remove it, then try again.'
       }
     }
+    if (plan === 'refuse-not-empty') {
+      return {
+        ok: false,
+        dest: opts.dest,
+        detail: 'That folder already has files and is not this brain. Pick another place, then try again.'
+      }
+    }
+    if (plan === 'replace-empty') rmSync(opts.dest, { recursive: true })
   }
   mkdirSync(dirname(opts.dest), { recursive: true })
   const parent = dirname(opts.dest)
@@ -72,6 +126,7 @@ export async function cloneBrain(opts: {
   }
   await git(opts.dest, ['config', 'user.email', opts.email])
   await git(opts.dest, ['config', 'user.name', opts.name || opts.email.split('@')[0]])
+  if (!hasBrainMarker(opts.dest)) return { ok: false, dest: opts.dest, detail: EMPTY_BRAIN }
   return { ok: true, dest: opts.dest, detail: 'Cloned the shared brain onto this computer.' }
 }
 

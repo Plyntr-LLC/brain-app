@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { githubAppInstallUrl, githubInstallReady, reuseExistingFolder } from './setup-folder.ts'
+import { bridgeInstallUrl, clonePlan, githubAppInstallUrl, githubInstallReady, reuseExistingFolder } from './setup-folder.ts'
 
 test('reuseExistingFolder never returns a different team folder', () => {
   assert.equal(
@@ -36,9 +36,10 @@ test('reuseExistingFolder never returns a different team folder', () => {
   )
 })
 
-test('setup does not require Agency Brain.app', () => {
+test('setup lists Agency Brain and still reaches ready without it', () => {
   const src = readFileSync(new URL('./install.ts', import.meta.url), 'utf8')
-  assert.equal(/label: 'Agency Brain'/.test(src), false)
+  assert.match(src, /label: 'Agency Brain'/)
+  assert.match(src, /ready: folder && hasCli && gitPresent\(\) && cloudflaredPresent\(\)/)
   assert.match(src, /currentBrainFolder\(\)/)
   assert.match(src, /id: 'cloudflared'/)
   assert.match(src, /cloudflaredPresent\(\)/)
@@ -53,6 +54,14 @@ test('setup does not require Agency Brain.app', () => {
   assert.match(sync, /gitSyncAuthed/)
   assert.match(sync, /if \(!sync\.ok\)/)
   assert.match(sync, /lastFolder/)
+})
+
+test('bridgeInstallUrl opens Brain Bridge for one repo', () => {
+  const url = bridgeInstallUrl('acme/brain')
+  assert.match(url, /^https:\/\/github.com\/apps\/plyntr-brain-bridge\/installations\/new\?state=/)
+  const state = decodeURIComponent(url.split('state=')[1] || '')
+  const body = JSON.parse(Buffer.from(state, 'base64').toString('utf8')) as { hq_repo?: string }
+  assert.equal(body.hq_repo, 'acme/brain')
 })
 
 test('githubAppInstallUrl keeps state on installations/new', () => {
@@ -71,10 +80,38 @@ test('githubAppInstallUrl keeps state on installations/new', () => {
   assert.ok(!githubAppInstallUrl('x', 1).includes('/permissions'))
 })
 
-test('githubInstallReady is true when the app is on the team or a repo exists', () => {
+test('clonePlan refuses an empty checkout and replaces a blank folder', () => {
+  assert.equal(
+    clonePlan({ destExists: false, isGit: false, sameOrigin: false, hasMarker: false, empty: false }),
+    'clone'
+  )
+  assert.equal(
+    clonePlan({ destExists: true, isGit: true, sameOrigin: true, hasMarker: true, empty: false }),
+    'reuse'
+  )
+  assert.equal(
+    clonePlan({ destExists: true, isGit: true, sameOrigin: true, hasMarker: false, empty: false }),
+    'refuse-empty-brain'
+  )
+  assert.equal(
+    clonePlan({ destExists: true, isGit: true, sameOrigin: false, hasMarker: false, empty: false }),
+    'refuse-other-repo'
+  )
+  assert.equal(
+    clonePlan({ destExists: true, isGit: false, sameOrigin: false, hasMarker: false, empty: true }),
+    'replace-empty'
+  )
+  assert.equal(
+    clonePlan({ destExists: true, isGit: false, sameOrigin: false, hasMarker: false, empty: false }),
+    'refuse-not-empty'
+  )
+})
+
+test('githubInstallReady is true only when GitHub says the app is installed', () => {
   assert.equal(githubInstallReady({ installed: true }), true)
   assert.equal(githubInstallReady({ installed: true, repoUrl: 'https://github.com/acme/brain' }), true)
-  assert.equal(githubInstallReady({ repo: 'acme/brain' }), true)
+  assert.equal(githubInstallReady({ repo: 'acme/brain' }), false)
+  assert.equal(githubInstallReady({ installed: false, repoUrl: 'https://github.com/acme/brain' }), false)
   assert.equal(githubInstallReady({ installed: false }), false)
   assert.equal(githubInstallReady(null), false)
 })

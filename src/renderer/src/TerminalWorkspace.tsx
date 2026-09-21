@@ -1905,7 +1905,7 @@ export function TerminalWorkspace({
     setHydratedCwd('')
     void window.brain.chat
       .loadState(wanted)
-      .then((raw) => {
+      .then(async (raw) => {
         if (!live) return
         const saved = raw as {
           cwd?: string
@@ -1926,10 +1926,18 @@ export function TerminalWorkspace({
           setTranscripts(saved.messages || {})
         } else {
           const t = freshTab()
+          let opening: Msg[] | null = null
+          try {
+            const welcome = await window.brain.chat.firstWelcome(wanted)
+            if (welcome?.show && welcome.text) opening = [{ who: 'brain', text: welcome.text }]
+          } catch {
+            opening = null
+          }
+          if (!live) return
           setTabs([t])
           setActive(t.id)
           setLastChatId(t.id)
-          setTranscripts({})
+          setTranscripts(opening ? { [t.id]: opening } : {})
         }
       })
       .catch(() => {

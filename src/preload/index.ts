@@ -285,6 +285,24 @@ const brain = {
         ipcRenderer.removeListener('setup:back', h)
       }
     },
+    bridgeStatus: (folder: string) =>
+      ipcRenderer.invoke('setup:bridgeStatus', folder) as Promise<{
+        ok: boolean
+        installed: boolean
+        skipped?: boolean
+        repo: string
+        detail?: string
+      }>,
+    openBridge: (folder: string) =>
+      ipcRenderer.invoke('setup:openBridge', folder) as Promise<{ ok: boolean; repo: string }>,
+    waitBridge: (folder: string) =>
+      ipcRenderer.invoke('setup:waitBridge', folder) as Promise<{
+        ok: boolean
+        installed: boolean
+        skipped?: boolean
+        repo?: string
+        detail?: string
+      }>,
     ensureRepo: (slug: string) => ipcRenderer.invoke('setup:ensureRepo', slug),
     putFolder: (opts: { teamSlug: string; org?: string }) =>
       ipcRenderer.invoke('setup:putFolder', opts) as Promise<{
@@ -513,7 +531,9 @@ const brain = {
       messages: Record<string, { who: string; text: string }[]>
     }) => ipcRenderer.sendSync('chat:saveStateSync', state) as boolean,
     flushDone: () => ipcRenderer.send('app:flush-done'),
-    needs: () => ipcRenderer.invoke('chat:needs')
+    needs: () => ipcRenderer.invoke('chat:needs'),
+    firstWelcome: (cwd?: string) =>
+      ipcRenderer.invoke('chat:firstWelcome', cwd) as Promise<{ show: boolean; text: string }>
   },
   skin: {
     get: () =>

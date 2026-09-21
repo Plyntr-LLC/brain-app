@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { STEPS, type AiKind, type PathKind, type Session } from '@shared/contracts'
 import { blankSession, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
@@ -66,6 +66,7 @@ export function FirstRun() {
   const [sync, setSync] = useState<{ ok: boolean; line: string } | null>(null)
   const [watching, setWatching] = useState(false)
   const [away, setAway] = useState<'github-org' | 'github-install' | 'ai-login' | null>(null)
+  const bridgeOnce = useRef('')
 
   useEffect(() => {
     void (async () => {
@@ -137,6 +138,13 @@ export function FirstRun() {
   }
 
   useEffect(() => {
+    if (s.screen !== 'bridge' || !s.brainPath) return
+    if (bridgeOnce.current === s.brainPath) return
+    bridgeOnce.current = s.brainPath
+    void runBridge()
+  }, [s.screen, s.brainPath])
+
+  useEffect(() => {
     if (!showInvite) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
@@ -204,13 +212,16 @@ export function FirstRun() {
   async function afterMembership(patch?: Partial<Session>) {
     const slug = patch?.team?.slug || s.team?.slug
     const orgLogin = patch?.orgLogin || s.orgLogin || org
+    let fail = ''
     const applied = slug
       ? await window.brain.setup.putFolder({ teamSlug: slug, org: orgLogin }).catch((e) => {
-          setErr(String((e as Error).message || e))
+          fail = String((e as Error).message || e)
+          setErr(fail)
           return null
         })
       : await window.brain.setup.applyFolder().catch((e) => {
-          setErr(String((e as Error).message || e))
+          fail = String((e as Error).message || e)
+          setErr(fail)
           return null
         })
     const st = await window.brain.setup.status()
@@ -218,26 +229,132 @@ export function FirstRun() {
     setDetected(d)
     const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
     const signed = pick ? Boolean((await window.brain.ai.signedIn(pick)).signedIn) : false
-    const brainPath = applied?.brainPath || s.brainPath || patch?.brainPath || st.brainPath || undefined
+    const brainPath = fail ? undefined : applied?.brainPath || s.brainPath || patch?.brainPath || st.brainPath || undefined
     const next = { ...patch, ai: patch?.ai || pick, brainPath }
     if (!brainPath) {
+      if (/not installed on GitHub/i.test(fail) && s.screen !== 'github') {
+        go('github', { ...next, path: 'create' })
+        return
+      }
       if (s.screen === 'github' || s.screen === 'abapply' || s.screen === 'abget') return
+      if (slug) {
+        go('abapply', next)
+        return
+      }
       go('needs', next)
       return
     }
+    if (await holdForBridge(next)) return
     if (pick && signed && st.watching) go('chat', { ...next, abWatching: true })
     else go('aipick', { ...next, abWatching: st.watching })
   }
 
-  const title = s.business || 'Brain'
+  async function holdForBridge(patch?: Partial<Session>): Promise<boolean> {
+    const role = patch?.role || s.role
+    const kind = patch?.brainKind || s.brainKind
+    if (role === 'project' || kind === 'project' || patch?.bridgeOk || s.bridgeOk) return false
+    const path = patch?.brainPath || s.brainPath || ''
+    if (!path) return false
+    const st = await window.brain.setup.bridgeStatus(path).catch(() => null)
+    if (st?.installed) return false
+    go('bridge', { ...patch, brainPath: path })
+    return true
+  }
+
+  async function runBridge() {
+    const path = s.brainPath || ''
+    if (!path) {
+      setErr('The shared folder is not on this computer yet.')
+      return
+    }
+    setErr('')
+    setAway('github-install')
+    try {
+      await window.brain.setup.openBridge(path)
+      const waited = await window.brain.setup.waitBridge(path)
+      setAway(null)
+      if (!waited.ok) {
+        bridgeOnce.current = ''
+        setErr(waited.detail || 'Brain Bridge is not installed on this repo yet.')
+        return
+      }
+      const d = await window.brain.ai.detect()
+      setDetected(d)
+      const pick: AiKind | undefined =
+        s.ai || (d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined)
+      const signed = pick ? Boolean((await window.brain.ai.signedIn(pick)).signedIn) : false
+      const next = { bridgeOk: true, brainPath: path, ai: pick, abWatching: s.abWatching }
+      if (pick && signed) go('chat', next)
+      else go('aipick', next)
+    } catch (e) {
+      setAway(null)
+      bridgeOnce.current = ''
+      setErr(String((e as Error).message || e))
+    }
+  }
+
+  const title = (s.brainPath || '').split(/[/\\]/).filter(Boolean).pop() || s.business || 'Brain'
 
   function startChat() {
     void (async () => {
       const st = await window.brain.setup.status().catch(() => null)
       const path = s.brainPath || st?.brainPath || ''
       if (!path) go('aipick')
+      else if (await holdForBridge({ brainPath: path, abWatching: Boolean(st?.watching) })) return
       else go('chat', { brainPath: path, abWatching: Boolean(st?.watching) })
     })()
+  }
+
+  async function installOnGithub(rawLogin: string) {
+    if (rawLogin.trim().length < 2) {
+      setErr('Create the short name on GitHub, then paste it here.')
+      return
+    }
+    try {
+      setErr('')
+      const look = await window.brain.setup.lookupOrg(rawLogin.trim())
+      if (look && look.ok === false) {
+        setErr(look.detail || look.reason || 'GitHub did not accept that name. Check the short name you copied.')
+        return
+      }
+      if (look?.login) setOrg(look.login)
+      let slug = String(s.team?.slug || '').trim()
+      let teamName = s.team?.name || s.business
+      if (!slug) {
+        const created = (await window.brain.setup.createTeam(s.business)) as {
+          skipped?: boolean
+          team?: { slug?: string; name?: string }
+        }
+        if (created?.skipped) {
+          setErr('This is a dry-run window. Use the packed Brain app to finish GitHub.')
+          return
+        }
+        slug = String(created?.team?.slug || '').trim()
+        teamName = created?.team?.name || s.business
+      }
+      if (!slug) {
+        setErr('Could not make the team. Check the business name and try again.')
+        return
+      }
+      const login = String(look?.login || rawLogin.trim())
+      setAway('github-install')
+      await window.brain.setup.openAppInstall(slug, login)
+      const waited = await window.brain.setup.waitInstall(slug)
+      setAway(null)
+      if (!waited.ok) {
+        setErr(waited.detail || 'The app is not installed on GitHub yet. Click Install in the browser, then try again.')
+        return
+      }
+      go('abapply', {
+        orgLogin: login,
+        team: { slug, name: teamName, role: s.role || 'owner' },
+        brainPath: '',
+        abWatching: false
+      })
+    } catch (e) {
+      setAway(null)
+      setErr(String((e as Error).message || e))
+    }
   }
 
   async function logOut() {
@@ -351,8 +468,10 @@ export function FirstRun() {
                   const signed = pick ? Boolean((await window.brain.ai.signedIn(pick)).signedIn) : false
                   const path = brainPath || s.brainPath
                   if (!path) return
-                  if (ready && signed) go('chat', { abWatching: watching || Boolean(path), brainPath: path, ai: pick })
-                  else go('aipick', { abWatching: watching || Boolean(path), ai: pick, brainPath: path })
+                  const patch = { abWatching: watching || Boolean(path), brainPath: path, ai: pick }
+                  if (await holdForBridge(patch)) return
+                  if (ready && signed) go('chat', patch)
+                  else go('aipick', patch)
                 })()
               }}
               onNeedFolder={() => go('github')}
@@ -392,19 +511,32 @@ export function FirstRun() {
                       const email = res.member?.email || ''
                       const canBuild =
                         kind === 'client' ? role === 'owner' : role === 'owner' || role === 'scout' || role === 'head_scout'
-                      const needsGithub = canBuild && !res.repoUrl
+                      const slug = String(res.teamSlug || '').trim()
                       const patch = {
                         email,
                         business,
                         kind,
                         role,
                         member: res.member,
-                        team: { slug: res.teamSlug, name: business, role, kind, repoUrl: res.repoUrl },
-                        path: (needsGithub ? 'create' : role === 'team' || role === 'member' ? 'join' : 'second') as PathKind
+                        team: { slug, name: business, role, kind, repoUrl: res.repoUrl },
+                        path: (!canBuild ? 'join' : 'second') as PathKind
                       }
-                      if (needsGithub) go('github', patch)
-                      else if (role === 'team' || role === 'member') go('hello', { ...patch, path: 'join' })
-                      else void afterMembership({ ...patch, path: 'second' })
+                      if (!canBuild) {
+                        go('hello', { ...patch, path: 'join' })
+                        return
+                      }
+                      const inst = slug
+                        ? ((await window.brain.setup.pollInstall(slug).catch(() => null)) as {
+                            installed?: boolean
+                            repoUrl?: string
+                          } | null)
+                        : null
+                      const repoReady = inst?.installed === true
+                      if (repoReady && slug) {
+                        go('abapply', { ...patch, path: 'second' })
+                        return
+                      }
+                      go('github', { ...patch, path: 'create' })
                     } catch (e) {
                       const msg = String((e as Error).message || e)
                       if (/not found|404/i.test(msg)) setErr("I couldn't find that code. Check the invite and type it exactly.")
@@ -549,17 +681,21 @@ export function FirstRun() {
                       const signed = pick ? Boolean((await window.brain.ai.signedIn(pick)).signedIn) : false
                       const path = st.brainPath || s.brainPath || ''
                       if (st.ready && signed && path) {
-                        go('chat', { email, member: res.member, abWatching: true, ai: pick, brainPath: path })
+                        const patch = { email, member: res.member, abWatching: true, ai: pick, brainPath: path }
+                        if (await holdForBridge(patch)) return
+                        go('chat', patch)
                         return
                       }
                       if (st.watching || path) {
-                        go('aipick', {
+                        const patch = {
                           email,
                           member: res.member,
                           abWatching: Boolean(st.watching),
                           ai: pick,
                           brainPath: path || undefined
-                        })
+                        }
+                        if (path && (await holdForBridge(patch))) return
+                        go('aipick', patch)
                         return
                       }
                       const teams = res.teams || []
@@ -576,14 +712,13 @@ export function FirstRun() {
                           installed?: boolean
                           repoUrl?: string
                         } | null
-                        if (inst && (inst.repoUrl || inst.installed)) {
-                          void afterMembership({
-                            ...patch,
-                            path: 'second',
-                            team: { slug, name: teams[0]?.name || slug, role: role || 'owner', repoUrl: inst.repoUrl }
-                          })
+                        const team = { slug, name: teams[0]?.name || slug, role: role || 'owner', repoUrl: inst?.repoUrl }
+                        if (inst?.installed === true) {
+                          go('abapply', { ...patch, path: 'second', team })
                           return
                         }
+                        go('github', { ...patch, path: 'create', business: team.name, team })
+                        return
                       }
                       go('choice', patch)
                     } catch (e) {
@@ -680,18 +815,20 @@ export function FirstRun() {
           {s.screen === 'github' && (
             <>
               <p className="kicker">GitHub</p>
-              <h1>Paste the GitHub short name.</h1>
+              <h1>Install the app on GitHub.</h1>
               <p>
-                GitHub short name (one word, like harolds-books, not your business name). A browser will open. Sign in
-                if GitHub asks. A passkey works there.
+                GitHub does not have this app installed for the company yet. Open GitHub. If the company has no short
+                name yet, create one (one word, like harolds-books) and copy it. We then open Install. Click Install,
+                then Only select repositories. We wait here until GitHub says the app is installed. Sign in if GitHub
+                asks. A passkey works there.
               </p>
               <AwayBanner kind={away} />
               {!away ? (
                 <div className="warn-box">
                   <h3>Do this in order</h3>
                   <ol>
-                    <li>Open GitHub. Copy the short name (one word, like harolds-books, not your business name).</li>
-                    <li>Paste it below. Continue opens Install. Click Install, then Only select repositories.</li>
+                    <li>Open GitHub. Create the short name if you do not have one, and copy it.</li>
+                    <li>On the Install page, click Install, then Only select repositories.</li>
                   </ol>
                 </div>
               ) : null}
@@ -708,7 +845,10 @@ export function FirstRun() {
                     })
                     setAway(null)
                     const login = String(r?.org || '').trim()
-                    if (login) setOrg(login)
+                    if (login) {
+                      setOrg(login)
+                      await installOnGithub(login)
+                    }
                   }}
                 >
                   Open GitHub
@@ -728,7 +868,7 @@ export function FirstRun() {
                     const clip = await window.brain.setup.clipOrg()
                     const login = String(clip.org || '').trim()
                     if (!login) {
-                      setErr('Copy the GitHub short name first, then paste.')
+                      setErr('Create the short name on GitHub, then copy it.')
                       return
                     }
                     setOrg(login)
@@ -737,57 +877,33 @@ export function FirstRun() {
                 >
                   Paste from clipboard
                 </button>
+                <button className="primary" type="button" onClick={() => void installOnGithub(org)}>
+                  Install on GitHub
+                </button>
+              </div>
+            </>
+          )}
+          {s.screen === 'bridge' && (
+            <>
+              <p className="kicker">GitHub</p>
+              <h1>Install Brain Bridge on this repo.</h1>
+              <p>
+                GitHub does not have Brain Bridge on this repository yet. The browser opens the install page. Click
+                Install. Choose Only select repositories. Pick this repo. We stay here until GitHub says it is
+                installed. Chat stays closed until then.
+              </p>
+              <AwayBanner kind={away} />
+              {err ? <p className="note">{err}</p> : null}
+              <div className="actions">
                 <button
                   className="primary"
                   type="button"
-                  onClick={async () => {
-                    if (org.trim().length < 2) {
-                      setErr('Paste the GitHub short name first. Open GitHub if you do not have it yet.')
-                      return
-                    }
-                    try {
-                      setErr('')
-                      const look = await window.brain.setup.lookupOrg(org.trim())
-                      if (look && look.ok === false) {
-                        setErr(look.detail || look.reason || 'GitHub did not accept that name. Check the short name you copied.')
-                        return
-                      }
-                      if (look?.login) setOrg(look.login)
-                      const created = (await window.brain.setup.createTeam(s.business)) as {
-                        skipped?: boolean
-                        team?: { slug?: string; name?: string }
-                      }
-                      if (created?.skipped) {
-                        setErr('This is a dry-run window. Use the packed Brain app to finish GitHub.')
-                        return
-                      }
-                      const slug = String(created?.team?.slug || '').trim()
-                      if (!slug) {
-                        setErr('Could not make the team. Check the business name and try again.')
-                        return
-                      }
-                      const login = String(look?.login || org.trim())
-                      setAway('github-install')
-                      await window.brain.setup.openAppInstall(slug, login)
-                      const waited = await window.brain.setup.waitInstall(slug)
-                      setAway(null)
-                      if (!waited.ok) {
-                        setErr(waited.detail || 'GitHub is not finished. Click Install in the browser, then try again.')
-                        return
-                      }
-                      go('abapply', {
-                        orgLogin: login,
-                        team: { slug, name: created.team?.name || s.business, role: 'owner' },
-                        brainPath: '',
-                        abWatching: false
-                      })
-                    } catch (e) {
-                      setAway(null)
-                      setErr(String((e as Error).message || e))
-                    }
+                  onClick={() => {
+                    bridgeOnce.current = ''
+                    void runBridge()
                   }}
                 >
-                  Continue
+                  Install Brain Bridge
                 </button>
               </div>
             </>

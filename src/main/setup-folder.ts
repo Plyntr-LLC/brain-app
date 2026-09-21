@@ -1,4 +1,6 @@
 const GITHUB_APP_INSTALL = 'https://github.com/apps/agency-brain-sync/installations/new'
+const BRIDGE_APP_INSTALL = 'https://github.com/apps/plyntr-brain-bridge/installations/new'
+const BRIDGE_ORIGIN = 'https://brain-sync.joe-84a.workers.dev'
 
 /** Reuse a folder only when it is already this team. Never hand a new brain the old one. */
 export function reuseExistingFolder(opts: {
@@ -30,8 +32,30 @@ export function githubAppInstallUrl(slug: string, orgId?: number): string {
   return GITHUB_APP_INSTALL
 }
 
+/** What to do when the clone destination is already on disk. */
+export function clonePlan(opts: {
+  destExists: boolean
+  isGit: boolean
+  sameOrigin: boolean
+  hasMarker: boolean
+  empty: boolean
+}): 'clone' | 'reuse' | 'replace-empty' | 'refuse-other-repo' | 'refuse-not-empty' | 'refuse-empty-brain' {
+  if (!opts.destExists) return 'clone'
+  if (opts.isGit && opts.sameOrigin && opts.hasMarker) return 'reuse'
+  if (opts.isGit && opts.sameOrigin) return 'refuse-empty-brain'
+  if (opts.isGit) return 'refuse-other-repo'
+  if (opts.empty) return 'replace-empty'
+  return 'refuse-not-empty'
+}
+
+/** Install URL for Brain Bridge on one repo. state matches the worker's payload. */
+export function bridgeInstallUrl(hqRepo: string): string {
+  const repo = String(hqRepo || '').trim()
+  const state = Buffer.from(JSON.stringify({ hq_repo: repo, origin: BRIDGE_ORIGIN })).toString('base64')
+  return `${BRIDGE_APP_INSTALL}?state=${encodeURIComponent(state)}`
+}
+
+/** A repo address is not an install. GitHub has to say the app is installed. */
 export function githubInstallReady(st: { installed?: boolean; repoUrl?: string; repo?: string } | null): boolean {
-  if (!st) return false
-  if (st.installed === true) return true
-  return Boolean(String(st.repoUrl || st.repo || '').trim())
+  return st?.installed === true
 }

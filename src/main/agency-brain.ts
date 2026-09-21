@@ -1,7 +1,7 @@
-import { closeSync, existsSync, fsyncSync, openSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { execFile } from 'node:child_process'
 import {
@@ -257,6 +257,7 @@ export function plyntrOwnerEmail(): string | null {
 
 function writeConfigAtomic(cfg: AgencyConfig): void {
   const p = configPath()
+  mkdirSync(dirname(p), { recursive: true })
   const json = JSON.stringify(cfg, null, 2)
   const tmp = p + '.tmp'
   const fd = openSync(tmp, 'w')
@@ -363,10 +364,23 @@ export function accountFieldsForFolder(folder: string): {
 export async function activateWatching(folder: string): Promise<{ ok: boolean; detail: string }> {
   const path = String(folder || '').trim()
   if (!path || !existsSync(path)) return { ok: false, detail: 'That brain folder is not on this computer.' }
-  const cfg = loadFullConfig()
-  if (!cfg) return { ok: false, detail: 'Agency Brain is not set up on this computer yet.' }
   const ident = readTeamIdentity(path)
   const incoming = profileFromJoin(path)
+  let cfg = loadFullConfig()
+  if (!cfg) {
+    if (!detectApp().installed) return { ok: false, detail: 'Agency Brain is not installed on this computer.' }
+    if (!incoming?.memberToken) {
+      return { ok: false, detail: 'Add this brain with the code from Ads2AI first so Agency Brain can watch it.' }
+    }
+    const target: AgencyProfile = {
+      ...incoming,
+      brainPath: path,
+      brandName: incoming.brandName || ident?.name || incoming.teamSlug
+    }
+    writeConfigAtomic(activateProfile({ brainPath: '', brains: [] }, target))
+    await bounceAgencyBrain()
+    return { ok: true, detail: 'Agency Brain is watching this brain.' }
+  }
   const slug = incoming?.teamSlug || ident?.slug || ''
   const found = findProfile(cfg, path, slug)
   const target: AgencyProfile | null = incoming
