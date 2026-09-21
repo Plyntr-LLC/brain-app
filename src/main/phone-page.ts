@@ -91,7 +91,15 @@ export function phonePageHtml(): string {
     }
     .tabrow { display: grid; grid-template-columns: 1fr; gap: 0.35rem; margin-top: 0.45rem; }
     .tabtools { display: grid; grid-template-columns: 1fr auto auto; gap: 0.35rem; }
-    #tabs { min-height: 2.5rem; font-size: 1rem; }
+    .tablist { display: flex; flex-wrap: wrap; gap: 0.35rem; min-height: 2.4rem; align-items: center; }
+    .tabchip {
+      font-size: 0.88rem;
+      padding: 0.4rem 0.65rem;
+      background: #fff;
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+    .tabchip.on { background: var(--ink); color: #fff; border-color: var(--ink); }
     .pairbox { display: flex; gap: 0.35rem; margin-top: 0.45rem; }
     .pairbox.hidden { display: none; }
     #pin { width: 7rem; padding: 0.4rem 0.5rem; border: 1px solid var(--line); letter-spacing: 0.2em; font-size: 1.05rem; }
@@ -225,7 +233,7 @@ export function phonePageHtml(): string {
       <h1 id="title">This Mac</h1>
       <p class="tiny">Plug the computer in. Closing the lid on battery will sleep.</p>
       <div class="tabrow">
-        <select id="tabs" aria-label="Open chats"></select>
+        <div id="tabs" class="tablist" role="listbox" aria-label="Open chats"></div>
         <div class="tabtools">
           <select id="kind" aria-label="CLI">
             <option value="grok">Grok</option>
@@ -450,6 +458,7 @@ export function phonePageHtml(): string {
       say.placeholder = busy()
         ? (queued ? 'Enter queues. Empty Enter sends the next one.' : 'Working. Enter queues a follow-up.')
         : 'Ask about this folder'
+      paintTabs()
       paintDrops()
       paintQueue()
     }
@@ -481,15 +490,32 @@ export function phonePageHtml(): string {
       busyBy = Object.assign({}, s.busy || {})
       if (pending) busyBy[pending.tabId] = true
       queueBy = s.queue || {}
-      tabsEl.innerHTML = tabs.length
-        ? tabs.map(function (t) {
-            const name = t.title || (t.kind === 'claude' ? 'Claude' : t.kind === 'gpt' ? 'ChatGPT' : t.kind === 'cursor' ? 'Cursor' : 'Grok')
-            return '<option value="' + esc(t.id) + '"' + (t.id === active ? ' selected' : '') + '>' + esc(name) + '</option>'
-          }).join('')
-        : '<option value="">No chats yet</option>'
       const cur = tabs.find(function (t) { return t.id === active })
       if (cur && cur.kind) kindEl.value = cur.kind === 'claude' || cur.kind === 'gpt' || cur.kind === 'cursor' ? cur.kind : 'grok'
       paint()
+    }
+    function tabName(t) {
+      return t.title || (t.kind === 'claude' ? 'Claude' : t.kind === 'gpt' ? 'ChatGPT' : t.kind === 'cursor' ? 'Cursor' : 'Grok')
+    }
+    function paintTabs() {
+      tabsEl.textContent = ''
+      if (!tabs.length) {
+        const empty = document.createElement('p')
+        empty.className = 'tiny'
+        empty.textContent = 'No chats yet. Tap New.'
+        tabsEl.appendChild(empty)
+        return
+      }
+      tabs.forEach(function (t) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'tabchip' + (t.id === active ? ' on' : '')
+        btn.setAttribute('data-tab', t.id)
+        btn.setAttribute('role', 'option')
+        btn.setAttribute('aria-selected', t.id === active ? 'true' : 'false')
+        btn.textContent = tabName(t)
+        tabsEl.appendChild(btn)
+      })
     }
     function showPair(show) {
       pairbox.classList.toggle('hidden', !show)
@@ -676,8 +702,10 @@ export function phonePageHtml(): string {
         pairBtn.click()
       }
     })
-    tabsEl.addEventListener('change', function () {
-      active = tabsEl.value
+    tabsEl.addEventListener('click', function (e) {
+      const btn = e.target.closest('[data-tab]')
+      if (!btn) return
+      active = btn.getAttribute('data-tab') || ''
       paint()
     })
     sendBtn.addEventListener('click', function () { void send(false) })
@@ -698,8 +726,15 @@ export function phonePageHtml(): string {
     newBtn.addEventListener('click', function () {
       if (newBtn.disabled) return
       newBtn.disabled = true
-      void postJson('/api/tab', { op: 'new', kind: kindEl.value || 'grok' }).then(function (r) {
-        if (r.tabId) active = r.tabId
+      const kind = kindEl.value || 'grok'
+      void postJson('/api/tab', { op: 'new', kind: kind }).then(function (r) {
+        if (r.tabId) {
+          active = r.tabId
+          if (!tabs.some(function (t) { return t.id === r.tabId })) {
+            tabs.push({ id: r.tabId, type: 'chat', title: tabName({ kind: kind }), kind: kind })
+          }
+          paint()
+        }
         return pullState()
       }).then(function () { say.focus() }).catch(function (e) { showBanner(String(e.message || e)) }).finally(function () {
         newBtn.disabled = false
