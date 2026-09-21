@@ -10,9 +10,9 @@ This file is the working set. Open this repo, read this file, work **Inbox** the
 
 One downloadable window that feels like Slack and has the power of the local AI CLIs (Grok, Claude, Cursor, Codex). **Skin is the default face:** Brain catalog paint over the live CLI. Chat is the ACP bubble toggle. **Show terminal** peels the skin to the real CLI TUI in a PTY (not a login shell). Terminal (`+` → Terminal) is a login shell, optional and hidden by default.
 
-A teammate installs this app, Agency Brain (Mike’s, for git sync), and one AI CLI they already pay for. They sign into that CLI as themselves. They land in Skin against the watched brain folder. **Show terminal is its own CLI session** (accepted). App `/` commands stay in Brain; other `/` commands are typed into that CLI. They never scrape the TUI into bubbles, and they never share Joe’s login.
+A teammate installs this app and one AI CLI they already pay for. They sign into that CLI as themselves. Brain.app copies their GitHub repo (`org/slug-brain`) and keeps it in sync. They land in Skin against that folder. Agency Brain.app is optional: if it is already watching this folder, Brain.app does not start a second watcher. **Show terminal is its own CLI session** (accepted). App `/` commands stay in Brain; other `/` commands are typed into that CLI. They never scrape the TUI into bubbles, and they never share Joe’s login.
 
-Agency Brain owns git. This app does not start a second watcher. Switching brains (Joe superadmin) writes Agency Brain `config.json` so Mike watches the same folder, bounces Agency Brain, and retargets Plyntr project sync (`com.plyntr.brain-sync`) to that brain’s HQ seats or stops it. Adding a company brain uses the Ads2AI join code (create the company there first). Tokens in that file are never logged or sent to the renderer.
+HQ seats use ads2ai git-token + `agency-brain-sync` (Only select repositories). Project seats use hq-sync / Brain Bridge. Switching brains (Joe superadmin) uses `switchBrain` and `startBrainSync` (or hq-sync). `activateWatching` only when Agency Brain is present and the target is already in its profiles. Tokens are never logged or sent to the renderer.
 
 ## How it talks to the CLIs
 
@@ -59,7 +59,7 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
 - Auto-install: if Homebrew, Git, Agency Brain, or a CLI is missing, one setup screen lists them, pre-warns every permission dialog, then **Start setup** (one click) runs official installers in order and waits. Chat when Agency Brain is watching and at least one CLI is present. Joe’s already-set-up Mac skips to Chat.
 - Long runs show a live Working strip (wheel, phase, elapsed time) plus a pulse on the chat tab. Tools update the phase. Setup polls use the same strip. The thread does not sit on a frozen Thinking label.
-- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.31**. Developer ID Application: Plyntr LLC.
+- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.32**. Developer ID Application: Plyntr LLC.
 - Phone: Settings → Phone starts a loopback listener, `caffeinate -dims`, and a Cloudflare tunnel (named host `brain-phone.plyntr.com` when configured). Scan the QR or type the 6-digit code to link a phone. Linked phones stay until Remove.
 
 ## How Joe runs Inbox
@@ -93,6 +93,10 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 7. Typecheck green. For UI, click-check in the running Electron window.
 
 ## Now
+
+- [x] 2026-09-21 Joe: One app for all users. No Agency Brain.app required. Brain.app clones org/slug-brain and ff-only syncs. Project seats stay hq-sync. Done: 2026-09-21. Grok 4.6 xhigh APPROVE (cycle 3). Packed 0.1.32.
+
+
 
 Skin is the face. Chat stays in the code, hidden. Terminal is a top tab only. Last tab can close after a confirm. Empty stage is the card color, not black. Claude tabs start on Opus 5 at low effort. Settings → Phone is a Cloudflare Tunnel remote of this Mac.
 

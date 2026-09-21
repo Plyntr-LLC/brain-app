@@ -30,7 +30,7 @@ function readSeatsFile(brainPath: string | null): {
   }
 }
 
-/** Owner, scout, and agency team use Agency Brain codes. Project only uses this app's codes. */
+/** Owner, scout, and agency team use ads2ai setup codes. Project only uses this app's codes. */
 export async function classifyLogin(emailRaw: string): Promise<LoginVia | 'unknown'> {
   const email = String(emailRaw || '').trim().toLowerCase()
   if (!email.includes('@')) return 'unknown'

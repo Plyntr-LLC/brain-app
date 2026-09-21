@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { githubAppInstallUrl, githubInstallReady, reuseExistingFolder } from './setup-folder.ts'
 
@@ -33,6 +34,21 @@ test('reuseExistingFolder never returns a different team folder', () => {
     }),
     '/Users/joe/Projects/agency-brain'
   )
+})
+
+test('setup does not require Agency Brain.app', () => {
+  const src = readFileSync(new URL('./install.ts', import.meta.url), 'utf8')
+  assert.equal(/label: 'Agency Brain'/.test(src), false)
+  assert.match(src, /currentBrainFolder\(\)/)
+  const ipc = readFileSync(new URL('./ipc-stubs.ts', import.meta.url), 'utf8')
+  assert.match(ipc, /clone skipped in dry-run/)
+  assert.match(ipc, /switchBrain\(cloned\.dest\)/)
+  const clone = readFileSync(new URL('./clone.ts', import.meta.url), 'utf8')
+  assert.match(clone, /x-access-token:\$\{t\}@/)
+  const sync = readFileSync(new URL('./brain-sync.ts', import.meta.url), 'utf8')
+  assert.match(sync, /gitSyncAuthed/)
+  assert.match(sync, /if \(!sync\.ok\) return/)
+  assert.match(sync, /lastFolder/)
 })
 
 test('githubAppInstallUrl keeps state on installations/new', () => {

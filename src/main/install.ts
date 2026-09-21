@@ -9,6 +9,7 @@ import { Readable } from 'node:stream'
 import { shell } from 'electron'
 import { DOWNLOAD_AB } from '../shared/contracts'
 import { detectApp, readWatching } from './agency-brain'
+import { currentBrainFolder } from './brains'
 import { loadAccount } from './session-token'
 import { binEnv, detect as detectAi, resolveBin } from './ai-cli'
 import type { AiKind } from '../shared/contracts'
@@ -90,14 +91,6 @@ export function listNeeds(): { ready: boolean; watching: boolean; brainPath: str
     })
   }
   items.push({
-    id: 'ab',
-    label: 'Agency Brain',
-    line: 'Menu bar app. Sign in there and pick the shared folder. You keep working in Brain.',
-    present: watching,
-    warn: 'Agency Brain will open. Sign in, pick the shared folder, and allow access if macOS or Windows asks.',
-    accept: 'Sign in to Agency Brain and pick the shared folder. We continue when it is watching.'
-  })
-  items.push({
     id: 'grok',
     label: 'Grok CLI',
     line: 'Official xAI installer. You sign in with your own SuperGrok later.',
@@ -130,11 +123,12 @@ export function listNeeds(): { ready: boolean; watching: boolean; brainPath: str
     accept: cliWin.accept
   })
   const hasCli = ai.grok || ai.claude || ai.cursor || ai.gpt
-  const folder = Boolean(watchingInfo.brainPath) || Boolean(loadAccount()?.folder)
+  const folderPath = currentBrainFolder() || watchingInfo.brainPath || loadAccount()?.folder || null
+  const folder = Boolean(folderPath)
   return {
-    ready: folder && hasCli,
+    ready: folder && hasCli && gitPresent(),
     watching,
-    brainPath: watchingInfo.brainPath || loadAccount()?.folder || null,
+    brainPath: folderPath,
     items
   }
 }
@@ -246,7 +240,7 @@ async function installAgencyBrainApp(): Promise<InstallResult> {
   return { ok: true, detail: 'The Agency Brain installer is open. Finish it, then come back here. Skip its setup wizard.', wait: 'present' }
 }
 
-const TOOL_IDS: NeedId[] = ['brew', 'git', 'ab', 'grok', 'claude', 'cursor', 'gpt']
+const TOOL_IDS: NeedId[] = ['brew', 'git', 'grok', 'claude', 'cursor', 'gpt']
 
 export function isNeedId(id: string): id is NeedId {
   return (TOOL_IDS as string[]).includes(id)

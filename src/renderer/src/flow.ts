@@ -19,14 +19,14 @@ export function stepState(s: Session, id: (typeof STEPS)[number]['id']): 'now' |
     return s.screen === 'welcome' || s.screen === 'email' || s.screen === 'otp' ? 'now' : 'done'
   }
   if (id === 'ab') {
-    if (s.abWatching) return 'done'
+    if (s.abWatching || s.brainPath) return 'done'
     if (['abget', 'github', 'abapply', 'hello', 'choice', 'name', 'needs'].includes(s.screen)) return 'now'
     return s.email && s.screen !== 'email' && s.screen !== 'code' ? 'now' : ''
   }
   if (id === 'ai') {
     if (s.screen === 'chat') return 'done'
     if (s.screen === 'aipick' || s.screen === 'aiwork') return 'now'
-    return s.abWatching ? 'now' : ''
+    return s.abWatching || s.brainPath ? 'now' : ''
   }
   if (id === 'know') {
     if (s.screen === 'chat') return 'now'

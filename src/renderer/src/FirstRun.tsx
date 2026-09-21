@@ -9,7 +9,7 @@ import { WorkPulse } from './WorkPulse'
 function TwoApps() {
   return (
     <p className="two-apps">
-      Brain is where you talk. Agency Brain (menu bar) keeps files in sync. You only work in Brain.
+      One app. It copies the shared brain onto this computer and keeps it in sync. You talk here.
     </p>
   )
 }
@@ -351,8 +351,8 @@ export function FirstRun() {
                   const signed = pick ? Boolean((await window.brain.ai.signedIn(pick)).signedIn) : false
                   const path = brainPath || s.brainPath
                   if (!path) return
-                  if (ready && signed) go('chat', { abWatching: true, brainPath: path, ai: pick })
-                  else go('aipick', { abWatching: true, ai: pick, brainPath: path })
+                  if (ready && signed) go('chat', { abWatching: watching || Boolean(path), brainPath: path, ai: pick })
+                  else go('aipick', { abWatching: watching || Boolean(path), ai: pick, brainPath: path })
                 })()
               }}
               onNeedFolder={() => go('github')}
@@ -432,8 +432,8 @@ export function FirstRun() {
               <p className="kicker">Sign in</p>
               <h1>Sign in with your email.</h1>
               <p>
-                Owners, scouts, and agency team get an Agency Brain code. Project only people get a code from this
-                app. You do not pick which. Type the email you were invited with.
+                Owners, scouts, and agency team get a setup code. Project only people get a code from this app. You do
+                not pick which. Type the email you were invited with.
               </p>
               <label className="field">
                 Your email
@@ -621,7 +621,7 @@ export function FirstRun() {
               <p>Teammates never see this.</p>
               <button type="button" className={`choice ${choice === 'new' ? 'on' : ''}`} onClick={() => setChoice('new')}>
                 <h3>I'm setting this brain up</h3>
-                <p>First time. We'll get Agency Brain on this computer, then GitHub, then the conversation.</p>
+                <p>First time. We copy this team’s brain onto this computer, then GitHub if needed, then the conversation.</p>
               </button>
               <button type="button" className={`choice ${choice === 'existing' ? 'on' : ''}`} onClick={() => setChoice('existing')}>
                 <h3>It's already set up. I need it on this computer.</h3>

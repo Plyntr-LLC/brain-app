@@ -634,9 +634,14 @@ export function registerStubIpc(): void {
         accountSlug: acctIdent?.slug || null
       }) || folderForSlug(slug)
     if (reuse) {
+      switchBrain(reuse)
+      applyAccountForFolder(reuse)
       startBrainSync(reuse)
       rememberBrain({ path: reuse, slug, name: readTeamIdentity(reuse)?.name || slug })
       return { ok: true, skipped: true, brainPath: reuse, reason: 'already-on-this-computer', detail: reuse }
+    }
+    if (dryRun()) {
+      return { ok: true, skipped: true, reason: 'clone skipped in dry-run', brainPath: currentBrainFolder() || null }
     }
     if (!slug) throw new Error('No team to clone. Sign in first, or finish GitHub.')
     const git = await ads2ai.gitToken(tokenForSlug(slug), slug)
@@ -656,6 +661,8 @@ export function registerStubIpc(): void {
     })
     if (!cloned.ok) throw new Error(cloned.detail || 'Could not copy the shared folder onto this computer.')
     saveRecent(cloned.dest)
+    switchBrain(cloned.dest)
+    applyAccountForFolder(cloned.dest)
     rememberBrain({ path: cloned.dest, slug, name: readTeamIdentity(cloned.dest)?.name || slug })
     startBrainSync(cloned.dest)
     return { ok: true, brainPath: cloned.dest, detail: cloned.detail }
@@ -666,6 +673,9 @@ export function registerStubIpc(): void {
     const slug = String(opts?.teamSlug || '').trim()
     const org = String(opts?.org || '').trim()
     if (!slug) throw new Error('No team to clone. Finish GitHub first.')
+    if (dryRun()) {
+      return applyFolderImpl({ teamSlug: slug })
+    }
     const token = tokenForSlug(slug)
     if (org) {
       await ads2ai.adoptOrgInstallation(token, slug, org).catch((e) => {

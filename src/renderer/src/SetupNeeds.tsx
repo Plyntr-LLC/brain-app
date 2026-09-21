@@ -52,6 +52,7 @@ export function SetupNeeds({
 }) {
   const [items, setItems] = useState<ToolNeed[]>([])
   const [watching, setWatching] = useState(false)
+  const [brainPath, setBrainPath] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [phase, setPhase] = useState<'review' | 'run'>('review')
   const [busyId, setBusyId] = useState('')
@@ -85,6 +86,7 @@ export function SetupNeeds({
     const st = await window.brain.setup.status()
     setItems(st.items)
     setWatching(st.watching)
+    setBrainPath(st.brainPath || null)
     setLoaded(true)
     return st
   }
@@ -149,11 +151,11 @@ export function SetupNeeds({
     try {
       const first = await refresh()
       if (first.ready) {
-        onReady(asReady(first, { ready: true, watching: true }))
+        onReady(asReady(first, { ready: true, watching: Boolean(first.brainPath || first.watching) }))
         return
       }
       const missing = first.items.filter((i) => !i.present)
-      const required = new Set(['brew', 'git', 'ab'])
+      const required = new Set(['brew', 'git'])
       for (const item of missing) {
         if (stop.current) {
           setPhase('review')
@@ -180,16 +182,16 @@ export function SetupNeeds({
         return
       }
       if (st.ready) {
-        onReady(asReady(st, { ready: true, watching: true }))
+        onReady(asReady(st, { ready: true, watching: Boolean(st.brainPath || st.watching) }))
         return
       }
-      if (st.watching && ai) {
-        onReady(asReady(st, { ready: false, watching: true }))
+      if ((st.brainPath || st.watching) && ai) {
+        onReady(asReady(st, { ready: false, watching: Boolean(st.brainPath || st.watching) }))
         return
       }
       setPhase('review')
-      if (!st.watching) {
-        setErr('Agency Brain is not watching a folder yet. Finish sign-in there, then Recheck.')
+      if (!st.brainPath && !st.watching) {
+        setErr('The shared folder is not on this computer yet. Finish GitHub, then Recheck.')
         return
       }
       setNote('Still missing a watched folder or an AI tool. Finish the open installer, then Start setup again.')
@@ -240,13 +242,10 @@ export function SetupNeeds({
           ) : null}
         </div>
       ) : null}
-      {!running && loaded && missing.length === 0 && !watching ? (
+      {!running && loaded && missing.length === 0 && !watching && !brainPath ? (
         <div className="warn-box">
-          <h3>Before we start: you will need to allow access</h3>
-          <p>
-            Agency Brain is on this computer but not watching a folder yet. We will open it. Sign in, pick the shared
-            folder, and allow access if macOS or Windows asks.
-          </p>
+          <h3>The shared folder is not on this computer yet</h3>
+          <p>Finish GitHub (Only select repositories), then Recheck. This app copies the folder and keeps it in sync.</p>
         </div>
       ) : null}
       <ul className="setup-list">

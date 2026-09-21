@@ -28,8 +28,8 @@ function git(cwd: string, args: string[], timeoutMs = 120_000): Promise<{ code: 
   })
 }
 
-function redact(s: string): string {
-  return s.replace(/x-access-token:[^@]+@/g, 'x-access-token:***@').replace(/\/\/[^:]+:[^@]+@/g, '//***@')
+export function redact(s: string): string {
+  return s.replace(/x-access-token:[^@]+@/g, 'x-access-token:***@').replace(/\/\/[^:]+:[^@]+@/g, '//***@').replace(/Bearer\s+[A-Za-z0-9._\-=]+/gi, 'Bearer ***')
 }
 
 export async function cloneBrain(opts: {
@@ -74,5 +74,49 @@ export async function gitPushIfDirty(cwd: string): Promise<{ ok: boolean; detail
   const c = await git(cwd, ['commit', '-m', 'Brain.app sync'])
   if (c.code !== 0 && !/nothing to commit/i.test(c.out)) return { ok: false, detail: redact(c.out).slice(-400) }
   const p = await git(cwd, ['push'])
+  return { ok: p.code === 0, detail: redact(p.out).slice(-400) }
+}
+
+async function originHttps(cwd: string): Promise<string> {
+  const r = await git(cwd, ['remote', 'get-url', 'origin'])
+  return r.out.trim().replace(/https:\/\/x-access-token:[^@]+@/i, 'https://').replace(/https:\/\/[^:]+:[^@]+@/i, 'https://')
+}
+
+function withToken(url: string, token: string): string {
+  const t = String(token || '').trim()
+  const u = String(url || '').trim()
+  if (!t || !u.startsWith('https://')) return u
+  return u.replace(/^https:\/\//, `https://x-access-token:${t}@`)
+}
+
+async function currentBranch(cwd: string): Promise<string> {
+  const r = await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  const b = r.out.trim()
+  return b && b !== 'HEAD' ? b : 'main'
+}
+
+export async function gitSyncAuthed(cwd: string, token: string): Promise<{ ok: boolean; detail: string }> {
+  const st = await git(cwd, ['status', '--porcelain'])
+  if (st.code !== 0) return { ok: false, detail: redact(st.out) }
+  if (st.out.trim()) {
+    await git(cwd, ['add', '-A'])
+    const c = await git(cwd, ['commit', '-m', 'Brain.app sync'])
+    if (c.code !== 0 && !/nothing to commit/i.test(c.out)) return { ok: false, detail: redact(c.out).slice(-400) }
+  }
+  const origin = await originHttps(cwd)
+  const authed = withToken(origin, token)
+  if (!authed) {
+    const pull = await gitPull(cwd)
+    if (!pull.ok) return pull
+    return gitPushIfDirty(cwd)
+  }
+  const branch = await currentBranch(cwd)
+  const pull = await git(cwd, ['pull', '--ff-only', authed, branch])
+  if (pull.code !== 0) return { ok: false, detail: redact(pull.out).slice(-400) }
+  const ahead = await git(cwd, ['rev-list', '--count', `origin/${branch}..HEAD`])
+  const sb = await git(cwd, ['status', '-sb'])
+  const needPush = /ahead/.test(sb.out) || (ahead.code === 0 && Number(ahead.out.trim()) > 0)
+  if (!needPush && !st.out.trim()) return { ok: true, detail: 'clean' }
+  const p = await git(cwd, ['push', authed, `HEAD:${branch}`])
   return { ok: p.code === 0, detail: redact(p.out).slice(-400) }
 }
