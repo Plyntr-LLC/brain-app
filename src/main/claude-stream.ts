@@ -3,6 +3,7 @@ import type { StreamEvent } from './ai-cli'
 import { binEnv, resolveBin } from './ai-cli'
 import { claudeContent, type Attach } from './attach'
 import { asRecord, asText, fileHits, spawnBin } from './line-rpc'
+import { captureToolHook, wrapPromptWithHooks } from './project-hooks'
 
 const RULES =
   'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
@@ -45,6 +46,28 @@ function handleClaude(s: Sess, line: string): void {
     else if (dType === 'text_delta') {
       s.text += bit
       s.onEvent({ kind: 'text', data: bit })
+    }
+    return
+  }
+  if (type === 'user') {
+    const msg = asRecord(o.message)
+    const content = Array.isArray(msg.content) ? msg.content : []
+    for (const block of content) {
+      const b = asRecord(block)
+      if (String(b.type || '') !== 'tool_result') continue
+      const out = asText(b.content) || asText(b) || (typeof b.content === 'string' ? b.content : '')
+      try {
+        captureToolHook({
+          cwd: s.cwd,
+          kind: 'claude',
+          sessionId: s.tabId,
+          toolName: String(b.tool_name || b.name || 'tool'),
+          toolOutput: String(out || ''),
+          toolId: String(b.tool_use_id || b.toolUseId || '')
+        })
+      } catch {
+        /* fail-open */
+      }
     }
     return
   }
@@ -193,7 +216,11 @@ export async function claudePrompt(opts: {
   const gen = ++s.promptGen
   s.onEvent = opts.onEvent
   s.text = ''
-  writeUser(s, opts.text, opts.attachments || [])
+  writeUser(
+    s,
+    wrapPromptWithHooks({ cwd: opts.cwd, kind: 'claude', sessionId: s.tabId, text: opts.text }),
+    opts.attachments || []
+  )
   await new Promise<void>((resolve) => {
     s.waiting = { resolve }
   })

@@ -3,6 +3,7 @@ import { binEnv, resolveBin } from './ai-cli'
 import type { Cap, LiveRun } from './acp-session'
 import { codexInput, type Attach } from './attach'
 import { asRecord, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
+import { wrapPromptWithHooks } from './project-hooks'
 
 const RULES =
   'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
@@ -299,7 +300,10 @@ export async function codexPrompt(opts: {
   tab.text = ''
   const params: Record<string, unknown> = {
     threadId: tab.threadId,
-    input: codexInput(opts.text, opts.attachments || [])
+    input: codexInput(
+      wrapPromptWithHooks({ cwd: opts.cwd, kind: 'gpt', sessionId: tab.threadId, text: opts.text }),
+      opts.attachments || []
+    )
   }
   if (opts.model) params.model = opts.model
   if (opts.effort) params.effort = opts.effort

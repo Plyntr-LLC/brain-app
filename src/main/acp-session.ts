@@ -10,6 +10,7 @@ import { underRoot } from './files'
 import { grokAcpArgs, ensureGrokLeader, killGrokLeader } from './grok-leader'
 import { asRecord, asText, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 import { captureEvent, skinHint } from './skin/capture'
+import { captureToolHook, toolCaptureFromUpdate, wrapPromptWithHooks } from './project-hooks'
 import { GROK_DEFAULT_EFFORT } from '../shared/effort'
 
 const RULES =
@@ -371,6 +372,24 @@ function handleNote(pool: Pool, msg: RpcMsg): void {
   }
   const phase = compactPhase(method, update)
   if (phase && tab.onEvent) tab.onEvent({ kind: 'status', data: phase })
+  if (kind === 'tool_call' || kind === 'tool_call_update') {
+    const cap = toolCaptureFromUpdate(update)
+    if (cap) {
+      try {
+        captureToolHook({
+          cwd: pool.cwd,
+          kind: pool.kind,
+          sessionId: tab.sessionId,
+          toolName: cap.toolName,
+          toolInput: cap.toolInput,
+          toolOutput: cap.toolOutput,
+          toolId: cap.toolId
+        })
+      } catch {
+        /* fail-open */
+      }
+    }
+  }
   const metaU = asRecord(params._meta || update._meta)
   const usage = asRecord(update.usage || params.usage)
   const used = Number(
@@ -930,7 +949,13 @@ async function acpPromptOnce(
   if (/^\s*\/compact\b/i.test(opts.text)) opts.onEvent({ kind: 'status', data: 'compacting' })
   let retry = false
   try {
-    const prompt = acpPromptParts(opts.text, opts.attachments || [])
+    const hooked = wrapPromptWithHooks({
+      cwd: opts.cwd,
+      kind: opts.kind,
+      sessionId: tab.sessionId,
+      text: opts.text
+    })
+    const prompt = acpPromptParts(hooked, opts.attachments || [])
     const result = asRecord(
       await pool.rpc.request(
         'session/prompt',
