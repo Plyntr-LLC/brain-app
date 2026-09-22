@@ -423,7 +423,16 @@ const brain = {
       }>,
     seats: (brainId: string) =>
       ipcRenderer.invoke('plyntr:seats', brainId) as Promise<{
-        seats: { id: string; email: string; name: string; role: string; status: string; bootstrap?: boolean; roots?: string[] }[]
+        seats: {
+          id: string
+          email: string
+          name: string
+          role: string
+          status: string
+          bootstrap?: boolean
+          plyntrScout?: boolean
+          roots?: string[]
+        }[]
         invites: { inviteId: string; email: string; name: string; role: string; status: string; expiresAt: string; roots?: string[] }[]
       }>,
     bind: (brainId: string) =>
@@ -439,9 +448,12 @@ const brain = {
         inviteId: string
         code: string
         expiresAt: string
+        emailed?: boolean
         needsBridge?: boolean
         projectSeatCount?: number
       }>,
+    transfer: (brainId: string) =>
+      ipcRenderer.invoke('plyntr:transfer', brainId) as Promise<{ ok: boolean; removed?: boolean; email?: string }>,
     revokeSeat: (brainId: string, seatId: string) =>
       ipcRenderer.invoke('plyntr:revokeSeat', brainId, seatId) as Promise<{ ok: boolean }>,
     revokeInvite: (brainId: string, inviteId: string) =>

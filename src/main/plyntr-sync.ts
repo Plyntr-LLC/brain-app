@@ -105,12 +105,16 @@ function dryRunPlyntrWorker(path: string, body: Record<string, unknown> | null, 
         code: minted.code,
         expiresAt: minted.expiresAt,
         needsBridge: minted.needsBridge,
-        projectSeatCount: minted.projectSeatCount
+        projectSeatCount: minted.projectSeatCount,
+        emailed: false
       }
     }
-    return { inviteId: 'dry-invite', code: 'TESTTEST12', expiresAt: '2099-01-01T00:00:00.000Z' }
+    return { inviteId: 'dry-invite', code: 'TESTTEST12', expiresAt: '2099-01-01T00:00:00.000Z', emailed: false }
   }
   if (path === '/v1/seats') return { seats: [], invites: [] }
+  if (/^\/v1\/brains\/[^/]+\/transfer$/.test(path)) {
+    return { ok: true, removed: true, email: 'scout@example.com' }
+  }
   if (/\/revoke$/.test(path)) return { ok: true }
   fail(404, { error: 'not found' })
 }
@@ -288,14 +292,31 @@ export async function plyntrMintInvite(
     inviteId: string
     code: string
     expiresAt: string
+    emailed?: boolean
     needsBridge?: boolean
     projectSeatCount?: number
   }>
 }
 
+export async function plyntrTransferScout(brainId: string) {
+  return call(`/v1/brains/${encodeURIComponent(brainId)}/transfer`, { method: 'POST', brainId, body: {} }) as Promise<{
+    ok: boolean
+    removed?: boolean
+    email?: string
+  }>
+}
+
 export async function plyntrListSeats(brainId: string) {
   return call('/v1/seats', { method: 'GET', brainId }) as Promise<{
-    seats: { id: string; email: string; name: string; role: string; status: string; bootstrap?: boolean }[]
+    seats: {
+      id: string
+      email: string
+      name: string
+      role: string
+      status: string
+      bootstrap?: boolean
+      plyntrScout?: boolean
+    }[]
     invites: { inviteId: string; email: string; name: string; role: string; status: string; expiresAt: string }[]
   }>
 }

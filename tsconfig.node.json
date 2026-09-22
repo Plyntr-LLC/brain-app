@@ -30,10 +30,12 @@
     "src/main/cli-auth.test.ts",
     "src/main/phone-lib.test.ts",
     "src/shared/effort.test.ts",
+    "src/shared/plyntr-package.test.ts",
     "src/shared/skin/hidden-kinds.test.ts",
     "src/main/project-hooks.test.ts",
     "src/main/sync-manifest.test.ts",
     "src/main/plyntr-invite.test.ts",
+    "src/main/join-folder-ui.test.ts",
     "src/main/watcher-choice.test.ts"
   ]
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { isTeamSeat, seatLabel, type SeatRole } from '@shared/contracts'
 import { displayPlyntrCode } from '@shared/plyntr-invite'
+import { plyntrPackageCopy } from '@shared/plyntr-package'
 
 type Person = {
   name: string
@@ -177,7 +178,16 @@ export function SettingsPanel({
   const [plyntrSlug, setPlyntrSlug] = useState('')
   const [plyntrLabel, setPlyntrLabel] = useState('')
   const [plyntrRows, setPlyntrRows] = useState<{
-    seats: { id: string; email: string; name: string; role: string; status: string; bootstrap?: boolean; roots?: string[] }[]
+    seats: {
+      id: string
+      email: string
+      name: string
+      role: string
+      status: string
+      bootstrap?: boolean
+      plyntrScout?: boolean
+      roots?: string[]
+    }[]
     invites: { inviteId: string; email: string; name: string; role: string; status: string; expiresAt: string; roots?: string[] }[]
   }>({ seats: [], invites: [] })
   const [shownCode, setShownCode] = useState('')
@@ -887,7 +897,29 @@ export function SettingsPanel({
                   Recover scout token
                 </button>
               ) : null}
-              <p className="tiny">Create a code. It is shown once. Project-only people paste it on the first screen.</p>
+              <p className="tiny">{plyntrPackageCopy()}</p>
+              <p className="tiny">Create a code. It is shown once. If email is set up, they also get it in their inbox.</p>
+              {seat === 'owner' && plyntrRows.seats.some((s) => s.plyntrScout && s.status === 'active') ? (
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const res = await window.brain.plyntr.transfer(plyntrBrainId)
+                      setPlyntrRows(await window.brain.plyntr.seats(plyntrBrainId))
+                      setNote(
+                        res.email
+                          ? `${res.email} is off this brain. They lose sync.`
+                          : 'The Plyntr scout is off this brain.'
+                      )
+                    } catch (e) {
+                      setNote(String((e as Error).message || e))
+                    }
+                  }}
+                >
+                  Remove Plyntr scout
+                </button>
+              ) : null}
               {shownCode ? <p className="note">Code: {displayPlyntrCode(shownCode)}</p> : null}
               <label className="field">
                 Name
@@ -987,15 +1019,22 @@ export function SettingsPanel({
                       role: mintRole,
                       roots
                     })
+                    let bindNote = ''
                     if (res.needsBridge && !connected) {
                       const repo = plyntrOrg && plyntrSlug ? `${plyntrOrg}/${plyntrSlug}-brain` : hqRepo
                       if (repo.includes('/')) {
                         setNote('Connecting project sync. Authorize Brain Bridge on that one repo if your browser opens.')
                         const bound = await window.brain.plyntr.bind(plyntrBrainId)
-                        if (!bound.ok) setNote(bound.detail)
+                        if (!bound.ok) bindNote = bound.detail || 'Connect project sync before the first project person.'
                       }
                     }
                     setShownCode(res.code)
+                    setNote(
+                      bindNote ||
+                        (res.emailed
+                          ? 'The code is in their email and on this screen once.'
+                          : 'The code is on this screen once. Email did not send.')
+                    )
                     setPlyntrRows(await window.brain.plyntr.seats(plyntrBrainId))
                     setDraft({ name: '', email: '', role: 'team', brain: '', brains: [] })
                     setMintRole('team')
@@ -1044,20 +1083,22 @@ export function SettingsPanel({
                         {s.roots?.length ? ` · ${s.roots.join(', ')}` : ''}
                       </span>
                     </span>
-                    <button
-                      type="button"
-                      className="linkish"
-                      onClick={async () => {
-                        try {
-                          await window.brain.plyntr.revokeSeat(plyntrBrainId, s.id)
-                          setPlyntrRows(await window.brain.plyntr.seats(plyntrBrainId))
-                        } catch (e) {
-                          setNote(String((e as Error).message || e))
-                        }
-                      }}
-                    >
-                      Revoke
-                    </button>
+                    {s.plyntrScout ? null : (
+                      <button
+                        type="button"
+                        className="linkish"
+                        onClick={async () => {
+                          try {
+                            await window.brain.plyntr.revokeSeat(plyntrBrainId, s.id)
+                            setPlyntrRows(await window.brain.plyntr.seats(plyntrBrainId))
+                          } catch (e) {
+                            setNote(String((e as Error).message || e))
+                          }
+                        }}
+                      >
+                        Revoke
+                      </button>
+                    )}
                   </div>
                 ))}
             </div>

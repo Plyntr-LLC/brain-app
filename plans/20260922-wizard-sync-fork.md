@@ -92,10 +92,20 @@ In scope:
 
 ### Phase 3
 
-- Package tiers and billing.
-- Owner transfer that removes the Plyntr scout.
-- Email delivery of Path B codes.
-- Hide `auth:joinFolder` from any leftover UI. Delete it only after no packaged build still calls it.
+Smallest shippable slice. Stripe and any other checkout stay out until Joe approves a paid service. This repo has no billing client.
+
+- **Package.** The tier is the caps already enforced on the worker: 2 builders (owner + scout), 10 agency team, project-only with no numeric cap. Settings on a Plyntr brain states that package. No payment call.
+- **Owner transfer.** `POST /v1/brains/:id/transfer` with the owner seat token revokes the active scout whose email is the brain row `scout_email`, and revokes that email's pending scout invites. A later git token for that seat is unauthorized. Scout and team receive 403. Settings shows **Remove Plyntr scout** only for the owner while that scout is still active.
+- **Email.** `POST /v1/invites` still returns the code once. When `extras.sendPathCode` is wired (Resend via `mail.js`, same key as other brain-sync mail), it also emails the code. Mail copy uses `pathCodeMail` and must pass `assertBrainCopy`. If the key is missing or send throws, the mint still succeeds and the response is `emailed: false`.
+- **Legacy join.** Wizard and Settings do not call `auth:joinFolder`. The IPC handler stays so a Path A folder with `roles.json` can still join until no packaged build calls it.
+
+### Phase 3 acceptance
+
+- Settings on a Plyntr folder shows the package sentence (2 builders, 10 agency team, project-only with no numeric cap). The app does not call a payment API.
+- Owner transfer revokes only the Plyntr scout seat. That seat's git token then returns 401. A scout token cannot transfer. A second transfer returns "The Plyntr scout is already off this brain."
+- A mail stub that records the message sets `emailed: true` and the message contains the code. A mail stub that throws sets `emailed: false` and the code is still in the JSON. The seats list still does not contain the plaintext code.
+- Renderer source does not reference `joinFolder`. `auth:joinFolder` remains registered.
+- `npm run typecheck` is green. brain-app unit tests and brain-sync tests are green. Worker deploy is not part of this slice.
 
 ## Backend
 
@@ -431,7 +441,7 @@ Do not edit `vendor/brain-sync/src/acl.js` in this repo. Do not hand-edit `out/`
 
 ### Phase 3
 
-- No acceptance in this plan. Do not start it inside the Phase 1 slice.
+See **Phase 3 acceptance** under Phases. Do not start it inside the Phase 1 slice.
 
 ## Not in this delivery
 
@@ -443,8 +453,7 @@ Do not edit `vendor/brain-sync/src/acl.js` in this repo. Do not hand-edit `out/`
 - Loading both watchers on one folder.
 - All repositories.
 - Auto-migrating brains that are already on disk.
-- Billing, package tiers, and owner-removal of the Plyntr scout.
-- Emailing Path B codes.
+- Stripe or any other paid checkout. Phase 3 states the seat package in Settings and does not charge.
 - Rewriting customer `AGENTS.md` files on existing brains.
 - Editing the vendored ACL lock from brain-app.
 - A signed Mac build or notarization (still blocked until Joe says yes).
@@ -453,7 +462,7 @@ Do not edit `vendor/brain-sync/src/acl.js` in this repo. Do not hand-edit `out/`
 ## Open questions (defaults are binding unless Joe overrides before implementation)
 
 1. **Who creates the first brain?** Default: Joe, with the existing brain-sync platform owner session, as bootstrap scout. The client owner joins later with an Owner code. Jeen joins as Agency team when she is staff, or as Owner when she is the client.
-2. **How does Jeen get the code?** Default: Joe copies it from Settings. No email in Phase 1.
+2. **How does Jeen get the code?** Default: Joe copies it from Settings. No email in Phase 1. Phase 3 also sends it through brain-sync mail when Resend is configured. The screen still shows the code once.
 3. **Code shape and life.** Default: 10 chars from Crockford-32 alphabet (see Review closure), 7 days, one redeem, revocable; revoke/expired frees cap.
 4. **Caps.** Default: 2 builders, 10 agency team, project-only uncapped and root-scoped. Stored per brain on the worker.
 5. **Scout mint rights (Phase 1).** Default: scout mints **team** only. **Project mint: Phase 1.5.** Bootstrap scout mints **team + one owner** (not scout). After the owner redeems, only the owner mints owner or scout.

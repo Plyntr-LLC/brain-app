@@ -108,6 +108,7 @@ import {
   plyntrMintInvite,
   plyntrRevokeInvite,
   plyntrRevokeSeat,
+  plyntrTransferScout,
   resolvePlyntrCode
 } from './plyntr-sync'
 import {
@@ -1222,6 +1223,7 @@ export function registerStubIpc(): void {
   )
   ipcMain.handle('plyntr:revokeSeat', async (_e, brainId: string, seatId: string) => plyntrRevokeSeat(brainId, seatId))
   ipcMain.handle('plyntr:revokeInvite', async (_e, brainId: string, inviteId: string) => plyntrRevokeInvite(brainId, inviteId))
+  ipcMain.handle('plyntr:transfer', async (_e, brainId: string) => plyntrTransferScout(brainId))
   ipcMain.handle('plyntr:active', () => {
     const folder = currentBrainFolder()
     const rows = listBrains()
