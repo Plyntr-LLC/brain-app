@@ -95,14 +95,14 @@ In scope:
 Smallest shippable slice. Stripe and any other checkout stay out until Joe approves a paid service. This repo has no billing client.
 
 - **Package.** The tier is the caps already enforced on the worker: 2 builders (owner + scout), 10 agency team, project-only with no numeric cap. Settings on a Plyntr brain states that package. No payment call.
-- **Owner transfer.** `POST /v1/brains/:id/transfer` with the owner seat token revokes the active scout whose email is the brain row `scout_email`, and revokes that email's pending scout invites. A later git token for that seat is unauthorized. Scout and team receive 403. Settings shows **Remove Plyntr scout** only for the owner while that scout is still active.
+- **Owner transfer.** `POST /v1/brains/:id/transfer` with the redeemed owner's seat token revokes the active scout whose email is the brain row `scout_email`, and revokes that email's pending scout invites. A later git token for that seat is unauthorized. Scout and team receive 403. Settings shows **Remove Plyntr scout** only when this session's seat token role is owner and that token's email is not the active Plyntr scout. After Move to Plyntr sync, a scout seat token stays hidden even when `roles.json` still lists that email as owner, and the app does not send that scout token.
 - **Email.** `POST /v1/invites` still returns the code once. When `extras.sendPathCode` is wired (Resend via `mail.js`, same key as other brain-sync mail), it also emails the code. Mail copy uses `pathCodeMail` and must pass `assertBrainCopy`. If the key is missing or send throws, the mint still succeeds and the response is `emailed: false`.
 - **Legacy join.** Wizard and Settings do not call `auth:joinFolder`. The IPC handler stays so a Path A folder with `roles.json` can still join until no packaged build calls it.
 
 ### Phase 3 acceptance
 
 - Settings on a Plyntr folder shows the package sentence (2 builders, 10 agency team, project-only with no numeric cap). The app does not call a payment API.
-- Owner transfer revokes only the Plyntr scout seat. That seat's git token then returns 401. A scout token cannot transfer. A second transfer returns "The Plyntr scout is already off this brain."
+- Owner transfer revokes only the Plyntr scout seat. That seat's git token then returns 401. A scout token cannot transfer. A second transfer returns "The Plyntr scout is already off this brain." Settings offers the control only for a redeemed owner seat token. A roster owner who holds the scout seat after a move does not see it, and that scout token is not posted.
 - A mail stub that records the message sets `emailed: true` and the message contains the code. A mail stub that throws sets `emailed: false` and the code is still in the JSON. The seats list still does not contain the plaintext code.
 - Renderer source does not reference `joinFolder`. `auth:joinFolder` remains registered.
 - `npm run typecheck` is green. brain-app unit tests and brain-sync tests are green. Worker deploy is not part of this slice.

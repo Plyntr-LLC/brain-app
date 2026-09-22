@@ -3,7 +3,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { redact } from './clone'
-import { plyntrDeviceId, seatTokenForBrain } from './plyntr-seats'
+import { plyntrDeviceId, savePlyntrSeat, seatForBrain, seatTokenForBrain } from './plyntr-seats'
+import { listedRoleForSeat, transferUsesOwnerToken } from '../shared/plyntr-transfer'
 import { normalizePlyntrInviteCode, slugFromBusinessName } from '../shared/plyntr-invite'
 import { dryRunInstalledBody, dryRunPlyntrBind, dryRunProjectInvite, type PlyntrBindActor } from './plyntr-dry-run'
 
@@ -119,10 +120,10 @@ function dryRunPlyntrWorker(path: string, body: Record<string, unknown> | null, 
   fail(404, { error: 'not found' })
 }
 
-async function call(path: string, opts: { method: string; brainId?: string; body?: Record<string, unknown>; repo?: string }): Promise<unknown> {
+async function call(path: string, opts: { method: string; brainId?: string; body?: Record<string, unknown>; repo?: string; token?: string }): Promise<unknown> {
   const repoQuery = String(opts.repo || '')
   if (dryRun()) return dryRunPlyntrWorker(path, opts.body || null, repoQuery)
-  const token = opts.brainId ? seatTokenForBrain(opts.brainId) : ''
+  const token = opts.token || (opts.brainId ? seatTokenForBrain(opts.brainId) : '')
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers.Authorization = `Bearer ${token}`
   const url = new URL(path, ORIGIN)
@@ -299,7 +300,31 @@ export async function plyntrMintInvite(
 }
 
 export async function plyntrTransferScout(brainId: string) {
-  return call(`/v1/brains/${encodeURIComponent(brainId)}/transfer`, { method: 'POST', brainId, body: {} }) as Promise<{
+  const seat = seatForBrain(brainId)
+  if (!seat?.seatToken) throw new Error('Only the owner can remove the Plyntr scout.')
+  let seats: { email: string; role: string; status: string; plyntrScout?: boolean; bootstrap?: boolean }[] | null = null
+  if (!dryRun()) {
+    const listed = await plyntrListSeats(brainId)
+    seats = listed.seats
+    const synced = listedRoleForSeat(seat, listed.seats)
+    if (synced && (synced.role !== seat.role || synced.bootstrap !== Boolean(seat.bootstrap))) {
+      savePlyntrSeat(brainId, { ...seat, role: synced.role, bootstrap: synced.bootstrap })
+      seat.role = synced.role
+    }
+  }
+  const gate = transferUsesOwnerToken({
+    seatRole: seat.role,
+    seatEmail: seat.email,
+    seatToken: seat.seatToken,
+    seats
+  })
+  if (!gate.ok) throw new Error(gate.detail)
+  return call(`/v1/brains/${encodeURIComponent(brainId)}/transfer`, {
+    method: 'POST',
+    brainId,
+    body: {},
+    token: gate.token
+  }) as Promise<{
     ok: boolean
     removed?: boolean
     email?: string

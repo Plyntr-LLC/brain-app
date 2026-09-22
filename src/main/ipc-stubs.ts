@@ -81,6 +81,7 @@ import { justUpdated } from './update'
 import { contextBlurb, grokCli, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
 import { clearAccount, getAccount, getMemberToken, loadAccount, saveAccount } from './session-token'
 import { authCodeRoute, normalizePlyntrInviteCode } from '../shared/plyntr-invite'
+import { listedRoleForSeat, plyntrSessionRole } from '../shared/plyntr-transfer'
 import { readSyncManifest, readSyncMode } from './sync-manifest'
 import { AB_OWNS_PLYNTR, chooseWatcher } from './watcher-choice'
 import {
@@ -1184,11 +1185,9 @@ export function registerStubIpc(): void {
     const id = String(brainId || '')
     const rows = await plyntrListSeats(id)
     const local = seatForBrain(id)
-    const mine = local
-      ? rows.seats.find((s) => s.email === local.email && s.status === 'active' && (s.role === 'owner' || s.role === 'scout'))
-      : undefined
-    if (local && mine && (mine.role !== local.role || Boolean(mine.bootstrap) !== Boolean(local.bootstrap))) {
-      savePlyntrSeat(id, { ...local, role: mine.role, bootstrap: Boolean(mine.bootstrap) })
+    const synced = local ? listedRoleForSeat(local, rows.seats) : null
+    if (local && synced && (synced.role !== local.role || synced.bootstrap !== Boolean(local.bootstrap))) {
+      savePlyntrSeat(id, { ...local, role: synced.role, bootstrap: synced.bootstrap })
     }
     return rows
   })
@@ -1234,12 +1233,15 @@ export function registerStubIpc(): void {
     const slug = row?.slug || repoName.replace(/-brain$/, '')
     const brainId = row?.brainId || ''
     const acct = getAccount()
+    const seat = brainId ? seatForBrain(brainId) : null
     const syncMode = readSyncMode(folder) || ''
     return {
       folder,
       syncMode,
       brainId,
-      role: row?.role || acct?.role || '',
+      role: plyntrSessionRole({ seatRole: seat?.role, accountRole: acct?.role, rowRole: row?.role }),
+      accountRole: String(acct?.role || ''),
+      seatEmail: String(seat?.email || ''),
       hasSeat: Boolean(seatTokenForFolder(folder)),
       org,
       slug,

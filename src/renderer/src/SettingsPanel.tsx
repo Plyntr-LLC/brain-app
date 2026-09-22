@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { isTeamSeat, seatLabel, type SeatRole } from '@shared/contracts'
 import { displayPlyntrCode } from '@shared/plyntr-invite'
 import { plyntrPackageCopy } from '@shared/plyntr-package'
+import { canOfferPlyntrTransfer } from '@shared/plyntr-transfer'
 
 type Person = {
   name: string
@@ -173,6 +174,9 @@ export function SettingsPanel({
   const canAddUsers = joe || !isTeamSeat(seat || role)
   const [plyntrMode, setPlyntrMode] = useState(false)
   const [plyntrBrainId, setPlyntrBrainId] = useState('')
+  const [plyntrRole, setPlyntrRole] = useState('')
+  const [plyntrAccountRole, setPlyntrAccountRole] = useState('')
+  const [plyntrSeatEmail, setPlyntrSeatEmail] = useState('')
   const [plyntrSeat, setPlyntrSeat] = useState(true)
   const [plyntrOrg, setPlyntrOrg] = useState('')
   const [plyntrSlug, setPlyntrSlug] = useState('')
@@ -195,6 +199,49 @@ export function SettingsPanel({
   const [canMove, setCanMove] = useState(false)
   const [moveBusy, setMoveBusy] = useState(false)
   const [syncHint, setSyncHint] = useState('')
+
+  async function takePlyntrActive(
+    active: {
+      canMove?: boolean
+      syncMode?: string
+      brainId?: string
+      hasSeat?: boolean
+      org?: string
+      slug?: string
+      label?: string
+      role?: string
+      accountRole?: string
+      seatEmail?: string
+    } | null,
+    opts?: { clearHint?: boolean }
+  ) {
+    setCanMove(Boolean(active?.canMove))
+    setPlyntrRole(String(active?.role || ''))
+    setPlyntrAccountRole(String(active?.accountRole || ''))
+    setPlyntrSeatEmail(String(active?.seatEmail || ''))
+    if (active?.syncMode === 'plyntr' && active.brainId) {
+      setPlyntrMode(true)
+      setPlyntrBrainId(active.brainId)
+      setPlyntrSeat(Boolean(active.hasSeat))
+      setPlyntrOrg(active.org || '')
+      setPlyntrSlug(active.slug || '')
+      setPlyntrLabel(active.label || '')
+      const health = await window.brain.hqSync.health().catch(() => null)
+      setSyncHint(health?.lastSync || '')
+      if (active.hasSeat) {
+        setPlyntrRows(await window.brain.plyntr.seats(active.brainId).catch(() => ({ seats: [], invites: [] })))
+        const again = await window.brain.plyntr.active().catch(() => null)
+        if (again) {
+          setPlyntrRole(String(again.role || ''))
+          setPlyntrAccountRole(String(again.accountRole || ''))
+          setPlyntrSeatEmail(String(again.seatEmail || ''))
+        }
+      }
+      return
+    }
+    setPlyntrMode(false)
+    if (opts?.clearHint) setSyncHint('')
+  }
 
   useEffect(() => {
     void (async () => {
@@ -238,23 +285,7 @@ export function SettingsPanel({
       ])
       const local = roster.length ? roster : await window.brain.settings.team().catch(() => [])
       setPeople(local)
-      const active = await window.brain.plyntr.active().catch(() => null)
-      setCanMove(Boolean(active?.canMove))
-      if (active?.syncMode === 'plyntr' && active.brainId) {
-        setPlyntrMode(true)
-        setPlyntrBrainId(active.brainId)
-        setPlyntrSeat(active.hasSeat)
-        setPlyntrOrg(active.org)
-        setPlyntrSlug(active.slug)
-        setPlyntrLabel(active.label)
-        const health = await window.brain.hqSync.health().catch(() => null)
-        setSyncHint(health?.lastSync || '')
-        if (active.hasSeat) {
-          setPlyntrRows(await window.brain.plyntr.seats(active.brainId).catch(() => ({ seats: [], invites: [] })))
-        }
-      } else {
-        setPlyntrMode(false)
-      }
+      await takePlyntrActive(await window.brain.plyntr.active().catch(() => null))
       setLiveProjects(projects)
       if (bridge) {
         setHq(bridge)
@@ -350,24 +381,7 @@ export function SettingsPanel({
                   setBrainPath(row.path)
                   setBrainName(placeName(row.path, prettyName(row.name)))
                   onSwitchBrain?.({ path: row.path, name: placeName(row.path, row.name) })
-                  const active = await window.brain.plyntr.active().catch(() => null)
-                  setCanMove(Boolean(active?.canMove))
-                  if (active?.syncMode === 'plyntr' && active.brainId) {
-                    setPlyntrMode(true)
-                    setPlyntrBrainId(active.brainId)
-                    setPlyntrSeat(active.hasSeat)
-                    setPlyntrOrg(active.org)
-                    setPlyntrSlug(active.slug)
-                    setPlyntrLabel(active.label)
-                    const health = await window.brain.hqSync.health().catch(() => null)
-                    setSyncHint(health?.lastSync || '')
-                    if (active.hasSeat) {
-                      setPlyntrRows(await window.brain.plyntr.seats(active.brainId).catch(() => ({ seats: [], invites: [] })))
-                    }
-                  } else {
-                    setPlyntrMode(false)
-                    setSyncHint('')
-                  }
+                  await takePlyntrActive(await window.brain.plyntr.active().catch(() => null), { clearHint: true })
                   const bridge = await window.brain.hqSync.ownerStatus().catch(() => null)
                   setHq(bridge)
                   setFolderRepo(await window.brain.hqSync.watchedRepo().catch(() => ''))
@@ -692,21 +706,7 @@ export function SettingsPanel({
                 const res = await window.brain.plyntr.move()
                 setNote(res.detail)
                 if (!res.ok) return
-                const active = await window.brain.plyntr.active().catch(() => null)
-                setCanMove(Boolean(active?.canMove))
-                if (active?.syncMode === 'plyntr' && active.brainId) {
-                  setPlyntrMode(true)
-                  setPlyntrBrainId(active.brainId)
-                  setPlyntrSeat(active.hasSeat)
-                  setPlyntrOrg(active.org)
-                  setPlyntrSlug(active.slug)
-                  setPlyntrLabel(active.label)
-                  const health = await window.brain.hqSync.health().catch(() => null)
-                  setSyncHint(health?.lastSync || '')
-                  if (active.hasSeat) {
-                    setPlyntrRows(await window.brain.plyntr.seats(active.brainId).catch(() => ({ seats: [], invites: [] })))
-                  }
-                }
+                await takePlyntrActive(await window.brain.plyntr.active().catch(() => null))
               } catch (e) {
                 setNote(String((e as Error).message || e))
               } finally {
@@ -899,7 +899,12 @@ export function SettingsPanel({
               ) : null}
               <p className="tiny">{plyntrPackageCopy()}</p>
               <p className="tiny">Create a code. It is shown once. If email is set up, they also get it in their inbox.</p>
-              {seat === 'owner' && plyntrRows.seats.some((s) => s.plyntrScout && s.status === 'active') ? (
+              {canOfferPlyntrTransfer({
+                accountRole: plyntrAccountRole,
+                seatRole: plyntrRole,
+                sessionEmail: plyntrSeatEmail || email,
+                seats: plyntrRows.seats
+              }) ? (
                 <button
                   className="ghost"
                   type="button"
@@ -907,6 +912,12 @@ export function SettingsPanel({
                     try {
                       const res = await window.brain.plyntr.transfer(plyntrBrainId)
                       setPlyntrRows(await window.brain.plyntr.seats(plyntrBrainId))
+                      const again = await window.brain.plyntr.active().catch(() => null)
+                      if (again) {
+                        setPlyntrRole(String(again.role || ''))
+                        setPlyntrAccountRole(String(again.accountRole || ''))
+                        setPlyntrSeatEmail(String(again.seatEmail || ''))
+                      }
                       setNote(
                         res.email
                           ? `${res.email} is off this brain. They lose sync.`

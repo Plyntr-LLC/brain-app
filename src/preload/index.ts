@@ -464,6 +464,8 @@ const brain = {
         syncMode: string
         brainId: string
         role: string
+        accountRole: string
+        seatEmail: string
         hasSeat: boolean
         org: string
         slug: string

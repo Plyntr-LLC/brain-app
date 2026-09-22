@@ -16,5 +16,5 @@
     }
   },
   "include": ["src/renderer/src/**/*", "src/shared/**/*.ts"],
-  "exclude": ["src/shared/effort.test.ts", "src/shared/skin/hidden-kinds.test.ts", "src/shared/plyntr-package.test.ts"]
+  "exclude": ["src/shared/effort.test.ts", "src/shared/skin/hidden-kinds.test.ts", "src/shared/plyntr-package.test.ts", "src/shared/plyntr-transfer.test.ts"]
 }
