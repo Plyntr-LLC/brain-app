@@ -9,6 +9,17 @@ export async function lookupGithubAccount(login: string): Promise<{
   id?: number
 }> {
   const name = parseGithubOrgLogin(login)
+  if (process.env.BRAIN_APP_DRY_RUN === '1') {
+    if (!name) {
+      return {
+        ok: false,
+        reason: 'invalid-name',
+        detail: 'Paste the GitHub short name (one word, like harolds-books, not your business name) or its github.com address.',
+        login: String(login || '').trim()
+      }
+    }
+    return { ok: true, login: name, type: 'Organization', id: 1 }
+  }
   if (!name) {
     return {
       ok: false,

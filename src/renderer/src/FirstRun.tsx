@@ -4,7 +4,7 @@ import { blankSession, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
 import { SettingsPanel } from './SettingsPanel'
 import { SetupNeeds } from './SetupNeeds'
-import { ForkScreen, PlyntrCodeScreen, PlyntrCreateScreen } from './PlyntrPath'
+import { ForkScreen, PlyntrCodeScreen, PlyntrCreateScreen, PlyntrProjectScreen } from './PlyntrPath'
 import { WorkPulse } from './WorkPulse'
 
 function TwoApps() {
@@ -76,6 +76,7 @@ export function FirstRun() {
     brainId?: string
   } | null>(null)
   const [plyntrJoin, setPlyntrJoin] = useState(false)
+  const [createGate, setCreateGate] = useState(false)
   const [sync, setSync] = useState<{ ok: boolean; line: string } | null>(null)
   const [watching, setWatching] = useState(false)
   const [away, setAway] = useState<'github-org' | 'github-install' | 'ai-login' | null>(null)
@@ -520,7 +521,6 @@ export function FirstRun() {
   }
 
   async function finishPlyntrJoin(row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) {
-    setErr('')
     const until = Date.now() + 15 * 60 * 1000
     let ready = false
     while (Date.now() < until) {
@@ -532,8 +532,7 @@ export function FirstRun() {
       await new Promise((r) => setTimeout(r, 3000))
     }
     if (!ready) {
-      setErr('This brain is not ready on GitHub yet. Ask whoever set it up to finish install on the repo.')
-      return
+      throw new Error('This brain is not ready on GitHub yet. Ask whoever set it up to finish install on the repo.')
     }
     const applied = await window.brain.setup.putFolderPlyntr({
       brainId: row.brainId,
@@ -545,12 +544,40 @@ export function FirstRun() {
   }
 
   async function continuePlyntrJoin() {
-    const pend = await window.brain.plyntr.pending()
-    if (!pend.join) {
-      go('plyntr-code')
-      return
+    setErr('')
+    try {
+      await window.brain.plyntr.resumeAccount('join')
+      const session = await window.brain.auth.session()
+      if (session.signedIn) setS((p) => ({ ...p, email: session.email, role: session.role || p.role }))
+      const pend = await window.brain.plyntr.pending()
+      if (!pend.join) {
+        go('plyntr-code')
+        return
+      }
+      await finishPlyntrJoin(pend.join)
+    } catch (e) {
+      setErr(String((e as Error).message || e))
     }
-    await finishPlyntrJoin(pend.join)
+  }
+
+  async function openPlyntrCreate() {
+    setErr('')
+    try {
+      const pend = await window.brain.plyntr.pending()
+      const session = await window.brain.auth.session()
+      if (pend.create) setPlyntrCreate(pend.create)
+      const step = pend.create?.wizardStep ?? 0
+      const gate = !session.signedIn || (step > 0 && !pend.platform)
+      setCreateGate(gate)
+      if (!gate && step > 0) {
+        await window.brain.plyntr.resumeAccount('create')
+        const again = await window.brain.auth.session()
+        if (again.signedIn) setS((p) => ({ ...p, email: again.email, role: again.role || p.role }))
+      }
+      go('plyntr-create')
+    } catch (e) {
+      setErr(String((e as Error).message || e))
+    }
   }
 
   async function logOut() {
@@ -670,30 +697,36 @@ export function FirstRun() {
               signedOutFolder={Boolean(s.brainPath)}
               pendingCreate={Boolean(plyntrCreate)}
               pendingJoin={plyntrJoin}
+              err={err}
               onAgency={() => {
                 setLoginVia('')
                 go('welcome')
               }}
               onHaveCode={() => go('plyntr-code')}
-              onCreate={() => go('plyntr-create')}
-              onProject={() => {
-                setLoginVia('hq-sync')
-                go('email')
-              }}
-              onContinueCreate={() => go('plyntr-create')}
+              onCreate={() => void openPlyntrCreate()}
+              onProject={() => go('plyntr-project')}
+              onContinueCreate={() => void openPlyntrCreate()}
               onContinueJoin={() => void continuePlyntrJoin()}
             />
           )}
           {s.screen === 'plyntr-code' && (
-            <PlyntrCodeScreen
-              onResolved={(row) => {
-                void finishPlyntrJoin(row)
+            <PlyntrCodeScreen onJoin={finishPlyntrJoin} />
+          )}
+          {s.screen === 'plyntr-project' && (
+            <PlyntrProjectScreen
+              onJoin={async (row) => {
+                await afterProject(row)
+              }}
+              onEmail={() => {
+                setLoginVia('hq-sync')
+                go('email')
               }}
             />
           )}
           {s.screen === 'plyntr-create' && (
             <PlyntrCreateScreen
               initial={plyntrCreate}
+              gateFirst={createGate}
               onCloned={(brainPath) => {
                 go('needs', { brainPath, role: 'scout', path: 'create' })
               }}
@@ -904,6 +937,17 @@ export function FirstRun() {
                         otp,
                         loginVia || undefined
                       )
+                      if (res.via === 'plyntr' && res.brainId && res.repo && res.slug) {
+                        await finishPlyntrJoin({
+                          brainId: res.brainId,
+                          repo: res.repo,
+                          slug: res.slug,
+                          role: res.role || res.member.role || 'team',
+                          email: res.member.email,
+                          name: res.member.name || res.member.email
+                        })
+                        return
+                      }
                       if (res.via === 'hq-sync') {
                         await afterProject({
                           email: res.member.email,

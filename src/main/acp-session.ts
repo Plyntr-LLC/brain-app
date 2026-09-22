@@ -7,6 +7,8 @@ import { binEnv, resolveBin } from './ai-cli'
 import { loginCli } from './install'
 import { acpPromptParts, type Attach } from './attach'
 import { underRoot } from './files'
+import { brainWriteBlock } from './write-guard'
+import { roleForBrainWrite } from './write-guard-role'
 import { grokAcpArgs, ensureGrokLeader, killGrokLeader } from './grok-leader'
 import { asRecord, asText, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 import { captureEvent, skinHint } from './skin/capture'
@@ -501,6 +503,11 @@ function handleReq(pool: Pool, msg: RpcMsg): void {
     const abs = String(p.path || '')
     if (!abs || !underRoot(pool.cwd, abs)) {
       pool.rpc.error(msg.id, -32603, 'That file is not in this folder.')
+      return
+    }
+    const blocked = brainWriteBlock(roleForBrainWrite(pool.cwd), pool.cwd, abs)
+    if (blocked) {
+      pool.rpc.error(msg.id, -32603, blocked)
       return
     }
     try {

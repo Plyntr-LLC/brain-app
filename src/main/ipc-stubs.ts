@@ -29,7 +29,7 @@ import {
   plyntrGithubInstallReady,
   reuseExistingFolder
 } from './setup-folder'
-import { currentBrainFolder, folderForSlug, listBrains, rememberBrain, switchBrain } from './brains'
+import { brainRowForPath, currentBrainFolder, folderForSlug, listBrains, rememberBrain, switchBrain } from './brains'
 import { clearPendingJoin, getPendingJoin, pendingFromInvite, setPendingJoin } from './join-pending'
 import { ensurePendingJoinForFolder } from './watch-handoff'
 import { bringAppFront, clipOrgLogin, stopClipboardOrgWatch, watchClipboardOrg } from './bring-front'
@@ -42,6 +42,7 @@ import {
   isHqMiniFolder,
   isPlatformOwnerSession,
   loadOwnerSession,
+  rememberBrainOwnerSession,
   joinProject,
   openExistingSeat,
   HQ_SYNC_ORIGIN,
@@ -61,6 +62,17 @@ import { cliSignedIn } from './cli-auth'
 import * as ai from './ai-cli'
 import { asAttachBuf, inspectAttach, stashBytes } from './attach'
 import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot } from './files'
+import { brainWriteBlock } from './write-guard'
+import { roleForBrainWrite } from './write-guard-role'
+import {
+  MOVE_NO_REPO,
+  brainRepoParts,
+  folderCanMoveToPlyntr,
+  gitRemoteRepo,
+  runPlyntrMove,
+  writePlyntrSyncFile
+} from './plyntr-move'
+import { lookupGithubAccount } from './github-account'
 import { loadAnyChats, loadChats, saveChats, type SavedChats } from './persist'
 import { rememberPhoneChats } from './phone'
 import { emitChat, markChatBusy } from './chat-fan'
@@ -69,7 +81,7 @@ import { justUpdated } from './update'
 import { contextBlurb, grokCli, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
 import { clearAccount, getAccount, getMemberToken, loadAccount, saveAccount } from './session-token'
 import { authCodeRoute, normalizePlyntrInviteCode } from '../shared/plyntr-invite'
-import { readSyncMode } from './sync-manifest'
+import { readSyncManifest, readSyncMode } from './sync-manifest'
 import { AB_OWNS_PLYNTR, chooseWatcher } from './watcher-choice'
 import {
   clearPendingCreate,
@@ -79,13 +91,17 @@ import {
   readPendingJoin as readPendingPlyntrJoin,
   savePlyntrSeat,
   seatForBrain,
+  seatTokenForBrain,
+  seatTokenForFolder,
   writePendingCreate,
   writePendingJoin
 } from './plyntr-seats'
 import {
   copyDryRunFixture,
   createPlyntrBrain,
+  dryRunProjectFolder,
   ensurePlyntrRepo,
+  plyntrBindUntilReady,
   plyntrGitToken,
   plyntrInstalled,
   plyntrListSeats,
@@ -132,6 +148,28 @@ function saveRecent(folder: string): RecentFolder {
 /** Dev only (`npm run dev`). Packed Brain skips Ads2AI create-team. Join, clone, and Agency Brain switch still run. */
 export function dryRun(): boolean {
   return process.env.BRAIN_APP_DRY_RUN === '1'
+}
+
+async function openPlyntrProject(code: string) {
+  const normalized = normalizePlyntrInviteCode(code)
+  const resolved = await resolvePlyntrCode(normalized)
+  if (resolved.role !== 'project') {
+    throw new Error('That code is for a full seat. Use I have a Plyntr code.')
+  }
+  const joined = dryRun()
+    ? dryRunProjectFolder(resolved)
+    : await joinProject({ email: resolved.email, code: normalized })
+  saveAccount({
+    email: joined.email,
+    name: joined.name,
+    token: `local:${joined.email}`,
+    role: 'project',
+    source: 'hq-sync',
+    folder: joined.brainPath,
+    brains: joined.roots
+  })
+  saveRecent(joined.brainPath)
+  return joined
 }
 
 function tokenForSlug(slug: string): string {
@@ -371,6 +409,10 @@ export function registerStubIpc(): void {
       client: String(person.client || '').trim(),
       brains
     }
+    if (folder) {
+      const blocked = brainWriteBlock(roleForBrainWrite(folder), folder, join(folder, '.team-config', 'roles.json'))
+      if (blocked) return { people: loadTeam(), roster: { ok: false, detail: blocked } }
+    }
     if (row.role === 'project') {
       const added = await addProjectSeat({ name: row.name, email, roots: brains })
       return { people: loadTeam(), roster: { ok: added.ok, detail: added.detail } }
@@ -479,9 +521,72 @@ export function registerStubIpc(): void {
       return { ok: true, via: 'ads2ai' as const, member: res.member, teams, role: '' }
     }
 
-    const plyntrLen = authCodeRoute(code) === 'plyntr'
+    if (authCodeRoute(code) === 'plyntr') {
+      const resolved = await resolvePlyntrCode(normalizePlyntrInviteCode(code))
+      if (resolved.role === 'project') {
+        const joined = dryRun()
+          ? dryRunProjectFolder(resolved)
+          : await joinProject({ email: resolved.email, code: normalizePlyntrInviteCode(code) })
+        saveAccount({
+          email: joined.email,
+          name: joined.name,
+          token: `local:${joined.email}`,
+          role: 'project',
+          source: 'hq-sync',
+          folder: joined.brainPath,
+          brains: joined.roots
+        })
+        saveRecent(joined.brainPath)
+        return {
+          ok: true,
+          via: 'hq-sync' as const,
+          member: { email: joined.email, name: joined.name, role: 'project' },
+          teams: [] as { slug: string; name: string; role: string; kind?: string }[],
+          brainPath: joined.brainPath,
+          teamName: joined.teamName,
+          role: 'project' as const
+        }
+      }
+      const slug = resolved.repo.split('/')[1]?.replace(/-brain$/, '') || ''
+      savePlyntrSeat(resolved.brainId, {
+        seatToken: resolved.seatToken,
+        slug,
+        email: resolved.email,
+        role: resolved.role,
+        repo: resolved.repo,
+        bootstrap: resolved.bootstrap
+      })
+      writePendingJoin({
+        brainId: resolved.brainId,
+        repo: resolved.repo,
+        role: resolved.role,
+        email: resolved.email,
+        name: resolved.name,
+        slug,
+        label: resolved.label,
+        bootstrap: resolved.bootstrap,
+        wizardStep: 5
+      })
+      saveAccount({
+        email: resolved.email,
+        name: resolved.name,
+        token: loginToken(),
+        role: resolved.role,
+        source: 'plyntr'
+      })
+      return {
+        ok: true,
+        via: 'plyntr' as const,
+        member: { email: resolved.email, name: resolved.name, role: resolved.role },
+        teams: [] as { slug: string; name: string; role: string; kind?: string }[],
+        brainPath: '',
+        role: resolved.role,
+        brainId: resolved.brainId,
+        repo: resolved.repo,
+        slug
+      }
+    }
     if (via === 'hq-sync') return asProject()
-    if (plyntrLen) return asAgency()
     try {
       return await asAgency()
     } catch {
@@ -850,10 +955,11 @@ export function registerStubIpc(): void {
     const repo = String(opts.repo || (org && slug ? `${org}/${slug}-brain` : '')).trim()
     if (!brainId || !slug || !repo) throw new Error('This brain is missing its Plyntr id.')
     const dest = defaultBrainDest(slug)
+    const seatBefore = seatForBrain(brainId)
     if (dryRun()) {
       await copyDryRunFixture({ dest, org: org || repo.split('/')[0], slug })
     } else {
-      await ensurePlyntrRepo(brainId)
+      if (seatBefore?.role === 'scout' && seatBefore.bootstrap) await ensurePlyntrRepo(brainId)
       const st = await plyntrInstalled(brainId, repo)
       if (!plyntrGithubInstallReady(st, repo)) {
         throw new Error('The app is not installed on GitHub yet. Click Install in the browser, then try again.')
@@ -967,7 +1073,8 @@ export function registerStubIpc(): void {
         slug: body.slug,
         email: body.scoutEmail,
         role: 'scout',
-        repo: created.repo
+        repo: created.repo,
+        bootstrap: true
       })
       const acct = getAccount() || loadAccount()
       saveAccount({
@@ -983,16 +1090,56 @@ export function registerStubIpc(): void {
     }
     return { brainId: created.brainId, repo: created.repo, hasToken: Boolean(created.seatToken) }
   })
+  function resumePlyntrAccount(brainId: string): { ok: boolean; email: string; role: string } {
+    const seat = seatForBrain(brainId)
+    if (!seat?.seatToken) return { ok: false, email: '', role: '' }
+    const acct = getAccount() || loadAccount()
+    if (!acct || acct.source !== 'plyntr') {
+      saveAccount({
+        email: seat.email,
+        name: acct?.name || seat.email,
+        token: loginToken(),
+        role: seat.role,
+        source: 'plyntr',
+        folder: acct?.folder || '',
+        brains: acct?.brains || []
+      })
+    }
+    return { ok: true, email: seat.email, role: seat.role }
+  }
+
+  ipcMain.handle('plyntr:hasSeat', (_e, brainId: string) => Boolean(seatTokenForBrain(String(brainId || ''))))
+  ipcMain.handle('plyntr:resumeAccount', (_e, which: 'create' | 'join') => {
+    if (which === 'create') {
+      if (!isPlatformOwnerSession()) throw new Error(PLATFORM_GATE)
+      const pending = readPendingCreate()
+      const resumed = pending?.brainId ? resumePlyntrAccount(pending.brainId) : { ok: true, email: '', role: 'scout' }
+      return resumed
+    }
+    const join = readPendingPlyntrJoin()
+    if (!join?.brainId) throw new Error('That join is not waiting.')
+    const resumed = resumePlyntrAccount(join.brainId)
+    if (!resumed.ok) throw new Error('Sign in with the Plyntr code again.')
+    return resumed
+  })
+  ipcMain.handle('plyntr:joinProject', async (_e, code: string) => {
+    if (authCodeRoute(code) !== 'plyntr') throw new Error('That code did not work.')
+    return openPlyntrProject(code)
+  })
   ipcMain.handle('plyntr:resolve', async (_e, code: string) => {
     if (authCodeRoute(code) !== 'plyntr') throw new Error('That code did not work.')
     const resolved = await resolvePlyntrCode(normalizePlyntrInviteCode(code))
+    if (resolved.role === 'project') {
+      throw new Error('That code is for a project folder. Use Project-only code on the first screen.')
+    }
     const slug = resolved.repo.split('/')[1]?.replace(/-brain$/, '') || ''
     savePlyntrSeat(resolved.brainId, {
       seatToken: resolved.seatToken,
       slug,
       email: resolved.email,
       role: resolved.role,
-      repo: resolved.repo
+      repo: resolved.repo,
+      bootstrap: resolved.bootstrap
     })
     writePendingJoin({
       brainId: resolved.brainId,
@@ -1025,11 +1172,53 @@ export function registerStubIpc(): void {
   })
   ipcMain.handle('plyntr:installed', async (_e, brainId: string, repo: string) => {
     const st = await plyntrInstalled(brainId, repo)
-    return { ready: plyntrGithubInstallReady(st, repo), installed: Boolean(st.installed), repo: st.repo || '' }
+    return {
+      ready: plyntrGithubInstallReady(st, repo),
+      installed: Boolean(st.installed),
+      repo: st.repo || '',
+      projectSeatCount: Number(st.projectSeatCount || 0)
+    }
   })
-  ipcMain.handle('plyntr:seats', async (_e, brainId: string) => plyntrListSeats(brainId))
-  ipcMain.handle('plyntr:invite', async (_e, brainId: string, body: { email: string; name: string; role: string }) =>
-    plyntrMintInvite(brainId, body)
+  ipcMain.handle('plyntr:seats', async (_e, brainId: string) => {
+    const id = String(brainId || '')
+    const rows = await plyntrListSeats(id)
+    const local = seatForBrain(id)
+    const mine = local
+      ? rows.seats.find((s) => s.email === local.email && s.status === 'active' && (s.role === 'owner' || s.role === 'scout'))
+      : undefined
+    if (local && mine && (mine.role !== local.role || Boolean(mine.bootstrap) !== Boolean(local.bootstrap))) {
+      savePlyntrSeat(id, { ...local, role: mine.role, bootstrap: Boolean(mine.bootstrap) })
+    }
+    return rows
+  })
+  ipcMain.handle('plyntr:bind', async (_e, brainId: string) => {
+    const id = String(brainId || '')
+    const seat = seatForBrain(id)
+    const bound = await plyntrBindUntilReady(id, seat, {
+      openInstall: (url) => {
+        openInApp(url, 'Authorize Brain Bridge')
+      }
+    })
+    if (bound.ok && bound.ownerToken && seat) {
+      rememberBrainOwnerSession({
+        email: seat.email,
+        token: bound.ownerToken,
+        hq_repo: bound.hq_repo || seat.repo,
+        kind: 'owner'
+      })
+    }
+    return {
+      ok: bound.ok,
+      hq_repo: bound.hq_repo || '',
+      detail: bound.detail,
+      install_url: bound.install_url,
+      projects: bound.projects || []
+    }
+  })
+  ipcMain.handle(
+    'plyntr:invite',
+    async (_e, brainId: string, body: { email: string; name: string; role: string; roots?: string[] }) =>
+      plyntrMintInvite(brainId, body)
   )
   ipcMain.handle('plyntr:revokeSeat', async (_e, brainId: string, seatId: string) => plyntrRevokeSeat(brainId, seatId))
   ipcMain.handle('plyntr:revokeInvite', async (_e, brainId: string, inviteId: string) => plyntrRevokeInvite(brainId, inviteId))
@@ -1037,12 +1226,118 @@ export function registerStubIpc(): void {
     const folder = currentBrainFolder()
     const rows = listBrains()
     const row = rows.find((r) => r.path === folder)
+    const manifest = readSyncManifest(folder)
+    const repo = manifest?.ok ? manifest.manifest.repo : ''
+    const [org = '', repoName = ''] = repo.split('/')
+    const slug = row?.slug || repoName.replace(/-brain$/, '')
+    const brainId = row?.brainId || ''
+    const acct = getAccount()
+    const syncMode = readSyncMode(folder) || ''
     return {
       folder,
-      syncMode: readSyncMode(folder) || '',
-      brainId: row?.brainId || '',
-      role: row?.role || getAccount()?.role || ''
+      syncMode,
+      brainId,
+      role: row?.role || acct?.role || '',
+      hasSeat: Boolean(seatTokenForFolder(folder)),
+      org,
+      slug,
+      label: row?.name || slug,
+      scoutEmail: acct?.email || '',
+      canMove: folderCanMoveToPlyntr({
+        joe: isJoeSuperAdmin(acct, getSettings()),
+        syncMode,
+        mini: isHqMiniFolder(folder),
+        hasMarker: Boolean(folder) && hasBrainMarker(folder)
+      })
     }
+  })
+  ipcMain.handle('plyntr:move', async () => {
+    const acct = getAccount() || loadAccount()
+    const folder = currentBrainFolder()
+    const repo = gitRemoteRepo(folder)
+    const parts = brainRepoParts(repo)
+    const ident = readTeamIdentity(folder)
+    let issuedId = ''
+    const abOnFolder = () => {
+      const w = readWatching()
+      return Boolean(w.watching && w.brainPath && folder && w.brainPath === folder)
+    }
+    return runPlyntrMove({
+      joe: isJoeSuperAdmin(acct, getSettings()),
+      syncMode: readSyncMode(folder),
+      mini: isHqMiniFolder(folder),
+      hasMarker: hasBrainMarker(folder),
+      abWatching: abOnFolder,
+      repo,
+      installed: async () => {
+        if (!issuedId || !parts) return false
+        const st = await plyntrInstalled(issuedId, parts.repo)
+        return plyntrGithubInstallReady(st, parts.repo)
+      },
+      issueToken: async () => {
+        if (!parts) return { brainId: '', hasToken: false }
+        if (!isPlatformOwnerSession()) throw new Error(PLATFORM_GATE)
+        const session = loadOwnerSession()
+        if (!session) throw new Error(PLATFORM_GATE)
+        const existing = brainRowForPath(folder)
+        if (existing?.brainId && seatTokenForBrain(existing.brainId)) {
+          issuedId = existing.brainId
+          return { brainId: existing.brainId, hasToken: true }
+        }
+        const body = {
+          label: ident?.name || parts.slug,
+          org: parts.org,
+          slug: parts.slug,
+          scoutEmail: String(acct?.email || session.email || '').trim().toLowerCase()
+        }
+        let created = await createPlyntrBrain(session.token, { ...body, rotate: Boolean(existing?.brainId) })
+        if (!created.seatToken && created.brainId) {
+          created = await createPlyntrBrain(session.token, { ...body, rotate: true })
+        }
+        issuedId = created.brainId
+        if (created.seatToken) {
+          savePlyntrSeat(created.brainId, {
+            seatToken: created.seatToken,
+            slug: parts.slug,
+            email: body.scoutEmail,
+            role: 'scout',
+            repo: created.repo || parts.repo,
+            bootstrap: true
+          })
+        }
+        return { brainId: created.brainId, hasToken: Boolean(created.seatToken) }
+      },
+      openInstall: async () => {
+        if (!issuedId || !parts) return
+        const look = await lookupGithubAccount(parts.org).catch(() => ({ ok: false as const }))
+        const url = plyntrBrainSyncInstallUrl(issuedId, look.ok ? look.id : undefined)
+        openInApp(url, 'Install Plyntr sync on GitHub')
+      },
+      writeManifest: () => {
+        if (!parts) throw new Error(MOVE_NO_REPO)
+        writePlyntrSyncFile(folder, parts.repo, new Date().toISOString())
+      },
+      remember: (brainId) => {
+        const seat = seatForBrain(brainId)
+        rememberBrain({
+          path: folder,
+          slug: ident?.slug || parts?.slug || '',
+          name: ident?.name || parts?.slug || '',
+          role: seat?.role || 'scout',
+          syncMode: 'plyntr',
+          brainId,
+          seatToken: seat?.seatToken
+        })
+      },
+      holdSync: () => {
+        stopBrainSync()
+        setBrainSyncBlockedReason(folder, AB_OWNS_PLYNTR)
+      },
+      startSync: () => {
+        startBrainSync(folder)
+      },
+      poll: true
+    })
   })
 
   ipcMain.handle('ab:detect', async () => detectApp())
@@ -1313,6 +1608,11 @@ export function registerStubIpc(): void {
     }
     const r = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
     if (r.canceled || !r.filePath) return null
+    const brain = currentBrainFolder()
+    if (brain) {
+      const blocked = brainWriteBlock(roleForBrainWrite(brain), brain, r.filePath)
+      if (blocked) throw new Error(blocked)
+    }
     writeFileSync(r.filePath, String(text || ''))
     return r.filePath
   })

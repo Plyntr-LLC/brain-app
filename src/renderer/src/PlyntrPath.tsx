@@ -18,6 +18,7 @@ export function ForkScreen({
   signedOutFolder,
   pendingCreate,
   pendingJoin,
+  err,
   onAgency,
   onHaveCode,
   onCreate,
@@ -28,6 +29,7 @@ export function ForkScreen({
   signedOutFolder: boolean
   pendingCreate: boolean
   pendingJoin: boolean
+  err: string
   onAgency: () => void
   onHaveCode: () => void
   onCreate: () => void
@@ -49,6 +51,7 @@ export function ForkScreen({
           Continue joining this brain
         </button>
       ) : null}
+      {err ? <p className="note">{err}</p> : null}
       <div className="actions">
         <button className="primary" type="button" onClick={onAgency}>
           With Agency Brain
@@ -69,10 +72,58 @@ export function ForkScreen({
   )
 }
 
-export function PlyntrCodeScreen({
-  onResolved
+export function PlyntrProjectScreen({
+  onJoin,
+  onEmail
 }: {
-  onResolved: (row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) => void
+  onJoin: (res: { email: string; name: string; brainPath: string; teamName: string; roots?: string[] }) => Promise<void>
+  onEmail: () => void
+}) {
+  const [code, setCode] = useState('')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  return (
+    <>
+      <p className="kicker">Project only</p>
+      <h1>Paste the project code.</h1>
+      <p>Whoever added you created a 10-character code. It opens your project folder.</p>
+      <label className="field">
+        Code
+        <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="XXXX-XXXX-XX" />
+      </label>
+      {err ? <p className="note">{err}</p> : null}
+      <div className="actions">
+        <button
+          className="primary"
+          type="button"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            setErr('')
+            try {
+              const row = await window.brain.plyntr.joinProject(code)
+              await onJoin(row)
+            } catch (e) {
+              setErr(String((e as Error).message || e))
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          Continue
+        </button>
+        <button className="linkish" type="button" onClick={onEmail}>
+          I have an email code
+        </button>
+      </div>
+    </>
+  )
+}
+
+export function PlyntrCodeScreen({
+  onJoin
+}: {
+  onJoin: (row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) => Promise<void>
 }) {
   const [code, setCode] = useState('')
   const [err, setErr] = useState('')
@@ -95,7 +146,7 @@ export function PlyntrCodeScreen({
           setErr('')
           try {
             const row = await window.brain.plyntr.resolve(code)
-            onResolved(row)
+            await onJoin(row)
           } catch (e) {
             setErr(String((e as Error).message || e))
           } finally {
@@ -111,17 +162,22 @@ export function PlyntrCodeScreen({
 
 export function PlyntrCreateScreen({
   initial,
+  gateFirst,
   onCloned
 }: {
   initial: CreatePending | null
+  gateFirst: boolean
   onCloned: (brainPath: string) => void
 }) {
-  const [step, setStep] = useState(initial?.wizardStep ?? 0)
+  const savedStep = initial?.wizardStep ?? 0
+  const [step, setStep] = useState(gateFirst ? 0 : savedStep)
   const [label, setLabel] = useState(initial?.label || '')
   const [org, setOrg] = useState(initial?.org || '')
   const [slug, setSlug] = useState(initial?.slug || '')
   const [email, setEmail] = useState(initial?.scoutEmail || '')
   const [brainId, setBrainId] = useState(initial?.brainId || '')
+  const [hasSeat, setHasSeat] = useState(false)
+  const [seatKnown, setSeatKnown] = useState(!initial?.brainId)
   const [repo, setRepo] = useState(initial?.org && initial?.slug ? `${initial.org}/${initial.slug}-brain` : '')
   const [made, setMade] = useState(false)
   const [err, setErr] = useState('')
@@ -134,6 +190,22 @@ export function PlyntrCreateScreen({
       stop.current = true
     }
   }, [])
+  useEffect(() => {
+    if (!brainId) {
+      setHasSeat(false)
+      setSeatKnown(true)
+      return
+    }
+    let live = true
+    void window.brain.plyntr.hasSeat(brainId).then((ok) => {
+      if (!live) return
+      setHasSeat(ok)
+      setSeatKnown(true)
+    })
+    return () => {
+      live = false
+    }
+  }, [brainId])
 
   async function save(next: number, patch?: Partial<CreatePending>) {
     const row = {
@@ -210,11 +282,16 @@ export function PlyntrCreateScreen({
               try {
                 const res = await window.brain.plyntr.createBrain({ label, org, slug, scoutEmail: email, rotate: true })
                 if (!res.hasToken) {
+                  setBrainId(res.brainId)
+                  setRepo(res.repo)
+                  setHasSeat(false)
+                  await save(3, { brainId: res.brainId, scoutEmail: email })
                   setErr('The scout token did not come back. Try Recover again.')
                   return
                 }
                 setBrainId(res.brainId)
                 setRepo(res.repo)
+                setHasSeat(true)
                 await save(4, { brainId: res.brainId })
               } catch (e) {
                 setErr(String((e as Error).message || e))
@@ -238,6 +315,11 @@ export function PlyntrCreateScreen({
                 const pend = await window.brain.plyntr.pending()
                 if (!pend.platform) {
                   setErr(PLATFORM)
+                  return
+                }
+                await window.brain.plyntr.resumeAccount('create')
+                if (gateFirst && savedStep > 0) {
+                  setStep(savedStep)
                   return
                 }
                 await save(1)
@@ -272,19 +354,23 @@ export function PlyntrCreateScreen({
                   return
                 }
                 setEmail(scoutEmail)
-                if (brainId) {
+                if (!seatKnown) return
+                if (hasSeat && brainId) {
                   await save(4, { scoutEmail, brainId })
                   return
                 }
                 const res = await window.brain.plyntr.createBrain({ label, org, slug, scoutEmail })
                 if (!res.hasToken) {
-                  setErr('The scout token did not come back. Use Recover scout token.')
                   setBrainId(res.brainId)
                   setRepo(res.repo)
+                  setHasSeat(false)
+                  await save(3, { scoutEmail, brainId: res.brainId })
+                  setErr('The scout token did not come back. Use Recover scout token.')
                   return
                 }
                 setBrainId(res.brainId)
                 setRepo(res.repo)
+                setHasSeat(true)
                 await save(4, { scoutEmail, brainId: res.brainId })
                 return
               }

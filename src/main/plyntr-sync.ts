@@ -1,9 +1,11 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { redact } from './clone'
 import { plyntrDeviceId, seatTokenForBrain } from './plyntr-seats'
-import { slugFromBusinessName } from '../shared/plyntr-invite'
+import { normalizePlyntrInviteCode, slugFromBusinessName } from '../shared/plyntr-invite'
+import { dryRunInstalledBody, dryRunPlyntrBind, dryRunProjectInvite, type PlyntrBindActor } from './plyntr-dry-run'
 
 const ORIGIN = 'https://brain-sync.joe-84a.workers.dev'
 
@@ -11,6 +13,19 @@ export type PlyntrInstall = {
   installed?: boolean
   repositorySelection?: string
   repo?: string
+  projectSeatCount?: number
+}
+
+export type PlyntrResolved = {
+  seatToken: string
+  role: string
+  email: string
+  name: string
+  repo: string
+  label: string
+  brainId: string
+  bootstrap: boolean
+  roots?: string[]
 }
 
 function dryRun(): boolean {
@@ -51,24 +66,50 @@ function dryRunPlyntrWorker(path: string, body: Record<string, unknown> | null, 
   }
   if (/^\/v1\/brains\/[^/]+\/ensure-repo$/.test(path)) return { ok: true }
   if (path === '/v1/invites/resolve') {
-    const code = String(body?.code || '')
+    const code = normalizePlyntrInviteCode(String(body?.code || ''))
+    if (code === 'PR0J3CT12X') {
+      return {
+        seatToken: '',
+        role: 'project',
+        email: 'pat@example.com',
+        name: 'Pat',
+        repo: 'plyntr-fixture/plyntr-fixture-brain',
+        label: 'Plyntr fixture',
+        brainId: 'dry-brain',
+        bootstrap: false,
+        roots: ['projects/fixture/']
+      }
+    }
     if (code !== 'TESTTEST12') fail(400, { error: 'bad', detail: 'That code did not work.' })
     return {
-      seatToken: 'pbt_dry_join',
-      role: 'team',
-      email: 'jeen@example.com',
-      name: 'Jeen',
+      seatToken: 'pbt_dry_scout',
+      role: 'scout',
+      email: 'joe@plyntr.com',
+      name: 'Joe',
       repo: 'plyntr-fixture/plyntr-fixture-brain',
       label: 'Plyntr fixture',
       brainId: 'dry-brain',
-      bootstrap: false
+      bootstrap: true
     }
   }
   if (path === '/v1/github/installed') {
-    return { installed: true, repositorySelection: 'selected', repo: repoQuery }
+    return dryRunInstalledBody(repoQuery)
   }
   if (path === '/v1/git/token') return { token: 'pbt_dry_git', repo: repoQuery, expiresIn: 600 }
-  if (path === '/v1/invites') return { inviteId: 'dry-invite', code: 'TESTTEST12', expiresAt: '2099-01-01T00:00:00.000Z' }
+  if (path === '/v1/invites') {
+    if (body?.role === 'project') {
+      const minted = dryRunProjectInvite(body.roots)
+      if (!minted.ok) fail(400, { error: 'invalid', detail: minted.detail })
+      return {
+        inviteId: minted.inviteId,
+        code: minted.code,
+        expiresAt: minted.expiresAt,
+        needsBridge: minted.needsBridge,
+        projectSeatCount: minted.projectSeatCount
+      }
+    }
+    return { inviteId: 'dry-invite', code: 'TESTTEST12', expiresAt: '2099-01-01T00:00:00.000Z' }
+  }
   if (path === '/v1/seats') return { seats: [], invites: [] }
   if (/\/revoke$/.test(path)) return { ok: true }
   fail(404, { error: 'not found' })
@@ -128,16 +169,31 @@ export async function plyntrGitToken(brainId: string): Promise<{ token: string; 
   return { token: String(body.token || ''), repo: String(body.repo || '') }
 }
 
-export async function resolvePlyntrCode(code: string): Promise<{
-  seatToken: string
-  role: string
+export function dryRunProjectFolder(resolved: PlyntrResolved): {
+  ok: true
   email: string
   name: string
-  repo: string
-  label: string
-  brainId: string
-  bootstrap: boolean
-}> {
+  role: 'project'
+  brainPath: string
+  teamName: string
+  teamSlug: string
+  roots: string[]
+} {
+  const dest = join(homedir(), 'Projects', 'plyntr-project-dry-run')
+  mkdirSync(dest, { recursive: true })
+  return {
+    ok: true,
+    email: resolved.email,
+    name: resolved.name,
+    role: 'project',
+    brainPath: dest,
+    teamName: resolved.label || 'Brain',
+    teamSlug: resolved.repo.split('/')[1] || 'brain',
+    roots: resolved.roots || []
+  }
+}
+
+export async function resolvePlyntrCode(code: string): Promise<PlyntrResolved> {
   if (dryRun()) {
     return dryRunPlyntrWorker('/v1/invites/resolve', { code }, '') as never
   }
@@ -151,8 +207,90 @@ export async function resolvePlyntrCode(code: string): Promise<{
   return body as never
 }
 
-export async function plyntrMintInvite(brainId: string, body: { email: string; name: string; role: string }) {
-  return call('/v1/invites', { method: 'POST', brainId, body }) as Promise<{ inviteId: string; code: string; expiresAt: string }>
+export type PlyntrBindResult = {
+  ok: boolean
+  hq_repo?: string
+  install_url?: string
+  detail: string
+  projects?: string[]
+  ownerToken?: string
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function plyntrBindOnce(brainId: string, actor: (PlyntrBindActor & { repo?: string }) | null): Promise<PlyntrBindResult> {
+  const repo = String(actor?.repo || '')
+  if (dryRun()) return dryRunPlyntrBind(repo, actor)
+  const token = seatTokenForBrain(brainId)
+  if (!token) return { ok: false, hq_repo: repo, detail: 'company login only' }
+  const r = await fetch(`${ORIGIN}/v1/brains/${encodeURIComponent(brainId)}/bind`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: '{}'
+  })
+  const body = (await r.json().catch(() => ({}))) as {
+    error?: string
+    detail?: string
+    hq_repo?: string
+    install_url?: string
+    projects?: string[]
+    ownerToken?: string
+  }
+  if (r.status === 409 && body.install_url) {
+    return {
+      ok: false,
+      hq_repo: String(body.hq_repo || repo),
+      install_url: String(body.install_url),
+      detail: String(body.detail || 'Authorize Brain Bridge on that one repo, then come back.')
+    }
+  }
+  if (!r.ok) fail(r.status, body)
+  return {
+    ok: true,
+    hq_repo: String(body.hq_repo || repo),
+    projects: Array.isArray(body.projects) ? body.projects : [],
+    detail: String(body.detail || 'Connected.'),
+    ownerToken: body.ownerToken ? String(body.ownerToken) : undefined
+  }
+}
+
+export async function plyntrBindUntilReady(
+  brainId: string,
+  actor: (PlyntrBindActor & { repo?: string }) | null,
+  opts?: { openInstall?: (url: string) => void; timeoutMs?: number }
+): Promise<PlyntrBindResult> {
+  const until = Date.now() + (opts?.timeoutMs ?? 120000)
+  let opened = false
+  while (true) {
+    const res = await plyntrBindOnce(brainId, actor)
+    if (res.ok || !res.install_url) return res
+    if (!opened) {
+      opts?.openInstall?.(res.install_url)
+      opened = true
+    }
+    if (Date.now() >= until) {
+      return {
+        ...res,
+        detail: 'GitHub is not on that repo yet. Authorize Brain Bridge on that one repo, then Connect this brain again.'
+      }
+    }
+    await wait(2000)
+  }
+}
+
+export async function plyntrMintInvite(
+  brainId: string,
+  body: { email: string; name: string; role: string; roots?: string[] }
+) {
+  return call('/v1/invites', { method: 'POST', brainId, body }) as Promise<{
+    inviteId: string
+    code: string
+    expiresAt: string
+    needsBridge?: boolean
+    projectSeatCount?: number
+  }>
 }
 
 export async function plyntrListSeats(brainId: string) {

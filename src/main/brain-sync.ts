@@ -9,7 +9,7 @@ import { plyntrGitToken } from './plyntr-sync'
 import { brainIdForSlug, seatTokenForFolder } from './plyntr-seats'
 import { brainRowForPath } from './brains'
 import { readSyncManifest, syncModesConflict } from './sync-manifest'
-import { AB_OWNS_PLYNTR } from './watcher-choice'
+import { AB_OWNS_PLYNTR, gitCredentialForMode } from './watcher-choice'
 
 let timer: ReturnType<typeof setInterval> | null = null
 let ticking = false
@@ -41,7 +41,7 @@ async function tick(): Promise<void> {
   ticking = true
   const manifest = readSyncManifest(folder)
   const row = brainRowForPath(folder)
-  const plyntr = manifest?.ok && manifest.manifest.mode === 'plyntr'
+  const plyntr = gitCredentialForMode(manifest?.ok ? manifest.manifest.mode : null) === 'plyntr'
   const slug = readTeamIdentity(folder)?.slug || ''
   let token = ''
   if (plyntr) {

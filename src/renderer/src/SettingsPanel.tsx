@@ -22,6 +22,21 @@ type HqStatus = {
   businesses: { id: string; name: string; hq_repo: string; owners: { email: string; name: string; role: string }[] }[]
 }
 
+function macSyncHint(raw: string): string {
+  const s = String(raw || '').trim()
+  if (!s) return 'This Mac has not synced this brain yet.'
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return 'Last sync on this Mac is saved.'
+  const when = d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  return `Last sync on this Mac: ${when}.`
+}
+
+function untilHint(raw: string): string {
+  const d = new Date(String(raw || ''))
+  if (Number.isNaN(d.getTime())) return ''
+  return ` · until ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+}
+
 function prettyName(raw: string): string {
   const s = String(raw || '').trim()
   if (!s) return ''
@@ -157,12 +172,19 @@ export function SettingsPanel({
   const canAddUsers = joe || !isTeamSeat(seat || role)
   const [plyntrMode, setPlyntrMode] = useState(false)
   const [plyntrBrainId, setPlyntrBrainId] = useState('')
+  const [plyntrSeat, setPlyntrSeat] = useState(true)
+  const [plyntrOrg, setPlyntrOrg] = useState('')
+  const [plyntrSlug, setPlyntrSlug] = useState('')
+  const [plyntrLabel, setPlyntrLabel] = useState('')
   const [plyntrRows, setPlyntrRows] = useState<{
-    seats: { id: string; email: string; name: string; role: string; status: string; bootstrap?: boolean }[]
-    invites: { inviteId: string; email: string; name: string; role: string; status: string; expiresAt: string }[]
+    seats: { id: string; email: string; name: string; role: string; status: string; bootstrap?: boolean; roots?: string[] }[]
+    invites: { inviteId: string; email: string; name: string; role: string; status: string; expiresAt: string; roots?: string[] }[]
   }>({ seats: [], invites: [] })
   const [shownCode, setShownCode] = useState('')
   const [mintRole, setMintRole] = useState<SeatRole>('team')
+  const [canMove, setCanMove] = useState(false)
+  const [moveBusy, setMoveBusy] = useState(false)
+  const [syncHint, setSyncHint] = useState('')
 
   useEffect(() => {
     void (async () => {
@@ -207,10 +229,21 @@ export function SettingsPanel({
       const local = roster.length ? roster : await window.brain.settings.team().catch(() => [])
       setPeople(local)
       const active = await window.brain.plyntr.active().catch(() => null)
+      setCanMove(Boolean(active?.canMove))
       if (active?.syncMode === 'plyntr' && active.brainId) {
         setPlyntrMode(true)
         setPlyntrBrainId(active.brainId)
-        setPlyntrRows(await window.brain.plyntr.seats(active.brainId).catch(() => ({ seats: [], invites: [] })))
+        setPlyntrSeat(active.hasSeat)
+        setPlyntrOrg(active.org)
+        setPlyntrSlug(active.slug)
+        setPlyntrLabel(active.label)
+        const health = await window.brain.hqSync.health().catch(() => null)
+        setSyncHint(health?.lastSync || '')
+        if (active.hasSeat) {
+          setPlyntrRows(await window.brain.plyntr.seats(active.brainId).catch(() => ({ seats: [], invites: [] })))
+        }
+      } else {
+        setPlyntrMode(false)
       }
       setLiveProjects(projects)
       if (bridge) {
@@ -307,6 +340,24 @@ export function SettingsPanel({
                   setBrainPath(row.path)
                   setBrainName(placeName(row.path, prettyName(row.name)))
                   onSwitchBrain?.({ path: row.path, name: placeName(row.path, row.name) })
+                  const active = await window.brain.plyntr.active().catch(() => null)
+                  setCanMove(Boolean(active?.canMove))
+                  if (active?.syncMode === 'plyntr' && active.brainId) {
+                    setPlyntrMode(true)
+                    setPlyntrBrainId(active.brainId)
+                    setPlyntrSeat(active.hasSeat)
+                    setPlyntrOrg(active.org)
+                    setPlyntrSlug(active.slug)
+                    setPlyntrLabel(active.label)
+                    const health = await window.brain.hqSync.health().catch(() => null)
+                    setSyncHint(health?.lastSync || '')
+                    if (active.hasSeat) {
+                      setPlyntrRows(await window.brain.plyntr.seats(active.brainId).catch(() => ({ seats: [], invites: [] })))
+                    }
+                  } else {
+                    setPlyntrMode(false)
+                    setSyncHint('')
+                  }
                   const bridge = await window.brain.hqSync.ownerStatus().catch(() => null)
                   setHq(bridge)
                   setFolderRepo(await window.brain.hqSync.watchedRepo().catch(() => ''))
@@ -612,6 +663,52 @@ export function SettingsPanel({
         </section>
       ) : null}
 
+      {canMove ? (
+        <section className="set-block">
+          <p className="kicker">Plyntr sync</p>
+          <h3 className="set-h">Move this brain to Plyntr sync</h3>
+          <p>
+            Install Plyntr sync on this same GitHub repo. This Mac then syncs with Plyntr and stops using the Agency
+            Brain git token. If Agency Brain is already syncing this folder, stop that first.
+          </p>
+          <button
+            className="primary"
+            type="button"
+            disabled={moveBusy}
+            onClick={async () => {
+              try {
+                setMoveBusy(true)
+                setNote('Installing Plyntr sync on this repo, then switching this folder.')
+                const res = await window.brain.plyntr.move()
+                setNote(res.detail)
+                if (!res.ok) return
+                const active = await window.brain.plyntr.active().catch(() => null)
+                setCanMove(Boolean(active?.canMove))
+                if (active?.syncMode === 'plyntr' && active.brainId) {
+                  setPlyntrMode(true)
+                  setPlyntrBrainId(active.brainId)
+                  setPlyntrSeat(active.hasSeat)
+                  setPlyntrOrg(active.org)
+                  setPlyntrSlug(active.slug)
+                  setPlyntrLabel(active.label)
+                  const health = await window.brain.hqSync.health().catch(() => null)
+                  setSyncHint(health?.lastSync || '')
+                  if (active.hasSeat) {
+                    setPlyntrRows(await window.brain.plyntr.seats(active.brainId).catch(() => ({ seats: [], invites: [] })))
+                  }
+                }
+              } catch (e) {
+                setNote(String((e as Error).message || e))
+              } finally {
+                setMoveBusy(false)
+              }
+            }}
+          >
+            {moveBusy ? 'Moving…' : 'Move this brain to Plyntr sync'}
+          </button>
+        </section>
+      ) : null}
+
       {canAddUsers ? (
         <section className="set-block">
           <FoldHead
@@ -761,7 +858,36 @@ export function SettingsPanel({
           </div>
           {plyntrMode ? (
             <div className="person-add">
-              <p className="tiny">Create a code. It is shown once. Project-only people still use the email link on the first screen.</p>
+              {!plyntrSeat ? (
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const res = await window.brain.plyntr.createBrain({
+                        label: plyntrLabel || plyntrSlug,
+                        org: plyntrOrg,
+                        slug: plyntrSlug,
+                        scoutEmail: email,
+                        rotate: true
+                      })
+                      if (!res.hasToken) {
+                        setNote('The scout token did not come back. Try Recover again.')
+                        return
+                      }
+                      setPlyntrBrainId(res.brainId)
+                      setPlyntrSeat(true)
+                      setPlyntrRows(await window.brain.plyntr.seats(res.brainId))
+                      setNote('Scout token recovered.')
+                    } catch (e) {
+                      setNote(String((e as Error).message || e))
+                    }
+                  }}
+                >
+                  Recover scout token
+                </button>
+              ) : null}
+              <p className="tiny">Create a code. It is shown once. Project-only people paste it on the first screen.</p>
               {shownCode ? <p className="note">Code: {displayPlyntrCode(shownCode)}</p> : null}
               <label className="field">
                 Name
@@ -775,10 +901,10 @@ export function SettingsPanel({
                 Seat
                 <select value={mintRole} onChange={(e) => setMintRole(e.target.value as SeatRole)}>
                   {(seat === 'owner'
-                    ? (['owner', 'scout', 'team'] as SeatRole[])
+                    ? (['owner', 'scout', 'team', 'project'] as SeatRole[])
                     : plyntrRows.seats.some((s) => s.email === email && s.bootstrap)
-                      ? (['owner', 'team'] as SeatRole[])
-                      : (['team'] as SeatRole[])
+                      ? (['owner', 'team', 'project'] as SeatRole[])
+                      : (['team', 'project'] as SeatRole[])
                   ).map((r) => (
                     <option key={r} value={r}>
                       {seatLabel(r)}
@@ -786,34 +912,113 @@ export function SettingsPanel({
                   ))}
                 </select>
               </label>
+              {mintRole === 'project' ? (
+                liveProjects.length ? (
+                  <div className="field">
+                    Projects they can use
+                    {liveProjects.map((p) => {
+                      const on = (draft.brains || []).includes(p.id)
+                      return (
+                        <label className="need-row" key={p.id}>
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            onChange={() => {
+                              const cur = new Set(draft.brains || [])
+                              if (on) cur.delete(p.id)
+                              else cur.add(p.id)
+                              setDraft({ ...draft, brains: [...cur], brain: [...cur][0] || '' })
+                            }}
+                          />
+                          <span>{prettyName(p.name)}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <p className="tiny">No project folders in this brain yet. Add folders under projects/ before a Project only seat.</p>
+                )
+              ) : null}
               <button
                 className="primary"
                 type="button"
-                disabled={!draft.name.trim() || !draft.email.includes('@')}
+                disabled={
+                  !draft.name.trim() ||
+                  !draft.email.includes('@') ||
+                  (mintRole === 'project' && (!(draft.brains || []).length || hqBusy))
+                }
                 onClick={async () => {
                   try {
+                    const roots =
+                      mintRole === 'project'
+                        ? (draft.brains || []).map((id) => (id.startsWith('projects/') || id.startsWith('clients/') ? id : `projects/${id}/`))
+                        : undefined
+                    let connected = false
+                    if (mintRole === 'project') {
+                      const repo = plyntrOrg && plyntrSlug ? `${plyntrOrg}/${plyntrSlug}-brain` : hqRepo
+                      const inst = await window.brain.plyntr.installed(plyntrBrainId, repo).catch(() => null)
+                      if (!inst || !inst.projectSeatCount) {
+                        if (!repo.includes('/')) {
+                          setNote('Connect project sync on this brain before the first project person.')
+                          return
+                        }
+                        setHqBusy(true)
+                        setNote('Connecting project sync. Authorize Brain Bridge on that one repo if your browser opens.')
+                        const bound = await window.brain.plyntr.bind(plyntrBrainId)
+                        if (!bound.ok) {
+                          setNote(bound.detail || 'Connect project sync before the first project person.')
+                          return
+                        }
+                        connected = true
+                        setNote(bound.detail)
+                        const st = await window.brain.hqSync.ownerStatus().catch(() => null)
+                        if (st) {
+                          setHq(st)
+                          if (st.hq_repo) setHqRepo(st.hq_repo)
+                          if (st.projects.length) {
+                            setLiveProjects(st.projects.map((p) => ({ id: p.slug, name: prettyName(p.slug) })))
+                          }
+                        }
+                      }
+                    }
                     const res = await window.brain.plyntr.invite(plyntrBrainId, {
                       name: draft.name.trim(),
                       email: draft.email.trim().toLowerCase(),
-                      role: mintRole
+                      role: mintRole,
+                      roots
                     })
+                    if (res.needsBridge && !connected) {
+                      const repo = plyntrOrg && plyntrSlug ? `${plyntrOrg}/${plyntrSlug}-brain` : hqRepo
+                      if (repo.includes('/')) {
+                        setNote('Connecting project sync. Authorize Brain Bridge on that one repo if your browser opens.')
+                        const bound = await window.brain.plyntr.bind(plyntrBrainId)
+                        if (!bound.ok) setNote(bound.detail)
+                      }
+                    }
                     setShownCode(res.code)
                     setPlyntrRows(await window.brain.plyntr.seats(plyntrBrainId))
                     setDraft({ name: '', email: '', role: 'team', brain: '', brains: [] })
+                    setMintRole('team')
                   } catch (e) {
                     setNote(String((e as Error).message || e))
+                  } finally {
+                    setHqBusy(false)
                   }
                 }}
               >
                 Create a code
               </button>
+              <p className="tiny">{macSyncHint(syncHint)}</p>
               {plyntrRows.invites
                 .filter((i) => i.status === 'pending')
                 .map((i) => (
                   <div className="set-row" key={i.inviteId}>
                     <span>
                       {i.name} · {i.email}
-                      <span className="tiny"> · {seatLabel(i.role)} · waiting</span>
+                      <span className="tiny">
+                        {' '}
+                        · {seatLabel(i.role)} · waiting{untilHint(i.expiresAt)}
+                      </span>
                     </span>
                     <button
                       type="button"
@@ -832,8 +1037,12 @@ export function SettingsPanel({
                 .map((s) => (
                   <div className="set-row" key={s.id}>
                     <span>
-                      {s.name} · {s.email}
-                      <span className="tiny"> · {seatLabel(s.role)}</span>
+                      {s.name || s.email} · {s.email}
+                      <span className="tiny">
+                        {' '}
+                        · {seatLabel(s.role)}
+                        {s.roots?.length ? ` · ${s.roots.join(', ')}` : ''}
+                      </span>
                     </span>
                     <button
                       type="button"

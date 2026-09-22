@@ -1130,7 +1130,7 @@ function ChatPane({
       const body = messages.map((m) => `## ${m.who}\n${m.text}`).join('\n\n')
       void window.brain.files.saveText(arg || 'chat.md', body).then((path) => {
         note(path ? `Saved ${path}` : 'Export cancelled.')
-      })
+      }).catch((err) => note(String((err as Error).message || err)))
       return true
     }
     if (name === 'quit' || name === 'exit') {

@@ -12,6 +12,7 @@ export type PlyntrSeat = {
   email: string
   role: string
   repo: string
+  bootstrap?: boolean
   wizardStep?: number
 }
 

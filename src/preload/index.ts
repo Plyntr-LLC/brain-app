@@ -153,12 +153,15 @@ const brain = {
     verify: (email: string, code: string, via?: 'ads2ai' | 'hq-sync') =>
       ipcRenderer.invoke('auth:verify', email, code, via) as Promise<{
         ok: boolean
-        via: 'ads2ai' | 'hq-sync'
+        via: 'ads2ai' | 'hq-sync' | 'plyntr'
         member: { email: string; name?: string; role?: string }
         teams: { slug: string; name: string; role: string; kind?: string }[]
         brainPath?: string
         teamName?: string
         role?: string
+        brainId?: string
+        repo?: string
+        slug?: string
       }>,
     session: () =>
       ipcRenderer.invoke('auth:session') as Promise<{
@@ -384,6 +387,9 @@ const brain = {
     }) => ipcRenderer.invoke('plyntr:saveCreate', row) as Promise<{ ok: boolean }>,
     clearCreate: () => ipcRenderer.invoke('plyntr:clearCreate') as Promise<{ ok: boolean }>,
     clearJoin: () => ipcRenderer.invoke('plyntr:clearJoin') as Promise<{ ok: boolean }>,
+    hasSeat: (brainId: string) => ipcRenderer.invoke('plyntr:hasSeat', brainId) as Promise<boolean>,
+    resumeAccount: (which: 'create' | 'join') =>
+      ipcRenderer.invoke('plyntr:resumeAccount', which) as Promise<{ ok: boolean; email: string; role: string }>,
     createBrain: (body: { label: string; org: string; slug: string; scoutEmail: string; rotate?: boolean }) =>
       ipcRenderer.invoke('plyntr:createBrain', body) as Promise<{ brainId: string; repo: string; hasToken: boolean }>,
     resolve: (code: string) =>
@@ -397,21 +403,71 @@ const brain = {
         slug: string
         bootstrap: boolean
       }>,
+    joinProject: (code: string) =>
+      ipcRenderer.invoke('plyntr:joinProject', code) as Promise<{
+        ok: boolean
+        email: string
+        name: string
+        role: 'project'
+        brainPath: string
+        teamName: string
+        teamSlug: string
+        roots: string[]
+      }>,
     installed: (brainId: string, repo: string) =>
-      ipcRenderer.invoke('plyntr:installed', brainId, repo) as Promise<{ ready: boolean; installed: boolean; repo: string }>,
+      ipcRenderer.invoke('plyntr:installed', brainId, repo) as Promise<{
+        ready: boolean
+        installed: boolean
+        repo: string
+        projectSeatCount: number
+      }>,
     seats: (brainId: string) =>
       ipcRenderer.invoke('plyntr:seats', brainId) as Promise<{
-        seats: { id: string; email: string; name: string; role: string; status: string; bootstrap?: boolean }[]
-        invites: { inviteId: string; email: string; name: string; role: string; status: string; expiresAt: string }[]
+        seats: { id: string; email: string; name: string; role: string; status: string; bootstrap?: boolean; roots?: string[] }[]
+        invites: { inviteId: string; email: string; name: string; role: string; status: string; expiresAt: string; roots?: string[] }[]
       }>,
-    invite: (brainId: string, body: { email: string; name: string; role: string }) =>
-      ipcRenderer.invoke('plyntr:invite', brainId, body) as Promise<{ inviteId: string; code: string; expiresAt: string }>,
+    bind: (brainId: string) =>
+      ipcRenderer.invoke('plyntr:bind', brainId) as Promise<{
+        ok: boolean
+        hq_repo?: string
+        install_url?: string
+        detail: string
+        projects?: string[]
+      }>,
+    invite: (brainId: string, body: { email: string; name: string; role: string; roots?: string[] }) =>
+      ipcRenderer.invoke('plyntr:invite', brainId, body) as Promise<{
+        inviteId: string
+        code: string
+        expiresAt: string
+        needsBridge?: boolean
+        projectSeatCount?: number
+      }>,
     revokeSeat: (brainId: string, seatId: string) =>
       ipcRenderer.invoke('plyntr:revokeSeat', brainId, seatId) as Promise<{ ok: boolean }>,
     revokeInvite: (brainId: string, inviteId: string) =>
       ipcRenderer.invoke('plyntr:revokeInvite', brainId, inviteId) as Promise<{ ok: boolean }>,
     active: () =>
-      ipcRenderer.invoke('plyntr:active') as Promise<{ folder: string; syncMode: string; brainId: string; role: string }>
+      ipcRenderer.invoke('plyntr:active') as Promise<{
+        folder: string
+        syncMode: string
+        brainId: string
+        role: string
+        hasSeat: boolean
+        org: string
+        slug: string
+        label: string
+        scoutEmail: string
+        canMove: boolean
+      }>,
+    move: () =>
+      ipcRenderer.invoke('plyntr:move') as Promise<{
+        ok: boolean
+        detail: string
+        needInstall: boolean
+        startedSync: boolean
+        wroteManifest: boolean
+        brainId: string
+      }>
   },
   ab: {
     detect: () => ipcRenderer.invoke('ab:detect'),

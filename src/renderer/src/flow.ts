@@ -16,7 +16,7 @@ export function blankSession(path: PathKind, dryRun: boolean): Session {
 
 export function stepState(s: Session, id: (typeof STEPS)[number]['id']): 'now' | 'done' | 'blocked' | '' {
   if (id === 'signed') {
-    if (['fork', 'welcome', 'email', 'otp', 'plyntr-code', 'plyntr-create'].includes(s.screen)) return 'now'
+    if (['fork', 'welcome', 'email', 'otp', 'plyntr-code', 'plyntr-project', 'plyntr-create'].includes(s.screen)) return 'now'
     return 'done'
   }
   if (id === 'ab') {

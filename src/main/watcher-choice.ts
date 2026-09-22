@@ -18,3 +18,8 @@ export function chooseWatcher(opts: {
 export function plyntrBlockedByAgency(mode: string | null, abWatching: boolean): boolean {
   return mode === 'plyntr' && abWatching
 }
+
+/** Valid plyntr manifest uses the worker git token. Every other folder stays on ads2ai. */
+export function gitCredentialForMode(mode: string | null | undefined): 'plyntr' | 'ads2ai' {
+  return mode === 'plyntr' ? 'plyntr' : 'ads2ai'
+}

@@ -8,6 +8,7 @@ import { app } from 'electron'
 import { parseGithubHqRepo } from './github-repo'
 import { getAccount, loadAccount } from './session-token'
 import { getSettings } from './settings-store'
+import { dryRunOwnerBind, storeBrainOwnerSession } from './plyntr-dry-run'
 import { isJoeSuperAdmin } from './super-admin'
 
 export const HQ_SYNC_ORIGIN = 'https://brain-sync.joe-84a.workers.dev'
@@ -123,6 +124,13 @@ export function loadOwnerSession(): OwnerSession | null {
   } catch {
     return null
   }
+}
+
+export function rememberBrainOwnerSession(next: OwnerSession): boolean {
+  const cur = loadOwnerSession()
+  if (!storeBrainOwnerSession(cur?.kind)) return false
+  saveOwnerSession({ ...next, kind: 'owner' })
+  return true
 }
 
 function saveOwnerSession(next: OwnerSession | null): void {
@@ -703,6 +711,10 @@ export async function ownerBind(hqRepo: string): Promise<{
   detail: string
   projects?: string[]
 }> {
+  if (process.env.BRAIN_APP_DRY_RUN === '1') {
+    const repo = parseGithubHqRepo(hqRepo) || String(hqRepo || '').trim()
+    return dryRunOwnerBind(repo, loadOwnerSession()?.kind || '')
+  }
   const session = loadOwnerSession()
   if (!session) throw new Error('Sign in for project sync first.')
   const api = await ownerApi(session.token)
