@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false",
     "preview": "electron-vite preview",
     "pack:mac": "node scripts/pack-mac.cjs",
-    "pack:win": "node scripts/pack-win.cjs"
+    "pack:win": "node scripts/pack-win.cjs",
+    "dry-run:plyntr-fixture": "node scripts/dry-run-plyntr-fixture.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

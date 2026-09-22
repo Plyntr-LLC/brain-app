@@ -4,6 +4,7 @@ import { blankSession, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
 import { SettingsPanel } from './SettingsPanel'
 import { SetupNeeds } from './SetupNeeds'
+import { ForkScreen, PlyntrCodeScreen, PlyntrCreateScreen } from './PlyntrPath'
 import { WorkPulse } from './WorkPulse'
 
 function TwoApps() {
@@ -65,6 +66,16 @@ export function FirstRun() {
   const [updatedLine, setUpdatedLine] = useState('')
   const [projectSeat, setProjectSeat] = useState<{ folder: string; label: string } | null>(null)
   const [loginVia, setLoginVia] = useState<'ads2ai' | 'hq-sync' | ''>('')
+  const [plyntrCreate, setPlyntrCreate] = useState<{
+    createId: string
+    wizardStep: number
+    label: string
+    org: string
+    slug: string
+    scoutEmail: string
+    brainId?: string
+  } | null>(null)
+  const [plyntrJoin, setPlyntrJoin] = useState(false)
   const [sync, setSync] = useState<{ ok: boolean; line: string } | null>(null)
   const [watching, setWatching] = useState(false)
   const [away, setAway] = useState<'github-org' | 'github-install' | 'ai-login' | null>(null)
@@ -78,7 +89,11 @@ export function FirstRun() {
       case 'otp':
         return 'email'
       case 'email':
-        return 'welcome'
+      case 'plyntr-code':
+      case 'plyntr-create':
+        return 'fork'
+      case 'welcome':
+        return 'fork'
       case 'choice':
         return session.email ? 'otp' : 'welcome'
       case 'name':
@@ -106,7 +121,7 @@ export function FirstRun() {
 
   function goBack() {
     const from = s.screen
-    if (from === 'welcome' || from === 'chat') return
+    if (from === 'welcome' || from === 'chat' || from === 'fork') return
     const prev = navStack.current.pop() ?? defaultBackScreen(from, s)
     if (!prev || prev === from) return
     setErr('')
@@ -126,20 +141,29 @@ export function FirstRun() {
       const d = await window.brain.ai.detect()
       setDetected(d)
       const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
-      const email = acct.signedIn ? acct.email : existing?.email || ''
+      const email = acct.signedIn ? acct.email : ''
       const folder = existing?.brainPath || acct.folder || ''
+      const pend = await window.brain.plyntr.pending().catch(() => null)
+      setPlyntrCreate(pend?.create || null)
+      setPlyntrJoin(Boolean(pend?.join))
       setProjectSeat(e.projectSeat ? { folder: e.projectSeat.folder, label: e.projectSeat.label } : null)
       setWatching(Boolean(existing?.watching || st.watching))
       const signed = pick ? Boolean((await window.brain.ai.signedIn(pick)).signedIn) : false
-      let screen = 'email'
-      const abMissing = st.items.some((i) => i.id === 'ab' && !i.present)
-      if (acct.signedIn && st.ready && signed && folder && !abMissing) {
-        const role = acct.role || ''
-        if (role === 'project') screen = 'chat'
-        else {
-          const br = await window.brain.setup.bridgeStatus(folder).catch(() => null)
-          screen = br?.installed || br?.skipped ? 'chat' : 'bridge'
-        }
+      const mode = folder ? await window.brain.setup.syncMode(folder).catch(() => '') : ''
+      const pathB = mode === 'plyntr'
+      let screen = 'fork'
+      const abMissing = !pathB && st.items.some((i) => i.id === 'ab' && !i.present)
+      const project = acct.role === 'project' || e.projectSeat
+      if (!acct.signedIn) screen = 'fork'
+      else if (project && (loginVia === 'hq-sync' || acct.role === 'project')) {
+        screen = folder && signed ? 'chat' : 'aipick'
+      } else if (pathB && folder && st.ready && signed) screen = 'chat'
+      else if (pathB && folder && !st.ready) screen = 'needs'
+      else if (pathB && folder) screen = 'aipick'
+      else if (pend?.create || pend?.join) screen = 'fork'
+      else if (acct.signedIn && st.ready && signed && folder && !abMissing) {
+        const br = await window.brain.setup.bridgeStatus(folder).catch(() => null)
+        screen = br?.installed || br?.skipped ? 'chat' : 'bridge'
       } else if (acct.signedIn && folder && (abMissing || !st.ready)) screen = 'needs'
       else if (acct.signedIn && (st.watching || folder)) screen = 'aipick'
       else if (acct.signedIn) screen = 'needs'
@@ -165,6 +189,12 @@ export function FirstRun() {
     void window.brain.hqSync.health().then(setSync).catch(() => {})
     return window.brain.onSyncHealth(setSync)
   }, [])
+
+  useEffect(() => {
+    if (s.screen !== 'chat') return
+    void window.brain.plyntr.clearCreate()
+    void window.brain.plyntr.clearJoin()
+  }, [s.screen])
 
   useEffect(() => {
     return window.brain.setup.onBack((ev) => {
@@ -368,6 +398,8 @@ export function FirstRun() {
     if (role === 'project' || kind === 'project' || patch?.bridgeOk || s.bridgeOk) return false
     const path = patch?.brainPath || s.brainPath || ''
     if (!path) return false
+    const mode = await window.brain.setup.syncMode(path).catch(() => '')
+    if (mode === 'plyntr') return false
     const st = await window.brain.setup.bridgeStatus(path).catch(() => null)
     if (st?.installed) return false
     go('bridge', { ...patch, brainPath: path })
@@ -487,11 +519,46 @@ export function FirstRun() {
     }
   }
 
+  async function finishPlyntrJoin(row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) {
+    setErr('')
+    const until = Date.now() + 15 * 60 * 1000
+    let ready = false
+    while (Date.now() < until) {
+      const st = await window.brain.plyntr.installed(row.brainId, row.repo).catch(() => null)
+      if (st?.ready) {
+        ready = true
+        break
+      }
+      await new Promise((r) => setTimeout(r, 3000))
+    }
+    if (!ready) {
+      setErr('This brain is not ready on GitHub yet. Ask whoever set it up to finish install on the repo.')
+      return
+    }
+    const applied = await window.brain.setup.putFolderPlyntr({
+      brainId: row.brainId,
+      slug: row.slug,
+      repo: row.repo,
+      org: row.repo.split('/')[0]
+    })
+    go('needs', { brainPath: applied.brainPath, role: row.role, email: row.email, business: row.name || row.slug })
+  }
+
+  async function continuePlyntrJoin() {
+    const pend = await window.brain.plyntr.pending()
+    if (!pend.join) {
+      go('plyntr-code')
+      return
+    }
+    await finishPlyntrJoin(pend.join)
+  }
+
   async function logOut() {
     await window.brain.auth.logout()
     navStack.current = []
     setShowInvite(false)
-    go('email')
+    setLoginVia('')
+    setS((prev) => ({ ...blankSession(prev.path, prev.dryRun), screen: 'fork' }))
   }
 
   async function afterProject(res: {
@@ -585,7 +652,7 @@ export function FirstRun() {
         </aside>
         ) : null}
         <section className="main">
-          {s.screen !== 'chat' && s.screen !== 'welcome' ? (
+          {s.screen !== 'chat' && s.screen !== 'welcome' && s.screen !== 'fork' ? (
             <div className="setup-back-row">
               <button type="button" className="ghost setup-back" onClick={() => goBack()}>
                 Back
@@ -598,6 +665,40 @@ export function FirstRun() {
               <span>Dev dry-run. New GitHub short names and clones stay off until you pack the app.</span>
             </div>
           ) : null}
+          {s.screen === 'fork' && (
+            <ForkScreen
+              signedOutFolder={Boolean(s.brainPath)}
+              pendingCreate={Boolean(plyntrCreate)}
+              pendingJoin={plyntrJoin}
+              onAgency={() => {
+                setLoginVia('')
+                go('welcome')
+              }}
+              onHaveCode={() => go('plyntr-code')}
+              onCreate={() => go('plyntr-create')}
+              onProject={() => {
+                setLoginVia('hq-sync')
+                go('email')
+              }}
+              onContinueCreate={() => go('plyntr-create')}
+              onContinueJoin={() => void continuePlyntrJoin()}
+            />
+          )}
+          {s.screen === 'plyntr-code' && (
+            <PlyntrCodeScreen
+              onResolved={(row) => {
+                void finishPlyntrJoin(row)
+              }}
+            />
+          )}
+          {s.screen === 'plyntr-create' && (
+            <PlyntrCreateScreen
+              initial={plyntrCreate}
+              onCloned={(brainPath) => {
+                go('needs', { brainPath, role: 'scout', path: 'create' })
+              }}
+            />
+          )}
           {s.screen === 'needs' && (
             <SetupNeeds
               onReady={({ ready, watching, ai, brainPath }) => {
@@ -728,7 +829,7 @@ export function FirstRun() {
                       return
                     }
                     try {
-                      const sent = await window.brain.auth.requestCode(s.email)
+                      const sent = await window.brain.auth.requestCode(s.email, loginVia === 'hq-sync' ? 'hq-sync' : undefined)
                       setLoginVia(sent.via)
                       go('otp')
                     } catch (e) {
@@ -879,7 +980,7 @@ export function FirstRun() {
                   type="button"
                   onClick={async () => {
                     try {
-                      const sent = await window.brain.auth.requestCode(s.email)
+                      const sent = await window.brain.auth.requestCode(s.email, loginVia === 'hq-sync' ? 'hq-sync' : undefined)
                       setLoginVia(sent.via)
                       setErr('Check that inbox for a six-digit code. It lasts ten minutes.')
                     } catch (e) {

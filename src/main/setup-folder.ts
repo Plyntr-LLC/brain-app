@@ -1,4 +1,5 @@
 const GITHUB_APP_INSTALL = 'https://github.com/apps/agency-brain-sync/installations/new'
+const PLYNTR_APP_INSTALL = 'https://github.com/apps/plyntr-brain-sync/installations/new'
 const BRIDGE_APP_INSTALL = 'https://github.com/apps/plyntr-brain-bridge/installations/new'
 const BRIDGE_ORIGIN = 'https://brain-sync.joe-84a.workers.dev'
 
@@ -46,6 +47,32 @@ export function clonePlan(opts: {
   if (opts.isGit) return 'refuse-other-repo'
   if (opts.empty) return 'replace-empty'
   return 'refuse-not-empty'
+}
+
+export function plyntrBrainSyncInstallUrl(brainId: string, orgId?: number): string {
+  const state = encodeURIComponent(String(brainId || '').trim())
+  const id = Number(orgId)
+  if (state && Number.isFinite(id) && id > 0) {
+    return `${PLYNTR_APP_INSTALL}?state=${state}&suggested_target_id=${Math.floor(id)}`
+  }
+  if (state) return `${PLYNTR_APP_INSTALL}?state=${state}`
+  return PLYNTR_APP_INSTALL
+}
+
+export function plyntrGithubInstallReady(
+  st: { installed?: boolean; repositorySelection?: string; repo?: string } | null,
+  expectedRepo: string
+): boolean {
+  if (st?.installed !== true) return false
+  const sel = String(st.repositorySelection || '').toLowerCase()
+  if (sel === 'all' || sel === 'all_repositories') return false
+  const repo = String(st.repo || '').trim().toLowerCase()
+  const want = String(expectedRepo || '').trim().toLowerCase()
+  return Boolean(repo && want && repo === want)
+}
+
+export function plyntrCreateRepoUrl(org: string, slug: string): string {
+  return `https://github.com/organizations/${encodeURIComponent(org)}/repositories/new?name=${encodeURIComponent(`${slug}-brain`)}`
 }
 
 /** Install URL for Brain Bridge on one repo. state matches the worker's payload. */

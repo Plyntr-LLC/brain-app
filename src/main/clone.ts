@@ -33,7 +33,11 @@ function git(cwd: string, args: string[], timeoutMs = 120_000): Promise<{ code: 
 }
 
 export function redact(s: string): string {
-  return s.replace(/x-access-token:[^@]+@/g, 'x-access-token:***@').replace(/\/\/[^:]+:[^@]+@/g, '//***@').replace(/Bearer\s+[A-Za-z0-9._\-=]+/gi, 'Bearer ***')
+  return s
+    .replace(/x-access-token:[^@]+@/g, 'x-access-token:***@')
+    .replace(/\/\/[^:]+:[^@]+@/g, '//***@')
+    .replace(/Bearer\s+[A-Za-z0-9._\-=]+/gi, 'Bearer ***')
+    .replace(/\bpbt_[A-Za-z0-9_-]+/g, 'pbt_***')
 }
 
 export function hasBrainMarker(dest: string): boolean {

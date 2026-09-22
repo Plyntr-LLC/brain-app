@@ -12,13 +12,18 @@ export type Account = {
   name?: string
   token: string
   role?: string
-  source?: 'ads2ai' | 'team-file' | 'hq-sync'
+  source?: 'ads2ai' | 'team-file' | 'hq-sync' | 'plyntr'
   folder?: string
   brains?: string[]
 }
 
 let memberToken: string | null = null
 let account: Account | null = null
+
+function accountSource(raw: string | undefined): NonNullable<Account['source']> {
+  if (raw === 'team-file' || raw === 'hq-sync' || raw === 'plyntr' || raw === 'ads2ai') return raw
+  return 'ads2ai'
+}
 
 function accountPath(): string {
   return join(app.getPath('userData'), 'account.json')
@@ -43,7 +48,7 @@ function persist(next: Account | null): void {
       name: next.name || '',
       token: next.token,
       role: next.role || '',
-      source: next.source || 'ads2ai',
+      source: accountSource(next.source),
       folder: next.folder || '',
       brains: next.brains || []
     })
@@ -80,7 +85,7 @@ export function loadAccount(): Account | null {
       name: greet,
       token,
       role: String(raw.role || ''),
-      source: raw.source === 'team-file' ? 'team-file' : raw.source === 'hq-sync' ? 'hq-sync' : 'ads2ai',
+      source: accountSource(raw.source),
       folder: String(raw.folder || ''),
       brains: Array.isArray(raw.brains) ? raw.brains.map((b) => String(b || '').trim()).filter(Boolean) : []
     }
@@ -107,7 +112,7 @@ export function saveAccount(next: Account): Account {
     name: greet,
     token: String(next.token || ''),
     role: String(next.role || ''),
-    source: next.source === 'team-file' ? 'team-file' : next.source === 'hq-sync' ? 'hq-sync' : 'ads2ai',
+    source: accountSource(next.source),
     folder: String(next.folder || ''),
     brains: Array.isArray(next.brains) ? next.brains.map((b) => String(b || '').trim()).filter(Boolean) : []
   })
@@ -127,8 +132,8 @@ export function setMemberToken(token: string | null): void {
 export function getMemberToken(): string {
   if (!memberToken) loadAccount()
   if (!memberToken) throw new Error('Sign in first')
-  if (memberToken.startsWith('local:') || account?.source === 'hq-sync') {
-    throw new Error('This sign-in is the shared folder, not Agency Brain membership.')
+  if (memberToken.startsWith('local:') || memberToken.startsWith('login:') || account?.source !== 'ads2ai') {
+    throw new Error('This sign-in is not an Agency Brain membership.')
   }
   return memberToken
 }

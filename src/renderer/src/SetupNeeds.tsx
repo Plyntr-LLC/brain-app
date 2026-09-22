@@ -9,6 +9,7 @@ type ToolNeed = {
   present: boolean
   warn: string
   accept: string
+  kind?: 'status' | 'install'
 }
 
 type Status = {
@@ -109,6 +110,14 @@ export function SetupNeeds({
 
   async function runOne(item: ToolNeed): Promise<void> {
     if (stop.current) return
+    if (item.kind === 'status') {
+      setBusyId(item.id)
+      setBusyLabel(item.label)
+      setNote(`Waiting on ${item.label}.`)
+      const ok = await pollUntil((st) => Boolean(st.items.find((i) => i.id === item.id)?.present), `Waiting on ${item.label}.`)
+      if (!ok) throw new Error(`${item.label} is not ready yet.`)
+      return
+    }
     setBusyId(item.id)
     setBusyLabel(item.label)
     if (item.accept) {
@@ -156,7 +165,7 @@ export function SetupNeeds({
         return
       }
       const missing = first.items.filter((i) => !i.present)
-      const required = new Set(['brew', 'git', 'cloudflared'])
+      const required = new Set(['brew', 'git', ...(first.items.some((i) => i.id === 'cloudflared') ? ['cloudflared'] : [])])
       for (const item of missing) {
         if (stop.current) {
           setPhase('review')

@@ -3,7 +3,7 @@ import { OWNER_NEEDS, STEPS, TEAM_NEED, type NeedId, type PathKind, type Session
 export function blankSession(path: PathKind, dryRun: boolean): Session {
   return {
     path,
-    screen: 'welcome',
+    screen: 'fork',
     email: '',
     teams: [],
     business: path === 'join' || path === 'second' ? "Harold's Books" : '',
@@ -16,7 +16,8 @@ export function blankSession(path: PathKind, dryRun: boolean): Session {
 
 export function stepState(s: Session, id: (typeof STEPS)[number]['id']): 'now' | 'done' | 'blocked' | '' {
   if (id === 'signed') {
-    return s.screen === 'welcome' || s.screen === 'email' || s.screen === 'otp' ? 'now' : 'done'
+    if (['fork', 'welcome', 'email', 'otp', 'plyntr-code', 'plyntr-create'].includes(s.screen)) return 'now'
+    return 'done'
   }
   if (id === 'ab') {
     if (s.abWatching || s.brainPath) return 'done'

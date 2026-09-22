@@ -1,0 +1,11 @@
+{
+  "team_slug": "plyntr-fixture",
+  "team_name": "plyntr-fixture",
+  "members": [
+    {
+      "email": "joe@plyntr.com",
+      "name": "Joe",
+      "role": "scout"
+    }
+  ]
+}

@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { bridgeInstallUrl, clonePlan, githubAppInstallUrl, githubInstallReady, reuseExistingFolder } from './setup-folder.ts'
+import {
+  bridgeInstallUrl,
+  clonePlan,
+  githubAppInstallUrl,
+  githubInstallReady,
+  plyntrGithubInstallReady,
+  reuseExistingFolder
+} from './setup-folder.ts'
 
 test('reuseExistingFolder never returns a different team folder', () => {
   assert.equal(
@@ -105,6 +112,23 @@ test('clonePlan refuses an empty checkout and replaces a blank folder', () => {
     clonePlan({ destExists: true, isGit: false, sameOrigin: false, hasMarker: false, empty: false }),
     'refuse-not-empty'
   )
+})
+
+test('plyntrGithubInstallReady rejects the wrong repo and All repositories', () => {
+  const repo = 'harolds-books/harolds-books-brain'
+  assert.equal(
+    plyntrGithubInstallReady({ installed: true, repositorySelection: 'selected', repo }, repo),
+    true
+  )
+  assert.equal(
+    plyntrGithubInstallReady({ installed: true, repositorySelection: 'selected', repo: 'other/other-brain' }, repo),
+    false
+  )
+  assert.equal(
+    plyntrGithubInstallReady({ installed: true, repositorySelection: 'all', repo }, repo),
+    false
+  )
+  assert.equal(githubInstallReady({ installed: true, repoUrl: 'https://github.com/acme/acme-brain' }), true)
 })
 
 test('githubInstallReady is true only when GitHub says the app is installed', () => {

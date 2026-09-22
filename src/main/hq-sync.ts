@@ -108,6 +108,11 @@ export type PlatformBusiness = {
   owners: { email: string; name: string; role: string }[]
 }
 
+export function isPlatformOwnerSession(): boolean {
+  const session = loadOwnerSession()
+  return Boolean(session && session.kind === 'platform')
+}
+
 export function loadOwnerSession(): OwnerSession | null {
   try {
     const raw = JSON.parse(readFileSync(ownerPath(), 'utf8')) as OwnerSession

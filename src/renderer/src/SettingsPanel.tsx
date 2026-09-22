@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { isTeamSeat, seatLabel, type SeatRole } from '@shared/contracts'
+import { displayPlyntrCode } from '@shared/plyntr-invite'
 
 type Person = {
   name: string
@@ -154,6 +155,14 @@ export function SettingsPanel({
   const [phoneNote, setPhoneNote] = useState('')
   const joe = email === 'joe@plyntr.com'
   const canAddUsers = joe || !isTeamSeat(seat || role)
+  const [plyntrMode, setPlyntrMode] = useState(false)
+  const [plyntrBrainId, setPlyntrBrainId] = useState('')
+  const [plyntrRows, setPlyntrRows] = useState<{
+    seats: { id: string; email: string; name: string; role: string; status: string; bootstrap?: boolean }[]
+    invites: { inviteId: string; email: string; name: string; role: string; status: string; expiresAt: string }[]
+  }>({ seats: [], invites: [] })
+  const [shownCode, setShownCode] = useState('')
+  const [mintRole, setMintRole] = useState<SeatRole>('team')
 
   useEffect(() => {
     void (async () => {
@@ -197,6 +206,12 @@ export function SettingsPanel({
       ])
       const local = roster.length ? roster : await window.brain.settings.team().catch(() => [])
       setPeople(local)
+      const active = await window.brain.plyntr.active().catch(() => null)
+      if (active?.syncMode === 'plyntr' && active.brainId) {
+        setPlyntrMode(true)
+        setPlyntrBrainId(active.brainId)
+        setPlyntrRows(await window.brain.plyntr.seats(active.brainId).catch(() => ({ seats: [], invites: [] })))
+      }
       setLiveProjects(projects)
       if (bridge) {
         setHq(bridge)
@@ -744,7 +759,101 @@ export function SettingsPanel({
               </>
             )}
           </div>
-          {people.map((p) => {
+          {plyntrMode ? (
+            <div className="person-add">
+              <p className="tiny">Create a code. It is shown once. Project-only people still use the email link on the first screen.</p>
+              {shownCode ? <p className="note">Code: {displayPlyntrCode(shownCode)}</p> : null}
+              <label className="field">
+                Name
+                <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+              </label>
+              <label className="field">
+                Email
+                <input value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} />
+              </label>
+              <label className="field">
+                Seat
+                <select value={mintRole} onChange={(e) => setMintRole(e.target.value as SeatRole)}>
+                  {(seat === 'owner'
+                    ? (['owner', 'scout', 'team'] as SeatRole[])
+                    : plyntrRows.seats.some((s) => s.email === email && s.bootstrap)
+                      ? (['owner', 'team'] as SeatRole[])
+                      : (['team'] as SeatRole[])
+                  ).map((r) => (
+                    <option key={r} value={r}>
+                      {seatLabel(r)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="primary"
+                type="button"
+                disabled={!draft.name.trim() || !draft.email.includes('@')}
+                onClick={async () => {
+                  try {
+                    const res = await window.brain.plyntr.invite(plyntrBrainId, {
+                      name: draft.name.trim(),
+                      email: draft.email.trim().toLowerCase(),
+                      role: mintRole
+                    })
+                    setShownCode(res.code)
+                    setPlyntrRows(await window.brain.plyntr.seats(plyntrBrainId))
+                    setDraft({ name: '', email: '', role: 'team', brain: '', brains: [] })
+                  } catch (e) {
+                    setNote(String((e as Error).message || e))
+                  }
+                }}
+              >
+                Create a code
+              </button>
+              {plyntrRows.invites
+                .filter((i) => i.status === 'pending')
+                .map((i) => (
+                  <div className="set-row" key={i.inviteId}>
+                    <span>
+                      {i.name} · {i.email}
+                      <span className="tiny"> · {seatLabel(i.role)} · waiting</span>
+                    </span>
+                    <button
+                      type="button"
+                      className="linkish"
+                      onClick={async () => {
+                        await window.brain.plyntr.revokeInvite(plyntrBrainId, i.inviteId)
+                        setPlyntrRows(await window.brain.plyntr.seats(plyntrBrainId))
+                      }}
+                    >
+                      Revoke
+                    </button>
+                  </div>
+                ))}
+              {plyntrRows.seats
+                .filter((s) => s.status === 'active')
+                .map((s) => (
+                  <div className="set-row" key={s.id}>
+                    <span>
+                      {s.name} · {s.email}
+                      <span className="tiny"> · {seatLabel(s.role)}</span>
+                    </span>
+                    <button
+                      type="button"
+                      className="linkish"
+                      onClick={async () => {
+                        try {
+                          await window.brain.plyntr.revokeSeat(plyntrBrainId, s.id)
+                          setPlyntrRows(await window.brain.plyntr.seats(plyntrBrainId))
+                        } catch (e) {
+                          setNote(String((e as Error).message || e))
+                        }
+                      }}
+                    >
+                      Revoke
+                    </button>
+                  </div>
+                ))}
+            </div>
+          ) : null}
+          {!plyntrMode && people.map((p) => {
             const ids = p.brains?.length ? p.brains : p.brain && p.brain !== 'hq' ? [p.brain] : []
             const names = ids.map((id) => liveProjects.find((x) => x.id === id)?.name || prettyName(id)).join(', ')
             const seatLine =
@@ -769,7 +878,7 @@ export function SettingsPanel({
               </div>
             )
           })}
-          <div className="person-add">
+          {!plyntrMode ? <div className="person-add">
             <label className="field">
               Name
               <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Maya" />
@@ -852,7 +961,7 @@ export function SettingsPanel({
             >
               Add this person
             </button>
-          </div>
+          </div> : null}
             </>
           ) : null}
         </section>

@@ -9,13 +9,18 @@ import { Readable } from 'node:stream'
 import { shell } from 'electron'
 import { DOWNLOAD_AB } from '../shared/contracts'
 import { detectApp, readWatching } from './agency-brain'
-import { currentBrainFolder } from './brains'
+import { brainRowForPath, currentBrainFolder } from './brains'
+import { hasBrainMarker } from './clone'
 import { handOffToAgencyBrain } from './watch-handoff'
 import { loadAccount } from './session-token'
 import { binEnv, detect as detectAi, resolveBin } from './ai-cli'
+import { plyntrInstalled } from './plyntr-sync'
+import { brainIdForSlug } from './plyntr-seats'
+import { readSyncManifest, readSyncMode } from './sync-manifest'
+import { plyntrGithubInstallReady } from './setup-folder'
 import type { AiKind } from '../shared/contracts'
 
-export type NeedId = 'brew' | 'git' | 'ab' | 'cloudflared' | 'grok' | 'claude' | 'cursor' | 'gpt'
+export type NeedId = 'brew' | 'git' | 'ab' | 'cloudflared' | 'grok' | 'claude' | 'cursor' | 'gpt' | 'plyntr-github'
 
 export type NeedItem = {
   id: NeedId
@@ -26,6 +31,7 @@ export type NeedItem = {
   warn: string
   /** Short line shown immediately before this install starts. */
   accept: string
+  kind?: 'status' | 'install'
 }
 
 export type InstallResult = {
@@ -74,7 +80,7 @@ function cloudflaredPresent(): boolean {
   }
 }
 
-export function listNeeds(): { ready: boolean; watching: boolean; brainPath: string | null; items: NeedItem[] } {
+export async function listNeeds(): Promise<{ ready: boolean; watching: boolean; brainPath: string | null; items: NeedItem[] }> {
   const ai = detectAi()
   const watchingInfo = readWatching()
   const watching = Boolean(watchingInfo.brainPath)
@@ -162,6 +168,43 @@ export function listNeeds(): { ready: boolean; watching: boolean; brainPath: str
   const hasCli = ai.grok || ai.claude || ai.cursor || ai.gpt
   const folderPath = currentBrainFolder() || watchingInfo.brainPath || loadAccount()?.folder || null
   const folder = Boolean(folderPath)
+  const mode = readSyncMode(folderPath || '')
+  if (mode === 'plyntr') {
+    const kept = items.filter((i) => i.id !== 'ab' && i.id !== 'cloudflared')
+    const manifest = folderPath ? readSyncManifest(folderPath) : null
+    const repo = manifest?.ok ? manifest.manifest.repo : ''
+    const row = folderPath ? brainRowForPath(folderPath) : null
+    const brainId = row?.brainId || brainIdForSlug(row?.slug || '')
+    let gh = false
+    if (brainId && repo) {
+      try {
+        gh = plyntrGithubInstallReady(await plyntrInstalled(brainId, repo), repo)
+      } catch {
+        gh = false
+      }
+    }
+    kept.push({
+      id: 'plyntr-github',
+      kind: 'status',
+      label: 'GitHub app on this repo',
+      line: 'plyntr-brain-sync on this one repo. Only select repositories.',
+      present: gh,
+      warn: '',
+      accept: ''
+    })
+    const signed =
+      (ai.grok && cliSignedIn('grok')) ||
+      (ai.claude && cliSignedIn('claude')) ||
+      (ai.cursor && cliSignedIn('cursor')) ||
+      (ai.gpt && cliSignedIn('gpt'))
+    const marker = Boolean(folderPath && hasBrainMarker(folderPath))
+    return {
+      ready: Boolean(folderPath) && gitPresent() && signed && marker && gh,
+      watching,
+      brainPath: folderPath,
+      items: kept
+    }
+  }
   return {
     ready: folder && hasCli && gitPresent() && cloudflaredPresent(),
     watching,
@@ -352,6 +395,9 @@ export async function loginCliUntilDone(kind: AiKind): Promise<{ ok: boolean; de
 }
 
 export async function installNeed(id: NeedId): Promise<InstallResult> {
+  if (id === 'plyntr-github') {
+    return { ok: false, detail: 'GitHub app on this repo is a status check, not an installer.', wait: 'none' }
+  }
   const win32 = process.platform === 'win32'
   if (id === 'brew') {
     if (win32) return { ok: true, detail: 'Homebrew is a Mac tool. Skipped on Windows.', wait: 'none' }

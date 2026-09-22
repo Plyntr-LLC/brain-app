@@ -9,6 +9,7 @@
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["node"],
     "outDir": "out"
   },
@@ -30,6 +31,9 @@
     "src/main/phone-lib.test.ts",
     "src/shared/effort.test.ts",
     "src/shared/skin/hidden-kinds.test.ts",
-    "src/main/project-hooks.test.ts"
+    "src/main/project-hooks.test.ts",
+    "src/main/sync-manifest.test.ts",
+    "src/main/plyntr-invite.test.ts",
+    "src/main/watcher-choice.test.ts"
   ]
 }

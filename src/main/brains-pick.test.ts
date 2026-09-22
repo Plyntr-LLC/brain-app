@@ -37,6 +37,13 @@ test('mergeBrainRows keeps Plyntr first and drops missing folders', () => {
     assert.equal(rows[0].slug, 'plyntr')
     assert.equal(rows[1].slug, 'acme')
     assert.equal(rows[1].watching, true)
+    const kept = mergeBrainRows([
+      { path: acme, name: 'Acme', slug: 'acme', syncMode: 'plyntr', brainId: 'b1', seatToken: 'pbt_secret' },
+      { path: acme, name: 'Acme', slug: 'acme', watching: true }
+    ])
+    assert.equal(kept[0].syncMode, 'plyntr')
+    assert.equal(kept[0].brainId, 'b1')
+    assert.equal(kept[0].seatToken, 'pbt_secret')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

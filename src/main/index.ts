@@ -2,7 +2,9 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
 import { readWatching } from './agency-brain'
 import { currentBrainFolder } from './brains'
-import { startBrainSync } from './brain-sync'
+import { setBrainSyncBlockedReason, startBrainSync } from './brain-sync'
+import { readSyncMode } from './sync-manifest'
+import { AB_OWNS_PLYNTR } from './watcher-choice'
 import { notifySetupBack } from './bring-front'
 import { retargetHqSync, isHqMiniFolder } from './hq-sync'
 import { loadAccount } from './session-token'
@@ -100,7 +102,11 @@ app.whenReady().then(() => {
     void retargetHqSync(folder)
     if (folder) prewarm('grok', folder)
   } else if (folder) {
-    startBrainSync(folder)
+    if (readSyncMode(folder) === 'plyntr' && watching.watching && watching.brainPath === folder) {
+      setBrainSyncBlockedReason(folder, AB_OWNS_PLYNTR)
+    } else {
+      startBrainSync(folder)
+    }
     prewarm('grok', folder)
   }
   restorePhoneIfWanted()

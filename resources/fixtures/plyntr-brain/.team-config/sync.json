@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "mode": "plyntr",
+  "githubApp": "plyntr-brain-sync",
+  "bridgeApp": "plyntr-brain-bridge",
+  "repo": "plyntr-fixture/plyntr-fixture-brain",
+  "createdAt": "2026-09-22T00:00:00.000Z"
+}

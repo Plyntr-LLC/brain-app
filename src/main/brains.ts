@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { app } from 'electron'
 import { readTeamIdentity, readWatching } from './agency-brain'
 import { mergeBrainRows, pickActivePath, type BrainRow } from './brains-pick'
@@ -26,7 +26,34 @@ function loadFile(): BrainsFile {
 }
 
 function saveFile(next: BrainsFile): void {
-  writeFileSync(filePath(), JSON.stringify(next, null, 2))
+  const p = filePath()
+  writeFileSync(p, JSON.stringify(next, null, 2))
+  try {
+    chmodSync(p, 0o600)
+  } catch {
+    /* windows */
+  }
+}
+
+function samePath(a: string, b: string): boolean {
+  try {
+    return resolve(a) === resolve(b)
+  } catch {
+    return a === b
+  }
+}
+
+export function brainRowForPath(path: string): BrainRow | null {
+  const want = String(path || '').trim()
+  if (!want) return null
+  const rows = loadFile().rows || []
+  return rows.find((r) => r.path === want || samePath(r.path, want)) || null
+}
+
+export function publicBrainRow(row: BrainRow): BrainRow {
+  const next = { ...row }
+  delete next.seatToken
+  return next
 }
 
 function agencyBrains(): BrainRow[] {
@@ -96,10 +123,18 @@ export function listBrains(): BrainRow[] {
       rowFromFolder(current)
     ].filter(Boolean) as BrainRow[]
   )
-  return rows.map((r) => ({ ...r, current: r.path === current }))
+  return rows.map((r) => publicBrainRow({ ...r, current: r.path === current }))
 }
 
-export function rememberBrain(row: { path?: string; name?: string; slug?: string; role?: string }): BrainRow[] {
+export function rememberBrain(row: {
+  path?: string
+  name?: string
+  slug?: string
+  role?: string
+  syncMode?: 'plyntr' | 'agency-brain'
+  brainId?: string
+  seatToken?: string
+}): BrainRow[] {
   const file = loadFile()
   const next = mergeBrainRows([
     ...(file.rows || []),
@@ -107,7 +142,10 @@ export function rememberBrain(row: { path?: string; name?: string; slug?: string
       path: String(row.path || '').trim(),
       name: String(row.name || '').trim(),
       slug: String(row.slug || '').trim(),
-      role: String(row.role || '').trim() || undefined
+      role: String(row.role || '').trim() || undefined,
+      syncMode: row.syncMode,
+      brainId: row.brainId,
+      seatToken: row.seatToken
     }
   ])
   saveFile({ ...file, rows: next.filter((r) => r.path) })

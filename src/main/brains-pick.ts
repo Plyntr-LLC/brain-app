@@ -8,6 +8,9 @@ export type BrainRow = {
   role?: string
   watching?: boolean
   current?: boolean
+  syncMode?: 'plyntr' | 'agency-brain'
+  brainId?: string
+  seatToken?: string
 }
 
 function samePath(a: string, b: string): boolean {
@@ -41,7 +44,10 @@ export function mergeBrainRows(rows: BrainRow[]): BrainRow[] {
       name: String(row.name || '').trim() || basename(path),
       slug: String(row.slug || '').trim(),
       role: String(row.role || '').trim() || undefined,
-      watching: Boolean(row.watching)
+      watching: Boolean(row.watching),
+      syncMode: row.syncMode === 'plyntr' || row.syncMode === 'agency-brain' ? row.syncMode : undefined,
+      brainId: String(row.brainId || '').trim() || undefined,
+      seatToken: String(row.seatToken || '').trim() || undefined
     }
     if (i < 0) out.push(next)
     else {
@@ -50,7 +56,10 @@ export function mergeBrainRows(rows: BrainRow[]): BrainRow[] {
         name: next.name || out[i].name,
         slug: next.slug || out[i].slug,
         role: next.role || out[i].role,
-        watching: out[i].watching || next.watching
+        watching: out[i].watching || next.watching,
+        syncMode: next.syncMode || out[i].syncMode,
+        brainId: next.brainId || out[i].brainId,
+        seatToken: next.seatToken || out[i].seatToken
       }
     }
   }
