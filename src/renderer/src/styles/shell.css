@@ -229,6 +229,13 @@
   flex-direction: column;
   overflow: auto;
 }
+.setup-back-row {
+  margin: 0 0 0.5rem;
+}
+.setup-back {
+  padding: 0.2rem 0.55rem;
+  font-size: 0.85rem;
+}
 .actions {
   margin-top: auto;
   display: flex;

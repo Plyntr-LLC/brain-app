@@ -70,7 +70,52 @@ export function FirstRun() {
   const [away, setAway] = useState<'github-org' | 'github-install' | 'ai-login' | null>(null)
   const bridgeOnce = useRef('')
   const folderPutKey = useRef('')
+  const navStack = useRef<string[]>([])
   const [folderCopyBusy, setFolderCopyBusy] = useState(false)
+
+  function defaultBackScreen(current: string, session: Session): string | null {
+    switch (current) {
+      case 'otp':
+        return 'email'
+      case 'email':
+        return 'welcome'
+      case 'choice':
+        return session.email ? 'otp' : 'welcome'
+      case 'name':
+        return 'choice'
+      case 'github':
+        return session.business.trim().length >= 2 ? 'name' : 'welcome'
+      case 'abapply':
+        return 'github'
+      case 'bridge':
+        return session.brainPath ? 'abapply' : 'github'
+      case 'needs':
+        return session.brainPath ? 'abapply' : 'github'
+      case 'aipick':
+        return 'needs'
+      case 'aiwork':
+        return 'aipick'
+      case 'hello':
+        return 'welcome'
+      case 'abget':
+        return 'welcome'
+      default:
+        return null
+    }
+  }
+
+  function goBack() {
+    const from = s.screen
+    if (from === 'welcome' || from === 'chat') return
+    const prev = navStack.current.pop() ?? defaultBackScreen(from, s)
+    if (!prev || prev === from) return
+    setErr('')
+    setAway(null)
+    setFolderCopyBusy(false)
+    if (from === 'abapply') folderPutKey.current = ''
+    if (from === 'bridge') bridgeOnce.current = ''
+    setS((p) => ({ ...p, screen: prev }))
+  }
 
   useEffect(() => {
     void (async () => {
@@ -146,7 +191,10 @@ export function FirstRun() {
 
   function go(screen: string, patch?: Partial<Session>) {
     setErr('')
-    setS((prev) => ({ ...prev, screen, ...patch }))
+    setS((prev) => {
+      if (prev.screen !== screen) navStack.current.push(prev.screen)
+      return { ...prev, screen, ...patch }
+    })
   }
 
   useEffect(() => {
@@ -441,6 +489,7 @@ export function FirstRun() {
 
   async function logOut() {
     await window.brain.auth.logout()
+    navStack.current = []
     setShowInvite(false)
     go('email')
   }
@@ -536,6 +585,13 @@ export function FirstRun() {
         </aside>
         ) : null}
         <section className="main">
+          {s.screen !== 'chat' && s.screen !== 'welcome' ? (
+            <div className="setup-back-row">
+              <button type="button" className="ghost setup-back" onClick={() => goBack()}>
+                Back
+              </button>
+            </div>
+          ) : null}
           {s.screen !== 'chat' ? <TwoApps /> : null}
           {s.screen !== 'chat' && s.dryRun ? (
             <div className="demo">

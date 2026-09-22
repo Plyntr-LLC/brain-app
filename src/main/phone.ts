@@ -101,6 +101,25 @@ function devicesFile(): string {
   return join(app.getPath('userData'), 'phone-devices.json')
 }
 
+function phonePrefFile(): string {
+  return join(app.getPath('userData'), 'phone-pref.json')
+}
+
+function readPhonePrefEnabled(): boolean {
+  try {
+    const raw = JSON.parse(readFileSync(phonePrefFile(), 'utf8')) as { enabled?: boolean }
+    return raw.enabled === true
+  } catch {
+    return false
+  }
+}
+
+function writePhonePrefEnabled(enabled: boolean): void {
+  const dir = app.getPath('userData')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(phonePrefFile(), JSON.stringify({ enabled: enabled === true }))
+}
+
 function loadDevices(): PhoneDevice[] {
   try {
     const raw = JSON.parse(readFileSync(devicesFile(), 'utf8')) as { devices?: PhoneDevice[] }
@@ -1060,17 +1079,26 @@ export async function startPhone(): Promise<PhoneStatus> {
     }
     mintOffer()
     detail = 'Plug this Mac in. Closing the lid on battery will sleep. Scan the QR on your phone.'
+    writePhonePrefEnabled(true)
     pushStatus()
     return status()
   } catch (err) {
     const msg = String((err as Error).message || err)
     await stopPhone()
+    writePhonePrefEnabled(false)
     detail = msg
     pushStatus()
     return { ...status(), detail: msg }
   } finally {
     starting = false
   }
+}
+
+/** Turn Phone back on after quit or an app update when the user left it on. */
+export function restorePhoneIfWanted(): void {
+  if (process.platform !== 'darwin') return
+  if (!readPhonePrefEnabled()) return
+  void startPhone()
 }
 
 export function rotatePhoneToken(): PhoneStatus {
@@ -1085,7 +1113,10 @@ export function registerPhoneIpc(): void {
     applyLiveEvent(ev)
   })
   ipcMain.handle('phone:start', async () => startPhone())
-  ipcMain.handle('phone:stop', async () => stopPhone())
+  ipcMain.handle('phone:stop', async () => {
+    writePhonePrefEnabled(false)
+    return stopPhone()
+  })
   ipcMain.handle('phone:status', async () => status())
   ipcMain.handle('phone:rotate', async () => rotatePhoneToken())
   ipcMain.handle('phone:link', async () => rotatePhoneToken())

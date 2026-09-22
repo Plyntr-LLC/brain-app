@@ -11,7 +11,7 @@ import { killAllPtys, registerPtyIpc } from './pty'
 import { killAllWarm, prewarm } from './warm'
 import { registerUpdateIpc, startAutoUpdate, recordLaunchVersion, isInstallingUpdate, installDownloadedUpdate } from './update'
 import { registerSkinIpc } from './skin/ipc'
-import { registerPhoneIpc, stopPhone } from './phone'
+import { registerPhoneIpc, restorePhoneIfWanted, stopPhone } from './phone'
 import { refreshTray, startTray } from './tray'
 
 registerStubIpc()
@@ -103,6 +103,7 @@ app.whenReady().then(() => {
     startBrainSync(folder)
     prewarm('grok', folder)
   }
+  restorePhoneIfWanted()
   app.on('activate', () => {
     if (!mainWin || mainWin.isDestroyed()) createWindow()
     else mainWin.show()
