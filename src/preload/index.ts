@@ -304,7 +304,7 @@ const brain = {
         detail?: string
       }>,
     ensureRepo: (slug: string) => ipcRenderer.invoke('setup:ensureRepo', slug),
-    putFolder: (opts: { teamSlug: string; org?: string }) =>
+    putFolder: (opts: { teamSlug: string; org?: string; retry?: boolean }) =>
       ipcRenderer.invoke('setup:putFolder', opts) as Promise<{
         ok: boolean
         brainPath?: string | null

@@ -108,10 +108,18 @@ test('clonePlan refuses an empty checkout and replaces a blank folder', () => {
 })
 
 test('githubInstallReady is true only when GitHub says the app is installed', () => {
-  assert.equal(githubInstallReady({ installed: true }), true)
+  assert.equal(githubInstallReady({ installed: true }), false)
   assert.equal(githubInstallReady({ installed: true, repoUrl: 'https://github.com/acme/brain' }), true)
+  assert.equal(githubInstallReady({ installed: true, repo: 'acme/brain' }), true)
+  assert.equal(githubInstallReady({ installed: true, allRepositories: true, repoUrl: 'https://github.com/acme/brain' }), false)
   assert.equal(githubInstallReady({ repo: 'acme/brain' }), false)
   assert.equal(githubInstallReady({ installed: false, repoUrl: 'https://github.com/acme/brain' }), false)
   assert.equal(githubInstallReady({ installed: false }), false)
   assert.equal(githubInstallReady(null), false)
+})
+
+test('setup:install accepts Agency Brain id', () => {
+  const src = readFileSync(new URL('./install.ts', import.meta.url), 'utf8')
+  assert.match(src, /TOOL_IDS: NeedId\[\] = \[[^\]]*'ab'/)
+  assert.match(src, /export function isNeedId/)
 })

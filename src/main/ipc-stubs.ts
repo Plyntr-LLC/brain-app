@@ -18,11 +18,12 @@ import {
   upsertTeamMember
 } from './agency-brain'
 import { helloName } from './login-identity'
-import { cloneBrain, hasBrainMarker } from './clone'
+import { cloneBrain, defaultBrainDest, hasBrainMarker, removeFailedBrainCheckout } from './clone'
 import { takeFirstWelcome } from './first-chat'
 import { bridgeInstallUrl, githubAppInstallUrl, githubInstallReady, reuseExistingFolder } from './setup-folder'
 import { currentBrainFolder, folderForSlug, listBrains, rememberBrain, switchBrain } from './brains'
-import { clearPendingJoin, getPendingJoin, setPendingJoin } from './join-pending'
+import { clearPendingJoin, getPendingJoin, pendingFromInvite, setPendingJoin } from './join-pending'
+import { ensurePendingJoinForFolder } from './watch-handoff'
 import { bringAppFront, clipOrgLogin, stopClipboardOrgWatch, watchClipboardOrg } from './bring-front'
 import { startBrainSync, stopBrainSync } from './brain-sync'
 import {
@@ -265,19 +266,7 @@ export function registerStubIpc(): void {
     if (!slug) throw new Error('That code did not name a company brain.')
     const member = res.member || {}
     const name = String(res.teamName || slug)
-    setPendingJoin({
-      memberToken: res.memberToken,
-      teamSlug: slug,
-      teamName: String(res.teamName || slug),
-      repoUrl: String(res.repoUrl || ''),
-      kind: String(res.kind || 'agency'),
-      brandName: String(res.teamName || slug),
-      memberEmail: String(member.email || res.memberEmail || '').toLowerCase(),
-      memberName: String(member.name || res.memberName || ''),
-      memberRole: String(member.role || res.memberRole || 'owner'),
-      scoutSeats: res.scoutSeats ?? null,
-      packageTier: res.packageTier ?? null
-    })
+    setPendingJoin(pendingFromInvite(res))
     const local = folderForSlug(slug)
     if (local) {
       const adopted = await adoptFolder(local)
@@ -358,6 +347,7 @@ export function registerStubIpc(): void {
       name: String(m.name || res.memberName || ''),
       token: res.memberToken
     })
+    setPendingJoin(pendingFromInvite(res))
     return {
       teamSlug: res.teamSlug,
       teamName: res.teamName || res.teamSlug,
@@ -604,7 +594,9 @@ export function registerStubIpc(): void {
     return { ok: false, detail: 'The app is not installed on GitHub yet. In the browser, click Install, then Only select repositories, and try again.' }
   })
   async function bridgeInstalled(repo: string): Promise<boolean> {
-    const r = await fetch(`${HQ_SYNC_ORIGIN}/github/installed?repo=${encodeURIComponent(repo)}`)
+    const r = await fetch(`${HQ_SYNC_ORIGIN}/github/installed?repo=${encodeURIComponent(repo)}`, {
+      signal: AbortSignal.timeout(15000)
+    })
     const body = (await r.json().catch(() => null)) as { installed?: boolean } | null
     return r.ok && body?.installed === true
   }
@@ -664,10 +656,14 @@ export function registerStubIpc(): void {
   })
 
   async function settleSync(folder: string): Promise<void> {
+    if (dryRun()) return
+    ensurePendingJoinForFolder(folder)
     if (detectApp().installed) {
       const watched = await activateWatching(folder)
-      if (!watched.ok) throw new Error(watched.detail || 'Agency Brain is installed, but its setup did not finish.')
-      if (readWatching().brainPath === folder) return
+      if (watched.ok) {
+        stopBrainSync()
+        return
+      }
     }
     startBrainSync(folder)
   }
@@ -728,31 +724,48 @@ export function registerStubIpc(): void {
   }
 
   ipcMain.handle('setup:applyFolder', async (_e, opts?: { teamSlug?: string; dest?: string }) => applyFolderImpl(opts))
-  ipcMain.handle('setup:putFolder', async (_e, opts?: { teamSlug?: string; org?: string }) => {
-    const slug = String(opts?.teamSlug || '').trim()
-    const org = String(opts?.org || '').trim()
-    if (!slug) throw new Error('No team to clone. Finish GitHub first.')
-    if (dryRun()) {
-      return applyFolderImpl({ teamSlug: slug })
+  ipcMain.handle(
+    'setup:putFolder',
+    async (_e, opts?: { teamSlug?: string; org?: string; retry?: boolean }) => {
+      const slug = String(opts?.teamSlug || '').trim()
+      const org = String(opts?.org || '').trim()
+      if (!slug) throw new Error('No team to clone. Finish GitHub first.')
+      if (dryRun()) {
+        return applyFolderImpl({ teamSlug: slug })
+      }
+      const token = tokenForSlug(slug)
+      if (org) {
+        await ads2ai.adoptOrgInstallation(token, slug, org).catch((e) => {
+          const msg = String((e as Error).message || e)
+          if (!/404|not found/i.test(msg)) throw e
+        })
+      }
+      const st = (await ads2ai.installStatus(slug).catch(() => null)) as {
+        installed?: boolean
+        repoUrl?: string
+        repo?: string
+      } | null
+      if (!githubInstallReady(st)) {
+        throw new Error('The app is not installed on GitHub yet. Click Install in the browser, then try again.')
+      }
+      const dest = defaultBrainDest(slug)
+      if (opts?.retry) removeFailedBrainCheckout(dest)
+
+      const emptyMsg = /empty folder|not in the repo/i
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await ads2ai.ensureBrainRepo(token, slug)
+        try {
+          return await applyFolderImpl({ teamSlug: slug })
+        } catch (err) {
+          const msg = String((err as Error).message || err)
+          if (!emptyMsg.test(msg) || attempt === 2) throw err
+          await new Promise((r) => setTimeout(r, 2500))
+          removeFailedBrainCheckout(dest)
+        }
+      }
+      throw new Error('Could not copy the shared folder onto this computer.')
     }
-    const token = tokenForSlug(slug)
-    if (org) {
-      await ads2ai.adoptOrgInstallation(token, slug, org).catch((e) => {
-        const msg = String((e as Error).message || e)
-        if (!/404|not found/i.test(msg)) throw e
-      })
-    }
-    const st = (await ads2ai.installStatus(slug).catch(() => null)) as {
-      installed?: boolean
-      repoUrl?: string
-      repo?: string
-    } | null
-    if (!githubInstallReady(st)) {
-      throw new Error('The app is not installed on GitHub yet. Click Install in the browser, then try again.')
-    }
-    await ads2ai.ensureBrainRepo(token, slug)
-    return applyFolderImpl({ teamSlug: slug })
-  })
+  )
 
   ipcMain.handle('ab:detect', async () => detectApp())
   ipcMain.handle('ab:install', async () => installNeed('ab'))

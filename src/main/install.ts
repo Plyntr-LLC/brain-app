@@ -10,6 +10,7 @@ import { shell } from 'electron'
 import { DOWNLOAD_AB } from '../shared/contracts'
 import { detectApp, readWatching } from './agency-brain'
 import { currentBrainFolder } from './brains'
+import { handOffToAgencyBrain } from './watch-handoff'
 import { loadAccount } from './session-token'
 import { binEnv, detect as detectAi, resolveBin } from './ai-cli'
 import type { AiKind } from '../shared/contracts'
@@ -233,10 +234,9 @@ async function downloadFile(url: string, dest: string): Promise<void> {
 
 async function installAgencyBrainApp(): Promise<InstallResult> {
   if (detectApp().installed) {
-    await openAb()
     return {
       ok: true,
-      detail: 'Agency Brain is already on this computer. Skip its setup wizard. Sign-in and GitHub stay in this app.',
+      detail: 'Agency Brain is already on this computer. This app writes its setup when the folder is on this computer.',
       wait: 'none'
     }
   }
@@ -265,10 +265,9 @@ async function installAgencyBrainApp(): Promise<InstallResult> {
     }
     await run('/usr/bin/ditto', [appPath, '/Applications/Agency Brain.app'])
     await run('/usr/bin/hdiutil', ['detach', mount, '-quiet'])
-    await openAb()
     return {
       ok: true,
-      detail: 'Agency Brain is in Applications. Skip its setup wizard. Sign-in stays in Brain.',
+      detail: 'Agency Brain is in Applications. This app writes its setup. Do not run its setup wizard.',
       wait: 'none'
     }
   }
@@ -276,7 +275,7 @@ async function installAgencyBrainApp(): Promise<InstallResult> {
   return { ok: true, detail: 'The Agency Brain installer is open. Finish it, then come back here. Skip its setup wizard.', wait: 'present' }
 }
 
-const TOOL_IDS: NeedId[] = ['brew', 'git', 'cloudflared', 'grok', 'claude', 'cursor', 'gpt']
+const TOOL_IDS: NeedId[] = ['brew', 'git', 'ab', 'cloudflared', 'grok', 'claude', 'cursor', 'gpt']
 
 export function isNeedId(id: string): id is NeedId {
   return (TOOL_IDS as string[]).includes(id)
@@ -403,6 +402,7 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
   }
   if (id === 'ab') {
     if (detectApp().installed) {
+      await handOffToAgencyBrain()
       return {
         ok: true,
         detail: 'Agency Brain is installed. This app writes its setup when the folder is on this computer.',
@@ -411,6 +411,7 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
     }
     const put = await installAgencyBrainApp()
     if (!put.ok) return put
+    if (detectApp().installed) await handOffToAgencyBrain()
     return {
       ok: detectApp().installed,
       detail: detectApp().installed

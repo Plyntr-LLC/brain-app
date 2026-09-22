@@ -54,6 +54,8 @@ export function FirstRun() {
   const [otp, setOtp] = useState('')
   const [choice, setChoice] = useState<'new' | 'existing' | ''>('')
   const [org, setOrg] = useState('')
+  const [githubOnlySelected, setGithubOnlySelected] = useState(false)
+  const [bridgeOnlySelected, setBridgeOnlySelected] = useState(false)
 
   const [err, setErr] = useState('')
   const [detected, setDetected] = useState<Partial<Record<AiKind, boolean>>>({})
@@ -67,6 +69,8 @@ export function FirstRun() {
   const [watching, setWatching] = useState(false)
   const [away, setAway] = useState<'github-org' | 'github-install' | 'ai-login' | null>(null)
   const bridgeOnce = useRef('')
+  const folderPutKey = useRef('')
+  const [folderCopyBusy, setFolderCopyBusy] = useState(false)
 
   useEffect(() => {
     void (async () => {
@@ -83,7 +87,15 @@ export function FirstRun() {
       setWatching(Boolean(existing?.watching || st.watching))
       const signed = pick ? Boolean((await window.brain.ai.signedIn(pick)).signedIn) : false
       let screen = 'email'
-      if (acct.signedIn && st.ready && signed) screen = 'chat'
+      const abMissing = st.items.some((i) => i.id === 'ab' && !i.present)
+      if (acct.signedIn && st.ready && signed && folder && !abMissing) {
+        const role = acct.role || ''
+        if (role === 'project') screen = 'chat'
+        else {
+          const br = await window.brain.setup.bridgeStatus(folder).catch(() => null)
+          screen = br?.installed || br?.skipped ? 'chat' : 'bridge'
+        }
+      } else if (acct.signedIn && folder && (abMissing || !st.ready)) screen = 'needs'
       else if (acct.signedIn && (st.watching || folder)) screen = 'aipick'
       else if (acct.signedIn) screen = 'needs'
       if (e.justUpdated) {
@@ -138,13 +150,6 @@ export function FirstRun() {
   }
 
   useEffect(() => {
-    if (s.screen !== 'bridge' || !s.brainPath) return
-    if (bridgeOnce.current === s.brainPath) return
-    bridgeOnce.current = s.brainPath
-    void runBridge()
-  }, [s.screen, s.brainPath])
-
-  useEffect(() => {
     if (!showInvite) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
@@ -178,7 +183,11 @@ export function FirstRun() {
   }, [s.screen, s.ai])
 
   useEffect(() => {
-    if (s.screen !== 'abapply') return
+    if (s.screen === 'abapply' && !s.brainPath) setFolderCopyBusy(true)
+  }, [s.screen, s.brainPath])
+
+  useEffect(() => {
+    if (s.screen !== 'abapply' || s.brainPath) return
     let stop = false
     void (async () => {
       const slug = s.team?.slug
@@ -186,17 +195,24 @@ export function FirstRun() {
         if (!stop) setErr('GitHub is not finished. Go back and Continue with GitHub.')
         return
       }
+      const key = `${slug}:${s.orgLogin || org}`
+      if (folderPutKey.current === key) return
+      folderPutKey.current = key
+      setFolderCopyBusy(true)
       const applied = await window.brain.setup.putFolder({ teamSlug: slug, org: s.orgLogin || org }).catch((e) => {
+        folderPutKey.current = ''
+        setFolderCopyBusy(false)
         if (!stop) setErr(String((e as Error).message || e))
         return null
       })
+      setFolderCopyBusy(false)
       if (stop || !applied?.brainPath) return
       setS((p) => ({ ...p, brainPath: applied.brainPath || p.brainPath, abWatching: true }))
     })()
     return () => {
       stop = true
     }
-  }, [s.screen, s.team?.slug, s.orgLogin])
+  }, [s.screen, s.team?.slug, s.orgLogin, org, s.brainPath])
 
   useEffect(() => {
     const waiting = s.screen === 'aiwork' || (s.screen === 'abapply' && !s.brainPath)
@@ -209,21 +225,60 @@ export function FirstRun() {
     return () => clearInterval(t)
   }, [s.screen, s.brainPath])
 
+  async function retryFolderCopy() {
+    if (folderCopyBusy) return
+    const slug = s.team?.slug
+    if (!slug) {
+      setErr('GitHub is not finished. Go back to the GitHub step.')
+      return
+    }
+    folderPutKey.current = ''
+    setFolderCopyBusy(true)
+    setErr('')
+    try {
+      await window.brain.setup.ensureRepo(slug)
+      const applied = await window.brain.setup.putFolder({
+        teamSlug: slug,
+        org: s.orgLogin || org,
+        retry: true
+      })
+      if (!applied?.brainPath) return
+      setS((p) => ({ ...p, brainPath: applied.brainPath || p.brainPath, abWatching: true }))
+      await afterMembership({ brainPath: applied.brainPath, team: s.team, orgLogin: s.orgLogin || org })
+    } catch (e) {
+      setErr(String((e as Error).message || e))
+      folderPutKey.current = ''
+    } finally {
+      setFolderCopyBusy(false)
+    }
+  }
+
   async function afterMembership(patch?: Partial<Session>) {
     const slug = patch?.team?.slug || s.team?.slug
     const orgLogin = patch?.orgLogin || s.orgLogin || org
     let fail = ''
-    const applied = slug
-      ? await window.brain.setup.putFolder({ teamSlug: slug, org: orgLogin }).catch((e) => {
-          fail = String((e as Error).message || e)
-          setErr(fail)
-          return null
-        })
-      : await window.brain.setup.applyFolder().catch((e) => {
-          fail = String((e as Error).message || e)
-          setErr(fail)
-          return null
-        })
+    const existingPath = String(patch?.brainPath || s.brainPath || '').trim()
+    const applied = existingPath
+      ? { ok: true as const, brainPath: existingPath }
+      : slug
+        ? await (async () => {
+            setFolderCopyBusy(true)
+            try {
+              return await window.brain.setup.putFolder({ teamSlug: slug, org: orgLogin })
+            } catch (e) {
+              fail = String((e as Error).message || e)
+              setErr(fail)
+              folderPutKey.current = ''
+              return null
+            } finally {
+              setFolderCopyBusy(false)
+            }
+          })()
+        : await window.brain.setup.applyFolder().catch((e) => {
+            fail = String((e as Error).message || e)
+            setErr(fail)
+            return null
+          })
     const st = await window.brain.setup.status()
     const d = await window.brain.ai.detect()
     setDetected(d)
@@ -236,7 +291,12 @@ export function FirstRun() {
         go('github', { ...next, path: 'create' })
         return
       }
-      if (s.screen === 'github' || s.screen === 'abapply' || s.screen === 'abget') return
+      if (/empty folder|not in the repo/i.test(fail)) {
+        setErr(fail)
+        return
+      }
+      if (s.screen === 'github' || s.screen === 'abget') return
+      if (s.screen === 'abapply') return
       if (slug) {
         go('abapply', next)
         return
@@ -245,6 +305,11 @@ export function FirstRun() {
       return
     }
     if (await holdForBridge(next)) return
+    const abMissing = st.items.some((i) => i.id === 'ab' && !i.present)
+    if (!st.ready || abMissing) {
+      go('needs', next)
+      return
+    }
     if (pick && signed && st.watching) go('chat', { ...next, abWatching: true })
     else go('aipick', { ...next, abWatching: st.watching })
   }
@@ -267,6 +332,12 @@ export function FirstRun() {
       setErr('The shared folder is not on this computer yet.')
       return
     }
+    if (!bridgeOnlySelected) {
+      setErr('Check the box confirming you chose Only select repositories and picked this repo on GitHub.')
+      return
+    }
+    if (bridgeOnce.current === path) return
+    bridgeOnce.current = path
     setErr('')
     setAway('github-install')
     try {
@@ -283,7 +354,12 @@ export function FirstRun() {
       const pick: AiKind | undefined =
         s.ai || (d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined)
       const signed = pick ? Boolean((await window.brain.ai.signedIn(pick)).signedIn) : false
+      const st = await window.brain.setup.status()
       const next = { bridgeOk: true, brainPath: path, ai: pick, abWatching: s.abWatching }
+      if (!st?.ready) {
+        go('needs', next)
+        return
+      }
       if (pick && signed) go('chat', next)
       else go('aipick', next)
     } catch (e) {
@@ -300,12 +376,17 @@ export function FirstRun() {
       const st = await window.brain.setup.status().catch(() => null)
       const path = s.brainPath || st?.brainPath || ''
       if (!path) go('aipick')
+      else if (!st?.ready) go('needs')
       else if (await holdForBridge({ brainPath: path, abWatching: Boolean(st?.watching) })) return
       else go('chat', { brainPath: path, abWatching: Boolean(st?.watching) })
     })()
   }
 
   async function installOnGithub(rawLogin: string) {
+    if (!githubOnlySelected) {
+      setErr('Check the box confirming you chose Only select repositories on GitHub.')
+      return
+    }
     if (rawLogin.trim().length < 2) {
       setErr('Create the short name on GitHub, then paste it here.')
       return
@@ -345,6 +426,7 @@ export function FirstRun() {
         setErr(waited.detail || 'The app is not installed on GitHub yet. Click Install in the browser, then try again.')
         return
       }
+      folderPutKey.current = ''
       go('abapply', {
         orgLogin: login,
         team: { slug, name: teamName, role: s.role || 'owner' },
@@ -531,8 +613,16 @@ export function FirstRun() {
                             repoUrl?: string
                           } | null)
                         : null
-                      const repoReady = inst?.installed === true
+                      const repoReady =
+                        inst?.installed === true &&
+                        Boolean(String(inst?.repoUrl || (inst as { repo?: string })?.repo || '').trim())
                       if (repoReady && slug) {
+                        try {
+                          await window.brain.setup.ensureRepo(slug)
+                        } catch (e) {
+                          setErr(String((e as Error).message || e))
+                          return
+                        }
                         go('abapply', { ...patch, path: 'second' })
                         return
                       }
@@ -814,21 +904,20 @@ export function FirstRun() {
           )}
           {s.screen === 'github' && (
             <>
-              <p className="kicker">GitHub</p>
-              <h1>Install the app on GitHub.</h1>
-              <p>
-                GitHub does not have this app installed for the company yet. Open GitHub. If the company has no short
-                name yet, create one (one word, like harolds-books) and copy it. We then open Install. Click Install,
-                then Only select repositories. We wait here until GitHub says the app is installed. Sign in if GitHub
-                asks. A passkey works there.
+              <p className="kicker">GitHub · step 1 of 2</p>
+              <h1>Company short name, then install our GitHub app.</h1>
+              <p className="muted">
+                This is not your business name. It is the one-word GitHub handle (like <strong>harolds-books</strong>).
+                After that, GitHub opens an Install page. Choose <strong>Only select repositories</strong>, never All
+                repositories.
               </p>
               <AwayBanner kind={away} />
               {!away ? (
                 <div className="warn-box">
-                  <h3>Do this in order</h3>
+                  <h3>Two steps</h3>
                   <ol>
-                    <li>Open GitHub. Create the short name if you do not have one, and copy it.</li>
-                    <li>On the Install page, click Install, then Only select repositories.</li>
+                    <li>Paste or create the short name below (or open GitHub to create it).</li>
+                    <li>Click Install on GitHub, then Only select repositories. We wait here until GitHub is done.</li>
                   </ol>
                 </div>
               ) : null}
@@ -859,6 +948,15 @@ export function FirstRun() {
                 <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="harolds-books" />
               </label>
               <p className="tiny">One word, like harolds-books, not your business name. A github.com address works too.</p>
+              <label className="field" style={{ flexDirection: 'row', alignItems: 'flex-start', gap: '0.5rem' }}>
+                <input
+                  type="checkbox"
+                  checked={githubOnlySelected}
+                  onChange={(e) => setGithubOnlySelected(e.target.checked)}
+                  style={{ width: 'auto', marginTop: '0.2rem' }}
+                />
+                <span>I will click Install, then Only select repositories (not All repositories).</span>
+              </label>
               {err && <p className="note">{err}</p>}
               <div className="actions">
                 <button
@@ -893,15 +991,21 @@ export function FirstRun() {
                 installed. Chat stays closed until then.
               </p>
               <AwayBanner kind={away} />
+              <label className="field" style={{ flexDirection: 'row', alignItems: 'flex-start', gap: '0.5rem' }}>
+                <input
+                  type="checkbox"
+                  checked={bridgeOnlySelected}
+                  onChange={(e) => setBridgeOnlySelected(e.target.checked)}
+                  style={{ width: 'auto', marginTop: '0.2rem' }}
+                />
+                <span>I will click Install, then Only select repositories, and pick this brain repo (not All repositories).</span>
+              </label>
               {err ? <p className="note">{err}</p> : null}
               <div className="actions">
                 <button
                   className="primary"
                   type="button"
-                  onClick={() => {
-                    bridgeOnce.current = ''
-                    void runBridge()
-                  }}
+                  onClick={() => void runBridge()}
                 >
                   Install Brain Bridge
                 </button>
@@ -910,14 +1014,14 @@ export function FirstRun() {
           )}
           {s.screen === 'abapply' && (
             <>
-              <p className="kicker">Step 2 of 2</p>
+              <p className="kicker">GitHub · step 2 of 2</p>
               <h1>{s.brainPath ? 'The shared folder is on this computer.' : 'Copying the shared folder onto this computer.'}</h1>
               <div className="warn-box">
                 <h3>{s.brainPath ? 'This is the brain' : 'Stay here'}</h3>
                 <p>
                   {s.brainPath
                     ? s.brainPath
-                    : 'We copy it from GitHub. This does not erase other folders on this computer.'}
+                    : 'We copy from GitHub into ~/Projects. Next you will see One setup: Git, Cloudflare, Agency Brain, and your AI tool.'}
                 </p>
               </div>
               <p className="tiny">
@@ -931,10 +1035,24 @@ export function FirstRun() {
                 <button
                   className="primary"
                   type="button"
-                  onClick={() => void afterMembership()}
+                  disabled={!s.brainPath && folderCopyBusy}
+                  onClick={() => {
+                    if (s.brainPath) void afterMembership()
+                    else void retryFolderCopy()
+                  }}
                 >
-                  {s.brainPath ? 'Continue' : 'Try again'}
+                  {s.brainPath ? 'Continue to setup' : folderCopyBusy ? 'Copying…' : 'Try again'}
                 </button>
+                {!s.brainPath && err ? (
+                  <>
+                    <button className="ghost" type="button" onClick={() => go('github')}>
+                      Back to GitHub
+                    </button>
+                    <button className="ghost" type="button" onClick={() => go('needs')}>
+                      Set up this Mac
+                    </button>
+                  </>
+                ) : null}
               </div>
             </>
           )}

@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { binEnv } from './ai-cli'
 import { clonePlan } from './setup-folder'
@@ -51,7 +52,20 @@ function dirIsEmpty(dest: string): boolean {
   }
 }
 
-const EMPTY_BRAIN = 'GitHub copied an empty folder. The brain files are not in the repo yet. Finish GitHub, then try again.'
+const EMPTY_BRAIN =
+  'GitHub copied an empty folder. The brain files are not in the repo yet. Wait a minute on GitHub, then tap Try again.'
+
+export function defaultBrainDest(slug: string): string {
+  return join(homedir(), 'Projects', `${String(slug || '').trim()}-brain`)
+}
+
+/** Remove a half-finished checkout with no brain files so the next copy can start clean. */
+export function removeFailedBrainCheckout(dest: string): void {
+  const path = String(dest || '').trim()
+  if (!path || !existsSync(path)) return
+  if (hasBrainMarker(path)) return
+  rmSync(path, { recursive: true, force: true })
+}
 
 async function fillEmptyCheckout(dest: string, cloneUrl: string): Promise<boolean> {
   const branch = await currentBranch(dest)

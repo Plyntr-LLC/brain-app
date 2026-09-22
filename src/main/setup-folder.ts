@@ -55,7 +55,20 @@ export function bridgeInstallUrl(hqRepo: string): string {
   return `${BRIDGE_APP_INSTALL}?state=${encodeURIComponent(state)}`
 }
 
-/** A repo address is not an install. GitHub has to say the app is installed. */
-export function githubInstallReady(st: { installed?: boolean; repoUrl?: string; repo?: string } | null): boolean {
-  return st?.installed === true
+/** A repo address is not an install. GitHub has to say the app is installed on this repo. */
+export function githubInstallReady(
+  st: {
+    installed?: boolean
+    repoUrl?: string
+    repo?: string
+    allRepositories?: boolean
+    repositorySelection?: string
+  } | null
+): boolean {
+  if (st?.installed !== true) return false
+  if (st.allRepositories === true) return false
+  const sel = String(st.repositorySelection || '').toLowerCase()
+  if (sel === 'all' || sel === 'all_repositories') return false
+  const repo = String(st.repoUrl || st.repo || '').trim()
+  return repo.length > 0
 }

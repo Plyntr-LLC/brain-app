@@ -150,7 +150,8 @@ export function SetupNeeds({
     stop.current = false
     try {
       const first = await refresh()
-      if (first.ready) {
+      const abMissing = first.items.some((i) => i.id === 'ab' && !i.present)
+      if (first.ready && !abMissing) {
         onReady(asReady(first, { ready: true, watching: Boolean(first.brainPath || first.watching) }))
         return
       }
@@ -181,7 +182,8 @@ export function SetupNeeds({
         setErr('Install Grok, Claude, Cursor, or ChatGPT. Chat needs one of them. Then Start setup again.')
         return
       }
-      if (st.ready) {
+      const abStillMissing = st.items.some((i) => i.id === 'ab' && !i.present)
+      if (st.ready && !abStillMissing) {
         onReady(asReady(st, { ready: true, watching: Boolean(st.brainPath || st.watching) }))
         return
       }
@@ -246,6 +248,13 @@ export function SetupNeeds({
         <div className="warn-box">
           <h3>The shared folder is not on this computer yet</h3>
           <p>Finish GitHub (Only select repositories), then Recheck. This app copies the folder and keeps it in sync.</p>
+          {onNeedFolder ? (
+            <p>
+              <button type="button" className="linkish" onClick={() => onNeedFolder()}>
+                Back to GitHub copy
+              </button>
+            </p>
+          ) : null}
         </div>
       ) : null}
       <ul className="setup-list">
@@ -278,9 +287,12 @@ export function SetupNeeds({
             }
             const st = await refresh()
             const ai = pickAi(st.items)
-            if (st.ready) onReady(asReady(st, { ready: true, watching: true }))
-            else if (st.watching && ai) onReady(asReady(st, { ready: false, watching: true }))
-            else setErr('Still missing a required piece. Finish the open installer, then Recheck.')
+            const abMissing = st.items.some((i) => i.id === 'ab' && !i.present)
+            if (st.ready && !abMissing) onReady(asReady(st, { ready: true, watching: true }))
+            else if (st.watching && ai && st.brainPath) onReady(asReady(st, { ready: false, watching: true }))
+            else if (!st.brainPath && onNeedFolder) {
+              setErr('The shared folder is not here yet. Use Back to GitHub copy, or finish GitHub in the browser.')
+            } else setErr('Still missing a required piece. Finish the open installer, then Recheck.')
           }}
         >
           {running ? 'I finished that window' : 'Recheck'}
