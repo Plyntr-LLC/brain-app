@@ -802,9 +802,9 @@ export function PlyntrCreateScreen({
       ) : null}
       {step === 5 ? (
         <p>
-          Install Plyntr sync on {org}. The account on the GitHub page must be {org}. If it says Plyntr LLC, stop.
-          Choose Only select repositories. Pick {org}/{slug}-brain. Come back here and click Check GitHub. This Mac
-          then copies the client brain here.
+          Install Plyntr sync on {org}. GitHub should show {org} with {org}/{slug}-brain already checked. If the page
+          says Plyntr LLC, close it and click Open GitHub again. Keep Only select repositories. Then come back and
+          click Check GitHub. This Mac then copies the client brain here.
         </p>
       ) : null}
       {err ? <p className="note">{err}</p> : null}
@@ -859,7 +859,7 @@ export function PlyntrCreateScreen({
             className="ghost"
             type="button"
             onClick={() => {
-              void window.brain.setup.openPlyntrInstall(brainId, org).then((opened) => {
+              void window.brain.setup.openPlyntrInstall(brainId, org, resolvePlyntrRepoName(org, slug, repo)).then((opened) => {
                 if (!opened.ok) setErr(opened.detail || 'The install page did not open on this organization.')
               })
             }}
@@ -1008,7 +1008,11 @@ export function PlyntrCreateScreen({
               }
               if (step === 5) {
                 if (!installOpened) {
-                  const opened = await window.brain.setup.openPlyntrInstall(brainId, org)
+                  const opened = await window.brain.setup.openPlyntrInstall(
+                    brainId,
+                    org,
+                    resolvePlyntrRepoName(org, slug, repo)
+                  )
                   if (!opened.ok) {
                     setErr(opened.detail || 'The install page did not open on this organization.')
                     return
@@ -1018,8 +1022,17 @@ export function PlyntrCreateScreen({
                 }
                 const want = resolvePlyntrRepoName(org, slug, repo)
                 const st = await window.brain.plyntr.installed(brainId, want).catch(() => null)
+                const sel = String(st?.repositorySelection || '').toLowerCase()
+                if (sel === 'all' || sel === 'all_repositories') {
+                  setErr(
+                    `Plyntr sync is on All repositories for ${org}. Choose Only select repositories, pick ${want}, then click Check GitHub.`
+                  )
+                  return
+                }
                 if (!st?.ready) {
-                  setErr('Plyntr sync is not on this repository yet. On the GitHub page, click Install, choose Only select repositories, pick this repo, then click Check GitHub.')
+                  setErr(
+                    `Plyntr sync is not on ${want} yet. On the GitHub page, click Install, keep Only select repositories, pick ${want}, then click Check GitHub.`
+                  )
                   return
                 }
                 await save(6)

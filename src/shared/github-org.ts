@@ -95,3 +95,9 @@ export function ghCliDetail(opts: {
   if (opts.status == null) return 'This Mac could not start the GitHub command (gh).'
   return `The GitHub command (gh) did not finish (exit ${opts.status}).`
 }
+
+export function repoIdFromGh(raw: string): number {
+  const n = Number(String(raw || '').trim())
+  if (!Number.isFinite(n) || n <= 0 || n !== Math.floor(n)) return 0
+  return n
+}

@@ -6,6 +6,7 @@ import {
   clonePlan,
   githubAppInstallUrl,
   githubInstallReady,
+  plyntrBrainSyncInstallUrl,
   plyntrGithubInstallReady,
   reuseExistingFolder
 } from './setup-folder.ts'
@@ -85,6 +86,26 @@ test('githubAppInstallUrl keeps state on installations/new', () => {
     'https://github.com/apps/agency-brain-sync/installations/new?state=harolds-books'
   )
   assert.ok(!githubAppInstallUrl('x', 1).includes('/permissions'))
+})
+
+test('Path B install URL pins org and repo on /permissions', () => {
+  const url = plyntrBrainSyncInstallUrl('a867878e-79d9-493c-a396-f82736ffa8a3', 332862614, 424242)
+  assert.equal(
+    url,
+    'https://github.com/apps/plyntr-brain-sync/installations/new/permissions?suggested_target_id=332862614&repository_ids%5B%5D=424242&state=a867878e-79d9-493c-a396-f82736ffa8a3'
+  )
+  assert.ok(url.includes('/permissions'))
+  assert.equal(url.includes('/installations/new?'), false)
+  assert.equal(url.includes('248626756'), false)
+  assert.equal(url.includes('organizations/its-a-test-rosene/settings/apps'), false)
+  assert.equal(plyntrBrainSyncInstallUrl('a867878e-79d9-493c-a396-f82736ffa8a3', 332862614), '')
+  assert.equal(plyntrBrainSyncInstallUrl('a867878e-79d9-493c-a396-f82736ffa8a3', 0, 424242), '')
+  assert.equal(plyntrBrainSyncInstallUrl('a867878e-79d9-493c-a396-f82736ffa8a3', 332862614, 0), '')
+  assert.equal(plyntrBrainSyncInstallUrl('', 332862614, 424242), '')
+  assert.equal(plyntrBrainSyncInstallUrl('id', 1.5, 424242), '')
+  const ipc = readFileSync(new URL('./ipc-stubs.ts', import.meta.url), 'utf8')
+  assert.equal(ipc.includes('plyntrBrainSyncInstallUrl(issuedId, look.ok ? look.id : undefined)'), false)
+  assert.match(ipc, /pinnedPlyntrInstall\(issuedId, parts\.org, parts\.repo\)/)
 })
 
 test('clonePlan refuses an empty checkout and replaces a blank folder', () => {

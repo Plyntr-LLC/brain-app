@@ -325,8 +325,12 @@ const brain = {
     putFolderPlyntr: (opts: { brainId: string; org?: string; slug?: string; repo?: string }) =>
       ipcRenderer.invoke('setup:putFolderPlyntr', opts) as Promise<{ ok: boolean; brainPath?: string }>,
     syncMode: (folder: string) => ipcRenderer.invoke('setup:syncMode', folder) as Promise<string>,
-    openPlyntrInstall: (brainId: string, org?: string) =>
-      ipcRenderer.invoke('setup:openPlyntrInstall', brainId, org) as Promise<{ ok: boolean; url: string; detail?: string }>,
+    openPlyntrInstall: (brainId: string, org?: string, repo?: string) =>
+      ipcRenderer.invoke('setup:openPlyntrInstall', brainId, org, repo) as Promise<{
+        ok: boolean
+        url: string
+        detail?: string
+      }>,
     createPlyntrRepo: (org: string, slug: string, repo?: string) =>
       ipcRenderer.invoke('setup:createPlyntrRepo', org, slug, repo) as Promise<{
         ok: boolean
@@ -476,6 +480,7 @@ const brain = {
         ready: boolean
         installed: boolean
         repo: string
+        repositorySelection: string
         projectSeatCount: number
       }>,
     seats: (brainId: string) =>

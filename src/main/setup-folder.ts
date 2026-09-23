@@ -49,14 +49,14 @@ export function clonePlan(opts: {
   return 'refuse-not-empty'
 }
 
-export function plyntrBrainSyncInstallUrl(brainId: string, orgId?: number): string {
+export function plyntrBrainSyncInstallUrl(brainId: string, orgId?: number, repoId?: number): string {
   const state = encodeURIComponent(String(brainId || '').trim())
-  const id = Number(orgId)
-  if (state && Number.isFinite(id) && id > 0) {
-    return `${PLYNTR_APP_INSTALL}?state=${state}&suggested_target_id=${Math.floor(id)}`
-  }
-  if (state) return `${PLYNTR_APP_INSTALL}?state=${state}`
-  return PLYNTR_APP_INSTALL
+  const org = Number(orgId)
+  const repo = Number(repoId)
+  if (!state) return ''
+  if (!Number.isInteger(org) || org <= 0) return ''
+  if (!Number.isInteger(repo) || repo <= 0) return ''
+  return `${PLYNTR_APP_INSTALL}/permissions?suggested_target_id=${org}&repository_ids%5B%5D=${repo}&state=${state}`
 }
 
 export function plyntrGithubInstallReady(

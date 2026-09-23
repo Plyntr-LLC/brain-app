@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { extraPath, binEnv } from './ai-cli'
-import { ghCliDetail, orgIdFromGraphql, orgLoginCandidates, parseGithubOrgLogin, resolvePlyntrRepoName } from './github-repo'
+import { ghCliDetail, orgIdFromGraphql, orgLoginCandidates, parseGithubHqRepo, parseGithubOrgLogin, resolvePlyntrRepoName, repoIdFromGh } from './github-repo'
 
 const execFileAsync = promisify(execFile)
 
@@ -170,6 +170,15 @@ export async function resolveGithubOrg(login: string): Promise<{
     return { ok: false, reason: 'gh', detail: ghCliDetail(r), login: name }
   }
   return look
+}
+
+export async function resolveGithubRepoId(repo: string): Promise<{ ok: boolean; id?: number; detail?: string }> {
+  const name = parseGithubHqRepo(repo)
+  if (!name) return { ok: false, detail: 'This brain has no GitHub repository name yet.' }
+  const r = await runGh(['api', `repos/${name}`, '--jq', '.id'])
+  const id = repoIdFromGh(r.stdout || '')
+  if (id) return { ok: true, id }
+  return { ok: false, detail: ghCliDetail(r) }
 }
 
 /** Create the named brain repo with the signed-in GitHub account, or keep it if it is already there. */

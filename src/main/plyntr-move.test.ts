@@ -156,3 +156,31 @@ test('if Agency Brain starts watching after the file is written, sync does not s
   assert.equal(started, 0)
   assert.equal(held, 1)
 })
+
+test('a failed GitHub install does not write the Plyntr manifest', async () => {
+  let wrote = 0
+  await assert.rejects(
+    () =>
+      runPlyntrMove({
+        joe: true,
+        syncMode: null,
+        mini: false,
+        hasMarker: true,
+        abWatching: () => false,
+        repo,
+        installed: async () => false,
+        issueToken: async () => ({ brainId: 'b1', hasToken: true }),
+        openInstall: async () => {
+          throw new Error('GitHub did not confirm the organization acme.')
+        },
+        writeManifest: () => {
+          wrote += 1
+        },
+        remember: () => {},
+        holdSync: () => {},
+        startSync: () => {}
+      }),
+    /GitHub did not confirm the organization acme/
+  )
+  assert.equal(wrote, 0)
+})

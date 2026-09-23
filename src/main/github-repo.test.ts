@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ghCliDetail, orgIdFromGraphql, orgLoginCandidates, parseGithubHqRepo, parseGithubOrgLogin, plyntrRepoFullName, resolvePlyntrRepoName } from '../shared/github-org.ts'
+import { ghCliDetail, orgIdFromGraphql, orgLoginCandidates, parseGithubHqRepo, parseGithubOrgLogin, plyntrRepoFullName, repoIdFromGh, resolvePlyntrRepoName } from '../shared/github-org.ts'
 
 test('parseGithubHqRepo accepts owner/name and git remotes', () => {
   assert.equal(parseGithubHqRepo('acme-org/acme-hq-brain'), 'acme-org/acme-hq-brain')
@@ -39,6 +39,16 @@ test('GraphQL organization id is used when the public API hides the org', () => 
     { login: 'its-a-test-rosene', id: 332862614 }
   )
   assert.equal(orgIdFromGraphql('{"data":{"organization":null}}'), null)
+})
+
+test('repoIdFromGh accepts one positive integer', () => {
+  assert.equal(repoIdFromGh('424242'), 424242)
+  assert.equal(repoIdFromGh(' 424242\n'), 424242)
+  assert.equal(repoIdFromGh('0'), 0)
+  assert.equal(repoIdFromGh('-1'), 0)
+  assert.equal(repoIdFromGh('1.5'), 0)
+  assert.equal(repoIdFromGh(''), 0)
+  assert.equal(repoIdFromGh('id'), 0)
 })
 
 test('the worker repo name wins over a rebuilt slug', () => {

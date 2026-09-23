@@ -72,8 +72,8 @@ import {
   runPlyntrMove,
   writePlyntrSyncFile
 } from './plyntr-move'
-import { adviseGithubOrg, ensureRemoteBrainRepo, lookupGithubAccount, resolveGithubOrg } from './github-account'
-import { resolvePlyntrRepoName } from './github-repo'
+import { adviseGithubOrg, ensureRemoteBrainRepo, resolveGithubOrg, resolveGithubRepoId } from './github-account'
+import { parseGithubHqRepo, resolvePlyntrRepoName } from './github-repo'
 import { loadAnyChats, loadChats, saveChats, type SavedChats } from './persist'
 import { rememberPhoneChats } from './phone'
 import { emitChat, markChatBusy } from './chat-fan'
@@ -158,6 +158,41 @@ function saveRecent(folder: string): RecentFolder {
 /** Dev only (`npm run dev`). Packed Brain skips Ads2AI create-team. Join, clone, and Agency Brain switch still run. */
 export function dryRun(): boolean {
   return process.env.BRAIN_APP_DRY_RUN === '1'
+}
+
+async function pinnedPlyntrInstall(
+  brainId: string,
+  org: string,
+  repo: string
+): Promise<{ ok: boolean; url: string; detail?: string }> {
+  const look = await resolveGithubOrg(org)
+  const orgName = look.login || String(org || '').trim()
+  if (!look.ok || look.type !== 'Organization' || !look.id) {
+    return {
+      ok: false,
+      url: '',
+      detail: look.detail || `GitHub did not confirm the organization ${orgName || 'you entered'}.`
+    }
+  }
+  const want = parseGithubHqRepo(repo) || resolvePlyntrRepoName(orgName, '', repo)
+  const rid = await resolveGithubRepoId(want)
+  if (!rid.ok || !rid.id) {
+    return {
+      ok: false,
+      url: '',
+      detail: rid.detail || `GitHub did not return an id for ${want || 'this repository'}.`
+    }
+  }
+  const url = plyntrBrainSyncInstallUrl(brainId, look.id, rid.id)
+  if (!url) {
+    return {
+      ok: false,
+      url: '',
+      detail: `The install page would open on Plyntr LLC, not ${orgName}.`
+    }
+  }
+  openInApp(url, 'Install Plyntr sync on GitHub')
+  return { ok: true, url }
 }
 
 async function openPlyntrProject(code: string) {
@@ -1016,22 +1051,9 @@ export function registerStubIpc(): void {
     putFolderPlyntr(opts)
   )
   ipcMain.handle('setup:syncMode', async (_e, folder: string) => readSyncMode(String(folder || '')) || '')
-  ipcMain.handle('setup:openPlyntrInstall', async (_e, brainId: string, org?: string) => {
-    const name = String(org || '').trim()
-    const look = name ? await resolveGithubOrg(name) : { ok: false as const }
-    if (!look.ok || !look.id) {
-      return {
-        ok: false,
-        url: '',
-        detail:
-          look.detail ||
-          `The install page would open on Plyntr LLC, not ${name || 'the new organization'}. GitHub did not return an id for that organization.`
-      }
-    }
-    const url = plyntrBrainSyncInstallUrl(brainId, look.id)
-    openInApp(url, 'Install Plyntr sync on GitHub')
-    return { ok: true, url }
-  })
+  ipcMain.handle('setup:openPlyntrInstall', async (_e, brainId: string, org?: string, repo?: string) =>
+    pinnedPlyntrInstall(brainId, org || '', repo || '')
+  )
   ipcMain.handle('setup:openPlyntrRepo', async (_e, org: string, slug: string) => {
     const url = plyntrCreateRepoUrl(org, slug)
     openInApp(url, 'Create the GitHub repo')
@@ -1266,6 +1288,7 @@ export function registerStubIpc(): void {
       ready: plyntrGithubInstallReady(st, repo),
       installed: Boolean(st.installed),
       repo: st.repo || '',
+      repositorySelection: String(st.repositorySelection || ''),
       projectSeatCount: Number(st.projectSeatCount || 0)
     }
   })
@@ -1401,9 +1424,10 @@ export function registerStubIpc(): void {
       },
       openInstall: async () => {
         if (!issuedId || !parts) return
-        const look = await lookupGithubAccount(parts.org).catch(() => ({ ok: false as const }))
-        const url = plyntrBrainSyncInstallUrl(issuedId, look.ok ? look.id : undefined)
-        openInApp(url, 'Install Plyntr sync on GitHub')
+        const opened = await pinnedPlyntrInstall(issuedId, parts.org, parts.repo)
+        if (!opened.ok) {
+          throw new Error(opened.detail || `GitHub did not confirm the organization ${parts.org}.`)
+        }
       },
       writeManifest: () => {
         if (!parts) throw new Error(MOVE_NO_REPO)
