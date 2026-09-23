@@ -524,26 +524,33 @@ export function FirstRun() {
   }
 
   async function finishPlyntrJoin(row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) {
-    const until = Date.now() + 15 * 60 * 1000
-    let ready = false
-    while (Date.now() < until) {
-      const st = await window.brain.plyntr.installed(row.brainId, row.repo).catch(() => null)
-      if (st?.ready) {
-        ready = true
-        break
-      }
-      await new Promise((r) => setTimeout(r, 3000))
+    const repo = String(row.repo || '')
+    const pendingRepo = !repo || repo.startsWith('pending/')
+    const st = pendingRepo ? null : await window.brain.plyntr.installed(row.brainId, repo).catch(() => null)
+    if (!pendingRepo && st?.ready) {
+      const applied = await window.brain.setup.putFolderPlyntr({
+        brainId: row.brainId,
+        slug: row.slug,
+        repo,
+        org: repo.split('/')[0]
+      })
+      go('needs', { brainPath: applied.brainPath, role: row.role, email: row.email, business: row.name || row.slug })
+      return
     }
-    if (!ready) {
-      throw new Error('This brain is not ready on GitHub yet. Ask whoever set it up to finish install on the repo.')
-    }
-    const applied = await window.brain.setup.putFolderPlyntr({
-      brainId: row.brainId,
+    const org = pendingRepo ? '' : repo.split('/')[0]
+    const next = {
+      createId: `c-${Date.now()}`,
+      wizardStep: org ? 4 : 2,
+      label: row.name || row.slug,
+      org,
       slug: row.slug,
-      repo: row.repo,
-      org: row.repo.split('/')[0]
-    })
-    go('needs', { brainPath: applied.brainPath, role: row.role, email: row.email, business: row.name || row.slug })
+      scoutEmail: row.email,
+      brainId: row.brainId
+    }
+    await window.brain.plyntr.saveCreate(next)
+    setPlyntrCreate(next)
+    setCreateGate(false)
+    go('plyntr-create')
   }
 
   async function continuePlyntrJoin() {

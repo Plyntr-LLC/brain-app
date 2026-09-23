@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { slugFromBusinessName } from '@shared/plyntr-invite'
 
 const PLATFORM =
@@ -481,13 +481,6 @@ export function PlyntrCreateScreen({
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const createId = initial?.createId || ''
-  const stop = useRef(false)
-  useEffect(() => {
-    stop.current = false
-    return () => {
-      stop.current = true
-    }
-  }, [])
   useEffect(() => {
     if (!brainId) {
       setHasSeat(false)
@@ -519,16 +512,6 @@ export function PlyntrCreateScreen({
     setStep(next)
   }
 
-  async function pollInstall() {
-    const want = repo || `${org}/${slug}-brain`
-    while (!stop.current) {
-      const st = await window.brain.plyntr.installed(brainId, want).catch(() => null)
-      if (st?.ready) return true
-      await new Promise((r) => setTimeout(r, 3000))
-    }
-    return false
-  }
-
   return (
     <>
       <p className="kicker">New company brain</p>
@@ -537,8 +520,10 @@ export function PlyntrCreateScreen({
           ? 'Platform sign-in'
           : step === 1
             ? 'Business name'
-            : step === 2
-              ? 'GitHub organization'
+              : step === 2
+              ? brainId
+                ? 'Your code worked. Next is GitHub.'
+                : 'GitHub organization'
               : step === 3
                 ? 'Create the brain'
                 : step === 4
@@ -556,7 +541,11 @@ export function PlyntrCreateScreen({
       ) : null}
       {step === 2 ? (
         <>
-          <p>Type the GitHub organization for this company. Next checks that name, then opens GitHub so you can create the empty repo.</p>
+          <p>
+            {brainId
+              ? 'The code is accepted. Type the GitHub organization for this company. Next checks that name, then opens GitHub so you can create the empty repo.'
+              : 'Type the GitHub organization for this company. Next checks that name, then opens GitHub so you can create the empty repo.'}
+          </p>
           <label className="field">
             GitHub organization
             <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="harolds-books" />
@@ -692,11 +681,12 @@ export function PlyntrCreateScreen({
                 return
               }
               if (step === 5) {
-                await window.brain.setup.openPlyntrInstall(brainId, org)
-                await window.brain.setup.bringFront()
-                const ready = await pollInstall()
-                if (!ready) {
-                  setErr('This brain is not ready on GitHub yet. Ask whoever set it up to finish install on the repo.')
+                const want = repo || `${org}/${slug}-brain`
+                const st = await window.brain.plyntr.installed(brainId, want).catch(() => null)
+                if (!st?.ready) {
+                  await window.brain.setup.openPlyntrInstall(brainId, org)
+                  await window.brain.setup.bringFront()
+                  setErr('GitHub is open. Install Plyntr sync on this repo only. Choose Only select repositories, pick this repo, then click Next.')
                   return
                 }
                 await save(6)

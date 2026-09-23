@@ -964,7 +964,9 @@ export function registerStubIpc(): void {
     if (dryRun()) {
       await copyDryRunFixture({ dest, org: org || repo.split('/')[0], slug })
     } else {
-      if (seatBefore?.role === 'scout' && seatBefore.bootstrap) await ensurePlyntrRepo(brainId)
+      if (seatBefore?.role === 'owner' || (seatBefore?.role === 'scout' && seatBefore.bootstrap)) {
+        await ensurePlyntrRepo(brainId)
+      }
       const st = await plyntrInstalled(brainId, repo)
       if (!plyntrGithubInstallReady(st, repo)) {
         throw new Error('The app is not installed on GitHub yet. Click Install in the browser, then try again.')
