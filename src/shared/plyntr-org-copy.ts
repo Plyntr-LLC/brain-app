@@ -1,3 +1,5 @@
+import { parseGithubOrgLogin } from './github-org.ts'
+
 export type OrgAdvice = {
   preferred: string
   free: boolean
@@ -5,31 +7,11 @@ export type OrgAdvice = {
   suggestion: string
 }
 
-/** Short org login from a name, @name, or github.com/orgs/name address. */
-function parseOrg(raw: string): string {
-  const s = String(raw || '').trim().replace(/^@/, '')
-  if (!s) return ''
-  const noQuery = s.split(/[?#]/)[0].replace(/\/+$/, '')
-  const fromUrl =
-    noQuery.match(/github\.com\/account\/organizations\/([^/\s]+)/i) ||
-    noQuery.match(/github\.com\/(?:orgs|organizations)\/([^/\s]+)/i) ||
-    noQuery.match(/github\.com\/([^/\s]+)\/[^/\s]+/i) ||
-    noQuery.match(/github\.com\/([^/\s]+)/i)
-  const name = String(fromUrl ? fromUrl[1] : noQuery).replace(/^@/, '')
-  if (!/^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$/.test(name)) return ''
-  if (
-    /^(account|accounts|apps|login|new|orgs|organizations|settings|signup)$/i.test(name)
-  ) {
-    return ''
-  }
-  return name
-}
-
 /** Login in the box when it is not the company slug. */
 export function typedOrgReadyLogin(typedOrg: string, slug: string): string {
-  const typed = parseOrg(typedOrg)
+  const typed = parseGithubOrgLogin(typedOrg)
   if (!typed) return ''
-  const company = parseOrg(String(slug || '').replace(/-brain$/i, ''))
+  const company = parseGithubOrgLogin(String(slug || '').replace(/-brain$/i, ''))
   if (company && typed.toLowerCase() === company.toLowerCase()) return ''
   if (company && typed.toLowerCase() === `${company}-brain`.toLowerCase()) return ''
   return typed
@@ -38,7 +20,7 @@ export function typedOrgReadyLogin(typedOrg: string, slug: string): string {
 export function orgStepCopy(label: string, slug: string, advice: OrgAdvice | null, typedOrg = ''): string {
   const ready = typedOrgReadyLogin(typedOrg, slug)
   if (ready) {
-    const repoSlug = parseOrg(String(slug || '').replace(/-brain$/i, '')) || slug
+    const repoSlug = parseGithubOrgLogin(String(slug || '').replace(/-brain$/i, '')) || slug
     return `This Mac will use the GitHub organization ${ready}. Click Use this organization. This Mac then creates ${ready}/${repoSlug}-brain.`
   }
   const company = label || 'This company'

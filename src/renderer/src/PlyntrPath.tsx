@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import { slugFromBusinessName } from '@shared/plyntr-invite'
 import { previousCreateStep } from '@shared/plyntr-wizard'
 import { orgStepCopy, orgUseError } from '@shared/plyntr-org-copy'
+import { resolvePlyntrRepoName } from '@shared/github-org'
 
 const PLATFORM =
   'Sign in to platform sync first: Settings → Add users → Email me a project-sync code, then Sign in, until you see This is the platform login.'
+const NO_REPO = 'This brain has no GitHub repository name yet.'
 
 type CreatePending = {
   createId: string
@@ -684,8 +686,7 @@ export function PlyntrCreateScreen({
   const [brainId, setBrainId] = useState(initial?.brainId || '')
   const [hasSeat, setHasSeat] = useState(false)
   const [seatKnown, setSeatKnown] = useState(!initial?.brainId)
-  const [repo, setRepo] = useState(initial?.org && initial?.slug ? `${initial.org}/${initial.slug}-brain` : '')
-  const [repoOpened, setRepoOpened] = useState(false)
+  const [repo, setRepo] = useState(resolvePlyntrRepoName(initial?.org || '', initial?.slug || ''))
   const [installOpened, setInstallOpened] = useState(false)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -751,7 +752,6 @@ export function PlyntrCreateScreen({
     onBindBack(() => {
       const prev = previousCreateStep(step, Boolean(brainId))
       if (prev == null) return false
-      if (step === 4) setRepoOpened(false)
       if (step === 5) setInstallOpened(false)
       void save(prev)
       return true
@@ -922,12 +922,18 @@ export function PlyntrCreateScreen({
                 setOrg(login)
                 if (brainId) {
                   const placed = await window.brain.plyntr.place({ brainId, org: login })
-                  const made = await window.brain.setup.createPlyntrRepo(login, placed.slug || slug)
+                  if (placed.slug) setSlug(placed.slug)
+                  const want = placed.repo
+                  if (!want) {
+                    setErr(NO_REPO)
+                    return
+                  }
+                  const made = await window.brain.setup.createPlyntrRepo(login, placed.slug || slug, want)
                   if (!made.ok) {
                     setErr(made.detail || 'GitHub did not create the repository.')
                     return
                   }
-                  setRepo(made.repo || placed.repo)
+                  setRepo(made.repo || want)
                   await save(5, { org: login, slug: placed.slug || slug })
                   return
                 }
@@ -944,12 +950,16 @@ export function PlyntrCreateScreen({
                 setEmail(scoutEmail)
                 if (!seatKnown) return
                 if (hasSeat && brainId) {
-                  const made = await window.brain.setup.createPlyntrRepo(org, slug)
+                  if (!repo) {
+                    setErr(NO_REPO)
+                    return
+                  }
+                  const made = await window.brain.setup.createPlyntrRepo(org, slug, repo)
                   if (!made.ok) {
                     setErr(made.detail || 'GitHub did not create the repository.')
                     return
                   }
-                  setRepo(made.repo)
+                  setRepo(made.repo || repo)
                   await save(5, { scoutEmail, brainId })
                   return
                 }
@@ -963,9 +973,16 @@ export function PlyntrCreateScreen({
                   return
                 }
                 setBrainId(res.brainId)
-                const made = await window.brain.setup.createPlyntrRepo(org, slug)
+                if (!res.repo) {
+                  setHasSeat(true)
+                  setErr(NO_REPO)
+                  await save(4, { scoutEmail, brainId: res.brainId })
+                  return
+                }
+                const made = await window.brain.setup.createPlyntrRepo(org, slug, res.repo)
                 if (!made.ok) {
                   setHasSeat(true)
+                  setRepo(res.repo)
                   setErr(made.detail || 'GitHub did not create the repository.')
                   await save(4, { scoutEmail, brainId: res.brainId })
                   return
@@ -976,7 +993,11 @@ export function PlyntrCreateScreen({
                 return
               }
               if (step === 4) {
-                const made = await window.brain.setup.createPlyntrRepo(org, slug)
+                if (!repo) {
+                  setErr(NO_REPO)
+                  return
+                }
+                const made = await window.brain.setup.createPlyntrRepo(org, slug, repo)
                 if (!made.ok) {
                   setErr(made.detail || 'GitHub did not create the repository.')
                   return
@@ -995,7 +1016,7 @@ export function PlyntrCreateScreen({
                   setInstallOpened(true)
                   return
                 }
-                const want = repo || `${org}/${slug}-brain`
+                const want = resolvePlyntrRepoName(org, slug, repo)
                 const st = await window.brain.plyntr.installed(brainId, want).catch(() => null)
                 if (!st?.ready) {
                   setErr('Plyntr sync is not on this repository yet. On the GitHub page, click Install, choose Only select repositories, pick this repo, then click Check GitHub.')
@@ -1008,7 +1029,7 @@ export function PlyntrCreateScreen({
                 brainId,
                 org,
                 slug,
-                repo: repo || `${org}/${slug}-brain`
+                repo: resolvePlyntrRepoName(org, slug, repo)
               })
               await save(7, { brainId })
               onCloned(applied.brainPath || '')

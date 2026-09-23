@@ -1,8 +1,19 @@
-import { spawnSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
+import { promisify } from 'node:util'
 import { extraPath, binEnv } from './ai-cli'
-import { ghCliDetail, orgIdFromGraphql, orgLoginCandidates, parseGithubOrgLogin, plyntrRepoFullName } from './github-repo'
+import { ghCliDetail, orgIdFromGraphql, orgLoginCandidates, parseGithubOrgLogin, resolvePlyntrRepoName } from './github-repo'
+
+const execFileAsync = promisify(execFile)
+
+type GhRun = {
+  bin: string | null
+  status: number | null
+  stdout: string
+  stderr: string
+  error?: string
+}
 
 export async function lookupGithubAccount(login: string): Promise<{
   ok: boolean
@@ -106,20 +117,34 @@ function resolveGhBin(): string | null {
   return null
 }
 
-function runGh(args: string[]): { bin: string | null; status: number | null; stdout: string; stderr: string; error?: string } {
+async function runGh(args: string[]): Promise<GhRun> {
   const bin = resolveGhBin()
   if (!bin) return { bin: null, status: null, stdout: '', stderr: '' }
-  const r = spawnSync(bin, args, {
-    encoding: 'utf8',
-    timeout: 60000,
-    env: { ...binEnv(), GH_PROMPT_DISABLED: '1', GIT_TERMINAL_PROMPT: '0' }
-  })
-  return {
-    bin,
-    status: r.status,
-    stdout: r.stdout || '',
-    stderr: r.stderr || '',
-    error: r.error ? String(r.error.message || r.error) : undefined
+  try {
+    const r = await execFileAsync(bin, args, {
+      encoding: 'utf8',
+      timeout: 60000,
+      maxBuffer: 2 * 1024 * 1024,
+      env: { ...binEnv(), GH_PROMPT_DISABLED: '1', GIT_TERMINAL_PROMPT: '0' }
+    })
+    return { bin, status: 0, stdout: r.stdout || '', stderr: r.stderr || '' }
+  } catch (e) {
+    const err = e as {
+      status?: number
+      code?: string | number
+      stdout?: string
+      stderr?: string
+      killed?: boolean
+      message?: string
+    }
+    const status = typeof err.status === 'number' ? err.status : typeof err.code === 'number' ? err.code : null
+    return {
+      bin,
+      status,
+      stdout: String(err.stdout || ''),
+      stderr: String(err.stderr || ''),
+      error: err.killed ? 'The GitHub command timed out.' : undefined
+    }
   }
 }
 
@@ -138,19 +163,26 @@ export async function resolveGithubOrg(login: string): Promise<{
   const name = parseGithubOrgLogin(login)
   if (!name) return look
   const query = 'query($login:String!){ organization(login:$login){ login databaseId } }'
-  const r = runGh(['api', 'graphql', '-f', `query=${query}`, '-f', `login=${name}`])
+  const r = await runGh(['api', 'graphql', '-f', `query=${query}`, '-f', `login=${name}`])
   const hit = orgIdFromGraphql(r.stdout || '')
-  if (!hit) return look
-  return { ok: true, login: hit.login, type: 'Organization', id: hit.id }
+  if (hit) return { ok: true, login: hit.login, type: 'Organization', id: hit.id }
+  if (!r.bin || r.status !== 0) {
+    return { ok: false, reason: 'gh', detail: ghCliDetail(r), login: name }
+  }
+  return look
 }
 
-/** Create org/slug-brain with the signed-in GitHub account, or keep it if it is already there. */
-export function ensureRemoteBrainRepo(org: string, slug: string): { ok: boolean; repo: string; detail?: string } {
-  const repo = plyntrRepoFullName(org, slug)
-  if (!repo) return { ok: false, repo: '', detail: 'That organization name cannot be used.' }
-  const view = runGh(['repo', 'view', repo, '--json', 'name'])
+/** Create the named brain repo with the signed-in GitHub account, or keep it if it is already there. */
+export async function ensureRemoteBrainRepo(
+  org: string,
+  slug: string,
+  repoName?: string
+): Promise<{ ok: boolean; repo: string; detail?: string }> {
+  const repo = resolvePlyntrRepoName(org, slug, repoName)
+  if (!repo) return { ok: false, repo: '', detail: 'This brain has no GitHub repository name yet.' }
+  const view = await runGh(['repo', 'view', repo, '--json', 'name'])
   if (view.bin && view.status === 0) return { ok: true, repo }
-  const made = runGh(['repo', 'create', repo, '--private', '--clone=false'])
+  const made = await runGh(['repo', 'create', repo, '--private', '--clone=false'])
   if (made.bin && made.status === 0) return { ok: true, repo }
   const err = `${made.stderr || ''}\n${made.stdout || ''}\n${view.stderr || ''}\n${view.stdout || ''}`
   if (/already exists/i.test(err)) return { ok: true, repo }

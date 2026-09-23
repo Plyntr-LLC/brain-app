@@ -327,8 +327,12 @@ const brain = {
     syncMode: (folder: string) => ipcRenderer.invoke('setup:syncMode', folder) as Promise<string>,
     openPlyntrInstall: (brainId: string, org?: string) =>
       ipcRenderer.invoke('setup:openPlyntrInstall', brainId, org) as Promise<{ ok: boolean; url: string; detail?: string }>,
-    createPlyntrRepo: (org: string, slug: string) =>
-      ipcRenderer.invoke('setup:createPlyntrRepo', org, slug) as Promise<{ ok: boolean; repo: string; detail?: string }>,
+    createPlyntrRepo: (org: string, slug: string, repo?: string) =>
+      ipcRenderer.invoke('setup:createPlyntrRepo', org, slug, repo) as Promise<{
+        ok: boolean
+        repo: string
+        detail?: string
+      }>,
     openPlyntrRepo: (org: string, slug: string) =>
       ipcRenderer.invoke('setup:openPlyntrRepo', org, slug) as Promise<{ ok: boolean; url: string }>,
     applyFolder: (opts?: { teamSlug?: string; dest?: string }) =>

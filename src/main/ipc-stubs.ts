@@ -73,6 +73,7 @@ import {
   writePlyntrSyncFile
 } from './plyntr-move'
 import { adviseGithubOrg, ensureRemoteBrainRepo, lookupGithubAccount, resolveGithubOrg } from './github-account'
+import { resolvePlyntrRepoName } from './github-repo'
 import { loadAnyChats, loadChats, saveChats, type SavedChats } from './persist'
 import { rememberPhoneChats } from './phone'
 import { emitChat, markChatBusy } from './chat-fan'
@@ -731,12 +732,12 @@ export function registerStubIpc(): void {
     }
   })
   ipcMain.handle('setup:lookupOrg', async (_e, login: string) => resolveGithubOrg(login))
-  ipcMain.handle('setup:createPlyntrRepo', async (_e, org: string, slug: string) => {
+  ipcMain.handle('setup:createPlyntrRepo', async (_e, org: string, slug: string, repo?: string) => {
     if (dryRun()) {
-      const repo = `${String(org || 'dry').trim()}/${String(slug || 'dry').trim()}-brain`
-      return { ok: true, repo }
+      const name = resolvePlyntrRepoName(org, slug, repo)
+      return { ok: Boolean(name), repo: name, detail: name ? undefined : 'This brain has no GitHub repository name yet.' }
     }
-    return ensureRemoteBrainRepo(org, slug)
+    return ensureRemoteBrainRepo(org, slug, repo)
   })
   ipcMain.handle('setup:adviseOrg', async (_e, login: string) => adviseGithubOrg(login))
   ipcMain.handle('setup:openCreateOrg', async () => {
@@ -969,7 +970,7 @@ export function registerStubIpc(): void {
     const brainId = String(opts.brainId || '').trim()
     const slug = String(opts.slug || '').trim()
     const org = String(opts.org || '').trim()
-    const repo = String(opts.repo || (org && slug ? `${org}/${slug}-brain` : '')).trim()
+    const repo = resolvePlyntrRepoName(org, slug, opts.repo)
     if (!brainId || !slug || !repo) throw new Error('This brain is missing its Plyntr id.')
     const dest = defaultBrainDest(slug)
     const seatBefore = seatForBrain(brainId)
@@ -1022,7 +1023,9 @@ export function registerStubIpc(): void {
       return {
         ok: false,
         url: '',
-        detail: `The install page would open on Plyntr LLC, not ${name || 'the new organization'}. GitHub did not return an id for that organization.`
+        detail:
+          look.detail ||
+          `The install page would open on Plyntr LLC, not ${name || 'the new organization'}. GitHub did not return an id for that organization.`
       }
     }
     const url = plyntrBrainSyncInstallUrl(brainId, look.id)

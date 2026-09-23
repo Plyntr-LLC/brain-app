@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ghCliDetail, orgIdFromGraphql, orgLoginCandidates, parseGithubHqRepo, parseGithubOrgLogin, plyntrRepoFullName } from './github-repo.ts'
+import { ghCliDetail, orgIdFromGraphql, orgLoginCandidates, parseGithubHqRepo, parseGithubOrgLogin, plyntrRepoFullName, resolvePlyntrRepoName } from '../shared/github-org.ts'
 
 test('parseGithubHqRepo accepts owner/name and git remotes', () => {
   assert.equal(parseGithubHqRepo('acme-org/acme-hq-brain'), 'acme-org/acme-hq-brain')
@@ -41,13 +41,23 @@ test('GraphQL organization id is used when the public API hides the org', () => 
   assert.equal(orgIdFromGraphql('{"data":{"organization":null}}'), null)
 })
 
+test('the worker repo name wins over a rebuilt slug', () => {
+  assert.equal(
+    resolvePlyntrRepoName('org', 'rose-wine', 'its-a-test-rosene/rose-wine-brain'),
+    'its-a-test-rosene/rose-wine-brain'
+  )
+  assert.equal(resolvePlyntrRepoName('its-a-test-rosene', 'rose-wine'), 'its-a-test-rosene/rose-wine-brain')
+  assert.equal(resolvePlyntrRepoName('org', 'foo-brain', ''), 'org/foo-brain')
+  assert.equal(resolvePlyntrRepoName('org', 'foo', 'not a repo'), 'org/foo-brain')
+})
+
 test('missing gh is a real error, not a blank create failure', () => {
   assert.equal(
     ghCliDetail({ bin: null, status: null }),
     'This Mac does not have the GitHub command (gh). Install GitHub CLI and sign in as an owner of the organization.'
   )
   assert.equal(ghCliDetail({ bin: '/opt/homebrew/bin/gh', status: 1, stderr: 'HTTP 404' }), 'HTTP 404')
-  assert.match(ghCliDetail({ bin: '/opt/homebrew/bin/gh', status: 1 }), /exit 1/)
+  assert.match(ghCliDetail({ bin: '/opt/homebrew/bin/gh', status: 1 }), /did not finish \(exit 1\)/)
 })
 
 test('org login candidates keep the name, then a short suffix', () => {
