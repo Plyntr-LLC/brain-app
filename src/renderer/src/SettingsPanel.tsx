@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { isTeamSeat, seatLabel, type SeatRole } from '@shared/contracts'
+import { asSeat, isTeamSeat, seatLabel, type SeatRole } from '@shared/contracts'
 import { displayPlyntrCode } from '@shared/plyntr-invite'
 import { plyntrPackageCopy } from '@shared/plyntr-package'
 import { canOfferPlyntrTransfer } from '@shared/plyntr-transfer'
@@ -769,7 +769,7 @@ export function SettingsPanel({
           {openPeople ? (
             <>
           <p>
-            Agency team is on this whole brain. Project only never clones HQ. This app copies only the folders you tick,
+            Team is on this whole brain. Project only never clones HQ. This app copies only the folders you tick,
             keeps them in sync in the background, and deletes those folders if you remove access.
           </p>
           <div className="set-block" style={{ padding: 0 }}>
@@ -982,10 +982,16 @@ export function SettingsPanel({
               <label className="field">
                 Seat
                 <select value={mintRole} onChange={(e) => setMintRole(e.target.value as SeatRole)}>
-                  {(seat === 'owner' || plyntrRows.seats.some((s) => s.email === email && s.bootstrap)
-                    ? (['owner', 'scout', 'team', 'project'] as SeatRole[])
-                    : (['team', 'project'] as SeatRole[])
-                  ).map((r) => (
+                  {((() => {
+                    const actor = asSeat(plyntrRole || seat)
+                    const mine = (plyntrSeatEmail || email).trim().toLowerCase()
+                    const builder =
+                      actor === 'owner' ||
+                      plyntrRows.seats.some(
+                        (s) => s.role === 'scout' && s.bootstrap && s.email.trim().toLowerCase() === mine
+                      )
+                    return (builder ? ['owner', 'scout', 'team', 'project'] : ['team', 'project']) as SeatRole[]
+                  })()).map((r) => (
                     <option key={r} value={r}>
                       {seatLabel(r)}
                     </option>
@@ -1192,7 +1198,7 @@ export function SettingsPanel({
             <label className="field">
               Seat
               <select value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value as Person['role'] })}>
-                <option value="team">Agency team</option>
+                <option value="team">Team</option>
                 <option value="project">Project only</option>
                 <option value="scout">Scout</option>
                 <option value="owner">Owner</option>

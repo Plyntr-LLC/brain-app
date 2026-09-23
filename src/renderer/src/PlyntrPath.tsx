@@ -275,7 +275,7 @@ export function PlyntrCodeScreen({
 const MEMBER_ROLES = [
   ['owner', 'Owner'],
   ['scout', 'Scout'],
-  ['team', 'Agency team'],
+  ['team', 'Team'],
   ['project', 'Project only']
 ] as const
 

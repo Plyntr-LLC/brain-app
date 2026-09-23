@@ -16,7 +16,7 @@ export function seatLabel(role?: string): string {
   if (r === 'owner') return 'Owner'
   if (r === 'scout') return 'Scout'
   if (r === 'project') return 'Project only'
-  return 'Agency team'
+  return 'Team'
 }
 
 export function isTeamSeat(role?: string): boolean {

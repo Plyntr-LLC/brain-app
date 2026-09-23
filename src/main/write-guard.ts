@@ -6,7 +6,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path'
  * bypass this until a later hook.
  */
 export const TEAM_WRITE_REFUSAL =
-  'Agency team can read skills and team config. Brain.app will not write those files. The CLI on this Mac can still write them until a later hook.'
+  'Team can read skills and team config. Brain.app will not write those files. The CLI on this Mac can still write them until a later hook.'
 
 export function isAgencyTeamRole(role?: string | null): boolean {
   const r = String(role || '').trim().toLowerCase()

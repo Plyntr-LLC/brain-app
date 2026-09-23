@@ -635,7 +635,7 @@ export function FirstRun() {
         <span>{title}</span>
         {s.role ? (
           <span className="role-lock">
-            {s.role === 'project' ? 'Project only' : s.role === 'team' || s.role === 'member' ? 'Agency team' : s.role === 'scout' ? 'Scout' : 'Owner'}
+            {s.role === 'project' ? 'Project only' : s.role === 'team' || s.role === 'member' ? 'Team' : s.role === 'scout' ? 'Scout' : 'Owner'}
             {s.brainKind === 'project' ? ' · project' : s.brainKind === 'hq' ? ' · HQ' : ''}
           </span>
         ) : null}
