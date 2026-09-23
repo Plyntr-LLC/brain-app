@@ -221,9 +221,9 @@ export async function openPlyntrCompany(
   }
 }
 
-export async function emailPlyntrCode(email: string): Promise<{ ok: boolean; emailed: boolean }> {
-  const parsed = (await call('/v1/codes/email', { method: 'POST', body: { email } })) as { emailed?: boolean }
-  return { ok: true, emailed: Boolean(parsed.emailed) }
+export async function emailPlyntrCode(email: string): Promise<{ ok: boolean; emailed: boolean; role: string }> {
+  const parsed = (await call('/v1/codes/email', { method: 'POST', body: { email } })) as { emailed?: boolean; role?: string }
+  return { ok: true, emailed: Boolean(parsed.emailed), role: String(parsed.role || '') }
 }
 
 export async function placePlyntrBrain(brainId: string, org: string): Promise<{ repo: string; slug: string; org: string }> {

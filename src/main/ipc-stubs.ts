@@ -1096,6 +1096,9 @@ export function registerStubIpc(): void {
     return { brainId: created.brainId, repo: created.repo, hasToken: Boolean(created.seatToken) }
   })
   ipcMain.handle('plyntr:openCompany', async (_e, body: { label: string; ownerName: string; ownerEmail: string }) => {
+    if (!isJoeSuperAdmin(getAccount() || loadAccount(), getSettings())) {
+      throw new Error('Only the Plyntr superadmin can add a company.')
+    }
     if (!isPlatformOwnerSession()) throw new Error(PLATFORM_GATE)
     const session = loadOwnerSession()
     if (!session) throw new Error(PLATFORM_GATE)

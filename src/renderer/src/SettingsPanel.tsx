@@ -3,6 +3,7 @@ import { isTeamSeat, seatLabel, type SeatRole } from '@shared/contracts'
 import { displayPlyntrCode } from '@shared/plyntr-invite'
 import { plyntrPackageCopy } from '@shared/plyntr-package'
 import { canOfferPlyntrTransfer } from '@shared/plyntr-transfer'
+import { PlyntrCompanyScreen } from './PlyntrPath'
 
 type Person = {
   name: string
@@ -85,12 +86,14 @@ export function SettingsPanel({
   role,
   onClose,
   onLogout,
-  onSwitchBrain
+  onSwitchBrain,
+  onBeginCompanySetup
 }: {
   role?: string
   onClose: () => void
   onLogout?: () => void
   onSwitchBrain?: (row: { path: string; name: string }) => void
+  onBeginCompanySetup?: (row: { brainId: string; slug: string; label: string; ownerEmail: string; code: string }) => void
 }) {
   const [superAdmin, setSuper] = useState(false)
   const [email, setEmail] = useState('')
@@ -121,6 +124,7 @@ export function SettingsPanel({
     { path: string; name: string; slug: string; watching?: boolean; current?: boolean }[]
   >([])
   const [openAdd, setOpenAdd] = useState(false)
+  const [openCompany, setOpenCompany] = useState(false)
   const [openPeople, setOpenPeople] = useState(false)
   const [openCatalog, setOpenCatalog] = useState(false)
   const [adsCode, setAdsCode] = useState('')
@@ -517,6 +521,29 @@ export function SettingsPanel({
           </button>
           <span className="tiny"> Chats and this brain folder stay on this computer.</span>
         </p>
+      ) : null}
+
+      {joe && superAdmin ? (
+        <section className="set-block">
+          <FoldHead
+            kicker="Plyntr"
+            title="Set up a new company brain"
+            open={openCompany}
+            onToggle={() => setOpenCompany((v) => !v)}
+          />
+          {openCompany ? (
+            <>
+              <p>
+                Add the company, their name, and their email. You get a six-digit code, and we email that same code to
+                them. They cannot start a company on their own. They paste the code, or ask for a new one at that email.
+              </p>
+              <PlyntrCompanyScreen
+                embedded
+                onSetupHere={(row) => onBeginCompanySetup?.(row)}
+              />
+            </>
+          ) : null}
+        </section>
       ) : null}
 
       {joe && superAdmin ? (

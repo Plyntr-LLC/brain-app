@@ -4,7 +4,7 @@ import { blankSession, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
 import { SettingsPanel } from './SettingsPanel'
 import { SetupNeeds } from './SetupNeeds'
-import { ForkScreen, PlyntrCodeScreen, PlyntrCompanyScreen, PlyntrCreateScreen, PlyntrProjectScreen } from './PlyntrPath'
+import { ForkScreen, PlyntrCodeScreen, PlyntrCreateScreen, PlyntrProjectScreen } from './PlyntrPath'
 import { WorkPulse } from './WorkPulse'
 
 function TwoApps() {
@@ -76,6 +76,7 @@ export function FirstRun() {
     brainId?: string
   } | null>(null)
   const [plyntrJoin, setPlyntrJoin] = useState(false)
+  const [codeStartsInEmail, setCodeStartsInEmail] = useState(false)
   const [createGate, setCreateGate] = useState(false)
   const [sync, setSync] = useState<{ ok: boolean; line: string } | null>(null)
   const [watching, setWatching] = useState(false)
@@ -569,10 +570,7 @@ export function FirstRun() {
       const session = await window.brain.auth.session()
       if (pend.create) setPlyntrCreate(pend.create)
       const step = pend.create?.wizardStep ?? 0
-      if (!pend.platform || step < 2) {
-        go('plyntr-company')
-        return
-      }
+      if (!pend.create || step < 2) return
       const gate = !session.signedIn || (step > 0 && !pend.platform)
       setCreateGate(gate)
       if (!gate && step > 0) {
@@ -665,6 +663,25 @@ export function FirstRun() {
               setS((p) => ({ ...p, brainPath: row.path, business: row.name }))
               setShowInvite(false)
             }}
+            onBeginCompanySetup={(row) => {
+              void (async () => {
+                const acct = await window.brain.auth.session()
+                const next = {
+                  createId: `c-${Date.now()}`,
+                  wizardStep: 2,
+                  label: row.label,
+                  org: '',
+                  slug: row.slug,
+                  scoutEmail: acct.email,
+                  brainId: row.brainId
+                }
+                await window.brain.plyntr.saveCreate(next)
+                setPlyntrCreate(next)
+                setCreateGate(false)
+                setShowInvite(false)
+                go('plyntr-create')
+              })()
+            }}
           />
         </>
       )}
@@ -708,47 +725,26 @@ export function FirstRun() {
                 setLoginVia('')
                 go('welcome')
               }}
-              onHaveCode={() => go('plyntr-code')}
-              onCreate={() => go('plyntr-company')}
+              onHaveCode={() => {
+                setCodeStartsInEmail(false)
+                go('plyntr-code')
+              }}
               onProject={() => go('plyntr-project')}
+              onEmailCode={() => {
+                setCodeStartsInEmail(true)
+                go('plyntr-code')
+              }}
               onContinueCreate={() => void openPlyntrCreate()}
               onContinueJoin={() => void continuePlyntrJoin()}
             />
           )}
           {s.screen === 'plyntr-code' && (
-            <PlyntrCodeScreen onJoin={finishPlyntrJoin} />
-          )}
-          {s.screen === 'plyntr-company' && (
-            <PlyntrCompanyScreen
-              onResume={() => void openPlyntrCreate()}
-              onSetupHere={(row) => {
-                void (async () => {
-                  const acct = await window.brain.auth.session()
-                  const next = {
-                    createId: `c-${Date.now()}`,
-                    wizardStep: 2,
-                    label: row.label,
-                    org: '',
-                    slug: row.slug,
-                    scoutEmail: acct.email,
-                    brainId: row.brainId
-                  }
-                  await window.brain.plyntr.saveCreate(next)
-                  setPlyntrCreate(next)
-                  setCreateGate(false)
-                  go('plyntr-create')
-                })()
-              }}
-            />
+            <PlyntrCodeScreen startInEmail={codeStartsInEmail} onJoin={finishPlyntrJoin} />
           )}
           {s.screen === 'plyntr-project' && (
             <PlyntrProjectScreen
               onJoin={async (row) => {
                 await afterProject(row)
-              }}
-              onEmail={() => {
-                setLoginVia('hq-sync')
-                go('email')
               }}
             />
           )}

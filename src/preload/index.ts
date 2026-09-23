@@ -404,7 +404,7 @@ const brain = {
         ownerName: string
       }>,
     emailCode: (email: string) =>
-      ipcRenderer.invoke('plyntr:emailCode', email) as Promise<{ ok: boolean; emailed: boolean }>,
+      ipcRenderer.invoke('plyntr:emailCode', email) as Promise<{ ok: boolean; emailed: boolean; role: string }>,
     place: (body: { brainId: string; org: string }) =>
       ipcRenderer.invoke('plyntr:place', body) as Promise<{ repo: string; slug: string; org: string }>,
     resolve: (code: string) =>

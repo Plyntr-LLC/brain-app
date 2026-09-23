@@ -21,8 +21,8 @@ export function ForkScreen({
   err,
   onAgency,
   onHaveCode,
-  onCreate,
   onProject,
+  onEmailCode,
   onContinueCreate,
   onContinueJoin
 }: {
@@ -32,8 +32,8 @@ export function ForkScreen({
   err: string
   onAgency: () => void
   onHaveCode: () => void
-  onCreate: () => void
   onProject: () => void
+  onEmailCode: () => void
   onContinueCreate: () => void
   onContinueJoin: () => void
 }) {
@@ -58,62 +58,112 @@ export function ForkScreen({
       </button>
       <button className="choice" type="button" onClick={onHaveCode}>
         <h3>I have a Plyntr code</h3>
-        <p>Paste the six-digit code for this company.</p>
-      </button>
-      <button className="choice" type="button" onClick={onCreate}>
-        <h3>Set up a new company brain</h3>
-        <p>Add the company, their name, and their email. You get a code to share.</p>
+        <p>Paste the code you were given.</p>
       </button>
       <button className="choice" type="button" onClick={onProject}>
         <h3>Project-only code</h3>
-        <p>They only get their project folder, not the whole brain.</p>
+        <p>Paste the project code if you were set up for one project.</p>
+      </button>
+      <button className="choice" type="button" onClick={onEmailCode}>
+        <h3>Email me a code</h3>
+        <p>This works after Plyntr, your owner, or a scout has already added your email.</p>
       </button>
     </>
   )
 }
 
 export function PlyntrProjectScreen({
-  onJoin,
-  onEmail
+  onJoin
 }: {
   onJoin: (res: { email: string; name: string; brainPath: string; teamName: string; roots?: string[] }) => Promise<void>
-  onEmail: () => void
 }) {
+  const [mode, setMode] = useState<'code' | 'email' | 'sent'>('code')
   const [code, setCode] = useState('')
+  const [email, setEmail] = useState('')
+  const [sentRole, setSentRole] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   return (
     <>
       <p className="kicker">Project only</p>
-      <h1>Paste the project code.</h1>
-      <p>Whoever added you created a 10-character code. It opens your project folder.</p>
-      <label className="field">
-        Code
-        <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="XXXX-XXXX-XX" />
-      </label>
+      <h1>{mode === 'code' ? 'Paste the project code.' : 'Email me the code.'}</h1>
+      {mode === 'code' ? (
+        <p>Paste the project code if an owner or a scout already set you up for one project.</p>
+      ) : mode === 'sent' ? (
+        <p>
+          Check {email}.
+          {sentRole && sentRole !== 'project'
+            ? ' That email is for the whole brain. Paste the code under I have a Plyntr code.'
+            : ' Paste the code from that email here.'}
+        </p>
+      ) : (
+        <p>
+          Type the email you were added with. A code is sent only after an owner or a scout has already set up your
+          project. If that has not happened, nothing is emailed.
+        </p>
+      )}
+      {mode === 'code' || mode === 'sent' ? (
+        <label className="field">
+          Code
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="XXXX-XXXX-XX" />
+        </label>
+      ) : (
+        <label className="field">
+          Email
+          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" />
+        </label>
+      )}
       {err ? <p className="note">{err}</p> : null}
       <div className="actions">
-        <button
-          className="primary"
-          type="button"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true)
-            setErr('')
-            try {
-              const row = await window.brain.plyntr.joinProject(code)
-              await onJoin(row)
-            } catch (e) {
-              setErr(String((e as Error).message || e))
-            } finally {
-              setBusy(false)
-            }
-          }}
-        >
-          Continue
-        </button>
-        <button className="linkish" type="button" onClick={onEmail}>
-          I have an email code
+        {mode === 'email' ? (
+          <button
+            className="primary"
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              if (!email.includes('@')) {
+                setErr('Type the email you were added with.')
+                return
+              }
+              setBusy(true)
+              setErr('')
+              try {
+                const sent = await window.brain.plyntr.emailCode(email)
+                setSentRole(sent.role || '')
+                setMode('sent')
+                if (!sent.emailed) setErr('You are on file. Email did not send. Ask for the code directly.')
+              } catch (e) {
+                setErr(String((e as Error).message || e))
+              } finally {
+                setBusy(false)
+              }
+            }}
+          >
+            Email me a code
+          </button>
+        ) : (
+          <button
+            className="primary"
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true)
+              setErr('')
+              try {
+                const row = await window.brain.plyntr.joinProject(code)
+                await onJoin(row)
+              } catch (e) {
+                setErr(String((e as Error).message || e))
+              } finally {
+                setBusy(false)
+              }
+            }}
+          >
+            Continue
+          </button>
+        )}
+        <button className="linkish" type="button" onClick={() => setMode(mode === 'code' ? 'email' : 'code')}>
+          {mode === 'code' ? "I don't have a code" : 'I have a code'}
         </button>
       </div>
     </>
@@ -121,13 +171,16 @@ export function PlyntrProjectScreen({
 }
 
 export function PlyntrCodeScreen({
-  onJoin
+  onJoin,
+  startInEmail
 }: {
   onJoin: (row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) => Promise<void>
+  startInEmail?: boolean
 }) {
-  const [mode, setMode] = useState<'code' | 'email' | 'sent'>('code')
+  const [mode, setMode] = useState<'code' | 'email' | 'sent'>(startInEmail ? 'email' : 'code')
   const [code, setCode] = useState('')
   const [email, setEmail] = useState('')
+  const [sentRole, setSentRole] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   return (
@@ -135,11 +188,17 @@ export function PlyntrCodeScreen({
       <p className="kicker">Plyntr</p>
       <h1>{mode === 'code' ? 'Paste the Plyntr code.' : 'Email me the code.'}</h1>
       {mode === 'code' ? (
-        <p>Whoever added you sent a six-digit code. It is already tied to your email.</p>
+        <p>Paste the code you were given after you were added.</p>
       ) : mode === 'sent' ? (
-        <p>Check {email}. The code is in that inbox. Paste it here when you have it.</p>
+        <p>
+          Check {email}. Paste that code here.
+          {sentRole === 'project' ? ' This email is a project login. Paste the code on Project-only code instead.' : ''}
+        </p>
       ) : (
-        <p>Use the email that was added for this company. We send a code only if that address is already on a company.</p>
+        <p>
+          Type the email you were added with. A code is sent only after Plyntr, your owner, or a scout has already set
+          you up. If that has not happened, nothing is emailed.
+        </p>
       )}
       {mode === 'code' || mode === 'sent' ? (
         <label className="field">
@@ -168,8 +227,9 @@ export function PlyntrCodeScreen({
               setErr('')
               try {
                 const sent = await window.brain.plyntr.emailCode(email)
+                setSentRole(sent.role || '')
                 setMode('sent')
-                if (!sent.emailed) setErr('The company is on file. Email did not send. Ask for the code directly.')
+                if (!sent.emailed) setErr('You are on file. Email did not send. Ask for the code directly.')
               } catch (e) {
                 setErr(String((e as Error).message || e))
               } finally {
@@ -210,10 +270,12 @@ export function PlyntrCodeScreen({
 
 export function PlyntrCompanyScreen({
   onSetupHere,
-  onResume
+  onResume,
+  embedded
 }: {
   onSetupHere: (row: { brainId: string; slug: string; label: string; ownerEmail: string; code: string }) => void
   onResume?: () => void
+  embedded?: boolean
 }) {
   const [phase, setPhase] = useState<'check' | 'login' | 'form' | 'code'>('check')
   const [email, setEmail] = useState('joe@plyntr.com')
@@ -237,14 +299,24 @@ export function PlyntrCompanyScreen({
 
   return (
     <>
-      <p className="kicker">New company</p>
-      <h1>
-        {phase === 'login' || phase === 'check'
-          ? 'Sign in as Plyntr first'
-          : phase === 'form'
-            ? 'Add the company'
-            : 'Share this code'}
-      </h1>
+      {embedded ? null : <p className="kicker">New company</p>}
+      {embedded ? (
+        <h3 className="set-h">
+          {phase === 'login' || phase === 'check'
+            ? 'Sign in as Plyntr first'
+            : phase === 'form'
+              ? 'Add the company'
+              : 'Share this code'}
+        </h3>
+      ) : (
+        <h1>
+          {phase === 'login' || phase === 'check'
+            ? 'Sign in as Plyntr first'
+            : phase === 'form'
+              ? 'Add the company'
+              : 'Share this code'}
+        </h1>
+      )}
       {phase === 'login' ? (
         <>
           <p>This Mac needs the platform login before it can add a company. We email a code to you, you paste it here, and setup continues on the next screen.</p>
