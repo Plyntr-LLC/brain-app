@@ -80,7 +80,7 @@ import { cancelWarm, closeWarm, forkSession, promptWarm, resetWarm, resumeSessio
 import { justUpdated } from './update'
 import { contextBlurb, grokCli, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
 import { clearAccount, getAccount, getMemberToken, loadAccount, saveAccount } from './session-token'
-import { authCodeRoute, normalizePlyntrInviteCode } from '../shared/plyntr-invite'
+import { authCodeRoute, isPlyntrCompanyCode, normalizePlyntrInviteCode } from '../shared/plyntr-invite'
 import { listedRoleForSeat, plyntrSessionRole } from '../shared/plyntr-transfer'
 import { readSyncManifest, readSyncMode } from './sync-manifest'
 import { AB_OWNS_PLYNTR, chooseWatcher } from './watcher-choice'
@@ -1159,7 +1159,7 @@ export function registerStubIpc(): void {
     return openPlyntrProject(code)
   })
   ipcMain.handle('plyntr:resolve', async (_e, code: string) => {
-    if (authCodeRoute(code) !== 'plyntr') throw new Error('That code did not work.')
+    if (authCodeRoute(code) !== 'plyntr' && !isPlyntrCompanyCode(code)) throw new Error('That code did not work.')
     const resolved = await resolvePlyntrCode(normalizePlyntrInviteCode(code))
     if (resolved.role === 'project') {
       throw new Error('That code is for a project folder. Use Project-only code on the first screen.')

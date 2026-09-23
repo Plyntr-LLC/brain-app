@@ -10,6 +10,11 @@ export function authCodeRoute(raw: string): 'plyntr' | 'other' {
   return normalizePlyntrInviteCode(raw).length === PLYNTR_INVITE_LEN ? 'plyntr' : 'other'
 }
 
+/** Company setup codes are six digits. Seat and project codes stay ten characters. */
+export function isPlyntrCompanyCode(raw: string): boolean {
+  return /^\d{6}$/.test(normalizePlyntrInviteCode(raw))
+}
+
 export function displayPlyntrCode(raw: string): string {
   const n = normalizePlyntrInviteCode(raw)
   if (n.length !== PLYNTR_INVITE_LEN) return n

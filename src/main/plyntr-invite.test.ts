@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { authCodeRoute, displayPlyntrCode, normalizePlyntrInviteCode, slugFromBusinessName } from '../shared/plyntr-invite.ts'
+import { authCodeRoute, displayPlyntrCode, isPlyntrCompanyCode, normalizePlyntrInviteCode, slugFromBusinessName } from '../shared/plyntr-invite.ts'
 
 test('authCodeRoute sends 10-character codes to Plyntr and leaves short codes alone', () => {
   assert.equal(authCodeRoute('TESTTEST12'), 'plyntr')
@@ -8,6 +8,10 @@ test('authCodeRoute sends 10-character codes to Plyntr and leaves short codes al
   assert.equal(authCodeRoute('test test 12'), 'plyntr')
   assert.equal(normalizePlyntrInviteCode('ab-cd ef'), 'ABCDEF')
   assert.equal(authCodeRoute('ABC123'), 'other')
+  assert.equal(isPlyntrCompanyCode('184392'), true)
+  assert.equal(isPlyntrCompanyCode('184 392'), true)
+  assert.equal(isPlyntrCompanyCode('ABC123'), false)
+  assert.equal(authCodeRoute('184392'), 'other')
   assert.equal(authCodeRoute('ABC123!'), 'other')
   assert.equal(displayPlyntrCode('TESTTEST12'), 'TEST-TEST-12')
 })
