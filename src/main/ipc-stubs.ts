@@ -62,7 +62,7 @@ import { installNeed, isNeedId, listNeeds, loginCli, loginCliUntilDone } from '.
 import { cliSignedIn } from './cli-auth'
 import * as ai from './ai-cli'
 import { asAttachBuf, inspectAttach, stashBytes } from './attach'
-import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot } from './files'
+import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot, writeSafe } from './files'
 import { brainWriteBlock } from './write-guard'
 import { roleForBrainWrite } from './write-guard-role'
 import {
@@ -1522,6 +1522,12 @@ export function registerStubIpc(): void {
   ipcMain.handle('files:list', async (_e, root: string, dir?: string) => listDir(root, dir || root))
   ipcMain.handle('files:match', async (_e, cwd: string, text: string) => matchExisting(cwd || '', text || ''))
   ipcMain.handle('files:read', async (_e, root: string, abs: string) => readSafe(root, abs))
+  ipcMain.handle('files:write', async (_e, root: string, abs: string, text: string) => {
+    const folder = String(root || '')
+    const block = brainWriteBlock(roleForBrainWrite(folder), folder, String(abs || ''))
+    if (block) throw new Error(block)
+    return writeSafe(folder, String(abs || ''), String(text ?? ''))
+  })
   ipcMain.handle('files:browse', async (_e, root?: string) => {
     const watching = readWatching()
     return browseDocs(root || currentBrainFolder() || watching.brainPath || '')

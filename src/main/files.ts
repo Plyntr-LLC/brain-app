@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join, relative, resolve, sep } from 'node:path'
 
 const SKIP = new Set([
@@ -104,6 +104,17 @@ export function readSafe(root: string, abs: string): { text: string; kind: 'md' 
   const text = readFileSync(abs, 'utf8')
   const kind = lower.endsWith('.html') || lower.endsWith('.htm') ? 'html' : lower.endsWith('.md') ? 'md' : 'text'
   return { text, kind, name }
+}
+
+const EDITABLE = /\.(md|txt|json|css|html|htm)$/i
+
+export function writeSafe(root: string, abs: string, text: string): { ok: true } {
+  if (!underRoot(root, abs) || !existsSync(abs)) throw new Error('That file is not in this brain.')
+  const name = basename(abs)
+  if (name.startsWith('.env') || abs.split(sep).includes('.git')) throw new Error('That file stays out of the editor.')
+  if (!EDITABLE.test(name)) throw new Error('This editor saves markdown and other text files.')
+  writeFileSync(abs, text, 'utf8')
+  return { ok: true }
 }
 
 export function browseDocs(root: string): { path: string; name: string }[] {

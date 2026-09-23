@@ -504,12 +504,15 @@
 .modes button.on { color: var(--ink); background: var(--card); }
 .tablist { display: flex; flex: 1; min-width: 0; overflow: auto; }
 .edgebtn {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
   cursor: pointer;
-  padding: 0 0.55rem;
-  font-size: 1rem;
+  min-width: 2.1rem;
+  min-height: 2.75rem;
+  padding: 0 0.35rem;
+  font-size: 1.35rem;
+  line-height: 1;
 }
 .picker {
   background: var(--card);
@@ -825,6 +828,7 @@ button.think-label:disabled { cursor: default; }
   border: 0;
 }
 .explorer {
+  position: relative;
   display: flex;
   flex-direction: column;
   background: var(--paper);
@@ -832,6 +836,37 @@ button.think-label:disabled { cursor: default; }
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+.refs { position: relative; }
+.sidegrip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  right: -6px;
+  z-index: 3;
+  border: 0;
+  padding: 0;
+  cursor: col-resize;
+  background: transparent;
+}
+.sidegrip-left { right: auto; left: -6px; }
+.sidegrip:hover, .sidegrip:focus { background: var(--orange); opacity: 0.45; }
+.fileedit { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.fileedit-bar { display: flex; align-items: center; gap: 0.6rem; padding: 0.45rem 0.7rem; border-bottom: 1px solid var(--line); }
+.fileedit-box {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  resize: none;
+  border: 0;
+  border-radius: 0;
+  padding: 0.8rem 1rem;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  background: var(--card);
+  color: var(--ink);
 }
 .explorer h2 {
   margin: 0;

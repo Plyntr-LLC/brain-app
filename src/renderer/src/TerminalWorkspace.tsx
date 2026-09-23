@@ -162,6 +162,14 @@ type Tab = {
   fileKind?: string
   html?: string
   url?: string
+  text?: string
+  dirty?: boolean
+  modelsLive?: boolean
+}
+
+function widthPref(key: string, fallback: number): number {
+  const n = Number(localStorage.getItem(key) || '')
+  return Number.isFinite(n) && n >= 160 && n <= 520 ? n : fallback
 }
 
 function nid(): string {
@@ -1820,6 +1828,8 @@ export function TerminalWorkspace({
   const [cwd, setCwd] = useState(s.brainPath || '')
   const [pick, setPick] = useState<null | 'model' | 'effort' | 'folder' | 'agentMode'>(null)
   const [modelsByKind, setModelsByKind] = useState<Partial<Record<AiKind, Cap[]>>>({})
+  const [explorerW, setExplorerW] = useState(() => widthPref('brain-explorer-w', 220))
+  const [refsW, setRefsW] = useState(() => widthPref('brain-refs-w', 260))
   const [recents, setRecents] = useState<{ path: string; name: string; watching?: boolean }[]>([])
   const [busyTabs, setBusyTabs] = useState<Record<string, boolean>>({})
   function freshTab(): Tab {
@@ -2055,7 +2065,7 @@ export function TerminalWorkspace({
         if (!tabId) return
         setTabs((all) =>
           all.map((x) => {
-            if (x.id !== tabId || x.kind !== kind) return x
+            if (x.id !== tabId || x.kind !== kind || x.modelsLive) return x
             const nextModels = listed.length ? listed : cliModels(x.kind, x.models)
             return {
               ...x,
@@ -2090,6 +2100,47 @@ export function TerminalWorkspace({
     }
   }, [pick])
 
+  function dragWidth(
+    which: 'explorer' | 'refs',
+    e: { clientX: number; preventDefault: () => void },
+    startW: number,
+    setW: (n: number) => void
+  ) {
+    e.preventDefault()
+    const startX = e.clientX
+    let latest = startW
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX
+      latest = Math.max(160, Math.min(520, which === 'explorer' ? startW + dx : startW - dx))
+      setW(latest)
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      localStorage.setItem(which === 'explorer' ? 'brain-explorer-w' : 'brain-refs-w', String(latest))
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
+  async function saveOpenFile(tab: Tab) {
+    if (!tab.path) return
+    try {
+      await window.brain.files.write(cwd, tab.path, tab.text || '')
+      setTabs((all) =>
+        all.map((x) =>
+          x.id === tab.id
+            ? { ...x, dirty: false, html: tab.fileKind === 'md' ? mdToHtml(tab.text || '') : x.html }
+            : x
+        )
+      )
+    } catch {
+      setTabs((all) =>
+        all.map((x) => (x.id === tab.id ? { ...x, title: `${tab.title.split(' · ')[0]} · not saved` } : x))
+      )
+    }
+  }
+
   async function openFile(abs: string) {
     const existing = tabs.find((t) => t.type === 'file' && t.path === abs)
     if (existing) {
@@ -2107,7 +2158,7 @@ export function TerminalWorkspace({
         const esc = r.text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string))
         html = r.kind === 'md' ? mdToHtml(r.text) : `<pre>${esc}</pre>`
       }
-      setTabs((t) => [...t, { id, type: 'file', title: r.name, path: abs, fileKind: r.kind, html, url }])
+      setTabs((t) => [...t, { id, type: 'file', title: r.name, path: abs, fileKind: r.kind, html, url, text: r.text }])
       setActive(id)
     } catch (e) {
       const msg = String((e as Error).message || e)
@@ -2381,7 +2432,12 @@ export function TerminalWorkspace({
           </div>
         </div>
       )}
-      <div className="chatrow">
+      <div
+        className="chatrow"
+        style={{
+          gridTemplateColumns: `${railOpen ? explorerW : 0}px minmax(0, 1fr) ${filesOpen ? refsW : 0}px`
+        }}
+      >
         <aside className="explorer">
           <h2>
             <button
@@ -2419,6 +2475,14 @@ export function TerminalWorkspace({
               </button>
             </div>
           )}
+          {railOpen ? (
+            <button
+              type="button"
+              className="sidegrip"
+              aria-label="Resize files"
+              onPointerDown={(e) => dragWidth('explorer', e, explorerW, setExplorerW)}
+            />
+          ) : null}
         </aside>
         <div className="stage">
           {tabs.length === 0 ? (
@@ -2468,7 +2532,8 @@ export function TerminalWorkspace({
                                 c.efforts && c.efforts.length ? c.efforts : x.efforts && x.efforts.length ? x.efforts : fallbackEfforts(x.kind),
                               agentMode: c.agentMode || x.agentMode,
                               cliSessionId: c.sessionId || x.cliSessionId,
-                              models: cliModels(x.kind, c.models ?? x.models),
+                              models: c.models?.length ? cliModels(x.kind, c.models) : cliModels(x.kind, x.models),
+                              modelsLive: Boolean(c.models?.length) || x.modelsLive,
                               agentModes: c.agentModes ?? x.agentModes
                             }
                           : x
@@ -2505,12 +2570,37 @@ export function TerminalWorkspace({
                 {t.fileKind === 'html' && t.url ? (
                   <webview className="fileweb" src={t.url} />
                 ) : (
-                  <div className="mdview" dangerouslySetInnerHTML={{ __html: t.html || '' }} />
+                  <div className="fileedit">
+                    <div className="fileedit-bar">
+                      <button type="button" className="ghost" disabled={!t.dirty} onClick={() => void saveOpenFile(t)}>
+                        Save
+                      </button>
+                      <span className="tiny">{t.dirty ? 'Unsaved' : 'Saved'}</span>
+                    </div>
+                    <textarea
+                      className="fileedit-box"
+                      value={t.text || ''}
+                      spellCheck={false}
+                      onChange={(e) =>
+                        setTabs((all) =>
+                          all.map((x) => (x.id === t.id ? { ...x, text: e.target.value, dirty: true } : x))
+                        )
+                      }
+                    />
+                  </div>
                 )}
               </div>
             ))}
         </div>
         <aside className="refs">
+          {filesOpen ? (
+            <button
+              type="button"
+              className="sidegrip sidegrip-left"
+              aria-label="Resize in use"
+              onPointerDown={(e) => dragWidth('refs', e, refsW, setRefsW)}
+            />
+          ) : null}
           <h2>In use</h2>
           <ul className="looking looking-log" ref={refsList}>
             {hits.length === 0 && <li className="tiny">Nothing for this chat yet.</li>}

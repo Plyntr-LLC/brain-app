@@ -62,6 +62,9 @@ export function FirstRun() {
   const [detected, setDetected] = useState<Partial<Record<AiKind, boolean>>>({})
   const [showInvite, setShowInvite] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('brain-theme') === 'dark' ? 'dark' : 'light'))
+  const [brainSeat, setBrainSeat] = useState('')
+  const [superAdmin, setSuperAdmin] = useState(false)
   const [waitSec, setWaitSec] = useState(0)
   const [updatedLine, setUpdatedLine] = useState('')
   const [projectSeat, setProjectSeat] = useState<{ folder: string; label: string } | null>(null)
@@ -629,6 +632,39 @@ export function FirstRun() {
     })
   }
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('brain-theme', theme)
+  }, [theme])
+
+  useEffect(() => {
+    void window.brain.settings.get().then((row) => setSuperAdmin(Boolean(row.superAdmin))).catch(() => {})
+  }, [s.email])
+
+  useEffect(() => {
+    if (!s.brainPath) {
+      setBrainSeat('')
+      return
+    }
+    let live = true
+    void window.brain.plyntr
+      .active()
+      .then((row) => {
+        if (!live) return
+        if (row.syncMode === 'plyntr' && row.seatEmail) {
+          const role =
+            row.role === 'project' ? 'Project only' : row.role === 'scout' ? 'Scout' : row.role === 'team' ? 'Team' : row.role === 'owner' ? 'Owner' : row.role
+          setBrainSeat(role ? `${row.seatEmail} · ${role}` : row.seatEmail)
+        } else setBrainSeat('')
+      })
+      .catch(() => {
+        if (live) setBrainSeat('')
+      })
+    return () => {
+      live = false
+    }
+  }, [s.brainPath])
+
   return (
     <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${!railOpen && s.screen !== 'chat' ? 'rail-off' : ''} ${updatedLine ? 'has-update' : ''}`}>
       <div className="titlebar">
@@ -647,7 +683,16 @@ export function FirstRun() {
                 : 'Agency Brain · watching this folder'
               : 'Folder not syncing')}
         </span>
-        {s.email ? <span className="tiny" style={{ marginLeft: 'auto' }}>{s.email}</span> : null}
+        {brainSeat ? <span className="role-lock">This brain · {brainSeat}</span> : null}
+        {s.email ? (
+          <span className="tiny" style={{ marginLeft: 'auto' }}>
+            {superAdmin ? 'Super admin · ' : ''}
+            {s.email}
+          </span>
+        ) : null}
+        <button type="button" className="ghost title-set" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+          {theme === 'dark' ? 'Light' : 'Dark'}
+        </button>
         {s.screen === 'chat' || s.email ? (
           <button type="button" className="ghost title-set" onClick={() => void logOut()}>
             Log out

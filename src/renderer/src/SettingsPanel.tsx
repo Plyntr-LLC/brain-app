@@ -378,6 +378,19 @@ export function SettingsPanel({
       <div className="set-now">
         <p className="set-now-k">Welcome, {who}</p>
         <p>You are inside {here}.</p>
+        {superAdmin ? <p className="tiny">This Mac stays {email}. Switching brains does not change that.</p> : null}
+        {plyntrMode && plyntrSeatEmail ? (
+          <p>This brain is signed in as {plyntrSeatEmail} · {seatLabel(plyntrRole || 'owner')}.</p>
+        ) : null}
+        <p className="tiny">
+          <button type="button" className="linkish" onClick={() => {
+            const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'
+            document.documentElement.dataset.theme = next
+            localStorage.setItem('brain-theme', next)
+          }}>
+            Light or dark
+          </button>
+        </p>
         {joe && superAdmin && brains.length ? (
           <label className="field" style={{ marginTop: '0.7rem', marginBottom: 0 }}>
             Switch brain

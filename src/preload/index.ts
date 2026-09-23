@@ -605,6 +605,8 @@ const brain = {
       ipcRenderer.invoke('files:match', cwd, text) as Promise<{ path: string; live?: boolean }[]>,
     read: (root: string, abs: string) =>
       ipcRenderer.invoke('files:read', root, abs) as Promise<{ text: string; kind: 'md' | 'html' | 'text'; name: string }>,
+    write: (root: string, abs: string, text: string) =>
+      ipcRenderer.invoke('files:write', root, abs, text) as Promise<{ ok: true }>,
     browse: (root?: string) =>
       ipcRenderer.invoke('files:browse', root) as Promise<{ path: string; name: string }[]>,
     fileUrl: (root: string, abs: string) => ipcRenderer.invoke('files:fileUrl', root, abs) as Promise<string>,
