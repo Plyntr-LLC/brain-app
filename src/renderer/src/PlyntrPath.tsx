@@ -52,22 +52,22 @@ export function ForkScreen({
         </button>
       ) : null}
       {err ? <p className="note">{err}</p> : null}
-      <div className="actions">
-        <button className="primary" type="button" onClick={onAgency}>
-          With Agency Brain
-        </button>
-        <p className="tiny">You have a setup code from Your Clients.</p>
-        <button className="ghost" type="button" onClick={onHaveCode}>
-          I have a Plyntr code
-        </button>
-        <button className="ghost" type="button" onClick={onCreate}>
-          Set up a new company brain
-        </button>
-        <p className="tiny">This brain stays in Brain.app. Agency Brain is not required.</p>
-        <button className="linkish" type="button" onClick={onProject}>
-          Project-only code
-        </button>
-      </div>
+      <button className="choice" type="button" onClick={onAgency}>
+        <h3>With Agency Brain</h3>
+        <p>You have a setup code from Your Clients.</p>
+      </button>
+      <button className="choice" type="button" onClick={onHaveCode}>
+        <h3>I have a Plyntr code</h3>
+        <p>Paste the six-digit code for this company.</p>
+      </button>
+      <button className="choice" type="button" onClick={onCreate}>
+        <h3>Set up a new company brain</h3>
+        <p>Add the company, their name, and their email. You get a code to share.</p>
+      </button>
+      <button className="choice" type="button" onClick={onProject}>
+        <h3>Project-only code</h3>
+        <p>They only get their project folder, not the whole brain.</p>
+      </button>
     </>
   )
 }
@@ -125,37 +125,263 @@ export function PlyntrCodeScreen({
 }: {
   onJoin: (row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) => Promise<void>
 }) {
+  const [mode, setMode] = useState<'code' | 'email' | 'sent'>('code')
   const [code, setCode] = useState('')
+  const [email, setEmail] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   return (
     <>
       <p className="kicker">Plyntr</p>
-      <h1>Paste the Plyntr code.</h1>
-      <label className="field">
-        Code
-        <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="XXXX-XXXX-XX" />
-      </label>
+      <h1>{mode === 'code' ? 'Paste the Plyntr code.' : 'Email me the code.'}</h1>
+      {mode === 'code' ? (
+        <p>Whoever added you sent a six-digit code. It is already tied to your email.</p>
+      ) : mode === 'sent' ? (
+        <p>Check {email}. The code is in that inbox. Paste it here when you have it.</p>
+      ) : (
+        <p>Use the email that was added for this company. We send a code only if that address is already on a company.</p>
+      )}
+      {mode === 'code' || mode === 'sent' ? (
+        <label className="field">
+          Code
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="184392" inputMode="numeric" />
+        </label>
+      ) : (
+        <label className="field">
+          Email
+          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" />
+        </label>
+      )}
       {err ? <p className="note">{err}</p> : null}
-      <button
-        className="primary"
-        type="button"
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true)
-          setErr('')
-          try {
-            const row = await window.brain.plyntr.resolve(code)
-            await onJoin(row)
-          } catch (e) {
-            setErr(String((e as Error).message || e))
-          } finally {
-            setBusy(false)
-          }
-        }}
-      >
-        Continue
-      </button>
+      <div className="actions">
+        {mode === 'email' ? (
+          <button
+            className="primary"
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              if (!email.includes('@')) {
+                setErr('Type the email you were added with.')
+                return
+              }
+              setBusy(true)
+              setErr('')
+              try {
+                const sent = await window.brain.plyntr.emailCode(email)
+                setMode('sent')
+                if (!sent.emailed) setErr('The company is on file. Email did not send. Ask for the code directly.')
+              } catch (e) {
+                setErr(String((e as Error).message || e))
+              } finally {
+                setBusy(false)
+              }
+            }}
+          >
+            Email me a code
+          </button>
+        ) : (
+          <button
+            className="primary"
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true)
+              setErr('')
+              try {
+                const row = await window.brain.plyntr.resolve(code)
+                await onJoin(row)
+              } catch (e) {
+                setErr(String((e as Error).message || e))
+              } finally {
+                setBusy(false)
+              }
+            }}
+          >
+            Continue
+          </button>
+        )}
+        <button className="linkish" type="button" onClick={() => setMode(mode === 'code' ? 'email' : 'code')}>
+          {mode === 'code' ? "I don't have a code" : 'I have a code'}
+        </button>
+      </div>
+    </>
+  )
+}
+
+export function PlyntrCompanyScreen({
+  onSetupHere,
+  onResume
+}: {
+  onSetupHere: (row: { brainId: string; slug: string; label: string; ownerEmail: string; code: string }) => void
+  onResume?: () => void
+}) {
+  const [phase, setPhase] = useState<'check' | 'login' | 'form' | 'code'>('check')
+  const [email, setEmail] = useState('joe@plyntr.com')
+  const [otp, setOtp] = useState('')
+  const [label, setLabel] = useState('')
+  const [ownerName, setOwnerName] = useState('')
+  const [ownerEmail, setOwnerEmail] = useState('')
+  const [code, setCode] = useState('')
+  const [emailed, setEmailed] = useState(false)
+  const [brainId, setBrainId] = useState('')
+  const [slug, setSlug] = useState('')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [hint, setHint] = useState('')
+
+  useEffect(() => {
+    void window.brain.plyntr.pending().then((pend) => {
+      setPhase(pend.platform ? 'form' : 'login')
+    })
+  }, [])
+
+  return (
+    <>
+      <p className="kicker">New company</p>
+      <h1>
+        {phase === 'login' || phase === 'check'
+          ? 'Sign in as Plyntr first'
+          : phase === 'form'
+            ? 'Add the company'
+            : 'Share this code'}
+      </h1>
+      {phase === 'login' ? (
+        <>
+          <p>This Mac needs the platform login before it can add a company. We email a code to you, you paste it here, and setup continues on the next screen.</p>
+          <label className="field">
+            Your email
+            <input value={email} onChange={(e) => setEmail(e.target.value)} />
+          </label>
+          <label className="field">
+            Code from that email
+            <input value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="184 392" />
+          </label>
+        </>
+      ) : null}
+      {phase === 'form' ? (
+        <>
+          <p>Their name and email are who the setup code belongs to. You will see the code, and we email it to them.</p>
+          <label className="field">
+            Company
+            <input value={label} onChange={(e) => setLabel(e.target.value)} />
+          </label>
+          <label className="field">
+            Their name
+            <input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} />
+          </label>
+          <label className="field">
+            Their email
+            <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="ada@company.com" />
+          </label>
+        </>
+      ) : null}
+      {phase === 'code' ? (
+        <>
+          <p>
+            Give {ownerName || 'them'} this code, or they can choose “I don’t have a code” and use {ownerEmail}.
+            {emailed ? ' We also emailed it.' : ' Email did not send. Hand them this code.'}
+          </p>
+          <p className="phone-pin">{code}</p>
+        </>
+      ) : null}
+      {hint ? <p className="tiny">{hint}</p> : null}
+      {err ? <p className="note">{err}</p> : null}
+      <div className="actions">
+        {phase === 'login' ? (
+          <>
+            <button
+              className="ghost"
+              type="button"
+              disabled={busy || !email.includes('@')}
+              onClick={async () => {
+                setBusy(true)
+                setErr('')
+                try {
+                  await window.brain.hqSync.ownerRequestCode(email)
+                  setHint('Check that inbox. Paste the code here, then Sign in.')
+                } catch (e) {
+                  setErr(String((e as Error).message || e))
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              Email me a code
+            </button>
+            <button
+              className="primary"
+              type="button"
+              disabled={busy || otp.replace(/\s/g, '').length < 4}
+              onClick={async () => {
+                setBusy(true)
+                setErr('')
+                try {
+                  const st = await window.brain.hqSync.ownerLogin({ email, code: otp })
+                  if (st.kind !== 'platform') {
+                    setErr('That sign-in is not the platform login. Use the Plyntr platform email.')
+                    return
+                  }
+                  const pend = await window.brain.plyntr.pending()
+                  if (pend.create && pend.create.wizardStep > 1 && onResume) {
+                    onResume()
+                    return
+                  }
+                  setPhase('form')
+                  setHint('')
+                } catch (e) {
+                  setErr(String((e as Error).message || e))
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              Sign in
+            </button>
+          </>
+        ) : null}
+        {phase === 'form' ? (
+          <button
+            className="primary"
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              if (label.trim().length < 2 || ownerName.trim().length < 2 || !ownerEmail.includes('@')) {
+                setErr('Add the company, their name, and their email.')
+                return
+              }
+              setBusy(true)
+              setErr('')
+              try {
+                const created = await window.brain.plyntr.openCompany({
+                  label: label.trim(),
+                  ownerName: ownerName.trim(),
+                  ownerEmail: ownerEmail.trim()
+                })
+                setCode(created.code)
+                setEmailed(created.emailed)
+                setBrainId(created.brainId)
+                setSlug(created.slug)
+                setPhase('code')
+              } catch (e) {
+                setErr(String((e as Error).message || e))
+              } finally {
+                setBusy(false)
+              }
+            }}
+          >
+            Create the company
+          </button>
+        ) : null}
+        {phase === 'code' ? (
+          <button
+            className="primary"
+            type="button"
+            onClick={() => onSetupHere({ brainId, slug, label, ownerEmail, code })}
+          >
+            Set this brain up on this Mac
+          </button>
+        ) : null}
+      </div>
     </>
   )
 }
@@ -257,10 +483,13 @@ export function PlyntrCreateScreen({
         </label>
       ) : null}
       {step === 2 ? (
-        <label className="field">
-          GitHub organization
-          <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="harolds-books" />
-        </label>
+        <>
+          <p>Type the GitHub organization for this company. Next checks that name, then opens GitHub so you can create the empty repo.</p>
+          <label className="field">
+            GitHub organization
+            <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="harolds-books" />
+          </label>
+        </>
       ) : null}
       {step === 3 && !brainId ? <p className="tiny">This creates your scout seat. The code for the client comes later in Settings.</p> : null}
       {step === 4 ? (
@@ -343,6 +572,12 @@ export function PlyntrCreateScreen({
                 }
                 const login = look.login || org
                 setOrg(login)
+                if (brainId) {
+                  const placed = await window.brain.plyntr.place({ brainId, org: login })
+                  setRepo(placed.repo)
+                  await save(4, { org: login, slug: placed.slug || slug })
+                  return
+                }
                 await save(3, { org: login })
                 return
               }
@@ -377,7 +612,8 @@ export function PlyntrCreateScreen({
               if (step === 4) {
                 if (!made) {
                   await window.brain.setup.openPlyntrRepo(org, slug)
-                  setErr(`Create ${org}/${slug}-brain with README unchecked, then check the box.`)
+                  await window.brain.setup.bringFront()
+                  setErr(`GitHub is open. Create ${org}/${slug}-brain with README unchecked, then come back and check the box.`)
                   return
                 }
                 await save(5)
@@ -385,6 +621,7 @@ export function PlyntrCreateScreen({
               }
               if (step === 5) {
                 await window.brain.setup.openPlyntrInstall(brainId, org)
+                await window.brain.setup.bringFront()
                 const ready = await pollInstall()
                 if (!ready) {
                   setErr('This brain is not ready on GitHub yet. Ask whoever set it up to finish install on the repo.')

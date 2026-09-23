@@ -402,6 +402,7 @@ export function SettingsPanel({
         ) : null}
       </div>
 
+      {email && brainPath ? (
       <section className="set-block" style={{ borderTop: 0, paddingTop: 0 }}>
         <p className="kicker">Phone</p>
         <h3 className="set-h">Use Brain from your phone</h3>
@@ -484,6 +485,7 @@ export function SettingsPanel({
           </>
         ) : null}
       </section>
+      ) : null}
 
       <section className="set-block">
         <p className="tiny">Brain {appVer || ''}</p>

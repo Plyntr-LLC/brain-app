@@ -392,6 +392,21 @@ const brain = {
       ipcRenderer.invoke('plyntr:resumeAccount', which) as Promise<{ ok: boolean; email: string; role: string }>,
     createBrain: (body: { label: string; org: string; slug: string; scoutEmail: string; rotate?: boolean }) =>
       ipcRenderer.invoke('plyntr:createBrain', body) as Promise<{ brainId: string; repo: string; hasToken: boolean }>,
+    openCompany: (body: { label: string; ownerName: string; ownerEmail: string }) =>
+      ipcRenderer.invoke('plyntr:openCompany', body) as Promise<{
+        brainId: string
+        repo: string
+        slug: string
+        label: string
+        code: string
+        emailed: boolean
+        ownerEmail: string
+        ownerName: string
+      }>,
+    emailCode: (email: string) =>
+      ipcRenderer.invoke('plyntr:emailCode', email) as Promise<{ ok: boolean; emailed: boolean }>,
+    place: (body: { brainId: string; org: string }) =>
+      ipcRenderer.invoke('plyntr:place', body) as Promise<{ repo: string; slug: string; org: string }>,
     resolve: (code: string) =>
       ipcRenderer.invoke('plyntr:resolve', code) as Promise<{
         brainId: string

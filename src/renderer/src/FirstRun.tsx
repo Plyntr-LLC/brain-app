@@ -4,7 +4,7 @@ import { blankSession, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
 import { SettingsPanel } from './SettingsPanel'
 import { SetupNeeds } from './SetupNeeds'
-import { ForkScreen, PlyntrCodeScreen, PlyntrCreateScreen, PlyntrProjectScreen } from './PlyntrPath'
+import { ForkScreen, PlyntrCodeScreen, PlyntrCompanyScreen, PlyntrCreateScreen, PlyntrProjectScreen } from './PlyntrPath'
 import { WorkPulse } from './WorkPulse'
 
 function TwoApps() {
@@ -92,6 +92,8 @@ export function FirstRun() {
       case 'email':
       case 'plyntr-code':
       case 'plyntr-create':
+      case 'plyntr-company':
+      case 'plyntr-project':
         return 'fork'
       case 'welcome':
         return 'fork'
@@ -122,7 +124,7 @@ export function FirstRun() {
 
   function goBack() {
     const from = s.screen
-    if (from === 'welcome' || from === 'chat' || from === 'fork') return
+    if (from === 'chat' || from === 'fork') return
     const prev = navStack.current.pop() ?? defaultBackScreen(from, s)
     if (!prev || prev === from) return
     setErr('')
@@ -567,6 +569,10 @@ export function FirstRun() {
       const session = await window.brain.auth.session()
       if (pend.create) setPlyntrCreate(pend.create)
       const step = pend.create?.wizardStep ?? 0
+      if (!pend.platform || step < 2) {
+        go('plyntr-company')
+        return
+      }
       const gate = !session.signedIn || (step > 0 && !pend.platform)
       setCreateGate(gate)
       if (!gate && step > 0) {
@@ -679,7 +685,7 @@ export function FirstRun() {
         </aside>
         ) : null}
         <section className="main">
-          {s.screen !== 'chat' && s.screen !== 'welcome' && s.screen !== 'fork' ? (
+          {s.screen !== 'chat' && s.screen !== 'fork' ? (
             <div className="setup-back-row">
               <button type="button" className="ghost setup-back" onClick={() => goBack()}>
                 Back
@@ -703,7 +709,7 @@ export function FirstRun() {
                 go('welcome')
               }}
               onHaveCode={() => go('plyntr-code')}
-              onCreate={() => void openPlyntrCreate()}
+              onCreate={() => go('plyntr-company')}
               onProject={() => go('plyntr-project')}
               onContinueCreate={() => void openPlyntrCreate()}
               onContinueJoin={() => void continuePlyntrJoin()}
@@ -711,6 +717,29 @@ export function FirstRun() {
           )}
           {s.screen === 'plyntr-code' && (
             <PlyntrCodeScreen onJoin={finishPlyntrJoin} />
+          )}
+          {s.screen === 'plyntr-company' && (
+            <PlyntrCompanyScreen
+              onResume={() => void openPlyntrCreate()}
+              onSetupHere={(row) => {
+                void (async () => {
+                  const acct = await window.brain.auth.session()
+                  const next = {
+                    createId: `c-${Date.now()}`,
+                    wizardStep: 2,
+                    label: row.label,
+                    org: '',
+                    slug: row.slug,
+                    scoutEmail: acct.email,
+                    brainId: row.brainId
+                  }
+                  await window.brain.plyntr.saveCreate(next)
+                  setPlyntrCreate(next)
+                  setCreateGate(false)
+                  go('plyntr-create')
+                })()
+              }}
+            />
           )}
           {s.screen === 'plyntr-project' && (
             <PlyntrProjectScreen

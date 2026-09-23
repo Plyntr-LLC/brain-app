@@ -101,7 +101,10 @@ import {
   copyDryRunFixture,
   createPlyntrBrain,
   dryRunProjectFolder,
+  emailPlyntrCode,
   ensurePlyntrRepo,
+  openPlyntrCompany,
+  placePlyntrBrain,
   plyntrBindUntilReady,
   plyntrGitToken,
   plyntrInstalled,
@@ -1091,6 +1094,30 @@ export function registerStubIpc(): void {
       })
     }
     return { brainId: created.brainId, repo: created.repo, hasToken: Boolean(created.seatToken) }
+  })
+  ipcMain.handle('plyntr:openCompany', async (_e, body: { label: string; ownerName: string; ownerEmail: string }) => {
+    if (!isPlatformOwnerSession()) throw new Error(PLATFORM_GATE)
+    const session = loadOwnerSession()
+    if (!session) throw new Error(PLATFORM_GATE)
+    const created = await openPlyntrCompany(session.token, body)
+    if (created.seatToken) {
+      savePlyntrSeat(created.brainId, {
+        seatToken: created.seatToken,
+        slug: created.slug,
+        email: session.email,
+        role: 'scout',
+        repo: created.repo,
+        bootstrap: true
+      })
+    }
+    return created
+  })
+  ipcMain.handle('plyntr:emailCode', async (_e, email: string) => emailPlyntrCode(email))
+  ipcMain.handle('plyntr:place', async (_e, body: { brainId: string; org: string }) => {
+    const placed = await placePlyntrBrain(body.brainId, body.org)
+    const seat = seatForBrain(body.brainId)
+    if (seat) savePlyntrSeat(body.brainId, { ...seat, slug: placed.slug || seat.slug, repo: placed.repo })
+    return placed
   })
   function resumePlyntrAccount(brainId: string): { ok: boolean; email: string; role: string } {
     const seat = seatForBrain(brainId)
