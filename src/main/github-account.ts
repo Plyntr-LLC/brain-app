@@ -1,4 +1,5 @@
-import { orgLoginCandidates, parseGithubOrgLogin } from './github-repo'
+import { spawnSync } from 'node:child_process'
+import { orgIdFromGraphql, orgLoginCandidates, parseGithubOrgLogin, plyntrRepoFullName } from './github-repo'
 
 export async function lookupGithubAccount(login: string): Promise<{
   ok: boolean
@@ -88,4 +89,38 @@ export async function adviseGithubOrg(preferred: string): Promise<{
     if (name === base) takenType = look.type || look.reason || 'taken'
   }
   return { preferred: base, free: false, takenType, suggestion: base }
+}
+
+/** REST lookup, then the signed-in GitHub account when the public API hides a new organization. */
+export async function resolveGithubOrg(login: string): Promise<{
+  ok: boolean
+  reason?: string
+  detail?: string
+  login?: string
+  type?: string
+  id?: number
+}> {
+  const look = await lookupGithubAccount(login)
+  if (look.ok && look.type === 'Organization' && look.id) return look
+  if (look.reason === 'personal-account') return look
+  const name = parseGithubOrgLogin(login)
+  if (!name) return look
+  const query = 'query($login:String!){ organization(login:$login){ login databaseId } }'
+  const r = spawnSync('gh', ['api', 'graphql', '-f', `query=${query}`, '-f', `login=${name}`], { encoding: 'utf8' })
+  const hit = orgIdFromGraphql(r.stdout || '')
+  if (!hit) return look
+  return { ok: true, login: hit.login, type: 'Organization', id: hit.id }
+}
+
+/** Create org/slug-brain with the signed-in GitHub account, or keep it if it is already there. */
+export function ensureRemoteBrainRepo(org: string, slug: string): { ok: boolean; repo: string; detail?: string } {
+  const repo = plyntrRepoFullName(org, slug)
+  if (!repo) return { ok: false, repo: '', detail: 'That organization name cannot be used.' }
+  const view = spawnSync('gh', ['repo', 'view', repo, '--json', 'name'], { encoding: 'utf8' })
+  if (view.status === 0) return { ok: true, repo }
+  const made = spawnSync('gh', ['repo', 'create', repo, '--private'], { encoding: 'utf8' })
+  if (made.status === 0) return { ok: true, repo }
+  const err = `${made.stderr || ''}\n${made.stdout || ''}`
+  if (/already exists/i.test(err)) return { ok: true, repo }
+  return { ok: false, repo, detail: err.trim() || 'GitHub did not create the repository.' }
 }

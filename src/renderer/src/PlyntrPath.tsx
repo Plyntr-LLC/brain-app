@@ -821,7 +821,7 @@ export function PlyntrCreateScreen({
               : step === 3
                 ? 'Create the brain'
                 : step === 4
-                  ? 'Create the empty repository'
+                  ? 'Create the client brain repository'
                   : step === 5
                     ? 'Install Plyntr sync'
                     : 'Copy the folder'}
@@ -845,14 +845,15 @@ export function PlyntrCreateScreen({
       {step === 3 && !brainId ? <p className="tiny">This creates your scout seat. The code for the client comes later in Settings.</p> : null}
       {step === 4 ? (
         <p>
-          Open GitHub. The repository name is {slug}-brain, under {org}. Leave Add a README unchecked. Create the
-          repository. Come back here and click The repository is created.
+          This Mac creates {org}/{slug}-brain. You do not make an empty repository. After Plyntr sync is installed
+          on {org}, this Mac copies the client brain onto this computer.
         </p>
       ) : null}
       {step === 5 ? (
         <p>
-          Open GitHub. Click Install. Choose Only select repositories. Pick {org}/{slug}-brain. Leave All repositories
-          alone. Come back here and click Check GitHub.
+          Install Plyntr sync on {org}. The account on the GitHub page must be {org}. If it says Plyntr LLC, stop.
+          Choose Only select repositories. Pick {org}/{slug}-brain. Come back here and click Check GitHub. This Mac
+          then copies the client brain here.
         </p>
       ) : null}
       {err ? <p className="note">{err}</p> : null}
@@ -902,16 +903,15 @@ export function PlyntrCreateScreen({
             Open GitHub again
           </button>
         ) : null}
-        {step === 4 && repoOpened ? (
-          <button className="ghost" type="button" onClick={() => void window.brain.setup.openPlyntrRepo(org, slug)}>
-            Open GitHub again
-          </button>
-        ) : null}
         {step === 5 && installOpened ? (
           <button
             className="ghost"
             type="button"
-            onClick={() => void window.brain.setup.openPlyntrInstall(brainId, org)}
+            onClick={() => {
+              void window.brain.setup.openPlyntrInstall(brainId, org).then((opened) => {
+                if (!opened.ok) setErr(opened.detail || 'The install page did not open on this organization.')
+              })
+            }}
           >
             Open GitHub again
           </button>
@@ -971,8 +971,13 @@ export function PlyntrCreateScreen({
                 setOrg(login)
                 if (brainId) {
                   const placed = await window.brain.plyntr.place({ brainId, org: login })
-                  setRepo(placed.repo)
-                  await save(4, { org: login, slug: placed.slug || slug })
+                  const made = await window.brain.setup.createPlyntrRepo(login, placed.slug || slug)
+                  if (!made.ok) {
+                    setErr(made.detail || 'GitHub did not create the repository.')
+                    return
+                  }
+                  setRepo(made.repo || placed.repo)
+                  await save(5, { org: login, slug: placed.slug || slug })
                   return
                 }
                 await save(3, { org: login })
@@ -988,7 +993,13 @@ export function PlyntrCreateScreen({
                 setEmail(scoutEmail)
                 if (!seatKnown) return
                 if (hasSeat && brainId) {
-                  await save(4, { scoutEmail, brainId })
+                  const made = await window.brain.setup.createPlyntrRepo(org, slug)
+                  if (!made.ok) {
+                    setErr(made.detail || 'GitHub did not create the repository.')
+                    return
+                  }
+                  setRepo(made.repo)
+                  await save(5, { scoutEmail, brainId })
                   return
                 }
                 const res = await window.brain.plyntr.createBrain({ label, org, slug, scoutEmail })
@@ -1001,23 +1012,35 @@ export function PlyntrCreateScreen({
                   return
                 }
                 setBrainId(res.brainId)
-                setRepo(res.repo)
+                const made = await window.brain.setup.createPlyntrRepo(org, slug)
+                if (!made.ok) {
+                  setHasSeat(true)
+                  setErr(made.detail || 'GitHub did not create the repository.')
+                  await save(4, { scoutEmail, brainId: res.brainId })
+                  return
+                }
+                setRepo(made.repo || res.repo)
                 setHasSeat(true)
-                await save(4, { scoutEmail, brainId: res.brainId })
+                await save(5, { scoutEmail, brainId: res.brainId })
                 return
               }
               if (step === 4) {
-                if (!repoOpened) {
-                  await window.brain.setup.openPlyntrRepo(org, slug)
-                  setRepoOpened(true)
+                const made = await window.brain.setup.createPlyntrRepo(org, slug)
+                if (!made.ok) {
+                  setErr(made.detail || 'GitHub did not create the repository.')
                   return
                 }
+                setRepo(made.repo)
                 await save(5)
                 return
               }
               if (step === 5) {
                 if (!installOpened) {
-                  await window.brain.setup.openPlyntrInstall(brainId, org)
+                  const opened = await window.brain.setup.openPlyntrInstall(brainId, org)
+                  if (!opened.ok) {
+                    setErr(opened.detail || 'The install page did not open on this organization.')
+                    return
+                  }
                   setInstallOpened(true)
                   return
                 }
@@ -1049,10 +1072,8 @@ export function PlyntrCreateScreen({
             ? 'Open GitHub'
             : step === 2
               ? 'Use this organization'
-              : step === 4 && !repoOpened
-                ? 'Open GitHub'
-                : step === 4
-                  ? 'The repository is created'
+              : step === 4
+                ? 'Create the repository'
                   : step === 5 && !installOpened
                     ? 'Open GitHub'
                     : step === 5

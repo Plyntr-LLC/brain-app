@@ -542,7 +542,7 @@ export function SettingsPanel({
             <>
               <p>
                 Add the company and the person, and pick their seat. Open that company to see everyone on it. Set this
-                brain up on this Mac walks the same GitHub setup an owner gets: the organization, the empty repo, then
+                brain up on this Mac walks the same GitHub setup an owner gets: the organization, the client brain repository, then
                 Plyntr sync on that one repo.
               </p>
               <PlyntrCompanyScreen

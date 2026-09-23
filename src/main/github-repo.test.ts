@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { orgLoginCandidates, parseGithubHqRepo, parseGithubOrgLogin } from './github-repo.ts'
+import { orgIdFromGraphql, orgLoginCandidates, parseGithubHqRepo, parseGithubOrgLogin, plyntrRepoFullName } from './github-repo.ts'
 
 test('parseGithubHqRepo accepts owner/name and git remotes', () => {
   assert.equal(parseGithubHqRepo('acme-org/acme-hq-brain'), 'acme-org/acme-hq-brain')
@@ -25,6 +25,20 @@ test('parseGithubOrgLogin takes a name, @name, or github.com address', () => {
   assert.equal(parseGithubOrgLogin('https://github.com/rose-wine/rose-wine-brain'), 'rose-wine')
   assert.equal(parseGithubOrgLogin('not a name!!!'), '')
   assert.equal(parseGithubOrgLogin(''), '')
+})
+
+test('a company brain repo is org/slug-brain', () => {
+  assert.equal(plyntrRepoFullName('its-a-test-rosene', 'rose-wine'), 'its-a-test-rosene/rose-wine-brain')
+  assert.equal(plyntrRepoFullName('https://github.com/orgs/its-a-test-rosene', 'rose-wine-brain'), 'its-a-test-rosene/rose-wine-brain')
+  assert.equal(plyntrRepoFullName('not a name', 'rose'), '')
+})
+
+test('GraphQL organization id is used when the public API hides the org', () => {
+  assert.deepEqual(
+    orgIdFromGraphql('{"data":{"organization":{"login":"its-a-test-rosene","databaseId":332862614}}}'),
+    { login: 'its-a-test-rosene', id: 332862614 }
+  )
+  assert.equal(orgIdFromGraphql('{"data":{"organization":null}}'), null)
 })
 
 test('org login candidates keep the name, then a short suffix', () => {

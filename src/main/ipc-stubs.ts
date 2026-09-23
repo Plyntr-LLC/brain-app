@@ -72,7 +72,7 @@ import {
   runPlyntrMove,
   writePlyntrSyncFile
 } from './plyntr-move'
-import { adviseGithubOrg, lookupGithubAccount } from './github-account'
+import { adviseGithubOrg, ensureRemoteBrainRepo, lookupGithubAccount, resolveGithubOrg } from './github-account'
 import { loadAnyChats, loadChats, saveChats, type SavedChats } from './persist'
 import { rememberPhoneChats } from './phone'
 import { emitChat, markChatBusy } from './chat-fan'
@@ -730,7 +730,14 @@ export function registerStubIpc(): void {
       throw e
     }
   })
-  ipcMain.handle('setup:lookupOrg', async (_e, login: string) => ads2ai.lookupGithubAccount(login))
+  ipcMain.handle('setup:lookupOrg', async (_e, login: string) => resolveGithubOrg(login))
+  ipcMain.handle('setup:createPlyntrRepo', async (_e, org: string, slug: string) => {
+    if (dryRun()) {
+      const repo = `${String(org || 'dry').trim()}/${String(slug || 'dry').trim()}-brain`
+      return { ok: true, repo }
+    }
+    return ensureRemoteBrainRepo(org, slug)
+  })
   ipcMain.handle('setup:adviseOrg', async (_e, login: string) => adviseGithubOrg(login))
   ipcMain.handle('setup:openCreateOrg', async () => {
     openInApp(GITHUB_NEW_ORG, 'Create a GitHub short name')
@@ -1009,8 +1016,16 @@ export function registerStubIpc(): void {
   )
   ipcMain.handle('setup:syncMode', async (_e, folder: string) => readSyncMode(String(folder || '')) || '')
   ipcMain.handle('setup:openPlyntrInstall', async (_e, brainId: string, org?: string) => {
-    const look = String(org || '').trim() ? await ads2ai.lookupGithubAccount(org || '') : { ok: false as const }
-    const url = plyntrBrainSyncInstallUrl(brainId, look.ok ? look.id : undefined)
+    const name = String(org || '').trim()
+    const look = name ? await resolveGithubOrg(name) : { ok: false as const }
+    if (!look.ok || !look.id) {
+      return {
+        ok: false,
+        url: '',
+        detail: `The install page would open on Plyntr LLC, not ${name || 'the new organization'}. GitHub did not return an id for that organization.`
+      }
+    }
+    const url = plyntrBrainSyncInstallUrl(brainId, look.id)
     openInApp(url, 'Install Plyntr sync on GitHub')
     return { ok: true, url }
   })

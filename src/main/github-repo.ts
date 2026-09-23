@@ -37,6 +37,30 @@ export function parseGithubOrgLogin(raw: string): string {
   return name
 }
 
+/** owner/name for this company's brain repository. */
+export function plyntrRepoFullName(org: string, slug: string): string {
+  const owner = parseGithubOrgLogin(org)
+  const name = parseGithubOrgLogin(String(slug || '').replace(/-brain$/i, ''))
+  if (!owner || !name) return ''
+  return `${owner}/${name}-brain`
+}
+
+/** database id from `gh api graphql` organization(login). */
+export function orgIdFromGraphql(raw: string): { login: string; id: number } | null {
+  try {
+    const data = JSON.parse(String(raw || '')) as {
+      data?: { organization?: { login?: string; databaseId?: number } | null }
+    }
+    const org = data.data?.organization
+    const id = Number(org?.databaseId)
+    const login = String(org?.login || '')
+    if (!login || !Number.isFinite(id) || id <= 0) return null
+    return { login, id }
+  } catch {
+    return null
+  }
+}
+
 /** Preferred login, then short suffixes, each still a valid GitHub name. */
 export function orgLoginCandidates(preferred: string): string[] {
   const base = parseGithubOrgLogin(preferred)
