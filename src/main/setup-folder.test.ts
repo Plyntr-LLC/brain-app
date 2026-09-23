@@ -109,6 +109,8 @@ test('Path B install URL pins org and repo on /permissions', () => {
   assert.equal(ipc.includes('plyntrBrainSyncInstallUrl(issuedId, look.ok ? look.id : undefined)'), false)
   assert.equal(ipc.includes('lookupGithubAccount(parts.org)'), false)
   assert.equal(ipc.includes('https://github.com/apps/plyntr-brain-sync/installations/new?'), false)
+  assert.equal(ipc.includes("resolvePlyntrRepoName(orgName, '', repo)"), false)
+  assert.match(ipc, /repoOwnerMatchesOrg\(want, orgName\)/)
   assert.match(ipc, /pinnedPlyntrInstall\(issuedId, parts\.org, parts\.repo\)/)
 })
 

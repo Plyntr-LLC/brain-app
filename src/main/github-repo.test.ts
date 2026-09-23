@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ghCliDetail, orgIdFromGraphql, orgLoginCandidates, parseGithubHqRepo, parseGithubOrgLogin, plyntrRepoFullName, repoIdFromGh, resolvePlyntrRepoName } from '../shared/github-org.ts'
+import { ghCliDetail, orgIdFromGraphql, orgLoginCandidates, parseGithubHqRepo, parseGithubOrgLogin, plyntrRepoFullName, repoIdFromGh, repoOwnerMatchesOrg, resolvePlyntrRepoName } from '../shared/github-org.ts'
 
 test('parseGithubHqRepo accepts owner/name and git remotes', () => {
   assert.equal(parseGithubHqRepo('acme-org/acme-hq-brain'), 'acme-org/acme-hq-brain')
@@ -49,6 +49,14 @@ test('repoIdFromGh accepts one positive integer', () => {
   assert.equal(repoIdFromGh('1.5'), 0)
   assert.equal(repoIdFromGh(''), 0)
   assert.equal(repoIdFromGh('id'), 0)
+})
+
+test('repoOwnerMatchesOrg requires the repo owner to be that organization', () => {
+  assert.equal(repoOwnerMatchesOrg('its-a-test-rosene/rose-wine-brain', 'its-a-test-rosene'), true)
+  assert.equal(repoOwnerMatchesOrg('Its-A-Test-Rosene/rose-wine-brain', 'its-a-test-rosene'), true)
+  assert.equal(repoOwnerMatchesOrg('Plyntr-LLC/rose-wine-brain', 'its-a-test-rosene'), false)
+  assert.equal(repoOwnerMatchesOrg('its-a-test-rosene/rose-wine-brain', 'Plyntr-LLC'), false)
+  assert.equal(repoOwnerMatchesOrg('', 'its-a-test-rosene'), false)
 })
 
 test('the worker repo name wins over a rebuilt slug', () => {

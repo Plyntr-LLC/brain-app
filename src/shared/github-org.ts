@@ -50,6 +50,14 @@ export function resolvePlyntrRepoName(org: string, slug: string, repo?: string):
   return parseGithubHqRepo(String(repo || '')) || plyntrRepoFullName(org, slug)
 }
 
+/** True when owner/name is a repository in this organization. */
+export function repoOwnerMatchesOrg(repo: string, org: string): boolean {
+  const name = parseGithubHqRepo(repo)
+  const owner = parseGithubOrgLogin(org)
+  if (!name || !owner) return false
+  return name.split('/')[0].toLowerCase() === owner.toLowerCase()
+}
+
 /** database id from `gh api graphql` organization(login). */
 export function orgIdFromGraphql(raw: string): { login: string; id: number } | null {
   try {

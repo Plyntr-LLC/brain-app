@@ -73,7 +73,7 @@ import {
   writePlyntrSyncFile
 } from './plyntr-move'
 import { adviseGithubOrg, ensureRemoteBrainRepo, resolveGithubOrg, resolveGithubRepoId } from './github-account'
-import { parseGithubHqRepo, resolvePlyntrRepoName } from './github-repo'
+import { parseGithubHqRepo, resolvePlyntrRepoName, repoOwnerMatchesOrg } from './github-repo'
 import { loadAnyChats, loadChats, saveChats, type SavedChats } from './persist'
 import { rememberPhoneChats } from './phone'
 import { emitChat, markChatBusy } from './chat-fan'
@@ -165,6 +165,10 @@ async function pinnedPlyntrInstall(
   org: string,
   repo: string
 ): Promise<{ ok: boolean; url: string; detail?: string }> {
+  const issued = String(brainId || '').trim()
+  if (!issued) {
+    return { ok: false, url: '', detail: 'This brain has no install id yet.' }
+  }
   const look = await resolveGithubOrg(org)
   const orgName = look.login || String(org || '').trim()
   if (!look.ok || look.type !== 'Organization' || !look.id) {
@@ -174,21 +178,31 @@ async function pinnedPlyntrInstall(
       detail: look.detail || `GitHub did not confirm the organization ${orgName || 'you entered'}.`
     }
   }
-  const want = parseGithubHqRepo(repo) || resolvePlyntrRepoName(orgName, '', repo)
+  const want = parseGithubHqRepo(repo)
+  if (!want) {
+    return { ok: false, url: '', detail: 'This brain has no GitHub repository name yet.' }
+  }
+  if (!repoOwnerMatchesOrg(want, orgName)) {
+    return {
+      ok: false,
+      url: '',
+      detail: `${want} is not a repository in ${orgName}.`
+    }
+  }
   const rid = await resolveGithubRepoId(want)
   if (!rid.ok || !rid.id) {
     return {
       ok: false,
       url: '',
-      detail: rid.detail || `GitHub did not return an id for ${want || 'this repository'}.`
+      detail: rid.detail || `GitHub did not return an id for ${want}.`
     }
   }
-  const url = plyntrBrainSyncInstallUrl(brainId, look.id, rid.id)
+  const url = plyntrBrainSyncInstallUrl(issued, look.id, rid.id)
   if (!url) {
     return {
       ok: false,
       url: '',
-      detail: `The install page would open on Plyntr LLC, not ${orgName}.`
+      detail: `GitHub did not build an install page for ${orgName}.`
     }
   }
   openInApp(url, 'Install Plyntr sync on GitHub')

@@ -697,6 +697,7 @@ export function PlyntrCreateScreen({
     suggestion: string
   } | null>(null)
   const createId = initial?.createId || ''
+  const wantRepo = resolvePlyntrRepoName(org, slug, repo)
   useEffect(() => {
     if (!brainId) {
       setHasSeat(false)
@@ -796,15 +797,16 @@ export function PlyntrCreateScreen({
       {step === 3 && !brainId ? <p className="tiny">This creates your scout seat. The code for the client comes later in Settings.</p> : null}
       {step === 4 ? (
         <p>
-          This Mac creates {org}/{slug}-brain. You do not make an empty repository. After Plyntr sync is installed
+          This Mac creates {wantRepo || `${org}/${slug}-brain`}. You do not make an empty repository. After Plyntr sync is installed
           on {org}, this Mac copies the client brain onto this computer.
         </p>
       ) : null}
       {step === 5 ? (
         <p>
-          Install Plyntr sync on {org}. GitHub should show {org} with {org}/{slug}-brain already checked. If the page
-          says Plyntr LLC, close it and click Open GitHub again. Keep Only select repositories. Then come back and
-          click Check GitHub. This Mac then copies the client brain here.
+          Install Plyntr sync on {org}. GitHub should show {org} with {wantRepo} already checked. Keep Only select
+          repositories. Do not choose All repositories. If the page says Plyntr LLC, do not click Install. Close that
+          page and click Open GitHub again. If it still says Plyntr LLC, stop and tell Plyntr. Then come back and click
+          Check GitHub. This Mac then copies the client brain here.
         </p>
       ) : null}
       {err ? <p className="note">{err}</p> : null}
@@ -859,7 +861,7 @@ export function PlyntrCreateScreen({
             className="ghost"
             type="button"
             onClick={() => {
-              void window.brain.setup.openPlyntrInstall(brainId, org, resolvePlyntrRepoName(org, slug, repo)).then((opened) => {
+              void window.brain.setup.openPlyntrInstall(brainId, org, wantRepo).then((opened) => {
                 if (!opened.ok) setErr(opened.detail || 'The install page did not open on this organization.')
               })
             }}
@@ -1008,11 +1010,7 @@ export function PlyntrCreateScreen({
               }
               if (step === 5) {
                 if (!installOpened) {
-                  const opened = await window.brain.setup.openPlyntrInstall(
-                    brainId,
-                    org,
-                    resolvePlyntrRepoName(org, slug, repo)
-                  )
+                  const opened = await window.brain.setup.openPlyntrInstall(brainId, org, wantRepo)
                   if (!opened.ok) {
                     setErr(opened.detail || 'The install page did not open on this organization.')
                     return
@@ -1020,7 +1018,7 @@ export function PlyntrCreateScreen({
                   setInstallOpened(true)
                   return
                 }
-                const want = resolvePlyntrRepoName(org, slug, repo)
+                const want = wantRepo
                 const st = await window.brain.plyntr.installed(brainId, want).catch(() => null)
                 const sel = String(st?.repositorySelection || '').toLowerCase()
                 if (sel === 'all' || sel === 'all_repositories') {

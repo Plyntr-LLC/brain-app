@@ -6,5 +6,6 @@ export {
   parseGithubOrgLogin,
   plyntrRepoFullName,
   resolvePlyntrRepoName,
-  repoIdFromGh
+  repoIdFromGh,
+  repoOwnerMatchesOrg
 } from '../shared/github-org.ts'
