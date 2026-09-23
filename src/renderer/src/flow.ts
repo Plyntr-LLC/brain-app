@@ -14,17 +14,22 @@ export function blankSession(path: PathKind, dryRun: boolean): Session {
   }
 }
 
+const settingUpNewBrain = ['plyntr-code', 'plyntr-project', 'plyntr-create']
+
 export function stepState(s: Session, id: (typeof STEPS)[number]['id']): 'now' | 'done' | 'blocked' | '' {
   if (id === 'signed') {
-    if (['fork', 'welcome', 'email', 'otp', 'plyntr-code', 'plyntr-project', 'plyntr-create'].includes(s.screen)) return 'now'
+    if (s.screen === 'plyntr-create') return 'done'
+    if (['fork', 'welcome', 'email', 'otp', 'plyntr-code', 'plyntr-project'].includes(s.screen)) return 'now'
     return 'done'
   }
   if (id === 'ab') {
+    if (settingUpNewBrain.includes(s.screen)) return 'now'
     if (s.abWatching || s.brainPath) return 'done'
     if (['abget', 'github', 'abapply', 'hello', 'choice', 'name', 'needs'].includes(s.screen)) return 'now'
     return s.email && s.screen !== 'email' && s.screen !== 'code' ? 'now' : ''
   }
   if (id === 'ai') {
+    if (settingUpNewBrain.includes(s.screen)) return ''
     if (s.screen === 'chat') return 'done'
     if (s.screen === 'aipick' || s.screen === 'aiwork') return 'now'
     return s.abWatching || s.brainPath ? 'now' : ''

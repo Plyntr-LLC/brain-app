@@ -255,6 +255,18 @@ export function plyntrOwnerEmail(): string | null {
   return plyntrOwnerProfile()?.email ?? null
 }
 
+/** Drop Agency Brain profiles whose folder is not on this computer. */
+export function forgetMissingBrainFolders(): void {
+  const cfg = loadFullConfig()
+  if (!cfg || !Array.isArray(cfg.brains)) return
+  const brains = cfg.brains.filter((b) => {
+    const folder = String(b.brainPath || '').trim()
+    return Boolean(folder) && existsSync(folder)
+  })
+  if (brains.length === cfg.brains.length) return
+  writeConfigAtomic({ ...cfg, brains })
+}
+
 function writeConfigAtomic(cfg: AgencyConfig): void {
   const p = configPath()
   mkdirSync(dirname(p), { recursive: true })

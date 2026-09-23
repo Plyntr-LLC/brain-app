@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { app } from 'electron'
-import { readTeamIdentity, readWatching } from './agency-brain'
+import { forgetMissingBrainFolders, readTeamIdentity, readWatching } from './agency-brain'
 import { mergeBrainRows, pickActivePath, type BrainRow } from './brains-pick'
 import { getAccount } from './session-token'
 
@@ -106,6 +106,7 @@ export function currentBrainFolder(): string {
 }
 
 export function listBrains(): BrainRow[] {
+  forgetMissingBrainFolders()
   const watching = readWatching()
   const acct = getAccount()
   const file = loadFile()
@@ -114,9 +115,14 @@ export function listBrains(): BrainRow[] {
     watching: watching.brainPath,
     account: acct?.folder
   })
+  const stored = file.rows || []
+  const kept = stored.filter((r) => r.path && existsSync(r.path))
+  if (kept.length !== stored.length) {
+    saveFile({ ...file, rows: kept, active: current || undefined })
+  }
   const rows = mergeBrainRows(
     [
-      ...(file.rows || []),
+      ...kept,
       ...agencyBrains(),
       rowFromFolder(watching.brainPath || '', true),
       rowFromFolder(acct?.folder || ''),
@@ -135,6 +141,8 @@ export function rememberBrain(row: {
   brainId?: string
   seatToken?: string
 }): BrainRow[] {
+  const path = String(row.path || '').trim()
+  if (!path || !existsSync(path)) return listBrains()
   const file = loadFile()
   const next = mergeBrainRows([
     ...(file.rows || []),
