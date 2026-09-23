@@ -24,9 +24,9 @@ import {
   bridgeInstallUrl,
   githubAppInstallUrl,
   githubInstallReady,
-  plyntrBrainSyncInstallUrl,
   plyntrCreateRepoUrl,
   plyntrGithubInstallReady,
+  plyntrInstallPin,
   reuseExistingFolder
 } from './setup-folder'
 import { brainRowForPath, currentBrainFolder, folderForSlug, listBrains, rememberBrain, switchBrain } from './brains'
@@ -73,7 +73,7 @@ import {
   writePlyntrSyncFile
 } from './plyntr-move'
 import { adviseGithubOrg, ensureRemoteBrainRepo, resolveGithubOrg, resolveGithubRepoId } from './github-account'
-import { parseGithubHqRepo, resolvePlyntrRepoName, repoOwnerMatchesOrg } from './github-repo'
+import { resolvePlyntrRepoName } from './github-repo'
 import { loadAnyChats, loadChats, saveChats, type SavedChats } from './persist'
 import { rememberPhoneChats } from './phone'
 import { emitChat, markChatBusy } from './chat-fan'
@@ -165,10 +165,6 @@ async function pinnedPlyntrInstall(
   org: string,
   repo: string
 ): Promise<{ ok: boolean; url: string; detail?: string }> {
-  const issued = String(brainId || '').trim()
-  if (!issued) {
-    return { ok: false, url: '', detail: 'This brain has no install id yet.' }
-  }
   const look = await resolveGithubOrg(org)
   const orgName = look.login || String(org || '').trim()
   if (!look.ok || look.type !== 'Organization' || !look.id) {
@@ -178,35 +174,37 @@ async function pinnedPlyntrInstall(
       detail: look.detail || `GitHub did not confirm the organization ${orgName || 'you entered'}.`
     }
   }
-  const want = parseGithubHqRepo(repo)
-  if (!want) {
-    return { ok: false, url: '', detail: 'This brain has no GitHub repository name yet.' }
+  const named = plyntrInstallPin({ brainId, orgName, repo })
+  if (!named.ok || !named.want) {
+    return { ok: false, url: '', detail: named.detail || 'This brain has no GitHub repository name yet.' }
   }
-  if (!repoOwnerMatchesOrg(want, orgName)) {
-    return {
-      ok: false,
-      url: '',
-      detail: `${want} is not a repository in ${orgName}.`
-    }
-  }
-  const rid = await resolveGithubRepoId(want)
+  const rid = await resolveGithubRepoId(named.want)
   if (!rid.ok || !rid.id) {
     return {
       ok: false,
       url: '',
-      detail: rid.detail || `GitHub did not return an id for ${want}.`
+      detail: rid.detail || `GitHub did not return an id for ${named.want}.`
     }
   }
-  const url = plyntrBrainSyncInstallUrl(issued, look.id, rid.id)
-  if (!url) {
+  const pin = plyntrInstallPin({
+    brainId,
+    orgName,
+    repo: named.want,
+    orgId: look.id,
+    repoId: rid.id,
+    repoOwner: rid.owner
+  })
+  if (!pin.ok || !pin.url) {
     return {
       ok: false,
       url: '',
-      detail: `GitHub did not build an install page for ${orgName}.`
+      detail:
+        pin.detail ||
+        `This Mac could not build the install page for ${orgName}: the organization or repository id is missing.`
     }
   }
-  openInApp(url, 'Install Plyntr sync on GitHub')
-  return { ok: true, url }
+  openInApp(pin.url, 'Install Plyntr sync on GitHub')
+  return { ok: true, url: pin.url }
 }
 
 async function openPlyntrProject(code: string) {

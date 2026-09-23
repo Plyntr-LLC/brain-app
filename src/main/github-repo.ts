@@ -7,5 +7,6 @@ export {
   plyntrRepoFullName,
   resolvePlyntrRepoName,
   repoIdFromGh,
+  repoIdOwnerFromGh,
   repoOwnerMatchesOrg
 } from '../shared/github-org.ts'

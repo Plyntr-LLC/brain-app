@@ -8,6 +8,7 @@ import {
   githubInstallReady,
   plyntrBrainSyncInstallUrl,
   plyntrGithubInstallReady,
+  plyntrInstallPin,
   reuseExistingFolder
 } from './setup-folder.ts'
 
@@ -105,13 +106,47 @@ test('Path B install URL pins org and repo on /permissions', () => {
   assert.equal(plyntrBrainSyncInstallUrl('id', 332862614, -1), '')
   assert.equal(plyntrBrainSyncInstallUrl('', 332862614, 424242), '')
   assert.equal(plyntrBrainSyncInstallUrl('id', 1.5, 424242), '')
+  const pin = plyntrInstallPin({
+    brainId: 'a867878e-79d9-493c-a396-f82736ffa8a3',
+    orgName: 'its-a-test-rosene',
+    repo: 'its-a-test-rosene/rose-wine-brain',
+    orgId: 332862614,
+    repoId: 424242,
+    repoOwner: 'its-a-test-rosene'
+  })
+  assert.equal(pin.ok, true)
+  assert.equal(pin.url, url)
+  assert.equal(plyntrInstallPin({ brainId: '', orgName: 'acme', repo: 'acme/x-brain', orgId: 1, repoId: 2 }).detail, 'This brain has no install id yet.')
+  assert.equal(plyntrInstallPin({ brainId: 'id', orgName: 'acme', repo: '', orgId: 1, repoId: 2 }).detail, 'This brain has no GitHub repository name yet.')
+  assert.match(
+    String(plyntrInstallPin({ brainId: 'id', orgName: 'its-a-test-rosene', repo: 'Plyntr-LLC/rose-wine-brain', orgId: 1, repoId: 2 }).detail),
+    /not a repository in its-a-test-rosene/
+  )
+  assert.match(
+    String(
+      plyntrInstallPin({
+        brainId: 'id',
+        orgName: 'its-a-test-rosene',
+        repo: 'its-a-test-rosene/rose-wine-brain',
+        orgId: 1,
+        repoId: 2,
+        repoOwner: 'Plyntr-LLC'
+      }).detail
+    ),
+    /not a repository in its-a-test-rosene/
+  )
+  assert.match(
+    String(plyntrInstallPin({ brainId: 'id', orgName: 'acme', repo: 'acme/x-brain', orgId: 1 }).detail),
+    /organization or repository id is missing/
+  )
   const ipc = readFileSync(new URL('./ipc-stubs.ts', import.meta.url), 'utf8')
   assert.equal(ipc.includes('plyntrBrainSyncInstallUrl(issuedId, look.ok ? look.id : undefined)'), false)
   assert.equal(ipc.includes('lookupGithubAccount(parts.org)'), false)
   assert.equal(ipc.includes('https://github.com/apps/plyntr-brain-sync/installations/new?'), false)
   assert.equal(ipc.includes("resolvePlyntrRepoName(orgName, '', repo)"), false)
-  assert.match(ipc, /repoOwnerMatchesOrg\(want, orgName\)/)
+  assert.match(ipc, /plyntrInstallPin\(/)
   assert.match(ipc, /pinnedPlyntrInstall\(issuedId, parts\.org, parts\.repo\)/)
+  assert.match(ipc, /repoOwner: rid\.owner/)
 })
 
 test('clonePlan refuses an empty checkout and replaces a blank folder', () => {

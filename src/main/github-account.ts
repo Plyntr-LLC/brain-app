@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { extraPath, binEnv } from './ai-cli'
-import { ghCliDetail, orgIdFromGraphql, orgLoginCandidates, parseGithubHqRepo, parseGithubOrgLogin, resolvePlyntrRepoName, repoIdFromGh } from './github-repo'
+import { ghCliDetail, orgIdFromGraphql, orgLoginCandidates, parseGithubHqRepo, parseGithubOrgLogin, resolvePlyntrRepoName, repoIdOwnerFromGh } from './github-repo'
 
 const execFileAsync = promisify(execFile)
 
@@ -172,12 +172,12 @@ export async function resolveGithubOrg(login: string): Promise<{
   return look
 }
 
-export async function resolveGithubRepoId(repo: string): Promise<{ ok: boolean; id?: number; detail?: string }> {
+export async function resolveGithubRepoId(repo: string): Promise<{ ok: boolean; id?: number; owner?: string; detail?: string }> {
   const name = parseGithubHqRepo(repo)
   if (!name) return { ok: false, detail: 'This brain has no GitHub repository name yet.' }
-  const r = await runGh(['api', `repos/${name}`, '--jq', '.id'])
-  const id = repoIdFromGh(r.stdout || '')
-  if (id) return { ok: true, id }
+  const r = await runGh(['api', `repos/${name}`, '--jq', '{id:.id,owner:.owner.login}'])
+  const parsed = repoIdOwnerFromGh(r.stdout || '')
+  if (parsed) return { ok: true, id: parsed.id, owner: parsed.owner }
   return { ok: false, detail: ghCliDetail(r) }
 }
 

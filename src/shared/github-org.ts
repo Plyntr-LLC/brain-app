@@ -109,3 +109,15 @@ export function repoIdFromGh(raw: string): number {
   if (!Number.isFinite(n) || n <= 0 || n !== Math.floor(n)) return 0
   return n
 }
+
+export function repoIdOwnerFromGh(raw: string): { id: number; owner: string } | null {
+  try {
+    const data = JSON.parse(String(raw || '').trim()) as { id?: unknown; owner?: unknown }
+    const id = repoIdFromGh(String(data.id ?? ''))
+    const owner = parseGithubOrgLogin(String(data.owner || ''))
+    if (!id || !owner) return null
+    return { id, owner }
+  } catch {
+    return null
+  }
+}

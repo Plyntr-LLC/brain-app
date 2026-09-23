@@ -1,3 +1,5 @@
+import { parseGithubHqRepo, parseGithubOrgLogin, repoOwnerMatchesOrg } from '../shared/github-org.ts'
+
 const GITHUB_APP_INSTALL = 'https://github.com/apps/agency-brain-sync/installations/new'
 const PLYNTR_APP_INSTALL = 'https://github.com/apps/plyntr-brain-sync/installations/new'
 const BRIDGE_APP_INSTALL = 'https://github.com/apps/plyntr-brain-bridge/installations/new'
@@ -57,6 +59,42 @@ export function plyntrBrainSyncInstallUrl(brainId: string, orgId?: number, repoI
   if (!Number.isInteger(org) || org <= 0) return ''
   if (!Number.isInteger(repo) || repo <= 0) return ''
   return `${PLYNTR_APP_INSTALL}/permissions?suggested_target_id=${org}&repository_ids%5B%5D=${repo}&state=${state}`
+}
+
+export function plyntrInstallPin(opts: {
+  brainId: string
+  orgName: string
+  repo: string
+  orgId?: number
+  repoId?: number
+  repoOwner?: string
+}): { ok: boolean; url: string; want?: string; detail?: string } {
+  const issued = String(opts.brainId || '').trim()
+  const orgName = String(opts.orgName || '').trim()
+  if (!issued) return { ok: false, url: '', detail: 'This brain has no install id yet.' }
+  const want = parseGithubHqRepo(opts.repo)
+  if (!want) return { ok: false, url: '', detail: 'This brain has no GitHub repository name yet.' }
+  if (!repoOwnerMatchesOrg(want, orgName)) {
+    return { ok: false, url: '', detail: `${want} is not a repository in ${orgName}.` }
+  }
+  const live = String(opts.repoOwner || '').trim()
+  if (live) {
+    const a = parseGithubOrgLogin(live)
+    const b = parseGithubOrgLogin(orgName)
+    if (!a || !b || a.toLowerCase() !== b.toLowerCase()) {
+      return { ok: false, url: '', detail: `${want} is not a repository in ${orgName}.` }
+    }
+  }
+  if (opts.orgId == null && opts.repoId == null) return { ok: true, url: '', want }
+  const url = plyntrBrainSyncInstallUrl(issued, opts.orgId, opts.repoId)
+  if (!url) {
+    return {
+      ok: false,
+      url: '',
+      detail: `This Mac could not build the install page for ${orgName}: the organization or repository id is missing.`
+    }
+  }
+  return { ok: true, url, want }
 }
 
 export function plyntrGithubInstallReady(

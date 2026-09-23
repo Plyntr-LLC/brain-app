@@ -729,8 +729,10 @@ export function SettingsPanel({
           <p className="kicker">Plyntr sync</p>
           <h3 className="set-h">Move this brain to Plyntr sync</h3>
           <p>
-            Install Plyntr sync on this same GitHub organization, not Plyntr LLC. This Mac then syncs with Plyntr and
-            stops using the Agency Brain git token. If Agency Brain is already syncing this folder, stop that first.
+            Install Plyntr sync on this same GitHub organization, not Plyntr LLC. Keep Only select repositories. Do not
+            choose All repositories. If the page says Plyntr LLC, do not click Install. Close that page and try again. If
+            it still says Plyntr LLC, stop and tell Plyntr. This Mac then syncs with Plyntr and stops using the Agency
+            Brain git token. If Agency Brain is already syncing this folder, stop that first.
           </p>
           <button
             className="primary"
