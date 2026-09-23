@@ -672,21 +672,16 @@ export function FirstRun() {
             }}
             onBeginCompanySetup={(row) => {
               void (async () => {
-                const acct = await window.brain.auth.session()
-                const next = {
-                  createId: `c-${Date.now()}`,
-                  wizardStep: 2,
-                  label: row.label,
-                  org: '',
-                  slug: row.slug,
-                  scoutEmail: acct.email,
-                  brainId: row.brainId
-                }
-                await window.brain.plyntr.saveCreate(next)
-                setPlyntrCreate(next)
-                setCreateGate(false)
                 setShowInvite(false)
-                go('plyntr-create')
+                const acct = await window.brain.auth.session()
+                await finishPlyntrJoin({
+                  brainId: row.brainId,
+                  repo: row.repo,
+                  slug: row.slug,
+                  role: 'scout',
+                  email: acct.email || row.ownerEmail,
+                  name: row.label
+                })
               })()
             }}
           />

@@ -93,7 +93,14 @@ export function SettingsPanel({
   onClose: () => void
   onLogout?: () => void
   onSwitchBrain?: (row: { path: string; name: string }) => void
-  onBeginCompanySetup?: (row: { brainId: string; slug: string; label: string; ownerEmail: string; code: string }) => void
+  onBeginCompanySetup?: (row: {
+    brainId: string
+    slug: string
+    label: string
+    ownerEmail: string
+    code: string
+    repo: string
+  }) => void
 }) {
   const [superAdmin, setSuper] = useState(false)
   const [email, setEmail] = useState('')
@@ -534,8 +541,9 @@ export function SettingsPanel({
           {openCompany ? (
             <>
               <p>
-                Add the company, their name, and their email. You get a six-digit code, and we email that same code to
-                them. They cannot start a company on their own. They paste the code, or ask for a new one at that email.
+                Add the company and the person, and pick their seat. Open that company to see everyone on it. Set this
+                brain up on this Mac walks the same GitHub setup an owner gets: the organization, the empty repo, then
+                Plyntr sync on that one repo.
               </p>
               <PlyntrCompanyScreen
                 embedded
@@ -972,11 +980,9 @@ export function SettingsPanel({
               <label className="field">
                 Seat
                 <select value={mintRole} onChange={(e) => setMintRole(e.target.value as SeatRole)}>
-                  {(seat === 'owner'
+                  {(seat === 'owner' || plyntrRows.seats.some((s) => s.email === email && s.bootstrap)
                     ? (['owner', 'scout', 'team', 'project'] as SeatRole[])
-                    : plyntrRows.seats.some((s) => s.email === email && s.bootstrap)
-                      ? (['owner', 'team', 'project'] as SeatRole[])
-                      : (['team', 'project'] as SeatRole[])
+                    : (['team', 'project'] as SeatRole[])
                   ).map((r) => (
                     <option key={r} value={r}>
                       {seatLabel(r)}

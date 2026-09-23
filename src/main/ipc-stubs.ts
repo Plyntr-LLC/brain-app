@@ -99,11 +99,15 @@ import {
 } from './plyntr-seats'
 import {
   copyDryRunFixture,
+  claimPlyntrCompany,
   createPlyntrBrain,
   dryRunProjectFolder,
   emailPlyntrCode,
   ensurePlyntrRepo,
+  invitePlyntrCompany,
+  listPlyntrCompanies,
   openPlyntrCompany,
+  readPlyntrCompany,
   placePlyntrBrain,
   plyntrBindUntilReady,
   plyntrGitToken,
@@ -1097,13 +1101,46 @@ export function registerStubIpc(): void {
     }
     return { brainId: created.brainId, repo: created.repo, hasToken: Boolean(created.seatToken) }
   })
-  ipcMain.handle('plyntr:openCompany', async (_e, body: { label: string; ownerName: string; ownerEmail: string }) => {
+  function platformSession(): { token: string; email: string } {
     if (!isJoeSuperAdmin(getAccount() || loadAccount(), getSettings())) {
       throw new Error('Only the Plyntr superadmin can add a company.')
     }
     if (!isPlatformOwnerSession()) throw new Error(PLATFORM_GATE)
     const session = loadOwnerSession()
     if (!session) throw new Error(PLATFORM_GATE)
+    return session
+  }
+
+  ipcMain.handle('plyntr:companies', async () => listPlyntrCompanies(platformSession().token))
+  ipcMain.handle('plyntr:company', async (_e, brainId: string) => readPlyntrCompany(platformSession().token, String(brainId || '')))
+  ipcMain.handle(
+    'plyntr:companyInvite',
+    async (_e, brainId: string, body: { email: string; name: string; role: string; roots?: string[] }) =>
+      invitePlyntrCompany(platformSession().token, String(brainId || ''), body)
+  )
+  ipcMain.handle('plyntr:claimCompany', async (_e, brainId: string) => {
+    const session = platformSession()
+    const claimed = await claimPlyntrCompany(session.token, String(brainId || ''))
+    if (claimed.seatToken) {
+      savePlyntrSeat(claimed.brainId, {
+        seatToken: claimed.seatToken,
+        slug: claimed.slug,
+        email: claimed.email || session.email,
+        role: 'scout',
+        repo: claimed.repo,
+        bootstrap: true
+      })
+    }
+    return {
+      brainId: claimed.brainId,
+      repo: claimed.repo,
+      slug: claimed.slug,
+      label: claimed.label,
+      email: claimed.email || session.email
+    }
+  })
+  ipcMain.handle('plyntr:openCompany', async (_e, body: { label: string; ownerName: string; ownerEmail: string; role?: string }) => {
+    const session = platformSession()
     const created = await openPlyntrCompany(session.token, body)
     if (created.seatToken) {
       savePlyntrSeat(created.brainId, {

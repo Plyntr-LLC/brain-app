@@ -268,55 +268,92 @@ export function PlyntrCodeScreen({
   )
 }
 
+const MEMBER_ROLES = [
+  ['owner', 'Owner'],
+  ['scout', 'Scout'],
+  ['team', 'Agency team'],
+  ['project', 'Project only']
+] as const
+
+type MemberRole = (typeof MEMBER_ROLES)[number][0]
+
+function roleName(role: string): string {
+  return MEMBER_ROLES.find((r) => r[0] === role)?.[1] || role
+}
+
 export function PlyntrCompanyScreen({
   onSetupHere,
   onResume,
   embedded
 }: {
-  onSetupHere: (row: { brainId: string; slug: string; label: string; ownerEmail: string; code: string }) => void
+  onSetupHere: (row: { brainId: string; slug: string; label: string; ownerEmail: string; code: string; repo: string }) => void
   onResume?: () => void
   embedded?: boolean
 }) {
-  const [phase, setPhase] = useState<'check' | 'login' | 'form' | 'code'>('check')
+  const [phase, setPhase] = useState<'check' | 'login' | 'list' | 'form' | 'detail'>('check')
   const [email, setEmail] = useState('joe@plyntr.com')
   const [otp, setOtp] = useState('')
   const [label, setLabel] = useState('')
   const [ownerName, setOwnerName] = useState('')
   const [ownerEmail, setOwnerEmail] = useState('')
+  const [memberRole, setMemberRole] = useState<MemberRole>('owner')
   const [code, setCode] = useState('')
   const [emailed, setEmailed] = useState(false)
-  const [brainId, setBrainId] = useState('')
-  const [slug, setSlug] = useState('')
+  const [companies, setCompanies] = useState<{ brainId: string; label: string; slug: string; org: string; repo: string }[]>([])
+  const [people, setPeople] = useState<{
+    brainId: string
+    label: string
+    slug: string
+    org: string
+    repo: string
+    seats: { id: string; email: string; name: string; role: string; status: string }[]
+    invites: { inviteId: string; email: string; name: string; role: string; status: string }[]
+  } | null>(null)
+  const [addName, setAddName] = useState('')
+  const [addEmail, setAddEmail] = useState('')
+  const [addRole, setAddRole] = useState<MemberRole>('team')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [hint, setHint] = useState('')
 
+  async function loadCompanies() {
+    const rows = await window.brain.plyntr.companies()
+    setCompanies(rows)
+    setPhase('list')
+  }
+
+  async function openCompanyRow(brainId: string) {
+    const row = await window.brain.plyntr.company(brainId)
+    setPeople(row)
+    setPhase('detail')
+  }
+
   useEffect(() => {
     void window.brain.plyntr.pending().then((pend) => {
-      setPhase(pend.platform ? 'form' : 'login')
+      if (!pend.platform) {
+        setPhase('login')
+        return
+      }
+      void loadCompanies().catch((e) => {
+        setErr(String((e as Error).message || e))
+        setPhase('list')
+      })
     })
   }, [])
+
+  const title =
+    phase === 'login' || phase === 'check'
+      ? 'Sign in as Plyntr first'
+      : phase === 'form'
+        ? 'Add the company'
+        : phase === 'detail'
+          ? people?.label || 'Company'
+          : 'Companies'
 
   return (
     <>
       {embedded ? null : <p className="kicker">New company</p>}
-      {embedded ? (
-        <h3 className="set-h">
-          {phase === 'login' || phase === 'check'
-            ? 'Sign in as Plyntr first'
-            : phase === 'form'
-              ? 'Add the company'
-              : 'Share this code'}
-        </h3>
-      ) : (
-        <h1>
-          {phase === 'login' || phase === 'check'
-            ? 'Sign in as Plyntr first'
-            : phase === 'form'
-              ? 'Add the company'
-              : 'Share this code'}
-        </h1>
-      )}
+      {embedded ? <h3 className="set-h">{title}</h3> : <h1>{title}</h1>}
       {phase === 'login' ? (
         <>
           <p>This Mac needs the platform login before it can add a company. We email a code to you, you paste it here, and setup continues on the next screen.</p>
@@ -330,9 +367,37 @@ export function PlyntrCompanyScreen({
           </label>
         </>
       ) : null}
+      {phase === 'list' ? (
+        <>
+          <p>Open a company to see its people, add someone, or set that brain up on this Mac.</p>
+          {companies.map((c) => (
+            <div className="set-row" key={c.brainId}>
+              <span>
+                {c.label}
+                <span className="tiny"> · {c.repo.startsWith('pending/') ? 'GitHub not set up yet' : c.repo}</span>
+              </span>
+              <button
+                type="button"
+                className="linkish"
+                onClick={() => {
+                  setBusy(true)
+                  setErr('')
+                  setCode('')
+                  void openCompanyRow(c.brainId)
+                    .catch((e) => setErr(String((e as Error).message || e)))
+                    .finally(() => setBusy(false))
+                }}
+              >
+                Open
+              </button>
+            </div>
+          ))}
+          {companies.length === 0 ? <p className="tiny">No companies yet.</p> : null}
+        </>
+      ) : null}
       {phase === 'form' ? (
         <>
-          <p>Their name and email are who the setup code belongs to. You will see the code, and we email it to them.</p>
+          <p>Their name, email, and seat are who the setup code belongs to. You will see the code, and we email it to them.</p>
           <label className="field">
             Company
             <input value={label} onChange={(e) => setLabel(e.target.value)} />
@@ -345,15 +410,72 @@ export function PlyntrCompanyScreen({
             Their email
             <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="ada@company.com" />
           </label>
+          <label className="field">
+            Seat
+            <select value={memberRole} onChange={(e) => setMemberRole(e.target.value as MemberRole)}>
+              {MEMBER_ROLES.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {memberRole === 'project' ? (
+            <p className="tiny">Project only can be chosen now. Their folders are picked after this brain is on GitHub.</p>
+          ) : null}
         </>
       ) : null}
-      {phase === 'code' ? (
+      {phase === 'detail' && people ? (
         <>
           <p>
-            Give {ownerName || 'them'} this code, or they can choose “I don’t have a code” and use {ownerEmail}.
-            {emailed ? ' We also emailed it.' : ' Email did not send. Hand them this code.'}
+            {people.repo.startsWith('pending/')
+              ? 'GitHub is not set up yet. Set this brain up on this Mac to create the repo and install Plyntr sync. That is the same setup an owner walks through.'
+              : `GitHub repo ${people.repo}. Set this brain up on this Mac if it is not on this computer yet.`}
           </p>
-          <p className="phone-pin">{code}</p>
+          {code ? (
+            <p>
+              Code for {ownerName || addName || 'them'}: <span className="phone-pin">{code}</span>
+              {emailed ? ' We also emailed it.' : ' Email did not send. Hand them this code.'}
+            </p>
+          ) : null}
+          {people.seats
+            .filter((s) => s.status === 'active')
+            .map((s) => (
+              <div className="set-row" key={s.id}>
+                <span>
+                  {s.name || s.email} · {s.email}
+                  <span className="tiny"> · {roleName(s.role)}</span>
+                </span>
+              </div>
+            ))}
+          {people.invites
+            .filter((i) => i.status === 'pending')
+            .map((i) => (
+              <div className="set-row" key={i.inviteId}>
+                <span>
+                  {i.name} · {i.email}
+                  <span className="tiny"> · {roleName(i.role)} · waiting on their code</span>
+                </span>
+              </div>
+            ))}
+          <label className="field">
+            Name
+            <input value={addName} onChange={(e) => setAddName(e.target.value)} />
+          </label>
+          <label className="field">
+            Email
+            <input value={addEmail} onChange={(e) => setAddEmail(e.target.value)} />
+          </label>
+          <label className="field">
+            Seat
+            <select value={addRole} onChange={(e) => setAddRole(e.target.value as MemberRole)}>
+              {MEMBER_ROLES.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
         </>
       ) : null}
       {hint ? <p className="tiny">{hint}</p> : null}
@@ -398,7 +520,7 @@ export function PlyntrCompanyScreen({
                     onResume()
                     return
                   }
-                  setPhase('form')
+                  await loadCompanies()
                   setHint('')
                 } catch (e) {
                   setErr(String((e as Error).message || e))
@@ -411,47 +533,129 @@ export function PlyntrCompanyScreen({
             </button>
           </>
         ) : null}
-        {phase === 'form' ? (
+        {phase === 'list' ? (
           <button
             className="primary"
             type="button"
-            disabled={busy}
-            onClick={async () => {
-              if (label.trim().length < 2 || ownerName.trim().length < 2 || !ownerEmail.includes('@')) {
-                setErr('Add the company, their name, and their email.')
-                return
-              }
-              setBusy(true)
+            onClick={() => {
               setErr('')
-              try {
-                const created = await window.brain.plyntr.openCompany({
-                  label: label.trim(),
-                  ownerName: ownerName.trim(),
-                  ownerEmail: ownerEmail.trim()
-                })
-                setCode(created.code)
-                setEmailed(created.emailed)
-                setBrainId(created.brainId)
-                setSlug(created.slug)
-                setPhase('code')
-              } catch (e) {
-                setErr(String((e as Error).message || e))
-              } finally {
-                setBusy(false)
-              }
+              setLabel('')
+              setOwnerName('')
+              setOwnerEmail('')
+              setMemberRole('owner')
+              setPhase('form')
             }}
           >
-            Create the company
+            Add a company
           </button>
         ) : null}
-        {phase === 'code' ? (
-          <button
-            className="primary"
-            type="button"
-            onClick={() => onSetupHere({ brainId, slug, label, ownerEmail, code })}
-          >
-            Set this brain up on this Mac
-          </button>
+        {phase === 'form' ? (
+          <>
+            <button className="ghost" type="button" onClick={() => setPhase('list')}>
+              Back
+            </button>
+            <button
+              className="primary"
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                if (label.trim().length < 2 || ownerName.trim().length < 2 || !ownerEmail.includes('@')) {
+                  setErr('Add the company, their name, and their email.')
+                  return
+                }
+                setBusy(true)
+                setErr('')
+                try {
+                  const created = await window.brain.plyntr.openCompany({
+                    label: label.trim(),
+                    ownerName: ownerName.trim(),
+                    ownerEmail: ownerEmail.trim(),
+                    role: memberRole
+                  })
+                  setCode(created.code)
+                  setEmailed(created.emailed)
+                  await openCompanyRow(created.brainId)
+                } catch (e) {
+                  setErr(String((e as Error).message || e))
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              Create the company
+            </button>
+          </>
+        ) : null}
+        {phase === 'detail' && people ? (
+          <>
+            <button
+              className="ghost"
+              type="button"
+              onClick={() => {
+                setCode('')
+                setBusy(true)
+                void loadCompanies()
+                  .catch((e) => setErr(String((e as Error).message || e)))
+                  .finally(() => setBusy(false))
+              }}
+            >
+              All companies
+            </button>
+            <button
+              className="ghost"
+              type="button"
+              disabled={busy || addName.trim().length < 2 || !addEmail.includes('@')}
+              onClick={async () => {
+                setBusy(true)
+                setErr('')
+                try {
+                  const res = await window.brain.plyntr.companyInvite(people.brainId, {
+                    name: addName.trim(),
+                    email: addEmail.trim().toLowerCase(),
+                    role: addRole
+                  })
+                  setCode(res.code)
+                  setEmailed(res.emailed)
+                  setOwnerName(addName.trim())
+                  setAddName('')
+                  setAddEmail('')
+                  setAddRole('team')
+                  await openCompanyRow(people.brainId)
+                } catch (e) {
+                  setErr(String((e as Error).message || e))
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              Add this person
+            </button>
+            <button
+              className="primary"
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true)
+                setErr('')
+                try {
+                  const claimed = await window.brain.plyntr.claimCompany(people.brainId)
+                  onSetupHere({
+                    brainId: claimed.brainId,
+                    slug: claimed.slug,
+                    label: claimed.label || people.label,
+                    ownerEmail: claimed.email,
+                    code,
+                    repo: claimed.repo || people.repo
+                  })
+                } catch (e) {
+                  setErr(String((e as Error).message || e))
+                  setBusy(false)
+                }
+              }}
+            >
+              Set this brain up on this Mac
+            </button>
+          </>
         ) : null}
       </div>
     </>

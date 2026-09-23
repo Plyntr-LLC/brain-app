@@ -392,7 +392,35 @@ const brain = {
       ipcRenderer.invoke('plyntr:resumeAccount', which) as Promise<{ ok: boolean; email: string; role: string }>,
     createBrain: (body: { label: string; org: string; slug: string; scoutEmail: string; rotate?: boolean }) =>
       ipcRenderer.invoke('plyntr:createBrain', body) as Promise<{ brainId: string; repo: string; hasToken: boolean }>,
-    openCompany: (body: { label: string; ownerName: string; ownerEmail: string }) =>
+    companies: () =>
+      ipcRenderer.invoke('plyntr:companies') as Promise<
+        { brainId: string; label: string; slug: string; org: string; repo: string; createdAt: string }[]
+      >,
+    company: (brainId: string) =>
+      ipcRenderer.invoke('plyntr:company', brainId) as Promise<{
+        brainId: string
+        label: string
+        slug: string
+        org: string
+        repo: string
+        seats: { id: string; email: string; name: string; role: string; status: string; bootstrap?: boolean }[]
+        invites: { inviteId: string; email: string; name: string; role: string; status: string }[]
+      }>,
+    companyInvite: (brainId: string, body: { email: string; name: string; role: string; roots?: string[] }) =>
+      ipcRenderer.invoke('plyntr:companyInvite', brainId, body) as Promise<{
+        code: string
+        emailed: boolean
+        pendingFolders: boolean
+      }>,
+    claimCompany: (brainId: string) =>
+      ipcRenderer.invoke('plyntr:claimCompany', brainId) as Promise<{
+        brainId: string
+        repo: string
+        slug: string
+        label: string
+        email: string
+      }>,
+    openCompany: (body: { label: string; ownerName: string; ownerEmail: string; role?: string }) =>
       ipcRenderer.invoke('plyntr:openCompany', body) as Promise<{
         brainId: string
         repo: string
@@ -402,6 +430,7 @@ const brain = {
         emailed: boolean
         ownerEmail: string
         ownerName: string
+        role: string
       }>,
     emailCode: (email: string) =>
       ipcRenderer.invoke('plyntr:emailCode', email) as Promise<{ ok: boolean; emailed: boolean; role: string }>,

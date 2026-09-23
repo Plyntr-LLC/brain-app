@@ -55,16 +55,47 @@ function fail(status: number, body: { error?: string; detail?: string }): never 
 
 function dryRunPlyntrWorker(path: string, body: Record<string, unknown> | null, repoQuery: string): unknown {
   if (path === '/v1/companies' && body) {
+    const role = String(body.role || 'owner')
     return {
       brainId: 'dry-brain',
       repo: 'pending/dry-brain',
       slug: slugFromBusinessName(String(body.label || 'dry')),
       label: String(body.label || 'Dry'),
       seatToken: 'pbt_dry_scout',
-      code: '184392',
+      code: role === 'owner' ? '184392' : 'TESTTEST12',
+      role,
       emailed: true,
       ownerEmail: String(body.ownerEmail || ''),
       ownerName: String(body.ownerName || '')
+    }
+  }
+  if (path === '/v1/companies') {
+    return { companies: [] }
+  }
+  if (/^\/v1\/companies\/[^/]+$/.test(path)) {
+    return {
+      brainId: 'dry-brain',
+      label: 'Dry',
+      slug: 'dry',
+      org: 'pending',
+      repo: 'pending/dry-brain',
+      seats: [],
+      invites: []
+    }
+  }
+  if (/^\/v1\/companies\/[^/]+\/invites$/.test(path)) {
+    return { inviteId: 'dry-invite', code: 'TESTTEST12', expiresAt: '2099-01-01T00:00:00.000Z', emailed: false }
+  }
+  if (/^\/v1\/companies\/[^/]+\/mac$/.test(path)) {
+    return {
+      brainId: 'dry-brain',
+      seatToken: 'pbt_dry_scout',
+      role: 'scout',
+      email: 'joe@plyntr.com',
+      repo: 'pending/dry-brain',
+      slug: 'dry',
+      label: 'Dry',
+      bootstrap: true
     }
   }
   if (path === '/v1/codes/email') {
@@ -182,10 +213,70 @@ export async function createPlyntrBrain(
   }
 }
 
+async function platformCall(platformToken: string, path: string, method: 'GET' | 'POST', body?: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (dryRun()) return dryRunPlyntrWorker(path, body || null, '') as Record<string, unknown>
+  const r = await fetch(`${ORIGIN}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${platformToken}` },
+    body: body ? JSON.stringify(body) : undefined
+  })
+  const json = (await r.json().catch(() => ({}))) as { error?: string; detail?: string }
+  if (!r.ok) fail(r.status, json)
+  return json as Record<string, unknown>
+}
+
+export type PlyntrCompanyRow = { brainId: string; label: string; slug: string; org: string; repo: string; createdAt: string }
+
+export async function listPlyntrCompanies(platformToken: string): Promise<PlyntrCompanyRow[]> {
+  const parsed = await platformCall(platformToken, '/v1/companies', 'GET')
+  const rows = Array.isArray(parsed.companies) ? parsed.companies : []
+  return rows.map((row) => {
+    const c = row as Record<string, unknown>
+    return {
+      brainId: String(c.brainId || ''),
+      label: String(c.label || ''),
+      slug: String(c.slug || ''),
+      org: String(c.org || ''),
+      repo: String(c.repo || ''),
+      createdAt: String(c.createdAt || '')
+    }
+  })
+}
+
+export async function readPlyntrCompany(platformToken: string, brainId: string): Promise<Record<string, unknown>> {
+  return platformCall(platformToken, `/v1/companies/${encodeURIComponent(brainId)}`, 'GET')
+}
+
+export async function invitePlyntrCompany(
+  platformToken: string,
+  brainId: string,
+  body: { email: string; name: string; role: string; roots?: string[] }
+): Promise<{ code: string; emailed: boolean; pendingFolders: boolean }> {
+  const parsed = await platformCall(platformToken, `/v1/companies/${encodeURIComponent(brainId)}/invites`, 'POST', body)
+  return { code: String(parsed.code || ''), emailed: Boolean(parsed.emailed), pendingFolders: Boolean(parsed.pendingFolders) }
+}
+
+export async function claimPlyntrCompany(
+  platformToken: string,
+  brainId: string
+): Promise<{ brainId: string; seatToken: string; role: string; email: string; repo: string; slug: string; label: string; bootstrap: boolean }> {
+  const parsed = await platformCall(platformToken, `/v1/companies/${encodeURIComponent(brainId)}/mac`, 'POST', {})
+  return {
+    brainId: String(parsed.brainId || brainId),
+    seatToken: String(parsed.seatToken || ''),
+    role: String(parsed.role || 'scout'),
+    email: String(parsed.email || ''),
+    repo: String(parsed.repo || ''),
+    slug: String(parsed.slug || ''),
+    label: String(parsed.label || ''),
+    bootstrap: Boolean(parsed.bootstrap)
+  }
+}
+
 export async function openPlyntrCompany(
   platformToken: string,
-  body: { label: string; ownerName: string; ownerEmail: string }
-): Promise<{ brainId: string; repo: string; slug: string; label: string; seatToken: string; code: string; emailed: boolean; ownerEmail: string; ownerName: string }> {
+  body: { label: string; ownerName: string; ownerEmail: string; role?: string }
+): Promise<{ brainId: string; repo: string; slug: string; label: string; seatToken: string; code: string; emailed: boolean; ownerEmail: string; ownerName: string; role: string }> {
   const parsed = (dryRun()
     ? dryRunPlyntrWorker('/v1/companies', body, '')
     : await (async () => {
@@ -207,6 +298,7 @@ export async function openPlyntrCompany(
     emailed?: boolean
     ownerEmail?: string
     ownerName?: string
+    role?: string
   }
   return {
     brainId: String(parsed.brainId || ''),
@@ -217,7 +309,8 @@ export async function openPlyntrCompany(
     code: String(parsed.code || ''),
     emailed: Boolean(parsed.emailed),
     ownerEmail: String(parsed.ownerEmail || body.ownerEmail),
-    ownerName: String(parsed.ownerName || body.ownerName)
+    ownerName: String(parsed.ownerName || body.ownerName),
+    role: String(parsed.role || body.role || 'owner')
   }
 }
 
