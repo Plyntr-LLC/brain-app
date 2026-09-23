@@ -4,6 +4,56 @@ import { slugFromBusinessName } from '@shared/plyntr-invite'
 const PLATFORM =
   'Sign in to platform sync first: Settings → Add users → Email me a project-sync code, then Sign in, until you see This is the platform login.'
 
+type OrgAdvice = {
+  preferred: string
+  free: boolean
+  takenType: string
+  suggestion: string
+}
+
+function orgStepCopy(label: string, slug: string, advice: OrgAdvice | null): string {
+  const company = label || 'This company'
+  if (!slug) {
+    return `${company} is not on GitHub yet. Open GitHub, sign in, and create a free organization. After GitHub creates it, paste the address bar. It looks like github.com/orgs/the-name.`
+  }
+  if (!advice || advice.preferred !== slug) {
+    return `${company} is not on GitHub yet. Open GitHub, sign in, and create a free organization. After GitHub creates it, paste the address bar.`
+  }
+  if (advice.free) {
+    return `${company} is not on GitHub yet. Open GitHub, sign in, and create a free organization. Set the organization account name to ${slug}. After GitHub creates it, the address bar is github.com/orgs/${slug}. Paste that address.`
+  }
+  if (advice.takenType === 'User') {
+    return `${slug} is already a person's GitHub login, so an organization cannot use that name. Open GitHub and set the organization account name to ${advice.suggestion}. After GitHub creates it, paste the address bar.`
+  }
+  if (advice.takenType === 'Organization' && advice.suggestion && advice.suggestion !== slug) {
+    return `${slug} is already an organization. If it is yours, paste ${slug}. If it is not, create ${advice.suggestion} and paste that address bar.`
+  }
+  if (advice.takenType === 'Organization') {
+    return `${slug} is already an organization. If it is yours, paste ${slug}. If it is not, pick a different organization name on GitHub and paste the address bar.`
+  }
+  return `${company} is not on GitHub yet. Open GitHub and create a free organization. After GitHub creates it, paste the address bar.`
+}
+
+function orgUseError(
+  raw: string,
+  slug: string,
+  pastedRepo: boolean,
+  look: { reason?: string; detail?: string; login?: string },
+  freeName: string
+): string {
+  if (pastedRepo && look.reason === 'personal-account') {
+    return `${raw} is not a GitHub organization. ${slug} is already a person's login, so an organization cannot use that name. On GitHub, set the organization account name to ${freeName}. After GitHub creates it, paste the address bar.`
+  }
+  if (pastedRepo && look.reason === 'not-found') {
+    return `${raw} is not a GitHub organization. Create the organization first. A free name is ${freeName}. After GitHub creates it, the address bar is github.com/orgs/${freeName}. Paste that address.`
+  }
+  if (look.reason === 'not-found') {
+    const name = look.login || raw
+    return `GitHub has no organization named ${name}. After you create it, the address bar is github.com/orgs/${name}. Paste that address.`
+  }
+  return look.detail || 'That GitHub name is not an organization yet. Paste the address bar after you create it.'
+}
+
 type CreatePending = {
   createId: string
   wizardStep: number
@@ -685,6 +735,12 @@ export function PlyntrCreateScreen({
   const [installOpened, setInstallOpened] = useState(false)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [nameAdvice, setNameAdvice] = useState<{
+    preferred: string
+    free: boolean
+    takenType: string
+    suggestion: string
+  } | null>(null)
   const createId = initial?.createId || ''
   useEffect(() => {
     if (!brainId) {
@@ -708,6 +764,19 @@ export function PlyntrCreateScreen({
       if (login) setOrg(login)
     })
   }, [])
+  useEffect(() => {
+    if (step !== 2 || !slug) {
+      setNameAdvice(null)
+      return
+    }
+    let live = true
+    void window.brain.setup.adviseOrg(slug).then((row) => {
+      if (live) setNameAdvice(row)
+    })
+    return () => {
+      live = false
+    }
+  }, [step, slug])
 
   async function save(next: number, patch?: Partial<CreatePending>) {
     const row = {
@@ -750,12 +819,7 @@ export function PlyntrCreateScreen({
       ) : null}
       {step === 2 ? (
         <>
-          <p>
-            {label || 'This company'} is not on GitHub yet. Open GitHub and sign in. If GitHub asks for an account,
-            create one, then create a free organization.
-            {slug ? ` A short name for this company is ${slug}.` : ' The short name is one word, the company name with hyphens.'}{' '}
-            Copy that short name from the address bar. It shows up in the box below.
-          </p>
+          <p>{orgStepCopy(label, slug, nameAdvice)}</p>
           <label className="field">
             Short name
             <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="Appears after you copy it" />
@@ -869,19 +933,25 @@ export function PlyntrCreateScreen({
                 return
               }
               if (step === 2) {
-                if (!org.trim()) {
+                const raw = org.trim()
+                const pastedRepo = Boolean(slug) && raw.toLowerCase() === `${slug}-brain`.toLowerCase()
+                const typed = pastedRepo ? slug : raw
+                if (!typed) {
                   void window.brain.setup.openCreateOrg().then((r) => {
                     const login = String(r?.org || '').trim()
                     if (login) setOrg(login)
                   })
                   return
                 }
-                const look = await window.brain.setup.lookupOrg(org)
+                const look = await window.brain.setup.lookupOrg(typed)
                 if (!look.ok || look.type !== 'Organization') {
-                  setErr(look.detail || 'That GitHub name is not an organization yet. Open GitHub, create it, and copy the short name.')
+                  const advice = slug ? await window.brain.setup.adviseOrg(slug).catch(() => nameAdvice) : nameAdvice
+                  const freeName = advice?.suggestion || slug
+                  if (pastedRepo && advice?.suggestion) setOrg(advice.suggestion)
+                  setErr(orgUseError(raw, slug, pastedRepo, look, freeName))
                   return
                 }
-                const login = look.login || org
+                const login = look.login || typed
                 setOrg(login)
                 if (brainId) {
                   const placed = await window.brain.plyntr.place({ brainId, org: login })

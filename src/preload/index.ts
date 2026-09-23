@@ -267,6 +267,13 @@ const brain = {
         type?: string
         id?: number
       }>,
+    adviseOrg: (login: string) =>
+      ipcRenderer.invoke('setup:adviseOrg', login) as Promise<{
+        preferred: string
+        free: boolean
+        takenType: string
+        suggestion: string
+      }>,
     openCreateOrg: () =>
       ipcRenderer.invoke('setup:openCreateOrg') as Promise<{ ok: boolean; org?: string }>,
     openAppInstall: (slug: string, org?: string) =>

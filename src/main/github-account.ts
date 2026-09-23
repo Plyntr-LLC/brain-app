@@ -1,4 +1,4 @@
-import { parseGithubOrgLogin } from './github-repo'
+import { orgLoginCandidates, parseGithubOrgLogin } from './github-repo'
 
 export async function lookupGithubAccount(login: string): Promise<{
   ok: boolean
@@ -37,7 +37,7 @@ export async function lookupGithubAccount(login: string): Promise<{
       return {
         ok: false,
         reason: 'not-found',
-        detail: `GitHub has no short name ${name}. Copy the name from the GitHub page after you create it.`,
+        detail: `GitHub has no organization named ${name}. After you create it, the address bar is github.com/orgs/${name}. Paste that address.`,
         login: name
       }
     }
@@ -55,7 +55,7 @@ export async function lookupGithubAccount(login: string): Promise<{
     return {
       ok: false,
       reason: 'personal-account',
-      detail: `${body?.login || name} is a person's GitHub login. Paste the short name you created (one word, like harolds-books), not your own username.`,
+      detail: `${body?.login || name} is already a person's GitHub login, so an organization cannot use that name. Choose a different organization name, then paste the address bar.`,
       login: body?.login || name,
       type: body?.type
     }
@@ -67,4 +67,25 @@ export async function lookupGithubAccount(login: string): Promise<{
       login: name
     }
   }
+}
+
+/** Whether the preferred org login is free, and a name that is free to create. */
+export async function adviseGithubOrg(preferred: string): Promise<{
+  preferred: string
+  free: boolean
+  takenType: string
+  suggestion: string
+}> {
+  const names = orgLoginCandidates(preferred)
+  const base = names[0] || ''
+  if (!base) return { preferred: '', free: false, takenType: '', suggestion: '' }
+  let takenType = ''
+  for (const name of names) {
+    const look = await lookupGithubAccount(name)
+    if (look.reason === 'not-found') {
+      return { preferred: base, free: name === base, takenType, suggestion: name }
+    }
+    if (name === base) takenType = look.type || look.reason || 'taken'
+  }
+  return { preferred: base, free: false, takenType, suggestion: base }
 }

@@ -72,7 +72,7 @@ import {
   runPlyntrMove,
   writePlyntrSyncFile
 } from './plyntr-move'
-import { lookupGithubAccount } from './github-account'
+import { adviseGithubOrg, lookupGithubAccount } from './github-account'
 import { loadAnyChats, loadChats, saveChats, type SavedChats } from './persist'
 import { rememberPhoneChats } from './phone'
 import { emitChat, markChatBusy } from './chat-fan'
@@ -731,6 +731,7 @@ export function registerStubIpc(): void {
     }
   })
   ipcMain.handle('setup:lookupOrg', async (_e, login: string) => ads2ai.lookupGithubAccount(login))
+  ipcMain.handle('setup:adviseOrg', async (_e, login: string) => adviseGithubOrg(login))
   ipcMain.handle('setup:openCreateOrg', async () => {
     openInApp(GITHUB_NEW_ORG, 'Create a GitHub short name')
     const org = await watchClipboardOrg()
