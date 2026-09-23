@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { orgIdFromGraphql, orgLoginCandidates, parseGithubHqRepo, parseGithubOrgLogin, plyntrRepoFullName } from './github-repo.ts'
+import { ghCliDetail, orgIdFromGraphql, orgLoginCandidates, parseGithubHqRepo, parseGithubOrgLogin, plyntrRepoFullName } from './github-repo.ts'
 
 test('parseGithubHqRepo accepts owner/name and git remotes', () => {
   assert.equal(parseGithubHqRepo('acme-org/acme-hq-brain'), 'acme-org/acme-hq-brain')
@@ -39,6 +39,15 @@ test('GraphQL organization id is used when the public API hides the org', () => 
     { login: 'its-a-test-rosene', id: 332862614 }
   )
   assert.equal(orgIdFromGraphql('{"data":{"organization":null}}'), null)
+})
+
+test('missing gh is a real error, not a blank create failure', () => {
+  assert.equal(
+    ghCliDetail({ bin: null, status: null }),
+    'This Mac does not have the GitHub command (gh). Install GitHub CLI and sign in as an owner of the organization.'
+  )
+  assert.equal(ghCliDetail({ bin: '/opt/homebrew/bin/gh', status: 1, stderr: 'HTTP 404' }), 'HTTP 404')
+  assert.match(ghCliDetail({ bin: '/opt/homebrew/bin/gh', status: 1 }), /exit 1/)
 })
 
 test('org login candidates keep the name, then a short suffix', () => {

@@ -1,5 +1,8 @@
 import { spawnSync } from 'node:child_process'
-import { orgIdFromGraphql, orgLoginCandidates, parseGithubOrgLogin, plyntrRepoFullName } from './github-repo'
+import { existsSync } from 'node:fs'
+import { delimiter, join } from 'node:path'
+import { extraPath, binEnv } from './ai-cli'
+import { ghCliDetail, orgIdFromGraphql, orgLoginCandidates, parseGithubOrgLogin, plyntrRepoFullName } from './github-repo'
 
 export async function lookupGithubAccount(login: string): Promise<{
   ok: boolean
@@ -91,6 +94,35 @@ export async function adviseGithubOrg(preferred: string): Promise<{
   return { preferred: base, free: false, takenType, suggestion: base }
 }
 
+function resolveGhBin(): string | null {
+  const dirs = `${extraPath()}${delimiter}${process.env.PATH || ''}`.split(delimiter).filter(Boolean)
+  const names = process.platform === 'win32' ? ['gh.exe', 'gh.cmd', 'gh'] : ['gh']
+  for (const dir of dirs) {
+    for (const n of names) {
+      const p = join(dir, n)
+      if (existsSync(p)) return p
+    }
+  }
+  return null
+}
+
+function runGh(args: string[]): { bin: string | null; status: number | null; stdout: string; stderr: string; error?: string } {
+  const bin = resolveGhBin()
+  if (!bin) return { bin: null, status: null, stdout: '', stderr: '' }
+  const r = spawnSync(bin, args, {
+    encoding: 'utf8',
+    timeout: 60000,
+    env: { ...binEnv(), GH_PROMPT_DISABLED: '1', GIT_TERMINAL_PROMPT: '0' }
+  })
+  return {
+    bin,
+    status: r.status,
+    stdout: r.stdout || '',
+    stderr: r.stderr || '',
+    error: r.error ? String(r.error.message || r.error) : undefined
+  }
+}
+
 /** REST lookup, then the signed-in GitHub account when the public API hides a new organization. */
 export async function resolveGithubOrg(login: string): Promise<{
   ok: boolean
@@ -106,7 +138,7 @@ export async function resolveGithubOrg(login: string): Promise<{
   const name = parseGithubOrgLogin(login)
   if (!name) return look
   const query = 'query($login:String!){ organization(login:$login){ login databaseId } }'
-  const r = spawnSync('gh', ['api', 'graphql', '-f', `query=${query}`, '-f', `login=${name}`], { encoding: 'utf8' })
+  const r = runGh(['api', 'graphql', '-f', `query=${query}`, '-f', `login=${name}`])
   const hit = orgIdFromGraphql(r.stdout || '')
   if (!hit) return look
   return { ok: true, login: hit.login, type: 'Organization', id: hit.id }
@@ -116,11 +148,15 @@ export async function resolveGithubOrg(login: string): Promise<{
 export function ensureRemoteBrainRepo(org: string, slug: string): { ok: boolean; repo: string; detail?: string } {
   const repo = plyntrRepoFullName(org, slug)
   if (!repo) return { ok: false, repo: '', detail: 'That organization name cannot be used.' }
-  const view = spawnSync('gh', ['repo', 'view', repo, '--json', 'name'], { encoding: 'utf8' })
-  if (view.status === 0) return { ok: true, repo }
-  const made = spawnSync('gh', ['repo', 'create', repo, '--private'], { encoding: 'utf8' })
-  if (made.status === 0) return { ok: true, repo }
-  const err = `${made.stderr || ''}\n${made.stdout || ''}`
+  const view = runGh(['repo', 'view', repo, '--json', 'name'])
+  if (view.bin && view.status === 0) return { ok: true, repo }
+  const made = runGh(['repo', 'create', repo, '--private', '--clone=false'])
+  if (made.bin && made.status === 0) return { ok: true, repo }
+  const err = `${made.stderr || ''}\n${made.stdout || ''}\n${view.stderr || ''}\n${view.stdout || ''}`
   if (/already exists/i.test(err)) return { ok: true, repo }
-  return { ok: false, repo, detail: err.trim() || 'GitHub did not create the repository.' }
+  return {
+    ok: false,
+    repo,
+    detail: ghCliDetail(made.bin ? made : view.bin ? view : { bin: null, status: null })
+  }
 }

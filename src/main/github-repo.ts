@@ -73,3 +73,20 @@ export function orgLoginCandidates(preferred: string): string[] {
   }
   return out
 }
+
+/** Human text when `gh` did not run or printed nothing. */
+export function ghCliDetail(opts: {
+  bin: string | null
+  status: number | null
+  stdout?: string
+  stderr?: string
+  error?: string
+}): string {
+  if (!opts.bin) {
+    return 'This Mac does not have the GitHub command (gh). Install GitHub CLI and sign in as an owner of the organization.'
+  }
+  const err = `${opts.stderr || ''}\n${opts.stdout || ''}\n${opts.error || ''}`.trim()
+  if (err) return err
+  if (opts.status == null) return 'This Mac could not start the GitHub command (gh).'
+  return `GitHub did not create the repository (exit ${opts.status}).`
+}
