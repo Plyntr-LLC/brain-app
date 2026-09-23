@@ -681,7 +681,8 @@ export function PlyntrCreateScreen({
   const [hasSeat, setHasSeat] = useState(false)
   const [seatKnown, setSeatKnown] = useState(!initial?.brainId)
   const [repo, setRepo] = useState(initial?.org && initial?.slug ? `${initial.org}/${initial.slug}-brain` : '')
-  const [made, setMade] = useState(false)
+  const [repoOpened, setRepoOpened] = useState(false)
+  const [installOpened, setInstallOpened] = useState(false)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const createId = initial?.createId || ''
@@ -701,6 +702,12 @@ export function PlyntrCreateScreen({
       live = false
     }
   }, [brainId])
+  useEffect(() => {
+    return window.brain.setup.onBack((ev) => {
+      const login = String(ev.org || '').trim()
+      if (login) setOrg(login)
+    })
+  }, [])
 
   async function save(next: number, patch?: Partial<CreatePending>) {
     const row = {
@@ -725,13 +732,11 @@ export function PlyntrCreateScreen({
           : step === 1
             ? 'Business name'
               : step === 2
-              ? brainId
-                ? 'Your code worked. Next is GitHub.'
-                : 'GitHub organization'
+              ? 'Create a GitHub organization'
               : step === 3
                 ? 'Create the brain'
                 : step === 4
-                  ? 'Create the empty repo'
+                  ? 'Create the empty repository'
                   : step === 5
                     ? 'Install Plyntr sync'
                     : 'Copy the folder'}
@@ -746,26 +751,32 @@ export function PlyntrCreateScreen({
       {step === 2 ? (
         <>
           <p>
-            {brainId
-              ? 'The code is accepted. Type the GitHub organization for this company. Next checks that name, then opens GitHub so you can create the empty repo.'
-              : 'Type the GitHub organization for this company. Next checks that name, then opens GitHub so you can create the empty repo.'}
+            {label || 'This company'} is not on GitHub yet. Open GitHub and sign in. If GitHub asks for an account,
+            create one, then create a free organization.
+            {slug ? ` A short name for this company is ${slug}.` : ' The short name is one word, the company name with hyphens.'}{' '}
+            Copy that short name from the address bar. It shows up in the box below.
           </p>
           <label className="field">
-            GitHub organization
-            <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="harolds-books" />
+            Short name
+            <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="Appears after you copy it" />
           </label>
         </>
       ) : null}
       {step === 3 && !brainId ? <p className="tiny">This creates your scout seat. The code for the client comes later in Settings.</p> : null}
       {step === 4 ? (
-        <label className="need-row">
-          <input type="checkbox" checked={made} onChange={(e) => setMade(e.target.checked)} />
-          <span>I created {org}/{slug}-brain</span>
-        </label>
+        <p>
+          Open GitHub. The repository name is {slug}-brain, under {org}. Leave Add a README unchecked. Create the
+          repository. Come back here and click The repository is created.
+        </p>
+      ) : null}
+      {step === 5 ? (
+        <p>
+          Open GitHub. Click Install. Choose Only select repositories. Pick {org}/{slug}-brain. Leave All repositories
+          alone. Come back here and click Check GitHub.
+        </p>
       ) : null}
       {err ? <p className="note">{err}</p> : null}
       <div className="actions">
-        {step === 3 && brainId ? null : null}
         {step === 3 ? (
           <button
             className="ghost"
@@ -795,6 +806,34 @@ export function PlyntrCreateScreen({
             }}
           >
             Recover scout token
+          </button>
+        ) : null}
+        {step === 2 && org.trim() ? (
+          <button
+            className="ghost"
+            type="button"
+            onClick={() => {
+              void window.brain.setup.openCreateOrg().then((r) => {
+                const login = String(r?.org || '').trim()
+                if (login) setOrg(login)
+              })
+            }}
+          >
+            Open GitHub again
+          </button>
+        ) : null}
+        {step === 4 && repoOpened ? (
+          <button className="ghost" type="button" onClick={() => void window.brain.setup.openPlyntrRepo(org, slug)}>
+            Open GitHub again
+          </button>
+        ) : null}
+        {step === 5 && installOpened ? (
+          <button
+            className="ghost"
+            type="button"
+            onClick={() => void window.brain.setup.openPlyntrInstall(brainId, org)}
+          >
+            Open GitHub again
           </button>
         ) : null}
         <button
@@ -830,9 +869,16 @@ export function PlyntrCreateScreen({
                 return
               }
               if (step === 2) {
+                if (!org.trim()) {
+                  void window.brain.setup.openCreateOrg().then((r) => {
+                    const login = String(r?.org || '').trim()
+                    if (login) setOrg(login)
+                  })
+                  return
+                }
                 const look = await window.brain.setup.lookupOrg(org)
                 if (!look.ok || look.type !== 'Organization') {
-                  setErr(look.detail || 'That GitHub name is not an organization.')
+                  setErr(look.detail || 'That GitHub name is not an organization yet. Open GitHub, create it, and copy the short name.')
                   return
                 }
                 const login = look.login || org
@@ -875,22 +921,24 @@ export function PlyntrCreateScreen({
                 return
               }
               if (step === 4) {
-                if (!made) {
+                if (!repoOpened) {
                   await window.brain.setup.openPlyntrRepo(org, slug)
-                  await window.brain.setup.bringFront()
-                  setErr(`GitHub is open. Create ${org}/${slug}-brain with README unchecked, then come back and check the box.`)
+                  setRepoOpened(true)
                   return
                 }
                 await save(5)
                 return
               }
               if (step === 5) {
+                if (!installOpened) {
+                  await window.brain.setup.openPlyntrInstall(brainId, org)
+                  setInstallOpened(true)
+                  return
+                }
                 const want = repo || `${org}/${slug}-brain`
                 const st = await window.brain.plyntr.installed(brainId, want).catch(() => null)
                 if (!st?.ready) {
-                  await window.brain.setup.openPlyntrInstall(brainId, org)
-                  await window.brain.setup.bringFront()
-                  setErr('GitHub is open. Install Plyntr sync on this repo only. Choose Only select repositories, pick this repo, then click Next.')
+                  setErr('Plyntr sync is not on this repository yet. On the GitHub page, click Install, choose Only select repositories, pick this repo, then click Check GitHub.')
                   return
                 }
                 await save(6)
@@ -911,7 +959,21 @@ export function PlyntrCreateScreen({
             }
           }}
         >
-          {step === 6 ? 'Copy the folder' : 'Next'}
+          {step === 2 && !org.trim()
+            ? 'Open GitHub'
+            : step === 2
+              ? 'Use this organization'
+              : step === 4 && !repoOpened
+                ? 'Open GitHub'
+                : step === 4
+                  ? 'The repository is created'
+                  : step === 5 && !installOpened
+                    ? 'Open GitHub'
+                    : step === 5
+                      ? 'Check GitHub'
+                      : step === 6
+                        ? 'Copy the folder'
+                        : 'Next'}
         </button>
       </div>
     </>
