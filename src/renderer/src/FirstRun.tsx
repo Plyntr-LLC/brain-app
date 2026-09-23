@@ -405,8 +405,6 @@ export function FirstRun() {
     if (role === 'project' || kind === 'project' || patch?.bridgeOk || s.bridgeOk) return false
     const path = patch?.brainPath || s.brainPath || ''
     if (!path) return false
-    const mode = await window.brain.setup.syncMode(path).catch(() => '')
-    if (mode === 'plyntr') return false
     const st = await window.brain.setup.bridgeStatus(path).catch(() => null)
     if (st?.installed) return false
     go('bridge', { ...patch, brainPath: path })
@@ -1153,10 +1151,11 @@ export function FirstRun() {
               <AwayBanner kind={away} />
               {!away ? (
                 <div className="warn-box">
-                  <h3>Two steps</h3>
+                  <h3>On GitHub</h3>
                   <ol>
                     <li>Paste or create the short name below (or open GitHub to create it).</li>
                     <li>Click Install on GitHub, then Only select repositories. We wait here until GitHub is done.</li>
+                    <li>After the folder is copied, install Brain Bridge on that same repository.</li>
                   </ol>
                 </div>
               ) : null}

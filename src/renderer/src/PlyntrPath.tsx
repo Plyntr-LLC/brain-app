@@ -688,6 +688,7 @@ export function PlyntrCreateScreen({
   const [seatKnown, setSeatKnown] = useState(!initial?.brainId)
   const [repo, setRepo] = useState(resolvePlyntrRepoName(initial?.org || '', initial?.slug || ''))
   const [installOpened, setInstallOpened] = useState(false)
+  const [bridgeOpened, setBridgeOpened] = useState(false)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [nameAdvice, setNameAdvice] = useState<{
@@ -753,7 +754,10 @@ export function PlyntrCreateScreen({
     onBindBack(() => {
       const prev = previousCreateStep(step, Boolean(brainId))
       if (prev == null) return false
-      if (step === 5) setInstallOpened(false)
+      if (step === 5) {
+        setInstallOpened(false)
+        setBridgeOpened(false)
+      }
       void save(prev)
       return true
     })
@@ -803,10 +807,10 @@ export function PlyntrCreateScreen({
       ) : null}
       {step === 5 ? (
         <p>
-          Install Plyntr sync on {org}. GitHub should show {org} with {wantRepo} already checked. Keep Only select
-          repositories. Do not choose All repositories. If the page says Plyntr LLC, do not click Install. Close that
-          page and click Open GitHub again. If it still says Plyntr LLC, stop and tell Plyntr. Then come back and click
-          Check GitHub. This Mac then copies the client brain here.
+          Install Plyntr sync on {org}, then install Brain Bridge on the same repository. GitHub should show {org} with{' '}
+          {wantRepo} already checked. Keep Only select repositories. Do not choose All repositories. If the page says
+          Plyntr LLC, do not click Install. Close that page and click Open GitHub again. After both are on {wantRepo},
+          this Mac copies the client brain template onto this computer.
         </p>
       ) : null}
       {err ? <p className="note">{err}</p> : null}
@@ -1033,6 +1037,23 @@ export function PlyntrCreateScreen({
                   )
                   return
                 }
+                const bridge = await window.brain.setup.bridgeOnRepo(want).catch(() => null)
+                if (!bridge?.installed) {
+                  if (!bridgeOpened) {
+                    const opened = await window.brain.setup.openBridgeRepo(want)
+                    if (!opened.ok) {
+                      setErr(opened.detail || 'The Brain Bridge page did not open on this organization.')
+                      return
+                    }
+                    setBridgeOpened(true)
+                    setErr('')
+                    return
+                  }
+                  setErr(
+                    `Brain Bridge is not on ${want} yet. On the GitHub page, click Install, keep Only select repositories, pick ${want}, then click Check GitHub.`
+                  )
+                  return
+                }
                 await save(6)
                 return
               }
@@ -1059,6 +1080,8 @@ export function PlyntrCreateScreen({
                 ? 'Create the repository'
                   : step === 5 && !installOpened
                     ? 'Open GitHub'
+                    : step === 5 && installOpened && !bridgeOpened
+                      ? 'Check GitHub'
                     : step === 5
                       ? 'Check GitHub'
                       : step === 6

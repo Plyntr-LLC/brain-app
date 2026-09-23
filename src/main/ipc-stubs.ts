@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { asSeat, GITHUB_NEW_ORG, type AiKind } from '../shared/contracts'
+import { parseGithubHqRepo } from '../shared/github-org'
 import { openInApp } from './in-app-browse'
 import * as ads2ai from './ads2ai'
 import { homedir } from 'node:os'
@@ -820,6 +821,24 @@ export function registerStubIpc(): void {
     bringAppFront()
     return { ok: false, detail: 'The app is not installed on GitHub yet. In the browser, click Install, then Only select repositories, and try again.' }
   })
+  async function openPinnedBridge(repo: string): Promise<{ ok: boolean; repo: string; url: string }> {
+    const named = parseGithubHqRepo(repo)
+    if (!named) throw new Error('This brain has no GitHub repository name yet.')
+    const owner = named.split('/')[0]
+    const look = await resolveGithubOrg(owner)
+    if (!look.ok || look.type !== 'Organization' || !look.id) {
+      throw new Error(look.detail || `GitHub did not confirm the organization ${owner}.`)
+    }
+    const rid = await resolveGithubRepoId(named)
+    if (!rid.ok || !rid.id) throw new Error(rid.detail || `GitHub did not return an id for ${named}.`)
+    if (rid.owner && rid.owner.toLowerCase() !== String(look.login || owner).toLowerCase()) {
+      throw new Error(`${named} is not a repository in ${look.login || owner}.`)
+    }
+    const url = bridgeInstallUrl(named, look.id, rid.id)
+    openInApp(url, 'Install Brain Bridge')
+    return { ok: true, repo: named, url }
+  }
+
   async function bridgeInstalled(repo: string): Promise<boolean> {
     const r = await fetch(`${HQ_SYNC_ORIGIN}/github/installed?repo=${encodeURIComponent(repo)}`, {
       signal: AbortSignal.timeout(15000)
@@ -850,8 +869,19 @@ export function registerStubIpc(): void {
   ipcMain.handle('setup:openBridge', async (_e, folder: string) => {
     const repo = hqRepoFromFolder(String(folder || ''))
     if (!repo) throw new Error('This folder has no GitHub repo yet.')
-    openInApp(bridgeInstallUrl(repo), 'Install Brain Bridge')
-    return { ok: true, repo }
+    return openPinnedBridge(repo)
+  })
+  ipcMain.handle('setup:openBridgeRepo', async (_e, repo: string) => openPinnedBridge(String(repo || '')))
+  ipcMain.handle('setup:bridgeOnRepo', async (_e, repo: string) => {
+    const name = parseGithubHqRepo(String(repo || ''))
+    if (!name) return { ok: false, installed: false, repo: '', detail: 'This brain has no GitHub repository name yet.' }
+    if (dryRun()) return { ok: true, installed: true, skipped: true, repo: name }
+    try {
+      const installed = await bridgeInstalled(name)
+      return { ok: true, installed, repo: name, detail: installed ? '' : 'Brain Bridge is not on this repo yet.' }
+    } catch {
+      return { ok: false, installed: false, repo: name, detail: 'Could not check Brain Bridge.' }
+    }
   })
   ipcMain.handle('setup:waitBridge', async (_e, folder: string) => {
     if (dryRun()) return { ok: true, installed: true, skipped: true, repo: '' }

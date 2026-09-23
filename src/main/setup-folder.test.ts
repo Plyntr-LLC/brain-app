@@ -71,6 +71,8 @@ test('bridgeInstallUrl opens Brain Bridge for one repo', () => {
   const state = decodeURIComponent(url.split('state=')[1] || '')
   const body = JSON.parse(Buffer.from(state, 'base64').toString('utf8')) as { hq_repo?: string }
   assert.equal(body.hq_repo, 'acme/brain')
+  const pinned = bridgeInstallUrl('acme/brain', 332862614, 1383221929)
+  assert.match(pinned, /\/permissions\?target_id=332862614&repository_ids%5B%5D=1383221929&state=/)
 })
 
 test('githubAppInstallUrl keeps state on installations/new', () => {

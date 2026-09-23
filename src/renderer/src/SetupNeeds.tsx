@@ -282,7 +282,7 @@ export function SetupNeeds({
           {CLI_IDS.map((id) => {
             const row = items.find((i) => i.id === id)
             return (
-              <label key={id} className="set-row">
+              <label key={id} className="need-row">
                 <input
                   type="checkbox"
                   checked={wantCli[id] !== false}

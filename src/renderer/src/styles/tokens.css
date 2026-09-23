@@ -51,6 +51,14 @@ input, select, textarea {
   background: #fff;
   color: var(--ink);
 }
+input[type='checkbox'],
+input[type='radio'] {
+  width: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: var(--ink);
+}
 .field {
   display: grid;
   gap: 0.25rem;

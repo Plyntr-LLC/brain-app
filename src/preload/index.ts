@@ -305,6 +305,21 @@ const brain = {
       }>,
     openBridge: (folder: string) =>
       ipcRenderer.invoke('setup:openBridge', folder) as Promise<{ ok: boolean; repo: string }>,
+    openBridgeRepo: (repo: string) =>
+      ipcRenderer.invoke('setup:openBridgeRepo', repo) as Promise<{
+        ok: boolean
+        repo: string
+        url: string
+        detail?: string
+      }>,
+    bridgeOnRepo: (repo: string) =>
+      ipcRenderer.invoke('setup:bridgeOnRepo', repo) as Promise<{
+        ok: boolean
+        installed: boolean
+        skipped?: boolean
+        repo: string
+        detail?: string
+      }>,
     waitBridge: (folder: string) =>
       ipcRenderer.invoke('setup:waitBridge', folder) as Promise<{
         ok: boolean

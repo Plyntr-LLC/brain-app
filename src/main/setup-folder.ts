@@ -114,10 +114,16 @@ export function plyntrCreateRepoUrl(org: string, slug: string): string {
 }
 
 /** Install URL for Brain Bridge on one repo. state matches the worker's payload. */
-export function bridgeInstallUrl(hqRepo: string): string {
+export function bridgeInstallUrl(hqRepo: string, orgId?: number, repoId?: number): string {
   const repo = String(hqRepo || '').trim()
   const state = Buffer.from(JSON.stringify({ hq_repo: repo, origin: BRIDGE_ORIGIN })).toString('base64')
-  return `${BRIDGE_APP_INSTALL}?state=${encodeURIComponent(state)}`
+  const stateQ = `state=${encodeURIComponent(state)}`
+  const org = Number(orgId)
+  const id = Number(repoId)
+  if (Number.isInteger(org) && org > 0 && Number.isInteger(id) && id > 0) {
+    return `${BRIDGE_APP_INSTALL}/permissions?target_id=${org}&repository_ids%5B%5D=${id}&${stateQ}`
+  }
+  return `${BRIDGE_APP_INSTALL}?${stateQ}`
 }
 
 /** A repo address is not an install. GitHub has to say the app is installed on this repo. */
