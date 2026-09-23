@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { slugFromBusinessName } from '@shared/plyntr-invite'
+import { previousCreateStep } from '@shared/plyntr-wizard'
 
 const PLATFORM =
   'Sign in to platform sync first: Settings → Add users → Email me a project-sync code, then Sign in, until you see This is the platform login.'
@@ -715,11 +716,13 @@ export function PlyntrCompanyScreen({
 export function PlyntrCreateScreen({
   initial,
   gateFirst,
-  onCloned
+  onCloned,
+  onBindBack
 }: {
   initial: CreatePending | null
   gateFirst: boolean
   onCloned: (brainPath: string) => void
+  onBindBack?: (fn: (() => boolean) | null) => void
 }) {
   const savedStep = initial?.wizardStep ?? 0
   const [step, setStep] = useState(gateFirst ? 0 : savedStep)
@@ -791,6 +794,19 @@ export function PlyntrCreateScreen({
     await window.brain.plyntr.saveCreate(row)
     setStep(next)
   }
+
+  useEffect(() => {
+    if (!onBindBack) return
+    onBindBack(() => {
+      const prev = previousCreateStep(step, Boolean(brainId))
+      if (prev == null) return false
+      if (step === 4) setRepoOpened(false)
+      if (step === 5) setInstallOpened(false)
+      void save(prev)
+      return true
+    })
+    return () => onBindBack(null)
+  }, [step, brainId, label, org, slug, email])
 
   return (
     <>

@@ -123,7 +123,10 @@ export function FirstRun() {
     }
   }
 
+  const plyntrWizardBack = useRef<(() => boolean) | null>(null)
+
   function goBack() {
+    if (s.screen === 'plyntr-create' && plyntrWizardBack.current?.()) return
     const from = s.screen
     if (from === 'chat' || from === 'fork') return
     const prev = navStack.current.pop() ?? defaultBackScreen(from, s)
@@ -540,7 +543,7 @@ export function FirstRun() {
     const org = pendingRepo ? '' : repo.split('/')[0]
     const next = {
       createId: `c-${Date.now()}`,
-      wizardStep: org ? 4 : 2,
+      wizardStep: 2,
       label: row.name || row.slug,
       org,
       slug: row.slug,
@@ -575,9 +578,14 @@ export function FirstRun() {
     try {
       const pend = await window.brain.plyntr.pending()
       const session = await window.brain.auth.session()
-      if (pend.create) setPlyntrCreate(pend.create)
-      const step = pend.create?.wizardStep ?? 0
-      if (!pend.create || step < 2) return
+      let create = pend.create
+      if (create && create.wizardStep === 4 && create.brainId) {
+        create = { ...create, wizardStep: 2 }
+        await window.brain.plyntr.saveCreate(create)
+      }
+      if (create) setPlyntrCreate(create)
+      const step = create?.wizardStep ?? 0
+      if (!create || step < 2) return
       const gate = !session.signedIn || (step > 0 && !pend.platform)
       setCreateGate(gate)
       if (!gate && step > 0) {
@@ -754,6 +762,9 @@ export function FirstRun() {
             <PlyntrCreateScreen
               initial={plyntrCreate}
               gateFirst={createGate}
+              onBindBack={(fn) => {
+                plyntrWizardBack.current = fn
+              }}
               onCloned={(brainPath) => {
                 go('needs', { brainPath, role: 'scout', path: 'create' })
               }}
