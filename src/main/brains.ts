@@ -137,7 +137,7 @@ export function rememberBrain(row: {
   name?: string
   slug?: string
   role?: string
-  syncMode?: 'plyntr' | 'agency-brain'
+  syncMode?: 'plyntr' | 'agency-brain' | 'local'
   brainId?: string
   seatToken?: string
 }): BrainRow[] {

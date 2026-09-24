@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { asSeat, isTeamSeat, seatLabel, type SeatRole } from '@shared/contracts'
+import { asSeat, canTurnOnGithubSync, isTeamSeat, seatLabel, type SeatRole } from '@shared/contracts'
 import { displayPlyntrCode } from '@shared/plyntr-invite'
 import { plyntrPackageCopy } from '@shared/plyntr-package'
 import { canOfferPlyntrTransfer } from '@shared/plyntr-transfer'
+import { LocalSyncPanel } from './LocalSyncPanel'
 import { PlyntrCompanyScreen } from './PlyntrPath'
 
 type Person = {
@@ -44,6 +45,20 @@ function prettyName(raw: string): string {
   const s = String(raw || '').trim()
   if (!s) return ''
   return s.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ')
+}
+
+function channelLine(row: { syncMode?: string; watching?: boolean }): string {
+  if (row.syncMode === 'local') return 'On this computer only'
+  if (row.syncMode === 'plyntr') return 'Plyntr sync'
+  if (row.syncMode === 'agency-brain' || row.watching) return 'Agency Brain sync'
+  return 'On this computer'
+}
+
+function businessTitle(row: { name: string; path: string; slug: string }, companyLabel = ''): string {
+  const label = prettyName(companyLabel)
+  if (label) return label
+  if (row.slug === 'plyntr') return 'Plyntr'
+  return prettyName(row.name || '') || placeName(row.path, '')
 }
 
 function placeName(path: string, fallback = ''): string {
@@ -128,11 +143,21 @@ export function SettingsPanel({
   const [folderRepo, setFolderRepo] = useState('')
   const [hqBusy, setHqBusy] = useState(false)
   const [brains, setBrains] = useState<
-    { path: string; name: string; slug: string; watching?: boolean; current?: boolean }[]
+    {
+      path: string
+      name: string
+      slug: string
+      role?: string
+      watching?: boolean
+      current?: boolean
+      syncMode?: 'plyntr' | 'agency-brain' | 'local'
+      brainId?: string
+    }[]
   >([])
+  const [rosters, setRosters] = useState<Record<string, Person[]>>({})
+  const [companyLabels, setCompanyLabels] = useState<Record<string, string>>({})
+  const [folderSync, setFolderSync] = useState('')
   const [openAdd, setOpenAdd] = useState(false)
-  const [openCompany, setOpenCompany] = useState(false)
-  const [openPeople, setOpenPeople] = useState(false)
   const [openCatalog, setOpenCatalog] = useState(false)
   const [adsCode, setAdsCode] = useState('')
   const [pending, setPending] = useState<{ slug: string; name: string } | null>(null)
@@ -227,18 +252,23 @@ export function SettingsPanel({
     opts?: { clearHint?: boolean }
   ) {
     setCanMove(Boolean(active?.canMove))
+    setFolderSync(String(active?.syncMode || ''))
     setPlyntrRole(String(active?.role || ''))
     setPlyntrAccountRole(String(active?.accountRole || ''))
     setPlyntrSeatEmail(String(active?.seatEmail || ''))
-    if (active?.syncMode === 'plyntr' && active.brainId) {
+    if ((active?.syncMode === 'plyntr' || active?.syncMode === 'local') && active.brainId) {
       setPlyntrMode(true)
       setPlyntrBrainId(active.brainId)
       setPlyntrSeat(Boolean(active.hasSeat))
       setPlyntrOrg(active.org || '')
       setPlyntrSlug(active.slug || '')
       setPlyntrLabel(active.label || '')
+      if (active.syncMode === 'local') {
+        setSyncHint('On this computer only. No GitHub sync yet.')
+      } else {
       const health = await window.brain.hqSync.health().catch(() => null)
       setSyncHint(health?.lastSync || '')
+      }
       if (active.hasSeat) {
         setPlyntrRows(await window.brain.plyntr.seats(active.brainId).catch(() => ({ seats: [], invites: [] })))
         const again = await window.brain.plyntr.active().catch(() => null)
@@ -267,6 +297,21 @@ export function SettingsPanel({
       setBrainName(placeName(String(s.brainPath || ''), prettyName(String(s.brainName || ''))))
       setSeat(String(s.role || ''))
       setBrains(list)
+      const nextRosters: Record<string, Person[]> = {}
+      await Promise.all(
+        list.map(async (b) => {
+          nextRosters[b.path] = (await window.brain.settings.rosterAt(b.path).catch(() => [])) as Person[]
+        })
+      )
+      setRosters(nextRosters)
+      if (s.superAdmin && s.email === 'joe@plyntr.com') {
+        const companies = await window.brain.plyntr.companies().catch(() => [])
+        const labels: Record<string, string> = {}
+        for (const company of companies) {
+          if (company.brainId && company.label) labels[company.brainId] = company.label
+        }
+        setCompanyLabels(labels)
+      }
       setLoaded(true)
       const [roster, projects, bridge, ver, skin, phoneNow] = await Promise.all([
         window.brain.settings.roster().catch(() => []),
@@ -349,6 +394,87 @@ export function SettingsPanel({
     return () => window.clearInterval(t)
   }, [phone.on])
 
+  async function refreshOpenBrain(row: { path: string; name: string }) {
+    const list = await window.brain.brains.list()
+    setBrains(list)
+    setBrainPath(row.path)
+    setBrainName(placeName(row.path, prettyName(row.name)))
+    const roster = (await window.brain.settings.roster().catch(() => [])) as Person[]
+    setPeople(roster)
+    setRosters((prev) => ({ ...prev, [row.path]: roster }))
+    const mode = await window.brain.setup.syncMode(row.path).catch(() => '')
+    await takePlyntrActive(await window.brain.plyntr.active().catch(() => null), { clearHint: true })
+    setFolderSync(mode)
+    onSwitchBrain?.({ path: row.path, name: placeName(row.path, row.name) })
+    setNote(nowIn(row))
+  }
+
+  function localSyncOffer() {
+    if (folderSync !== 'local' || !plyntrBrainId || !canTurnOnGithubSync(plyntrRole || seat || role, joe)) return null
+    return (
+      <LocalSyncPanel
+        brainId={plyntrBrainId}
+        slug={plyntrSlug}
+        repo={plyntrOrg && plyntrSlug ? `${plyntrOrg}/${plyntrSlug}-brain` : ''}
+        folder={brainPath}
+        onDone={(detail) => {
+          void (async () => {
+            setNote(detail)
+            setFolderSync('plyntr')
+            await takePlyntrActive(await window.brain.plyntr.active().catch(() => null))
+            setBrains(await window.brain.brains.list())
+            const roster = (await window.brain.settings.roster().catch(() => [])) as Person[]
+            setPeople(roster)
+          })()
+        }}
+      />
+    )
+  }
+
+  const currentIndex = brains.findIndex((b) => b.current)
+  const brainsBefore = currentIndex < 0 ? [] : brains.slice(0, currentIndex)
+  const brainsAfter = currentIndex < 0 ? brains : brains.slice(currentIndex + 1)
+  function renderOtherBrain(b: (typeof brains)[number]) {
+    const users = rosters[b.path] || []
+    return (
+      <section className="biz" key={b.path}>
+        <h3>{businessTitle(b, b.brainId ? companyLabels[b.brainId] : '')}</h3>
+        <p className="biz-brain">Brain · {placeName(b.path, prettyName(b.name || b.slug))}</p>
+        <p className="tiny">{channelLine(b)}</p>
+        {users.length ? (
+          users.map((p) => (
+            <div className="set-row" key={p.email}>
+              <span>
+                {p.name || p.email} · {p.email}
+                <span className="tiny"> · {seatLabel(p.role)}</span>
+              </span>
+            </div>
+          ))
+        ) : (
+          <p className="tiny">No people listed in this folder yet.</p>
+        )}
+        {joe && superAdmin ? (
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => {
+              void (async () => {
+                try {
+                  const row = await window.brain.brains.switch(b.path)
+                  await refreshOpenBrain(row)
+                } catch (err) {
+                  setNote(String((err as Error).message || err))
+                }
+              })()
+            }}
+          >
+            Open this brain
+          </button>
+        ) : null}
+      </section>
+    )
+  }
+
   if (!loaded) {
     return (
       <div className="settings">
@@ -401,15 +527,10 @@ export function SettingsPanel({
                 if (!path) return
                 try {
                   const row = await window.brain.brains.switch(path)
-                  setBrains(await window.brain.brains.list())
-                  setBrainPath(row.path)
-                  setBrainName(placeName(row.path, prettyName(row.name)))
-                  onSwitchBrain?.({ path: row.path, name: placeName(row.path, row.name) })
-                  await takePlyntrActive(await window.brain.plyntr.active().catch(() => null), { clearHint: true })
+                  await refreshOpenBrain(row)
                   const bridge = await window.brain.hqSync.ownerStatus().catch(() => null)
                   setHq(bridge)
                   setFolderRepo(await window.brain.hqSync.watchedRepo().catch(() => ''))
-                  setNote(nowIn(row))
                 } catch (err) {
                   setNote(String((err as Error).message || err))
                 }
@@ -426,361 +547,22 @@ export function SettingsPanel({
         ) : null}
       </div>
 
-      {email && brainPath ? (
-      <section className="set-block" style={{ borderTop: 0, paddingTop: 0 }}>
-        <p className="kicker">Phone</p>
-        <h3 className="set-h">Use Brain from your phone</h3>
-        <p>
-          Works on cellular or any wifi. This Mac has to stay on, with Brain.app open, and plugged in. Closing the lid
-          on battery will sleep. Scan the QR with the phone camera, like linking a WhatsApp device. Only a phone that
-          scanned that QR can read chats on this Mac and send into Grok, Claude, Cursor, or ChatGPT as you. Remove a
-          phone here to kick it off. Turning Phone on does not unlink phones you already linked.
-        </p>
-        <label className="set-row">
-          <span>Phone</span>
-          <button
-            type="button"
-            className={phone.on ? 'primary' : 'ghost'}
-            disabled={phoneBusy}
-            onClick={() => {
-              setPhoneBusy(true)
-              const run = phone.on ? window.brain.phone.stop() : window.brain.phone.start()
-              void run
-                .then(setPhone)
-                .finally(() => setPhoneBusy(false))
-            }}
-          >
-            {phoneBusy ? 'Working…' : phone.on ? 'On' : 'Off'}
-          </button>
-        </label>
-        {phone.detail ? <p className="tiny">{phone.detail}</p> : null}
-        {phoneNote ? <p className="tiny">{phoneNote}</p> : null}
-        {phone.on ? (
-          <>
-            <p className="tiny">
-              {phone.watching
-                ? 'A linked phone is using this Mac.'
-                : 'Waiting for a phone. Scan the QR, or type the code on the phone.'}
-            </p>
-            {phone.origin ? <p className="tiny">{phone.origin.replace(/^https:\/\//, '')}</p> : null}
-            {phone.pairQr ? (
-              <div className="phone-qr" dangerouslySetInnerHTML={{ __html: phone.pairQr }} />
-            ) : (
-              <p className="tiny">QR is ready after the tunnel comes up.</p>
-            )}
-            {phone.pairPin ? <p className="phone-pin">{phone.pairPin}</p> : null}
-            <p className="tiny">The QR and code last two minutes, then this screen makes a new one. Each scan links one phone.</p>
-            <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
-              <button
-                type="button"
-                className="ghost"
-                onClick={() => {
-                  void window.brain.phone
-                    .link()
-                    .then(setPhone)
-                    .catch((err) => setPhoneNote(String((err as Error).message || err)))
-                }}
-              >
-                New QR
-              </button>
-            </div>
-            {phone.devices.length ? (
-              <div style={{ marginTop: '0.6rem' }}>
-                <p className="tiny">Linked phones</p>
-                {phone.devices.map((d) => (
-                  <div key={d.id} className="phone-dev">
-                    <span>{d.label}</span>
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={() => {
-                        void window.brain.phone
-                          .unlink(d.id)
-                          .then(setPhone)
-                          .catch((err) => setPhoneNote(String((err as Error).message || err)))
-                      }}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </>
+      <div className="biz-wrap">
+        <h2 className="biz-kicker">Businesses</h2>
+        {joe && superAdmin ? (
+          <PlyntrCompanyScreen
+            embedded
+            hideBrainIds={brains.map((b) => b.brainId || '').filter(Boolean)}
+            onSetupHere={(row) => onBeginCompanySetup?.(row)}
+          />
         ) : null}
-      </section>
-      ) : null}
-
-      <section className="set-block">
-        <p className="tiny">Brain {appVer || ''}</p>
-        <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
-          <button
-            className="ghost"
-            type="button"
-            onClick={async () => {
-              setUpd('Checking for an update…')
-              const r = await window.brain.checkUpdate()
-              if (!r.ok && r.detail) setUpd(r.detail)
-            }}
-          >
-            Check for update
-          </button>
-          {upd.includes('ready') ? (
-            <button className="primary" type="button" onClick={() => void window.brain.installUpdate()}>
-              Restart to install
-            </button>
-          ) : null}
-        </div>
-        {upd ? <p className="tiny">{upd}</p> : null}
-      </section>
-
-      {onLogout && email ? (
-        <p>
-          <button type="button" className="ghost" onClick={onLogout}>
-            Log out
-          </button>
-          <span className="tiny"> Chats and this brain folder stay on this computer.</span>
-        </p>
-      ) : null}
-
-      {joe && superAdmin ? (
-        <section className="set-block">
-          <FoldHead
-            kicker="Plyntr"
-            title="Set up a new company brain"
-            open={openCompany}
-            onToggle={() => setOpenCompany((v) => !v)}
-          />
-          {openCompany ? (
-            <>
-              <p>
-                Add the company and the person, and pick their seat. Open that company to see everyone on it. Set this
-                brain up on this Mac walks the same GitHub setup an owner gets: the organization, the client brain repository, then
-                Plyntr sync on that one repo.
-              </p>
-              <PlyntrCompanyScreen
-                embedded
-                onSetupHere={(row) => onBeginCompanySetup?.(row)}
-              />
-            </>
-          ) : null}
-        </section>
-      ) : null}
-
-      {joe && superAdmin ? (
-        <section className="set-block">
-          <FoldHead
-            kicker="Ads2AI"
-            title="Add a new company brain"
-            open={openAdd}
-            onToggle={() => {
-              setOpenAdd((v) => !v)
-              if (openAdd) {
-                setPending(null)
-              }
-            }}
-          />
-          {openAdd ? (
-            <>
-              <p>
-                Create the company in Ads2AI first. Paste the code it gives you. If GitHub is not done, we walk you
-                through that here. If it is, we copy the folder onto this computer. Switching above also switches Agency
-                Brain so it watches this brain. Chats stay with each brain.
-              </p>
-              {pending ? (
-                <>
-                  <p>
-                    The app is not installed on GitHub for this company yet. Open GitHub, create the short name if you
-                    do not have one, then install. Click Install, then Only select repositories.
-                  </p>
-                  <label className="field">
-                    GitHub short name
-                    <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="harolds-books" />
-                  </label>
-                  <p className="tiny">The short GitHub name, not the business name. Copy it from the GitHub page.</p>
-                  <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
-                    <button
-                      className="ghost"
-                      type="button"
-                      onClick={async () => {
-                        const r = await window.brain.setup.openCreateOrg().catch(() => null)
-                        const login = String(r?.org || '').trim()
-                        if (login) setOrg(login)
-                      }}
-                    >
-                      Open GitHub
-                    </button>
-                    <button
-                      className="primary"
-                      type="button"
-                      disabled={bizBusy || org.trim().length < 2}
-                      onClick={async () => {
-                        if (org.trim().length < 2) {
-                          setNote('Create the short name on GitHub, then paste it here.')
-                          return
-                        }
-                        try {
-                          setBizBusy(true)
-                          setNote('')
-                          const look = await window.brain.setup.lookupOrg(org.trim())
-                          if (look && look.ok === false) {
-                            setNote(look.detail || look.reason || 'GitHub did not accept that name')
-                            return
-                          }
-                          const login = String(look?.login || org.trim())
-                          if (look?.login) setOrg(look.login)
-                          await window.brain.setup.openAppInstall(pending.slug, login)
-                          setNote('In the browser: click Install, then Only select repositories. We wait here.')
-                          const waited = await window.brain.setup.waitInstall(pending.slug)
-                          if (!waited.ok) {
-                            setNote(waited.detail || 'GitHub is not finished. Click Install, then try again.')
-                            return
-                          }
-                          const applied = await window.brain.setup.putFolder({ teamSlug: pending.slug, org: login })
-                          const path = String(applied?.brainPath || '')
-                          if (!path) {
-                            setNote(applied?.detail || 'Could not copy the shared folder.')
-                            return
-                          }
-                          const bridge = await window.brain.setup.bridgeStatus(path)
-                          if (!bridge.installed) {
-                            setNote('Install Brain Bridge on this repo. Choose Only select repositories, then pick this repo.')
-                            await window.brain.setup.openBridge(path)
-                            const waited = await window.brain.setup.waitBridge(path)
-                            if (!waited.ok) {
-                              setNote(waited.detail || 'Brain Bridge is not installed on this repo yet.')
-                              return
-                            }
-                          }
-                          await window.brain.brains.remember({
-                            path,
-                            name: pending.name,
-                            slug: pending.slug
-                          })
-                          const row = await window.brain.brains.switch(path)
-                          setBrains(await window.brain.brains.list())
-                          setBrainPath(row.path)
-                          setBrainName(placeName(row.path, prettyName(row.name)))
-                          onSwitchBrain?.({ path: row.path, name: placeName(row.path, row.name) })
-                          setPending(null)
-                          setOpenAdd(false)
-                          setAdsCode('')
-                          setOrg('')
-                          setNote(nowIn(row))
-                        } catch (e) {
-                          setNote(String((e as Error).message || e))
-                        } finally {
-                          setBizBusy(false)
-                        }
-                      }}
-                    >
-                      {bizBusy ? 'Installing…' : 'Install on GitHub'}
-                    </button>
-                  </div>
-                </>
-              ) : null}
-              {!pending ? (
-                <>
-                  <label className="field">
-                    Ads2AI code
-                    <input
-                      value={adsCode}
-                      onChange={(e) => setAdsCode(e.target.value)}
-                      placeholder="184392"
-                      autoComplete="one-time-code"
-                    />
-                  </label>
-                  <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
-                    <button
-                      className="primary"
-                      type="button"
-                      disabled={bizBusy || adsCode.replace(/[^A-Za-z0-9]/g, '').length < 4}
-                      onClick={async () => {
-                        const code = adsCode.replace(/[^A-Za-z0-9]/g, '')
-                        if (code.length < 4) {
-                          setNote('Paste the code Ads2AI showed after you created the company.')
-                          return
-                        }
-                        try {
-                          setBizBusy(true)
-                          const res = await window.brain.brains.add({ code })
-                          if (res.setup) {
-                            setPending({ slug: String(res.slug || ''), name: String(res.name || 'this company') })
-                            setNote('The app is not installed on GitHub yet. Open GitHub, create the short name if you need one, then click Install on GitHub.')
-                            return
-                          }
-                          if (res.brainPath) {
-                            setBrains(await window.brain.brains.list())
-                            setBrainPath(res.brainPath)
-                            setBrainName(placeName(res.brainPath, prettyName(String(res.name || ''))))
-                            onSwitchBrain?.({ path: res.brainPath, name: placeName(res.brainPath, String(res.name || '')) })
-                            setOpenAdd(false)
-                            setAdsCode('')
-                            setNote(nowIn({ path: res.brainPath, name: String(res.name || ''), agency: res.agency }))
-                            return
-                          }
-                          setNote(res.detail || 'That code did not finish.')
-                        } catch (e) {
-                          setNote(String((e as Error).message || e))
-                        } finally {
-                          setBizBusy(false)
-                        }
-                      }}
-                    >
-                      {bizBusy ? 'Adding…' : 'Add this brain'}
-                    </button>
-                  </div>
-                </>
-              ) : null}
-            </>
-          ) : null}
-        </section>
-      ) : null}
-
-      {canMove ? (
-        <section className="set-block">
-          <p className="kicker">Plyntr sync</p>
-          <h3 className="set-h">Move this brain to Plyntr sync</h3>
-          <p>
-            Install Plyntr sync on this same GitHub organization, not Plyntr LLC. Keep Only select repositories. Do not
-            choose All repositories. If the page says Plyntr LLC, do not click Install. Close that page and try again. If
-            it still says Plyntr LLC, stop and tell Plyntr. This Mac then syncs with Plyntr and stops using the Agency
-            Brain git token. If Agency Brain is already syncing this folder, stop that first.
-          </p>
-          <button
-            className="primary"
-            type="button"
-            disabled={moveBusy}
-            onClick={async () => {
-              try {
-                setMoveBusy(true)
-                setNote('Installing Plyntr sync on this repo, then switching this folder.')
-                const res = await window.brain.plyntr.move()
-                setNote(res.detail)
-                if (!res.ok) return
-                await takePlyntrActive(await window.brain.plyntr.active().catch(() => null))
-              } catch (e) {
-                setNote(String((e as Error).message || e))
-              } finally {
-                setMoveBusy(false)
-              }
-            }}
-          >
-            {moveBusy ? 'Moving…' : 'Move this brain to Plyntr sync'}
-          </button>
-        </section>
-      ) : null}
-
+        {brainsBefore.map((b) => renderOtherBrain(b))}
       {canAddUsers ? (
-        <section className="set-block">
-          <FoldHead
-            kicker={`People in ${here}`}
-            title="Add users"
-            open={openPeople}
-            onToggle={() => setOpenPeople((v) => !v)}
-          />
-          {openPeople ? (
-            <>
+        <section className="biz current">
+          <h3>{businessTitle({ name: brainName, path: brainPath, slug: brains.find((b) => b.current)?.slug || '' }, companyLabels[brains.find((b) => b.current)?.brainId || ''] || '')}</h3>
+          <p className="biz-brain">Brain · {here}</p>
+          <p className="tiny">{channelLine({ syncMode: folderSync, watching: brains.find((b) => b.current)?.watching })}</p>
+          {localSyncOffer()}
           <p>
             Team is on this whole brain. Project only never clones HQ. This app copies only the folders you tick,
             keeps them in sync in the background, and deletes those folders if you remove access.
@@ -1283,14 +1065,349 @@ export function SettingsPanel({
               Add this person
             </button>
           </div> : null}
+        </section>
+      ) : (
+        <section className="biz current">
+          <h3>{businessTitle({ name: brainName, path: brainPath, slug: brains.find((b) => b.current)?.slug || '' }, companyLabels[brains.find((b) => b.current)?.brainId || ''] || '')}</h3>
+          <p className="biz-brain">Brain · {here}</p>
+          <p className="tiny">{channelLine({ syncMode: folderSync, watching: brains.find((b) => b.current)?.watching })}</p>
+          {localSyncOffer()}
+          <p>You are {seatLabel(seat || role)} in {here}. The owner adds people.</p>
+          {(rosters[brainPath] || []).map((p) => (
+            <div className="set-row" key={p.email}>
+              <span>
+                {p.name || p.email} · {p.email}
+                <span className="tiny"> · {seatLabel(p.role)}</span>
+              </span>
+            </div>
+          ))}
+        </section>
+      )}
+        {brainsAfter.map((b) => renderOtherBrain(b))}
+      </div>
+
+
+      {email && brainPath ? (
+      <section className="set-block" style={{ borderTop: 0, paddingTop: 0 }}>
+        <p className="kicker">Phone</p>
+        <h3 className="set-h">Use Brain from your phone</h3>
+        <p>
+          Works on cellular or any wifi. This Mac has to stay on, with Brain.app open, and plugged in. Closing the lid
+          on battery will sleep. Scan the QR with the phone camera, like linking a WhatsApp device. Only a phone that
+          scanned that QR can read chats on this Mac and send into Grok, Claude, Cursor, or ChatGPT as you. Remove a
+          phone here to kick it off. Turning Phone on does not unlink phones you already linked.
+        </p>
+        <label className="set-row">
+          <span>Phone</span>
+          <button
+            type="button"
+            className={phone.on ? 'primary' : 'ghost'}
+            disabled={phoneBusy}
+            onClick={() => {
+              setPhoneBusy(true)
+              const run = phone.on ? window.brain.phone.stop() : window.brain.phone.start()
+              void run
+                .then(setPhone)
+                .finally(() => setPhoneBusy(false))
+            }}
+          >
+            {phoneBusy ? 'Working…' : phone.on ? 'On' : 'Off'}
+          </button>
+        </label>
+        {phone.detail ? <p className="tiny">{phone.detail}</p> : null}
+        {phoneNote ? <p className="tiny">{phoneNote}</p> : null}
+        {phone.on ? (
+          <>
+            <p className="tiny">
+              {phone.watching
+                ? 'A linked phone is using this Mac.'
+                : 'Waiting for a phone. Scan the QR, or type the code on the phone.'}
+            </p>
+            {phone.origin ? <p className="tiny">{phone.origin.replace(/^https:\/\//, '')}</p> : null}
+            {phone.pairQr ? (
+              <div className="phone-qr" dangerouslySetInnerHTML={{ __html: phone.pairQr }} />
+            ) : (
+              <p className="tiny">QR is ready after the tunnel comes up.</p>
+            )}
+            {phone.pairPin ? <p className="phone-pin">{phone.pairPin}</p> : null}
+            <p className="tiny">The QR and code last two minutes, then this screen makes a new one. Each scan links one phone.</p>
+            <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  void window.brain.phone
+                    .link()
+                    .then(setPhone)
+                    .catch((err) => setPhoneNote(String((err as Error).message || err)))
+                }}
+              >
+                New QR
+              </button>
+            </div>
+            {phone.devices.length ? (
+              <div style={{ marginTop: '0.6rem' }}>
+                <p className="tiny">Linked phones</p>
+                {phone.devices.map((d) => (
+                  <div key={d.id} className="phone-dev">
+                    <span>{d.label}</span>
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() => {
+                        void window.brain.phone
+                          .unlink(d.id)
+                          .then(setPhone)
+                          .catch((err) => setPhoneNote(String((err as Error).message || err)))
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </>
+        ) : null}
+      </section>
+      ) : null}
+
+      <section className="set-block">
+        <p className="tiny">Brain {appVer || ''}</p>
+        <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+          <button
+            className="ghost"
+            type="button"
+            onClick={async () => {
+              setUpd('Checking for an update…')
+              const r = await window.brain.checkUpdate()
+              if (!r.ok && r.detail) setUpd(r.detail)
+            }}
+          >
+            Check for update
+          </button>
+          {upd.includes('ready') ? (
+            <button className="primary" type="button" onClick={() => void window.brain.installUpdate()}>
+              Restart to install
+            </button>
+          ) : null}
+        </div>
+        {upd ? <p className="tiny">{upd}</p> : null}
+      </section>
+
+      {onLogout && email ? (
+        <p>
+          <button type="button" className="ghost" onClick={onLogout}>
+            Log out
+          </button>
+          <span className="tiny"> Chats and this brain folder stay on this computer.</span>
+        </p>
+      ) : null}
+
+      {joe && superAdmin ? (
+        <section className="set-block">
+          <FoldHead
+            kicker="Ads2AI"
+            title="Add a new company brain"
+            open={openAdd}
+            onToggle={() => {
+              setOpenAdd((v) => !v)
+              if (openAdd) {
+                setPending(null)
+              }
+            }}
+          />
+          {openAdd ? (
+            <>
+              <p>
+                Create the company in Ads2AI first. Paste the code it gives you. If GitHub is not done, we walk you
+                through that here. If it is, we copy the folder onto this computer. Switching above also switches Agency
+                Brain so it watches this brain. Chats stay with each brain.
+              </p>
+              {pending ? (
+                <>
+                  <p>
+                    The app is not installed on GitHub for this company yet. Open GitHub, create the short name if you
+                    do not have one, then install. Click Install, then Only select repositories.
+                  </p>
+                  <label className="field">
+                    GitHub short name
+                    <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="harolds-books" />
+                  </label>
+                  <p className="tiny">The short GitHub name, not the business name. Copy it from the GitHub page.</p>
+                  <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+                    <button
+                      className="ghost"
+                      type="button"
+                      onClick={async () => {
+                        const r = await window.brain.setup.openCreateOrg().catch(() => null)
+                        const login = String(r?.org || '').trim()
+                        if (login) setOrg(login)
+                      }}
+                    >
+                      Open GitHub
+                    </button>
+                    <button
+                      className="primary"
+                      type="button"
+                      disabled={bizBusy || org.trim().length < 2}
+                      onClick={async () => {
+                        if (org.trim().length < 2) {
+                          setNote('Create the short name on GitHub, then paste it here.')
+                          return
+                        }
+                        try {
+                          setBizBusy(true)
+                          setNote('')
+                          const look = await window.brain.setup.lookupOrg(org.trim())
+                          if (look && look.ok === false) {
+                            setNote(look.detail || look.reason || 'GitHub did not accept that name')
+                            return
+                          }
+                          const login = String(look?.login || org.trim())
+                          if (look?.login) setOrg(look.login)
+                          await window.brain.setup.openAppInstall(pending.slug, login)
+                          setNote('In the browser: click Install, then Only select repositories. We wait here.')
+                          const waited = await window.brain.setup.waitInstall(pending.slug)
+                          if (!waited.ok) {
+                            setNote(waited.detail || 'GitHub is not finished. Click Install, then try again.')
+                            return
+                          }
+                          const applied = await window.brain.setup.putFolder({ teamSlug: pending.slug, org: login })
+                          const path = String(applied?.brainPath || '')
+                          if (!path) {
+                            setNote(applied?.detail || 'Could not copy the shared folder.')
+                            return
+                          }
+                          const bridge = await window.brain.setup.bridgeStatus(path)
+                          if (!bridge.installed) {
+                            setNote('Install Brain Bridge on this repo. Choose Only select repositories, then pick this repo.')
+                            await window.brain.setup.openBridge(path)
+                            const waited = await window.brain.setup.waitBridge(path)
+                            if (!waited.ok) {
+                              setNote(waited.detail || 'Brain Bridge is not installed on this repo yet.')
+                              return
+                            }
+                          }
+                          await window.brain.brains.remember({
+                            path,
+                            name: pending.name,
+                            slug: pending.slug
+                          })
+                          const row = await window.brain.brains.switch(path)
+                          setBrains(await window.brain.brains.list())
+                          setBrainPath(row.path)
+                          setBrainName(placeName(row.path, prettyName(row.name)))
+                          onSwitchBrain?.({ path: row.path, name: placeName(row.path, row.name) })
+                          setPending(null)
+                          setOpenAdd(false)
+                          setAdsCode('')
+                          setOrg('')
+                          setNote(nowIn(row))
+                        } catch (e) {
+                          setNote(String((e as Error).message || e))
+                        } finally {
+                          setBizBusy(false)
+                        }
+                      }}
+                    >
+                      {bizBusy ? 'Installing…' : 'Install on GitHub'}
+                    </button>
+                  </div>
+                </>
+              ) : null}
+              {!pending ? (
+                <>
+                  <label className="field">
+                    Ads2AI code
+                    <input
+                      value={adsCode}
+                      onChange={(e) => setAdsCode(e.target.value)}
+                      placeholder="184392"
+                      autoComplete="one-time-code"
+                    />
+                  </label>
+                  <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+                    <button
+                      className="primary"
+                      type="button"
+                      disabled={bizBusy || adsCode.replace(/[^A-Za-z0-9]/g, '').length < 4}
+                      onClick={async () => {
+                        const code = adsCode.replace(/[^A-Za-z0-9]/g, '')
+                        if (code.length < 4) {
+                          setNote('Paste the code Ads2AI showed after you created the company.')
+                          return
+                        }
+                        try {
+                          setBizBusy(true)
+                          const res = await window.brain.brains.add({ code })
+                          if (res.setup) {
+                            setPending({ slug: String(res.slug || ''), name: String(res.name || 'this company') })
+                            setNote('The app is not installed on GitHub yet. Open GitHub, create the short name if you need one, then click Install on GitHub.')
+                            return
+                          }
+                          if (res.brainPath) {
+                            setBrains(await window.brain.brains.list())
+                            setBrainPath(res.brainPath)
+                            setBrainName(placeName(res.brainPath, prettyName(String(res.name || ''))))
+                            onSwitchBrain?.({ path: res.brainPath, name: placeName(res.brainPath, String(res.name || '')) })
+                            setOpenAdd(false)
+                            setAdsCode('')
+                            setNote(nowIn({ path: res.brainPath, name: String(res.name || ''), agency: res.agency }))
+                            return
+                          }
+                          setNote(res.detail || 'That code did not finish.')
+                        } catch (e) {
+                          setNote(String((e as Error).message || e))
+                        } finally {
+                          setBizBusy(false)
+                        }
+                      }}
+                    >
+                      {bizBusy ? 'Adding…' : 'Add this brain'}
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </>
           ) : null}
         </section>
-      ) : (
-        <p>
-          You are {seatLabel(seat || role)} in {here}. The owner adds people.
-        </p>
-      )}
+      ) : null}
+
+      {canMove ? (
+        <section className="set-block">
+          <p className="kicker">Plyntr sync</p>
+          <h3 className="set-h">Move this brain to Plyntr sync</h3>
+          <p>
+            Install Plyntr sync on this same GitHub organization, not Plyntr LLC. Keep Only select repositories. Do not
+            choose All repositories. If the page says Plyntr LLC, do not click Install. Close that page and try again. If
+            it still says Plyntr LLC, stop and tell Plyntr. This Mac then syncs with Plyntr and stops using the Agency
+            Brain git token. If Agency Brain is already syncing this folder, stop that first.
+          </p>
+          <button
+            className="primary"
+            type="button"
+            disabled={moveBusy}
+            onClick={async () => {
+              try {
+                setMoveBusy(true)
+                setNote('Installing Plyntr sync on this repo, then switching this folder.')
+                const res = await window.brain.plyntr.move()
+                setNote(res.detail)
+                if (!res.ok) return
+                await takePlyntrActive(await window.brain.plyntr.active().catch(() => null))
+              } catch (e) {
+                setNote(String((e as Error).message || e))
+              } finally {
+                setMoveBusy(false)
+              }
+            }}
+          >
+            {moveBusy ? 'Moving…' : 'Move this brain to Plyntr sync'}
+          </button>
+        </section>
+      ) : null}
+
 
       {joe ? (
         <section className="set-block">

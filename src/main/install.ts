@@ -169,6 +169,21 @@ export async function listNeeds(): Promise<{ ready: boolean; watching: boolean; 
   const folderPath = currentBrainFolder() || watchingInfo.brainPath || loadAccount()?.folder || null
   const folder = Boolean(folderPath)
   const mode = readSyncMode(folderPath || '')
+  if (mode === 'local') {
+    const kept = items.filter((i) => i.id !== 'ab' && i.id !== 'cloudflared')
+    const signed =
+      (ai.grok && cliSignedIn('grok')) ||
+      (ai.claude && cliSignedIn('claude')) ||
+      (ai.cursor && cliSignedIn('cursor')) ||
+      (ai.gpt && cliSignedIn('gpt'))
+    const marker = Boolean(folderPath && hasBrainMarker(folderPath))
+    return {
+      ready: Boolean(folderPath) && gitPresent() && signed && marker,
+      watching,
+      brainPath: folderPath,
+      items: kept
+    }
+  }
   if (mode === 'plyntr') {
     const kept = items.filter((i) => i.id !== 'ab' && i.id !== 'cloudflared')
     const manifest = folderPath ? readSyncManifest(folderPath) : null

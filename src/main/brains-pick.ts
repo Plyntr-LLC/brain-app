@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
+import { asSyncMode, type SyncMode } from './sync-manifest-parse.ts'
 
 export type BrainRow = {
   path: string
@@ -8,7 +9,7 @@ export type BrainRow = {
   role?: string
   watching?: boolean
   current?: boolean
-  syncMode?: 'plyntr' | 'agency-brain'
+  syncMode?: SyncMode
   brainId?: string
   seatToken?: string
 }
@@ -45,7 +46,7 @@ export function mergeBrainRows(rows: BrainRow[]): BrainRow[] {
       slug: String(row.slug || '').trim(),
       role: String(row.role || '').trim() || undefined,
       watching: Boolean(row.watching),
-      syncMode: row.syncMode === 'plyntr' || row.syncMode === 'agency-brain' ? row.syncMode : undefined,
+      syncMode: asSyncMode(row.syncMode),
       brainId: String(row.brainId || '').trim() || undefined,
       seatToken: String(row.seatToken || '').trim() || undefined
     }

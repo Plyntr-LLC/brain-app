@@ -8,7 +8,7 @@ import { getMemberToken } from './session-token'
 import { plyntrGitToken } from './plyntr-sync'
 import { brainIdForSlug, seatTokenForFolder } from './plyntr-seats'
 import { brainRowForPath } from './brains'
-import { readSyncManifest, syncModesConflict } from './sync-manifest'
+import { readSyncManifest, readSyncMode, syncModesConflict } from './sync-manifest'
 import { AB_OWNS_PLYNTR, gitCredentialForMode } from './watcher-choice'
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -136,6 +136,13 @@ export function setBrainSyncBlockedReason(folder: string, msg: string): void {
 /** Quiet pull/push when Agency Brain is not watching this folder. Never force. */
 export function startBrainSync(folder: string): void {
   if (!folder) return
+  if (readSyncMode(folder) === 'local') {
+    if (cwd === folder && timer) {
+      clearInterval(timer)
+      timer = null
+    }
+    return
+  }
   if (cwd !== folder) {
     lastTick = ''
     lastFolder = ''

@@ -18,6 +18,7 @@ test('move is only for Joe on an agency folder that is not already plyntr', () =
   assert.equal(folderCanMoveToPlyntr({ joe: true, syncMode: 'agency-brain', mini: false, hasMarker: true }), true)
   assert.equal(folderCanMoveToPlyntr({ joe: true, syncMode: null, mini: false, hasMarker: true }), true)
   assert.equal(folderCanMoveToPlyntr({ joe: true, syncMode: 'plyntr', mini: false, hasMarker: true }), false)
+  assert.equal(folderCanMoveToPlyntr({ joe: true, syncMode: 'local', mini: false, hasMarker: true }), false)
   assert.equal(folderCanMoveToPlyntr({ joe: false, syncMode: null, mini: false, hasMarker: true }), false)
   assert.equal(folderCanMoveToPlyntr({ joe: true, syncMode: null, mini: true, hasMarker: true }), false)
   assert.equal(folderCanMoveToPlyntr({ joe: true, syncMode: null, mini: false, hasMarker: false }), false)

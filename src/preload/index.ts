@@ -79,6 +79,16 @@ const brain = {
           brains?: string[]
         }[]
       >,
+    rosterAt: (folder: string) =>
+      ipcRenderer.invoke('settings:rosterAt', folder) as Promise<
+        {
+          name: string
+          email: string
+          role: 'owner' | 'scout' | 'team' | 'project'
+          brain: string
+          brains?: string[]
+        }[]
+      >,
     team: () =>
       ipcRenderer.invoke('settings:team') as Promise<
         {
@@ -120,7 +130,16 @@ const brain = {
   brains: {
     list: () =>
       ipcRenderer.invoke('brains:list') as Promise<
-        { path: string; name: string; slug: string; role?: string; watching?: boolean; current?: boolean }[]
+        {
+          path: string
+          name: string
+          slug: string
+          role?: string
+          watching?: boolean
+          current?: boolean
+          syncMode?: 'plyntr' | 'agency-brain' | 'local'
+          brainId?: string
+        }[]
       >,
     switch: (folder: string) =>
       ipcRenderer.invoke('brains:switch', folder) as Promise<{
@@ -317,6 +336,7 @@ const brain = {
         ok: boolean
         installed: boolean
         skipped?: boolean
+        repositorySelection?: string
         repo: string
         detail?: string
       }>,
@@ -339,6 +359,17 @@ const brain = {
       }>,
     putFolderPlyntr: (opts: { brainId: string; org?: string; slug?: string; repo?: string }) =>
       ipcRenderer.invoke('setup:putFolderPlyntr', opts) as Promise<{ ok: boolean; brainPath?: string }>,
+    putFolderLocal: (opts: {
+      brainId: string
+      org?: string
+      slug?: string
+      repo?: string
+      email?: string
+      name?: string
+    }) =>
+      ipcRenderer.invoke('setup:putFolderLocal', opts) as Promise<{ ok: boolean; brainPath?: string; seeded?: boolean }>,
+    enableLocalSync: (opts: { folder?: string; org?: string; repo?: string }) =>
+      ipcRenderer.invoke('setup:enableLocalSync', opts) as Promise<{ ok: boolean; detail: string; repo: string }>,
     syncMode: (folder: string) => ipcRenderer.invoke('setup:syncMode', folder) as Promise<string>,
     openPlyntrInstall: (brainId: string, org?: string, repo?: string) =>
       ipcRenderer.invoke('setup:openPlyntrInstall', brainId, org, repo) as Promise<{

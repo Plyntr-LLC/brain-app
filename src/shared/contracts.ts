@@ -1,6 +1,23 @@
 export type PathKind = 'create' | 'join' | 'second'
 export type AiKind = 'claude' | 'grok' | 'gpt' | 'cursor'
 export type SeatRole = 'owner' | 'scout' | 'team' | 'project'
+export type SetupChannel = 'plyntr' | 'agency' | 'local'
+
+export function isSetupChannel(raw: unknown): raw is SetupChannel {
+  return raw === 'plyntr' || raw === 'agency' || raw === 'local'
+}
+
+/** Local setup copies the brain and does not wait on a GitHub app. */
+export function channelSkipsGithub(channel?: string): boolean {
+  return channel === 'local'
+}
+
+/** Owner, scout, or the Plyntr superadmin can turn a local brain into GitHub sync. */
+export function canTurnOnGithubSync(role: string | undefined, joe: boolean): boolean {
+  if (joe) return true
+  const seat = asSeat(role)
+  return seat === 'owner' || seat === 'scout'
+}
 
 export function asSeat(role?: string): SeatRole {
   const r = String(role || '').toLowerCase()
@@ -32,6 +49,7 @@ export type Need = { id: NeedId; label: string; ask: string }
 
 export type Session = {
   path: PathKind
+  channel?: SetupChannel
   screen: string
   email: string
   member?: Omit<Member, 'token'>

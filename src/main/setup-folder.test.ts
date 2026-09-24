@@ -6,6 +6,7 @@ import {
   clonePlan,
   githubAppInstallUrl,
   githubInstallReady,
+  onlySelectedInstall,
   plyntrBrainSyncInstallUrl,
   plyntrGithubInstallReady,
   plyntrInstallPin,
@@ -193,6 +194,15 @@ test('plyntrGithubInstallReady rejects the wrong repo and All repositories', () 
     false
   )
   assert.equal(githubInstallReady({ installed: true, repoUrl: 'https://github.com/acme/acme-brain' }), true)
+})
+
+test('onlySelectedInstall accepts a one-repo install', () => {
+  assert.equal(onlySelectedInstall('selected'), true)
+  assert.equal(onlySelectedInstall('selected_repositories'), true)
+  assert.equal(onlySelectedInstall('all'), false)
+  assert.equal(onlySelectedInstall('all_repositories'), false)
+  assert.equal(onlySelectedInstall(''), false)
+  assert.equal(onlySelectedInstall(undefined), false)
 })
 
 test('githubInstallReady is true only when GitHub says the app is installed', () => {

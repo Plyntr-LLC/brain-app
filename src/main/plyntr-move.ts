@@ -22,7 +22,9 @@ export function folderCanMoveToPlyntr(opts: {
   mini: boolean
   hasMarker: boolean
 }): boolean {
-  return Boolean(opts.joe && opts.hasMarker && !opts.mini && opts.syncMode !== 'plyntr')
+  return Boolean(
+    opts.joe && opts.hasMarker && !opts.mini && opts.syncMode !== 'plyntr' && opts.syncMode !== 'local'
+  )
 }
 
 export function brainRepoParts(repo: string): { org: string; slug: string; repo: string } | null {
@@ -107,6 +109,9 @@ export async function runPlyntrMove(opts: {
   if (opts.mini) return stopped(MOVE_MINI)
   if (!opts.hasMarker) return stopped(MOVE_NOT_BRAIN)
   if (opts.syncMode === 'plyntr') return stopped(MOVE_ALREADY)
+  if (opts.syncMode === 'local') {
+    return stopped('This brain is on this computer only. Set up GitHub sync in Settings.')
+  }
   if (opts.abWatching()) return stopped(AB_OWNS_PLYNTR)
   const parts = brainRepoParts(opts.repo)
   if (!parts) return stopped(MOVE_NO_REPO)

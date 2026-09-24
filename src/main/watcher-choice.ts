@@ -4,12 +4,12 @@ export const AB_OWNS_PLYNTR =
 export type WatcherChoice = 'none' | 'blocked' | 'activate' | 'start'
 
 export function chooseWatcher(opts: {
-  mode: 'plyntr' | 'agency-brain' | null
+  mode: 'plyntr' | 'agency-brain' | 'local' | null
   abInstalled: boolean
   abWatchingPath: boolean
   mini: boolean
 }): WatcherChoice {
-  if (opts.mini) return 'none'
+  if (opts.mini || opts.mode === 'local') return 'none'
   if (opts.mode === 'plyntr') return opts.abWatchingPath ? 'blocked' : 'start'
   if (opts.abInstalled) return 'activate'
   return 'start'

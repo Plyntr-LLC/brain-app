@@ -126,6 +126,12 @@ export function bridgeInstallUrl(hqRepo: string, orgId?: number, repoId?: number
   return `${BRIDGE_APP_INSTALL}?${stateQ}`
 }
 
+/** GitHub's selected install is one repo. all and a missing value are not. */
+export function onlySelectedInstall(selection: unknown): boolean {
+  const sel = String(selection || '').toLowerCase()
+  return sel === 'selected' || sel === 'selected_repositories'
+}
+
 /** A repo address is not an install. GitHub has to say the app is installed on this repo. */
 export function githubInstallReady(
   st: {

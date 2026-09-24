@@ -2,10 +2,10 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { brainRowForPath } from './brains'
-import { parseSyncManifest, type SyncManifest, type SyncMode } from './sync-manifest-parse'
+import { effectiveSyncMode, parseSyncManifest, type SyncManifest, type SyncMode } from './sync-manifest-parse.ts'
 
 export type { SyncManifest, SyncMode }
-export { parseSyncManifest }
+export { effectiveSyncMode, parseSyncManifest }
 
 function gitOrigin(folder: string): string {
   try {
@@ -33,11 +33,8 @@ export function readSyncManifest(folder: string): { ok: true; manifest: SyncMani
 }
 
 export function readSyncMode(folder: string): SyncMode | null {
-  const parsed = readSyncManifest(folder)
-  if (parsed?.ok) return parsed.manifest.mode
   const row = brainRowForPath(folder)
-  if (row?.syncMode === 'plyntr' || row?.syncMode === 'agency-brain') return row.syncMode
-  return null
+  return effectiveSyncMode(row?.syncMode, readSyncManifest(folder))
 }
 
 export function syncModesConflict(folder: string): boolean {

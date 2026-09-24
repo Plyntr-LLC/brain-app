@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { asSeat, GITHUB_NEW_ORG, type AiKind } from '../shared/contracts'
+import { asSeat, canTurnOnGithubSync, GITHUB_NEW_ORG, type AiKind } from '../shared/contracts'
 import { parseGithubHqRepo } from '../shared/github-org'
 import { openInApp } from './in-app-browse'
 import * as ads2ai from './ads2ai'
@@ -26,6 +26,7 @@ import {
   githubAppInstallUrl,
   githubInstallReady,
   plyntrCreateRepoUrl,
+  onlySelectedInstall,
   plyntrGithubInstallReady,
   plyntrInstallPin,
   reuseExistingFolder
@@ -35,6 +36,7 @@ import { clearPendingJoin, getPendingJoin, pendingFromInvite, setPendingJoin } f
 import { ensurePendingJoinForFolder } from './watch-handoff'
 import { bringAppFront, clipOrgLogin, stopClipboardOrgWatch, watchClipboardOrg } from './bring-front'
 import { setBrainSyncBlockedReason, startBrainSync, stopBrainSync } from './brain-sync'
+import { publishLocalToGithub, stripOriginToken } from './local-brain'
 import {
   addCompany,
   addProjectSeat,
@@ -101,6 +103,7 @@ import {
 } from './plyntr-seats'
 import {
   copyDryRunFixture,
+  seedLocalBrain,
   claimPlyntrCompany,
   createPlyntrBrain,
   dryRunProjectFolder,
@@ -255,6 +258,15 @@ async function adoptFolder(path: string): Promise<{
 }> {
   const row = switchBrain(path)
   saveRecent(row.path)
+  if (readSyncMode(row.path) === 'local') {
+    applyAccountForFolder(row.path)
+    stopBrainSync()
+    return {
+      ...row,
+      agency: { ok: true, detail: 'On this computer only.' },
+      hq: { ok: true, detail: 'Project sync was left as-is.' }
+    }
+  }
   if (readSyncMode(row.path) === 'plyntr') {
     applyAccountForFolder(row.path)
     const watchingNow = readWatching()
@@ -372,10 +384,7 @@ export function registerStubIpc(): void {
   })
   ipcMain.handle('settings:setSuper', (_e, on: boolean) => setSuperAdmin(Boolean(on)))
   ipcMain.handle('settings:team', () => loadTeam())
-  ipcMain.handle('settings:roster', () => {
-    const watching = readWatching()
-    const acct = getAccount()
-    const folder = currentBrainFolder() || watching.brainPath || acct?.folder || null
+  function rosterPeople(folder: string | null) {
     const roster = readTeamRoster(folder)
     return (roster?.members || []).map((m) => ({
       name: m.name,
@@ -384,6 +393,17 @@ export function registerStubIpc(): void {
       brain: (m.brains && m.brains[0]) || 'hq',
       brains: m.brains || []
     }))
+  }
+  ipcMain.handle('settings:roster', () => {
+    const watching = readWatching()
+    const acct = getAccount()
+    const folder = currentBrainFolder() || watching.brainPath || acct?.folder || null
+    return rosterPeople(folder)
+  })
+  ipcMain.handle('settings:rosterAt', (_e, folder: string) => {
+    const path = String(folder || '').trim()
+    if (!path || !listBrains().some((b) => b.path === path)) return []
+    return rosterPeople(path)
   })
   ipcMain.handle('settings:saveTeam', (_e, people: TeamPerson[]) => saveTeam(people))
   ipcMain.handle('settings:clients', () => loadClients())
@@ -522,6 +542,10 @@ export function registerStubIpc(): void {
     if (viaRaw === 'hq-sync') {
       await requestHqCode(key)
       return { ok: true, via: 'hq-sync' as LoginVia }
+    }
+    if (viaRaw === 'ads2ai') {
+      await ads2ai.requestCode(key)
+      return { ok: true, via: 'ads2ai' as LoginVia }
     }
     const kind = await classifyLogin(key)
     if (kind === 'hq-sync') {
@@ -842,16 +866,24 @@ export function registerStubIpc(): void {
     return { ok: true, repo: named, url }
   }
 
-  async function bridgeInstalled(repo: string): Promise<boolean> {
+  async function bridgeInstallStatus(repo: string): Promise<{ installed: boolean; repositorySelection: string }> {
     const r = await fetch(`${HQ_SYNC_ORIGIN}/github/installed?repo=${encodeURIComponent(repo)}`, {
       signal: AbortSignal.timeout(15000)
     })
-    const body = (await r.json().catch(() => null)) as { installed?: boolean } | null
-    return r.ok && body?.installed === true
+    const body = (await r.json().catch(() => null)) as { installed?: boolean; repositorySelection?: string } | null
+    return {
+      installed: r.ok && body?.installed === true,
+      repositorySelection: String(body?.repositorySelection || '')
+    }
+  }
+
+  async function bridgeInstalled(repo: string): Promise<boolean> {
+    return (await bridgeInstallStatus(repo)).installed
   }
 
   ipcMain.handle('setup:bridgeStatus', async (_e, folder: string) => {
-    if (readSyncMode(String(folder || '')) === 'plyntr') {
+    const bridgeMode = readSyncMode(String(folder || ''))
+    if (bridgeMode === 'plyntr' || bridgeMode === 'local') {
       return { ok: true, installed: true, skipped: true, repo: '' }
     }
     if (dryRun()) return { ok: true, installed: true, skipped: true, repo: '' }
@@ -880,8 +912,14 @@ export function registerStubIpc(): void {
     if (!name) return { ok: false, installed: false, repo: '', detail: 'This brain has no GitHub repository name yet.' }
     if (dryRun()) return { ok: true, installed: true, skipped: true, repo: name }
     try {
-      const installed = await bridgeInstalled(name)
-      return { ok: true, installed, repo: name, detail: installed ? '' : 'Brain Bridge is not on this repo yet.' }
+      const status = await bridgeInstallStatus(name)
+      return {
+        ok: true,
+        installed: status.installed,
+        repositorySelection: status.repositorySelection,
+        repo: name,
+        detail: status.installed ? '' : 'Brain Bridge is not on this repo yet.'
+      }
     } catch {
       return { ok: false, installed: false, repo: name, detail: 'Could not check Brain Bridge.' }
     }
@@ -1092,8 +1130,154 @@ export function registerStubIpc(): void {
     return { ok: true, brainPath: dest }
   }
 
+  async function putFolderLocal(opts: {
+    brainId?: string
+    org?: string
+    slug?: string
+    repo?: string
+    email?: string
+    name?: string
+  }) {
+    const brainId = String(opts.brainId || '').trim()
+    const slug = String(opts.slug || '').trim() || brainId.slice(0, 8)
+    const org = String(opts.org || '').trim()
+    const rawRepo = String(opts.repo || '')
+    const pending = !rawRepo || rawRepo.startsWith('pending/')
+    const repo = pending ? '' : resolvePlyntrRepoName(org, slug, rawRepo)
+    if (!brainId || !slug) throw new Error('This brain is missing its Plyntr id.')
+    const dest = defaultBrainDest(slug)
+    const seat = seatForBrain(brainId)
+    const email = seat?.email || String(opts.email || '')
+    const name = String(opts.name || getAccount()?.name || '')
+    let seeded = false
+    if (!hasBrainMarker(dest)) {
+      const existed = existsSync(dest)
+      let cloned = false
+      let attempted = false
+      let cloneDetail = ''
+      if (repo && !dryRun()) {
+        let token = ''
+        try {
+          token = (await plyntrGitToken(brainId)).token
+        } catch {
+          token = ''
+        }
+        if (token) {
+          attempted = true
+          try {
+            const result = await cloneBrain({
+              cloneUrl: `https://x-access-token:${token}@github.com/${repo}.git`,
+              dest,
+              email,
+              name
+            })
+            cloned = result.ok
+            cloneDetail = result.detail || ''
+          } catch (err) {
+            cloned = false
+            cloneDetail = String((err as Error).message || err)
+          }
+          if (cloned) await stripOriginToken(dest).catch(() => undefined)
+        }
+      }
+      if (!cloned && existed) {
+        throw new Error(cloneDetail || 'That folder already has files and is not this brain. Pick another place, then try again.')
+      }
+      if (!cloned && attempted) removeFailedBrainCheckout(dest)
+      if (!cloned) {
+        await seedLocalBrain(dest)
+        seeded = true
+      }
+    }
+    if (!hasBrainMarker(dest)) throw new Error('Could not copy the client brain onto this computer.')
+    switchBrain(dest)
+    const acct = getAccount() || loadAccount()
+    if (acct) {
+      saveAccount({
+        ...acct,
+        folder: dest,
+        source: 'plyntr',
+        token: acct.token.startsWith('login:') ? acct.token : loginToken()
+      })
+    }
+    rememberBrain({
+      path: dest,
+      slug,
+      name: readTeamIdentity(dest)?.name || name || slug,
+      role: seat?.role,
+      syncMode: 'local',
+      brainId,
+      seatToken: seat?.seatToken
+    })
+    saveRecent(dest)
+    stopBrainSync()
+    return { ok: true, brainPath: dest, seeded }
+  }
+
+  async function enableLocalSync(opts: { folder?: string; org?: string; repo?: string }) {
+    const folder = String(opts.folder || currentBrainFolder() || '')
+    if (!folder || readSyncMode(folder) !== 'local') {
+      throw new Error('This brain is not the local-only one.')
+    }
+    const row = brainRowForPath(folder)
+    const brainId = String(row?.brainId || '')
+    if (!brainId) throw new Error('Sign in with the owner code for this brain before turning on GitHub sync.')
+    const acct = getAccount() || loadAccount()
+    const seat = seatForBrain(brainId)
+    const joe = isJoeSuperAdmin(acct, getSettings())
+    if (!canTurnOnGithubSync(seat?.role || row?.role, joe)) {
+      throw new Error('Only an owner or a scout can turn on GitHub sync.')
+    }
+    if (dryRun()) throw new Error('This is a dry-run window. Use the packed Brain app to finish GitHub.')
+    const slug = String(row?.slug || '')
+    const org = String(opts.org || '').trim()
+    const repo = resolvePlyntrRepoName(org, slug, opts.repo)
+    if (!repo) throw new Error('This brain has no GitHub repository name yet.')
+    if (seat?.role === 'owner' || (seat?.role === 'scout' && seat.bootstrap)) await ensurePlyntrRepo(brainId)
+    const st = await plyntrInstalled(brainId, repo)
+    if (!plyntrGithubInstallReady(st, repo)) {
+      throw new Error('Install Plyntr sync on this one repo first. Choose Only select repositories.')
+    }
+    const bridge = await bridgeInstallStatus(repo)
+    if (!bridge.installed || !onlySelectedInstall(bridge.repositorySelection)) {
+      throw new Error('Install Brain Bridge on this one repo. Choose Only select repositories, not All repositories.')
+    }
+    writePlyntrSyncFile(folder, repo, new Date().toISOString())
+    const git = await plyntrGitToken(brainId)
+    if (!git.token) throw new Error('Could not get a git token for this brain.')
+    const published = await publishLocalToGithub({
+      folder,
+      repo,
+      token: git.token,
+      email: seat?.email || acct?.email || '',
+      name: acct?.name || ''
+    })
+    if (!published.ok) throw new Error(published.detail || 'Could not copy this brain to GitHub.')
+    rememberBrain({
+      path: folder,
+      slug: slug || repo.split('/')[1]?.replace(/-brain$/, '') || '',
+      name: row?.name,
+      role: seat?.role || row?.role,
+      syncMode: 'plyntr',
+      brainId,
+      seatToken: seat?.seatToken
+    })
+    await settleSync(folder)
+    return { ok: true, detail: published.detail, repo }
+  }
+
   ipcMain.handle('setup:putFolderPlyntr', async (_e, opts: { brainId?: string; org?: string; slug?: string; repo?: string }) =>
     putFolderPlyntr(opts)
+  )
+  ipcMain.handle(
+    'setup:putFolderLocal',
+    async (
+      _e,
+      opts: { brainId?: string; org?: string; slug?: string; repo?: string; email?: string; name?: string }
+    ) => putFolderLocal(opts)
+  )
+  ipcMain.handle('setup:enableLocalSync', async (_e, opts: { folder?: string; org?: string; repo?: string }) =>
+    enableLocalSync(opts || {})
   )
   ipcMain.handle('setup:syncMode', async (_e, folder: string) => readSyncMode(String(folder || '')) || '')
   ipcMain.handle('setup:openPlyntrInstall', async (_e, brainId: string, org?: string, repo?: string) =>
@@ -1290,7 +1474,7 @@ export function registerStubIpc(): void {
     if (authCodeRoute(code) !== 'plyntr' && !isPlyntrCompanyCode(code)) throw new Error('That code did not work.')
     const resolved = await resolvePlyntrCode(normalizePlyntrInviteCode(code))
     if (resolved.role === 'project') {
-      throw new Error('That code is for a project folder. Use Project-only code on the first screen.')
+      throw new Error('That code is for one project.')
     }
     const slug = resolved.repo.split('/')[1]?.replace(/-brain$/, '') || ''
     savePlyntrSeat(resolved.brainId, {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { parseSyncManifest } from './sync-manifest-parse.ts'
+import { canTurnOnGithubSync, channelSkipsGithub } from '../shared/contracts.ts'
+import { effectiveSyncMode, parseSyncManifest } from './sync-manifest-parse.ts'
 
 const ok = {
   version: 1,
@@ -15,6 +16,25 @@ test('parseSyncManifest accepts a plyntr file and matches origin', () => {
   const parsed = parseSyncManifest(ok, 'https://github.com/harolds-books/harolds-books-brain.git')
   assert.equal(parsed.ok, true)
   if (parsed.ok) assert.equal(parsed.manifest.repo, 'harolds-books/harolds-books-brain')
+})
+
+test('local setup skips GitHub, and only an owner or scout can turn sync on', () => {
+  assert.equal(channelSkipsGithub('local'), true)
+  assert.equal(channelSkipsGithub('plyntr'), false)
+  assert.equal(channelSkipsGithub('agency'), false)
+  assert.equal(canTurnOnGithubSync('owner', false), true)
+  assert.equal(canTurnOnGithubSync('scout', false), true)
+  assert.equal(canTurnOnGithubSync('team', false), false)
+  assert.equal(canTurnOnGithubSync('project', false), false)
+  assert.equal(canTurnOnGithubSync('team', true), true)
+})
+
+test('a local row wins over a plyntr sync file', () => {
+  const manifest = parseSyncManifest(ok, 'https://github.com/harolds-books/harolds-books-brain.git')
+  assert.equal(effectiveSyncMode('local', manifest), 'local')
+  assert.equal(effectiveSyncMode('plyntr', manifest), 'plyntr')
+  assert.equal(effectiveSyncMode(undefined, null), null)
+  assert.equal(effectiveSyncMode('agency-brain', { ok: false, error: 'no' }), 'agency-brain')
 })
 
 test('parseSyncManifest fails closed on unknown version, mode, app, and repo mismatch', () => {

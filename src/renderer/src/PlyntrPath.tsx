@@ -19,32 +19,28 @@ type CreatePending = {
 }
 
 export function ForkScreen({
-  signedOutFolder,
   pendingCreate,
   pendingJoin,
   err,
+  onPlyntr,
   onAgency,
-  onHaveCode,
-  onProject,
-  onEmailCode,
+  onLocal,
   onContinueCreate,
   onContinueJoin
 }: {
-  signedOutFolder: boolean
   pendingCreate: boolean
   pendingJoin: boolean
   err: string
+  onPlyntr: () => void
   onAgency: () => void
-  onHaveCode: () => void
-  onProject: () => void
-  onEmailCode: () => void
+  onLocal: () => void
   onContinueCreate: () => void
   onContinueJoin: () => void
 }) {
   return (
     <>
       <p className="kicker">Start</p>
-      <h1>{signedOutFolder ? 'Pick how to sign in.' : 'How does this brain sync?'}</h1>
+      <h1>How do you want to set this up?</h1>
       {pendingCreate ? (
         <button className="primary" type="button" onClick={onContinueCreate}>
           Continue company brain setup
@@ -56,21 +52,17 @@ export function ForkScreen({
         </button>
       ) : null}
       {err ? <p className="note">{err}</p> : null}
+      <button className="choice" type="button" onClick={onPlyntr}>
+        <h3>Plyntr Brain setup</h3>
+        <p>Plyntr keeps backup copies, and more than one person can use this brain.</p>
+      </button>
       <button className="choice" type="button" onClick={onAgency}>
-        <h3>With Agency Brain</h3>
-        <p>You have a setup code from Your Clients.</p>
+        <h3>Plyntr Brain with Agency Brain sync</h3>
+        <p>Use the setup code from Your Clients. Agency Brain keeps the copy in sync.</p>
       </button>
-      <button className="choice" type="button" onClick={onHaveCode}>
-        <h3>I have a Plyntr code</h3>
-        <p>Paste the code you were given.</p>
-      </button>
-      <button className="choice" type="button" onClick={onProject}>
-        <h3>Project-only code</h3>
-        <p>Paste the project code if you were set up for one project.</p>
-      </button>
-      <button className="choice" type="button" onClick={onEmailCode}>
-        <h3>Email me a code</h3>
-        <p>This works after Plyntr, your owner, or a scout has already added your email.</p>
+      <button className="choice" type="button" onClick={onLocal}>
+        <h3>Plyntr Brain local only setup</h3>
+        <p>Copy the client brain onto this computer. No GitHub apps and no sync. An owner or a scout can add GitHub sync later in Settings.</p>
       </button>
     </>
   )
@@ -176,10 +168,14 @@ export function PlyntrProjectScreen({
 
 export function PlyntrCodeScreen({
   onJoin,
-  startInEmail
+  onProject,
+  startInEmail,
+  local
 }: {
   onJoin: (row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) => Promise<void>
+  onProject?: (row: { email: string; name: string; brainPath: string; teamName: string; roots?: string[] }) => Promise<void>
   startInEmail?: boolean
+  local?: boolean
 }) {
   const [mode, setMode] = useState<'code' | 'email' | 'sent'>(startInEmail ? 'email' : 'code')
   const [code, setCode] = useState('')
@@ -189,15 +185,16 @@ export function PlyntrCodeScreen({
   const [busy, setBusy] = useState(false)
   return (
     <>
-      <p className="kicker">Plyntr</p>
-      <h1>{mode === 'code' ? 'Paste the Plyntr code.' : 'Email me the code.'}</h1>
+      <p className="kicker">{local ? 'This computer only' : 'Plyntr'}</p>
+      <h1>{mode === 'code' ? 'Paste the code from Plyntr.' : 'Email me the code.'}</h1>
       {mode === 'code' ? (
-        <p>Paste the code you were given after you were added.</p>
-      ) : mode === 'sent' ? (
         <p>
-          Check {email}. Paste that code here.
-          {sentRole === 'project' ? ' This email is a project login. Paste the code on Project-only code instead.' : ''}
+          {local
+            ? 'Paste the code you were given. This copies the client brain here and does not set up GitHub.'
+            : 'Paste the code you were given after you were added.'}
         </p>
+      ) : mode === 'sent' ? (
+        <p>Check {email}. Paste that code here.</p>
       ) : (
         <p>
           Type the email you were added with. A code is sent only after Plyntr, your owner, or a scout has already set
@@ -252,8 +249,18 @@ export function PlyntrCodeScreen({
               setBusy(true)
               setErr('')
               try {
-                const row = await window.brain.plyntr.resolve(code)
-                await onJoin(row)
+                try {
+                  const row = await window.brain.plyntr.resolve(code)
+                  await onJoin(row)
+                } catch (e) {
+                  const msg = String((e as Error).message || e)
+                  if (onProject && /one project/i.test(msg)) {
+                    const row = await window.brain.plyntr.joinProject(code)
+                    await onProject(row)
+                    return
+                  }
+                  throw e
+                }
               } catch (e) {
                 setErr(String((e as Error).message || e))
               } finally {
@@ -288,11 +295,13 @@ function roleName(role: string): string {
 export function PlyntrCompanyScreen({
   onSetupHere,
   onResume,
-  embedded
+  embedded,
+  hideBrainIds
 }: {
   onSetupHere: (row: { brainId: string; slug: string; label: string; ownerEmail: string; code: string; repo: string }) => void
   onResume?: () => void
   embedded?: boolean
+  hideBrainIds?: string[]
 }) {
   const [phase, setPhase] = useState<'check' | 'login' | 'list' | 'form' | 'detail'>('check')
   const [email, setEmail] = useState('joe@plyntr.com')
@@ -304,6 +313,9 @@ export function PlyntrCompanyScreen({
   const [code, setCode] = useState('')
   const [emailed, setEmailed] = useState(false)
   const [companies, setCompanies] = useState<{ brainId: string; label: string; slug: string; org: string; repo: string }[]>([])
+  const [details, setDetails] = useState<
+    Record<string, { seats: { id: string; email: string; name: string; role: string; status: string }[]; invites: { inviteId: string; email: string; name: string; role: string; status: string }[] }>
+  >({})
   const [people, setPeople] = useState<{
     brainId: string
     label: string
@@ -322,8 +334,22 @@ export function PlyntrCompanyScreen({
 
   async function loadCompanies() {
     const rows = await window.brain.plyntr.companies()
-    setCompanies(rows)
+    const hidden = new Set(hideBrainIds || [])
+    const visible = rows.filter((row) => !hidden.has(row.brainId))
+    setCompanies(visible)
     setPhase('list')
+    const next: typeof details = {}
+    await Promise.all(
+      visible.map(async (row) => {
+        try {
+          const full = await window.brain.plyntr.company(row.brainId)
+          next[row.brainId] = { seats: full.seats, invites: full.invites }
+        } catch {
+          next[row.brainId] = { seats: [], invites: [] }
+        }
+      })
+    )
+    setDetails(next)
   }
 
   async function openCompanyRow(brainId: string) {
@@ -373,30 +399,53 @@ export function PlyntrCompanyScreen({
       ) : null}
       {phase === 'list' ? (
         <>
-          <p>Open a company to see its people, add someone, or set that brain up on this Mac.</p>
-          {companies.map((c) => (
-            <div className="set-row" key={c.brainId}>
-              <span>
-                {c.label}
-                <span className="tiny"> · {c.repo.startsWith('pending/') ? 'GitHub not set up yet' : c.repo}</span>
-              </span>
-              <button
-                type="button"
-                className="linkish"
-                onClick={() => {
-                  setBusy(true)
-                  setErr('')
-                  setCode('')
-                  void openCompanyRow(c.brainId)
-                    .catch((e) => setErr(String((e as Error).message || e)))
-                    .finally(() => setBusy(false))
-                }}
-              >
-                Open
-              </button>
-            </div>
-          ))}
-          {companies.length === 0 ? <p className="tiny">No companies yet.</p> : null}
+          <p>Each company is its own brain. People are listed under that company. Add or remove people from the brain you are in.</p>
+          {companies.map((c) => {
+            const peopleRow = details[c.brainId]
+            const brain = c.repo.startsWith('pending/') ? 'GitHub not set up yet' : c.repo
+            return (
+              <section className="biz" key={c.brainId}>
+                <h3>{c.label}</h3>
+                <p className="biz-brain">Brain · {brain}</p>
+                <p className="tiny">Not on this computer yet</p>
+                {(peopleRow?.seats || [])
+                  .filter((s) => s.status === 'active')
+                  .map((s) => (
+                    <div className="set-row" key={s.id}>
+                      <span>
+                        {s.name || s.email} · {s.email}
+                        <span className="tiny"> · {roleName(s.role)}</span>
+                      </span>
+                    </div>
+                  ))}
+                {(peopleRow?.invites || [])
+                  .filter((i) => i.status === 'pending')
+                  .map((i) => (
+                    <div className="set-row" key={i.inviteId}>
+                      <span>
+                        {i.name || i.email} · {i.email}
+                        <span className="tiny"> · {roleName(i.role)} · waiting on their code</span>
+                      </span>
+                    </div>
+                  ))}
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    setBusy(true)
+                    setErr('')
+                    setCode('')
+                    void openCompanyRow(c.brainId)
+                      .catch((e) => setErr(String((e as Error).message || e)))
+                      .finally(() => setBusy(false))
+                  }}
+                >
+                  Add someone or set this up here
+                </button>
+              </section>
+            )
+          })}
+          {companies.length === 0 ? <p className="tiny">Every company brain is already on this computer, or there are no companies yet.</p> : null}
         </>
       ) : null}
       {phase === 'form' ? (

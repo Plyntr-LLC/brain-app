@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -530,6 +530,15 @@ function git(cwd: string, args: string[]): Promise<void> {
     child.on('error', reject)
     child.on('close', (code) => (code === 0 ? resolve() : reject(new Error('git init failed'))))
   })
+}
+
+export async function seedLocalBrain(dest: string): Promise<void> {
+  mkdirSync(dest, { recursive: true })
+  cpSync(fixtureRoot(), dest, { recursive: true })
+  const syncPath = join(dest, '.team-config', 'sync.json')
+  if (existsSync(syncPath)) rmSync(syncPath)
+  await git(dest, ['init'])
+  await git(dest, ['remote', 'remove', 'origin']).catch(() => {})
 }
 
 export async function copyDryRunFixture(opts: { dest: string; org: string; slug: string }): Promise<void> {

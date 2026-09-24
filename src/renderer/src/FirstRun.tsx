@@ -7,10 +7,12 @@ import { SetupNeeds } from './SetupNeeds'
 import { ForkScreen, PlyntrCodeScreen, PlyntrCreateScreen, PlyntrProjectScreen } from './PlyntrPath'
 import { WorkPulse } from './WorkPulse'
 
-function TwoApps() {
+function TwoApps({ channel }: { channel?: string }) {
   return (
     <p className="two-apps">
-      One app. It copies the shared brain onto this computer and keeps it in sync. You talk here.
+      {channel === 'local'
+        ? 'One app. This brain stays on this computer until you add GitHub sync.'
+        : 'One app. You talk to your brain here.'}
     </p>
   )
 }
@@ -112,6 +114,7 @@ export function FirstRun() {
       case 'bridge':
         return session.brainPath ? 'abapply' : 'github'
       case 'needs':
+        if (session.channel === 'local') return 'plyntr-code'
         return session.brainPath ? 'abapply' : 'github'
       case 'aipick':
         return 'needs'
@@ -160,7 +163,7 @@ export function FirstRun() {
       setWatching(Boolean(existing?.watching || st.watching))
       const signed = pick ? Boolean((await window.brain.ai.signedIn(pick)).signedIn) : false
       const mode = folder ? await window.brain.setup.syncMode(folder).catch(() => '') : ''
-      const pathB = mode === 'plyntr'
+      const pathB = mode === 'plyntr' || mode === 'local'
       let screen = 'fork'
       const abMissing = !pathB && st.items.some((i) => i.id === 'ab' && !i.present)
       const project = acct.role === 'project' || e.projectSeat
@@ -189,6 +192,7 @@ export function FirstRun() {
         email,
         abWatching: st.watching,
         path: st.watching ? 'second' : prev.path,
+        channel: mode === 'local' ? 'local' : mode === 'plyntr' ? 'plyntr' : prev.channel,
         screen,
         ai: prev.ai || pick
       }))
@@ -405,9 +409,12 @@ export function FirstRun() {
   async function holdForBridge(patch?: Partial<Session>): Promise<boolean> {
     const role = patch?.role || s.role
     const kind = patch?.brainKind || s.brainKind
-    if (role === 'project' || kind === 'project' || patch?.bridgeOk || s.bridgeOk) return false
+    const channel = patch?.channel || s.channel
+    if (role === 'project' || kind === 'project' || channel === 'local' || patch?.bridgeOk || s.bridgeOk) return false
     const path = patch?.brainPath || s.brainPath || ''
     if (!path) return false
+    const mode = await window.brain.setup.syncMode(path).catch(() => '')
+    if (mode === 'local' || mode === 'plyntr') return false
     const st = await window.brain.setup.bridgeStatus(path).catch(() => null)
     if (st?.installed) return false
     go('bridge', { ...patch, brainPath: path })
@@ -528,6 +535,27 @@ export function FirstRun() {
   }
 
   async function finishPlyntrJoin(row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) {
+    if (s.channel === 'local') {
+      const applied = await window.brain.setup.putFolderLocal({
+        brainId: row.brainId,
+        slug: row.slug,
+        repo: row.repo,
+        org: String(row.repo || '').split('/')[0] || '',
+        email: row.email,
+        name: row.name
+      })
+      go('needs', {
+        brainPath: applied.brainPath,
+        role: row.role,
+        email: row.email,
+        business: row.name || row.slug,
+        channel: 'local'
+      })
+      if (applied.seeded) {
+        setErr('This computer has the client brain template. It is not a GitHub copy, and nothing syncs yet.')
+      }
+      return
+    }
     const repo = String(row.repo || '')
     const pendingRepo = !repo || repo.startsWith('pending/')
     const st = pendingRepo ? null : await window.brain.plyntr.installed(row.brainId, repo).catch(() => null)
@@ -762,7 +790,7 @@ export function FirstRun() {
               </button>
             </div>
           ) : null}
-          {s.screen !== 'chat' ? <TwoApps /> : null}
+          {s.screen !== 'chat' ? <TwoApps channel={s.channel} /> : null}
           {s.screen !== 'chat' && s.dryRun ? (
             <div className="demo">
               <span>Dev dry-run. New GitHub short names and clones stay off until you pack the app.</span>
@@ -770,29 +798,36 @@ export function FirstRun() {
           ) : null}
           {s.screen === 'fork' && (
             <ForkScreen
-              signedOutFolder={Boolean(s.brainPath)}
               pendingCreate={Boolean(plyntrCreate)}
               pendingJoin={plyntrJoin}
               err={err}
-              onAgency={() => {
+              onPlyntr={() => {
                 setLoginVia('')
-                go('welcome')
-              }}
-              onHaveCode={() => {
                 setCodeStartsInEmail(false)
-                go('plyntr-code')
+                go('plyntr-code', { channel: 'plyntr' })
               }}
-              onProject={() => go('plyntr-project')}
-              onEmailCode={() => {
-                setCodeStartsInEmail(true)
-                go('plyntr-code')
+              onAgency={() => {
+                setLoginVia('ads2ai')
+                go('welcome', { channel: 'agency' })
+              }}
+              onLocal={() => {
+                setLoginVia('')
+                setCodeStartsInEmail(false)
+                go('plyntr-code', { channel: 'local' })
               }}
               onContinueCreate={() => void openPlyntrCreate()}
               onContinueJoin={() => void continuePlyntrJoin()}
             />
           )}
           {s.screen === 'plyntr-code' && (
-            <PlyntrCodeScreen startInEmail={codeStartsInEmail} onJoin={finishPlyntrJoin} />
+            <PlyntrCodeScreen
+              local={s.channel === 'local'}
+              startInEmail={codeStartsInEmail}
+              onJoin={finishPlyntrJoin}
+              onProject={async (row) => {
+                await afterProject(row)
+              }}
+            />
           )}
           {s.screen === 'plyntr-project' && (
             <PlyntrProjectScreen
@@ -814,6 +849,8 @@ export function FirstRun() {
             />
           )}
           {s.screen === 'needs' && (
+            <>
+            {err ? <p className="note">{err}</p> : null}
             <SetupNeeds
               onReady={({ ready, watching, ai, brainPath }) => {
                 const pick = ai || s.ai
@@ -827,8 +864,9 @@ export function FirstRun() {
                   else go('aipick', patch)
                 })()
               }}
-              onNeedFolder={() => go('github')}
+              onNeedFolder={() => (s.channel === 'local' ? go('plyntr-code') : go('github'))}
             />
+            </>
           )}
           {s.screen === 'welcome' && (
             <>
@@ -943,7 +981,10 @@ export function FirstRun() {
                       return
                     }
                     try {
-                      const sent = await window.brain.auth.requestCode(s.email, loginVia === 'hq-sync' ? 'hq-sync' : undefined)
+                      const sent = await window.brain.auth.requestCode(
+                        s.email,
+                        loginVia === 'hq-sync' || loginVia === 'ads2ai' ? loginVia : undefined
+                      )
                       setLoginVia(sent.via)
                       go('otp')
                     } catch (e) {
@@ -1105,7 +1146,10 @@ export function FirstRun() {
                   type="button"
                   onClick={async () => {
                     try {
-                      const sent = await window.brain.auth.requestCode(s.email, loginVia === 'hq-sync' ? 'hq-sync' : undefined)
+                      const sent = await window.brain.auth.requestCode(
+                        s.email,
+                        loginVia === 'hq-sync' || loginVia === 'ads2ai' ? loginVia : undefined
+                      )
                       setLoginVia(sent.via)
                       setErr('Check that inbox for a six-digit code. It lasts ten minutes.')
                     } catch (e) {

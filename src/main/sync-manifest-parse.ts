@@ -1,17 +1,35 @@
 import { parseGithubHqRepo } from './github-repo.ts'
 
-export type SyncMode = 'plyntr' | 'agency-brain'
+export type FileSyncMode = 'plyntr' | 'agency-brain'
+export type SyncMode = FileSyncMode | 'local'
+
+export function asSyncMode(raw: unknown): SyncMode | undefined {
+  if (raw === 'plyntr' || raw === 'agency-brain' || raw === 'local') return raw
+  return undefined
+}
+
+/** This Mac's local choice wins over a sync file that other computers still use. */
+export function effectiveSyncMode(
+  rowMode: unknown,
+  manifest: { ok: true; manifest: SyncManifest } | { ok: false; error: string } | null
+): SyncMode | null {
+  const row = asSyncMode(rowMode)
+  if (row === 'local') return 'local'
+  if (manifest?.ok) return manifest.manifest.mode
+  if (row === 'plyntr' || row === 'agency-brain') return row
+  return null
+}
 
 export type SyncManifest = {
   version: 1
-  mode: SyncMode
+  mode: FileSyncMode
   repo: string
   githubApp: string
   bridgeApp?: string
   createdAt?: string
 }
 
-const APP_FOR_MODE: Record<SyncMode, string> = {
+const APP_FOR_MODE: Record<FileSyncMode, string> = {
   plyntr: 'plyntr-brain-sync',
   'agency-brain': 'agency-brain-sync'
 }

@@ -13,6 +13,17 @@ test('plyntr mode never calls activateWatching', () => {
   )
 })
 
+test('local mode never starts a watcher', () => {
+  assert.equal(
+    chooseWatcher({ mode: 'local', abInstalled: true, abWatchingPath: false, mini: false }),
+    'none'
+  )
+  assert.equal(
+    chooseWatcher({ mode: 'local', abInstalled: false, abWatchingPath: true, mini: false }),
+    'none'
+  )
+})
+
 test('agency mode still prefers Agency Brain when that app is installed', () => {
   assert.equal(
     chooseWatcher({ mode: 'agency-brain', abInstalled: true, abWatchingPath: false, mini: false }),
