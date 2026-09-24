@@ -2568,7 +2568,7 @@ export function TerminalWorkspace({
               <div key={t.id} className="filetab">
                 <div className="filetab-head">{t.title}</div>
                 {t.fileKind === 'html' && t.url ? (
-                  <webview className="fileweb" src={t.url} />
+                  <webview className="fileweb" src={t.url} allowpopups />
                 ) : (
                   <div className="fileedit">
                     <div className="fileedit-bar">

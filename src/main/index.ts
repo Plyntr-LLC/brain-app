@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { appAllowList, attachMainLinks, installGuestLinkPolicy } from './link-policy'
 import { join } from 'node:path'
 import { readWatching } from './agency-brain'
 import { currentBrainFolder } from './brains'
@@ -36,7 +37,7 @@ process.on('unhandledRejection', (err) => {
 let mainWin: BrowserWindow | null = null
 let allowQuit = false
 
-function createWindow(): BrowserWindow {
+export function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1100,
     height: 740,
@@ -64,9 +65,17 @@ function createWindow(): BrowserWindow {
     if (mainWin === win) mainWin = null
   })
 
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
-    return { action: 'deny' }
+  attachMainLinks(win.webContents, {
+    open: (url) => {
+      void shell.openExternal(url)
+    },
+    allow: appAllowList({
+      devUrl: process.env.ELECTRON_RENDERER_URL,
+      packagedIndex: join(__dirname, '../renderer/index.html')
+    })
+  })
+  installGuestLinkPolicy(win.webContents, (url) => {
+    void shell.openExternal(url)
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -84,6 +93,7 @@ function pushHealth(): void {
 }
 
 app.whenReady().then(() => {
+  if (process.env.BRAIN_CHECK_WINDOW === '1') return
   recordLaunchVersion()
   createWindow()
   startTray(() => mainWin)

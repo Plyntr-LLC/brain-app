@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { startSettingsLoad } from './settings-load'
 import { packLine, starterBlocksAdd } from '@shared/client-pack'
 import { PackSelect } from './PlyntrPath'
 import { asSeat, canTurnOnGithubSync, isTeamSeat, seatLabel, type SeatRole } from '@shared/contracts'
@@ -239,6 +240,8 @@ export function SettingsPanel({
   const [moveBusy, setMoveBusy] = useState(false)
   const [syncHint, setSyncHint] = useState('')
 
+  const settingsAlive = useRef(true)
+
   async function takePlyntrActive(
     active: {
       canMove?: boolean
@@ -270,13 +273,16 @@ export function SettingsPanel({
         setSyncHint('On this computer only. No GitHub sync yet.')
       } else {
       const health = await window.brain.hqSync.health().catch(() => null)
+      if (!settingsAlive.current) return
       setSyncHint(health?.lastSync || '')
       }
       if (active.hasSeat) {
         const seatRows = await window.brain.plyntr.seats(active.brainId).catch(() => ({ seats: [], invites: [], pack: '' }))
+        if (!settingsAlive.current) return
         setPlyntrRows(seatRows)
         if (seatRows.pack) setBrainPack(seatRows.pack)
         const again = await window.brain.plyntr.active().catch(() => null)
+        if (!settingsAlive.current) return
         if (again) {
           setPlyntrRole(String(again.role || ''))
           setPlyntrAccountRole(String(again.accountRole || ''))
@@ -290,87 +296,153 @@ export function SettingsPanel({
   }
 
   useEffect(() => {
-    void (async () => {
-      const [s, list] = await Promise.all([
-        window.brain.settings.get(),
-        window.brain.brains.list().catch(() => [])
-      ])
-      setSuper(s.superAdmin)
-      setEmail(s.email)
-      setHelloName(String(s.name || '').trim())
-      setBrainPath(String(s.brainPath || ''))
-      setBrainName(placeName(String(s.brainPath || ''), prettyName(String(s.brainName || ''))))
-      setSeat(String(s.role || ''))
-      setBrains(list)
-      const nextRosters: Record<string, Person[]> = {}
-      await Promise.all(
-        list.map(async (b) => {
-          nextRosters[b.path] = (await window.brain.settings.rosterAt(b.path).catch(() => [])) as Person[]
-        })
-      )
-      setRosters(nextRosters)
-      if (s.superAdmin && s.email === 'joe@plyntr.com') {
-        const companies = await window.brain.plyntr.companies().catch(() => [])
-        const labels: Record<string, string> = {}
-        const packs: Record<string, string> = {}
-        for (const company of companies) {
-          if (!company.brainId) continue
-          if (company.label) labels[company.brainId] = company.label
-          packs[company.brainId] = company.pack || ''
+    let dead = false
+    settingsAlive.current = true
+    setLoaded(false)
+    let shownBrains: typeof brains = []
+    let shownSettings: Awaited<ReturnType<typeof window.brain.settings.get>> | null = null
+    const load = startSettingsLoad(
+      {
+        get: () => window.brain.settings.get(),
+        list: () => window.brain.brains.list().catch(() => []),
+        slow: async (signal) => {
+          const list = shownBrains
+          const s = shownSettings
+          const aborted = () => signal.aborted
+          const rosterRows = await Promise.all(
+            list.map((b) => window.brain.settings.rosterAt(b.path).catch(() => [] as Person[]))
+          )
+          if (aborted()) return null
+          const folderRoster = await window.brain.settings.roster().catch(() => [] as Person[])
+          if (aborted()) return null
+          const people = folderRoster.length ? folderRoster : await window.brain.settings.team().catch(() => [] as Person[])
+          if (aborted()) return null
+          const nextRosters: Record<string, Person[]> = {}
+          list.forEach((b, i) => {
+            nextRosters[b.path] = rosterRows[i] || []
+          })
+          setRosters(nextRosters)
+          setPeople(people)
+          setLoaded(true)
+          if (aborted()) return null
+          const companiesP =
+            s?.superAdmin && s.email === 'joe@plyntr.com'
+              ? window.brain.plyntr.companies().catch(() => [])
+              : Promise.resolve([])
+          const activeP = window.brain.plyntr.active().catch(() => null)
+          const seatsP = activeP.then((active) => {
+            if (signal.aborted) return { seats: [], invites: [], pack: '' }
+            if ((active?.syncMode === 'plyntr' || active?.syncMode === 'local') && active.brainId && active.hasSeat) {
+              return window.brain.plyntr.seats(active.brainId).catch(() => ({ seats: [], invites: [], pack: '' }))
+            }
+            return { seats: [], invites: [], pack: '' }
+          })
+          const healthP = window.brain.hqSync.health().catch(() => null)
+          const skinP = window.brain.skin.get().catch(() => ({
+            capture: false,
+            jev: false,
+            jevReady: false,
+            joe: false,
+            components: [] as string[],
+            learned: [] as { cli: string; eventKind: string; component: string; confidence: number }[]
+          }))
+          const phoneP = window.brain.phone.status().catch(() => ({
+            on: false,
+            url: '',
+            origin: '',
+            detail: '',
+            platform: '',
+            watching: false,
+            pairPin: '',
+            pairQr: '',
+            pairUntil: 0,
+            devices: [] as { id: string; label: string; lastSeen: number }[]
+          }))
+          const [companies, seats, health, skin, phoneNow, active, projects, bridge, ver] = await Promise.all([
+            companiesP,
+            seatsP,
+            healthP,
+            skinP,
+            phoneP,
+            activeP,
+            window.brain.settings.projects().catch(() => []),
+            window.brain.hqSync.ownerStatus().catch(() => null),
+            window.brain.version().catch(() => '')
+          ])
+          if (aborted()) return null
+          const captures = skin.joe ? await window.brain.skin.list().catch(() => []) : []
+          if (aborted()) return null
+          return { companies, seats, health, skin, phoneNow, active, projects, bridge, ver, captures }
         }
-        setCompanyLabels(labels)
-        setCompanyPacks(packs)
-      }
-      setLoaded(true)
-      const [roster, projects, bridge, ver, skin, phoneNow] = await Promise.all([
-        window.brain.settings.roster().catch(() => []),
-        window.brain.settings.projects().catch(() => []),
-        window.brain.hqSync.ownerStatus().catch(() => null),
-        window.brain.version().catch(() => ''),
-        window.brain.skin.get().catch(() => ({
-          capture: false,
-          jev: false,
-          jevReady: false,
-          joe: false,
-          components: [] as string[],
-          learned: [] as { cli: string; eventKind: string; component: string; confidence: number }[]
-        })),
-        window.brain.phone.status().catch(() => ({
-          on: false,
-          url: '',
-          origin: '',
-          detail: '',
-          platform: '',
-          watching: false,
-          pairPin: '',
-          pairQr: '',
-          pairUntil: 0,
-          devices: []
-        }))
-      ])
-      const local = roster.length ? roster : await window.brain.settings.team().catch(() => [])
-      setPeople(local)
-      await takePlyntrActive(await window.brain.plyntr.active().catch(() => null))
-      setLiveProjects(projects)
-      if (bridge) {
-        setHq(bridge)
-        const watched = await window.brain.hqSync.watchedRepo().catch(() => '')
-        setFolderRepo(watched)
-        setHqRepo(watched || bridge.hq_repo || '')
-        if (bridge.projects.length) {
-          setLiveProjects(bridge.projects.map((p) => ({ id: p.slug, name: prettyName(p.slug) })))
+      },
+      (view) => {
+        if (dead) return
+        shownBrains = view.businesses
+        shownSettings = view.settings
+        const s = view.settings
+        setSuper(s.superAdmin)
+        setEmail(s.email)
+        setHelloName(String(s.name || '').trim())
+        setBrainPath(String(s.brainPath || ''))
+        setBrainName(placeName(String(s.brainPath || ''), prettyName(String(s.brainName || ''))))
+        setSeat(String(s.role || ''))
+        setBrains(view.businesses)
+      },
+      (rest) => {
+        if (dead || !rest || !settingsAlive.current) return
+        if (shownSettings?.superAdmin && shownSettings.email === 'joe@plyntr.com') {
+          const labels: Record<string, string> = {}
+          const packs: Record<string, string> = {}
+          for (const company of rest.companies) {
+            if (!company.brainId) continue
+            if (company.label) labels[company.brainId] = company.label
+            packs[company.brainId] = company.pack || ''
+          }
+          setCompanyLabels(labels)
+          setCompanyPacks(packs)
+        }
+        const active = rest.active
+        if (active && (active.syncMode === 'plyntr' || active.syncMode === 'local') && active.brainId) {
+          setCanMove(Boolean(active.canMove))
+          setFolderSync(String(active.syncMode || ''))
+          setPlyntrRole(String(active.role || ''))
+          setPlyntrAccountRole(String(active.accountRole || ''))
+          setPlyntrSeatEmail(String(active.seatEmail || ''))
+          setPlyntrMode(true)
+          setPlyntrBrainId(active.brainId)
+          setPlyntrSeat(Boolean(active.hasSeat))
+          setPlyntrOrg(active.org || '')
+          setPlyntrSlug(active.slug || '')
+          setPlyntrLabel(active.label || '')
+          setSyncHint(active.syncMode === 'local' ? 'On this computer only. No GitHub sync yet.' : rest.health?.lastSync || '')
+          setPlyntrRows(rest.seats)
+          if (rest.seats.pack) setBrainPack(rest.seats.pack)
+        } else {
+          setPlyntrMode(false)
+        }
+        setLiveProjects(rest.projects)
+        if (rest.bridge) {
+          setHq(rest.bridge)
+          void window.brain.hqSync.watchedRepo().catch(() => '').then((watched) => {
+            if (dead || !settingsAlive.current) return
+            setFolderRepo(watched)
+            setHqRepo(watched || rest.bridge?.hq_repo || '')
+          })
+          if (rest.bridge.projects.length) {
+            setLiveProjects(rest.bridge.projects.map((p) => ({ id: p.slug, name: prettyName(p.slug) })))
+          }
+        }
+        setAppVer(rest.ver)
+        setPhone(rest.phoneNow)
+        if (rest.skin.joe) {
+          setSkinCap(Boolean(rest.skin.capture))
+          setSkinJev(Boolean(rest.skin.jev))
+          setJevReady(Boolean(rest.skin.jevReady))
+          setLearned(rest.skin.learned || [])
+          setCaptures(rest.captures)
         }
       }
-      setAppVer(ver)
-      setPhone(phoneNow)
-      if (skin.joe) {
-        setSkinCap(Boolean(skin.capture))
-        setSkinJev(Boolean(skin.jev))
-        setJevReady(Boolean(skin.jevReady))
-        setLearned(skin.learned || [])
-        setCaptures(await window.brain.skin.list().catch(() => []))
-      }
-    })()
+    )
     const offUpdate = window.brain.onUpdate((ev) => {
       if (ev.status === 'checking') setUpd('Checking for an update…')
       else if (ev.status === 'available') setUpd(`Update ${ev.detail} is downloading.`)
@@ -388,12 +460,15 @@ export function SettingsPanel({
     })
     const offPhone = window.brain.phone.onStatus(setPhone)
     return () => {
+      dead = true
+      settingsAlive.current = false
+      load.cancel()
       offUpdate()
       offHeal()
       offBack()
       offPhone()
     }
-  }, [])
+  }, [role])
 
   useEffect(() => {
     if (!phone.on) return

@@ -67,7 +67,7 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
 - Auto-install follows the active folder. Path A still lists Homebrew, Git, Agency Brain, Cloudflare Tunnel, a CLI, `agency-brain-sync`, and Brain Bridge for full seats. Path B lists Homebrew, Git, one signed-in CLI, and a status row for `plyntr-brain-sync` on that repo. Chat opens only after that path's gate. A Mac that already has that folder skips to Chat.
 - Long runs show a live Working strip (wheel, phase, elapsed time) plus a pulse on the chat tab. Tools update the phase. Setup polls use the same strip. The thread does not sit on a frozen Thinking label.
-- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.59**. Developer ID Application: Plyntr LLC. A missing Brain Bridge answer does not stop GitHub sync. All repositories still does. Adding a company asks for Starter, Standard, or Growth, and superadmin can change that plan later. Starter stops at the owner and two other people.
+- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.60**. Developer ID Application: Plyntr LLC. A website link opens in the browser, and Settings shows the local roster before the network. A missing Brain Bridge answer does not stop GitHub sync. All repositories still does. Adding a company asks for Starter, Standard, or Growth, and superadmin can change that plan later. Starter stops at the owner and two other people.
 - Phone: Settings → Phone starts a loopback listener, `caffeinate -dims`, and a Cloudflare tunnel (named host `brain-phone.plyntr.com` when configured). Scan the QR or type the 6-digit code to link a phone. Linked phones stay until Remove.
 
 ## How Joe runs Inbox
@@ -103,7 +103,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Inbox
 
-- [ ] 2026-09-24 Joe: Client-brain seat packs. Replace the flat "10 agency team" cap with the commercial pack on that brain. Source sheet: `agency-brain/context/products/client-brain-offer-sheet.html`. No card and no per-seat charge in the app. Plyntr sets the pack when they pay. Changing the pack is how the cap lifts.
+- [x] 2026-09-24 Joe: Client-brain seat packs. Replace the flat "10 agency team" cap with the commercial pack on that brain. Source sheet: `agency-brain/context/products/client-brain-offer-sheet.html`. No card and no per-seat charge in the app. Plyntr sets the pack when they pay. Changing the pack is how the cap lifts. Done: 2026-09-24. Evidence: Brain.app 0.1.59 selector; worker `ca08e234-f85c-439a-b7a6-10c89f671bf4` stores the plan. rose wine read back `standard`.
 
   Packs:
   - **Starter.** 3 people total: the owner plus two others. Count active owner, scout, and team seats, plus pending invites for those roles. The next Add user is refused. Copy: "Starter includes the owner and two other people. Standard is $4,000 setup, then $700 a month."
