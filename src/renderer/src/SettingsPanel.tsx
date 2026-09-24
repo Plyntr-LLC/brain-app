@@ -1130,6 +1130,8 @@ export function SettingsPanel({
                       type="button"
                       className="linkish"
                       onClick={async () => {
+                        const who = i.name || i.email
+                        if (!window.confirm(`Revoke the code for ${who}? They will not be able to use it. You can invite them again.`)) return
                         await window.brain.plyntr.revokeInvite(plyntrBrainId, i.inviteId)
                         setPlyntrRows(await window.brain.plyntr.seats(plyntrBrainId))
                       }}
@@ -1155,6 +1157,8 @@ export function SettingsPanel({
                         type="button"
                         className="linkish"
                         onClick={async () => {
+                          const who = s.name || s.email
+                          if (!window.confirm(`Revoke ${who}'s access to this brain? They lose it until you invite them again.`)) return
                           try {
                             await window.brain.plyntr.revokeSeat(plyntrBrainId, s.id)
                             setPlyntrRows(await window.brain.plyntr.seats(plyntrBrainId))
