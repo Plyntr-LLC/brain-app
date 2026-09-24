@@ -1,14 +1,15 @@
 /** Brain.app Claude start. Not ~/.claude/settings.json (that may be Fable). */
 
-export const CLAUDE_DEFAULT_MODEL = 'claude-opus-5'
+export const CLAUDE_DEFAULT_MODEL = 'claude-opus-5-5'
 export const CLAUDE_DEFAULT_EFFORT = 'low'
 
 export function pickClaudeDefaultModel(models: { id: string }[]): string {
   const ids = models.map((m) => String(m.id || '').trim()).filter(Boolean)
   const hit = (re: RegExp) => ids.find((id) => re.test(id))
   return (
-    hit(/^(claude-)?opus-5(\b|\[|$)/i) ||
-    hit(/^claude-opus-5/i) ||
+    hit(/^(claude-)?opus-5-5(\[|$)/i) ||
+    hit(/^(claude-)?opus-5\.5(\[|$)/i) ||
+    hit(/^(claude-)?opus-5(\[|$)/i) ||
     hit(/^(claude-)?opus(\[|$)/i) ||
     CLAUDE_DEFAULT_MODEL
   )
@@ -17,7 +18,8 @@ export function pickClaudeDefaultModel(models: { id: string }[]): string {
 export function isClaudeDefaultAlias(id: string): boolean {
   const s = String(id || '').trim()
   if (!s) return true
-  return /^(claude-)?opus(-5)?(\[|$)/i.test(s) || /^claude-opus-5/i.test(s)
+  if (/^(claude-)?opus-5-5(\[|$)/i.test(s) || /^(claude-)?opus-5\.5(\[|$)/i.test(s)) return false
+  return /^(claude-)?opus(-5)?(\[|$)/i.test(s) || /^claude-opus-5(\[|$)/i.test(s)
 }
 
 /** Keep an explicit pick (Fable, Sonnet, Opus 4). Fill only a missing or default-alias id. */

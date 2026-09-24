@@ -625,13 +625,16 @@ export function registerStubIpc(): void {
         bootstrap: resolved.bootstrap,
         wizardStep: 5
       })
-      saveAccount({
-        email: resolved.email,
-        name: resolved.name,
-        token: loginToken(),
-        role: resolved.role,
-        source: 'plyntr'
-      })
+      const current = getAccount() || loadAccount()
+      if (!isJoeSuperAdmin(current, getSettings())) {
+        saveAccount({
+          email: resolved.email,
+          name: resolved.name,
+          token: loginToken(),
+          role: resolved.role,
+          source: 'plyntr'
+        })
+      }
       return {
         ok: true,
         via: 'plyntr' as const,
@@ -1248,6 +1251,9 @@ export function registerStubIpc(): void {
     const seat = seatForBrain(brainId)
     if (!seat?.seatToken) return { ok: false, email: '', role: '' }
     const acct = getAccount() || loadAccount()
+    if (isJoeSuperAdmin(acct, getSettings())) {
+      return { ok: true, email: String(acct?.email || ''), role: String(acct?.role || '') }
+    }
     if (!acct || acct.source !== 'plyntr') {
       saveAccount({
         email: seat.email,
@@ -1306,13 +1312,16 @@ export function registerStubIpc(): void {
       bootstrap: resolved.bootstrap,
       wizardStep: 5
     })
-    saveAccount({
-      email: resolved.email,
-      name: resolved.name,
-      token: loginToken(),
-      role: resolved.role,
-      source: 'plyntr'
-    })
+    const current = getAccount() || loadAccount()
+    if (!isJoeSuperAdmin(current, getSettings())) {
+      saveAccount({
+        email: resolved.email,
+        name: resolved.name,
+        token: loginToken(),
+        role: resolved.role,
+        source: 'plyntr'
+      })
+    }
     return {
       brainId: resolved.brainId,
       repo: resolved.repo,

@@ -7,6 +7,7 @@ import { claudeModelsFromCache } from './claude-models'
 import { formatClaudeUsage } from './claude-usage'
 import { listCodexCaps } from './codex-app'
 import { grokLeaderSocket } from './grok-args'
+import { parseGrokModels } from './grok-models'
 
 export type SlashCmd = { name: string; kind: 'builtin' | 'skill'; description: string }
 
@@ -124,10 +125,7 @@ export async function listSlash(
   }
   const grok = resolveBin('grok')
   let skills: SlashCmd[] = []
-  let models: { id: string; label: string }[] = [
-    { id: 'grok-4.6', label: 'Grok 4.6' },
-    { id: 'grok-4.5', label: 'Grok 4.5' }
-  ]
+  let models: { id: string; label: string }[] = []
   if (grok) {
     try {
       const raw = await run(grok, ['inspect', '--json'], cwd)
@@ -143,8 +141,8 @@ export async function listSlash(
     }
     try {
       const m = await run(grok, ['models'], cwd)
-      const found = [...m.matchAll(/^\s*[* -]+\s*(grok-[\w.]+)/gm)].map((x) => x[1])
-      if (found.length) models = [...new Set(found)].map((id) => ({ id, label: id }))
+      const found = parseGrokModels(m)
+      if (found.length) models = found
     } catch {
       /* */
     }

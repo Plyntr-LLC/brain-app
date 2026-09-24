@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { pickSeatForFolder, pickSeatForHqRepo, seatMatchesFolder } from './hq-folder.ts'
 import { claudeModelsFromCache } from './claude-models.ts'
+import { parseGrokModels } from './grok-models.ts'
 import { formatClaudeUsage } from './claude-usage.ts'
 import {
   CLAUDE_DEFAULT_EFFORT,
@@ -10,6 +11,11 @@ import {
   pickClaudeDefaultModel,
   resolveClaudeRun
 } from '../shared/claude-defaults.ts'
+
+test('Grok model lines keep the full id, including build-fast', () => {
+  const models = parseGrokModels(`Available models:\n  * grok-4.7 (default)\n  - grok-4.7-build-fast\n  - grok-4.6\n`)
+  assert.deepEqual(models.map((m) => m.id), ['grok-4.7', 'grok-4.7-build-fast', 'grok-4.6'])
+})
 
 test('Claude cache lists plan models, never Grok', () => {
   const models = claudeModelsFromCache(
@@ -46,10 +52,10 @@ test('Claude help aliases are used when the plan cache is empty', () => {
   )
 })
 
-test('Claude Brain.app default is Opus 5 low, not Fable or the CLI settings model', () => {
-  assert.equal(CLAUDE_DEFAULT_MODEL, 'claude-opus-5')
+test('Claude Brain.app default is Opus 5.5 low, not Fable or the CLI settings model', () => {
+  assert.equal(CLAUDE_DEFAULT_MODEL, 'claude-opus-5-5')
   assert.equal(CLAUDE_DEFAULT_EFFORT, 'low')
-  assert.equal(resolveClaudeRun({}).model, 'claude-opus-5')
+  assert.equal(resolveClaudeRun({}).model, 'claude-opus-5-5')
   assert.equal(resolveClaudeRun({}).effort, 'low')
   assert.equal(resolveClaudeRun({ model: 'fable[1m]', effort: 'high' }).model, 'fable[1m]')
   assert.equal(resolveClaudeRun({ model: 'fable[1m]', effort: 'high' }).effort, 'high')
@@ -65,6 +71,17 @@ test('Claude Brain.app default is Opus 5 low, not Fable or the CLI settings mode
   const picked = pickClaudeDefaultModel(listed)
   assert.ok(/opus-5/i.test(picked), picked)
   assert.equal(/fable/i.test(picked), false)
+  const with55 = claudeModelsFromCache(
+    {
+      cachedGrowthBookFeatures: {
+        tengu_curious_tower_stateless_models: 'fable-5-1, opus-5, opus-4-8',
+        tengu_startup_announcements: [{ text: 'Opus 5.5 is now your default model' }]
+      }
+    },
+    {}
+  )
+  assert.equal(pickClaudeDefaultModel(with55), 'claude-opus-5-5')
+  assert.ok(with55.some((m) => m.id === 'claude-opus-5-5'))
   assert.equal(pickClaudeDefaultModel([{ id: 'opus' }, { id: 'sonnet' }]), 'opus')
   assert.equal(keepClaudeModel('fable[1m]', []), 'fable[1m]')
   assert.equal(keepClaudeModel('fable[1m]', listed), 'fable[1m]')

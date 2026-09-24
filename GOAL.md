@@ -36,7 +36,7 @@ Skin paints catalog cards over a live CLI PTY. Chat keeps one warm ACP (or strea
 
 Pickers (model, effort, mode, folder) must follow what that CLI actually advertises. Claude reads this Mac’s plan list (not Grok). Do not send Grok fields to Cursor.
 
-Default Chat effort is **high** (Joe’s TUI stays extra high). **Claude** Chat defaults to **Opus 5** at **low** effort, not Fable and not `~/.claude/settings.json`. Cursor Chat defaults to **agent** so it can edit. Chat may write files in the watched folder (Grok no `--deny Write`, Claude Write/Edit allowed, Codex `workspace-write`). Google Ads and outbound mail still need a clear yes.
+Default Chat effort is **high** (Joe’s TUI stays extra high). **Claude** Chat defaults to **Opus 5.5** (`claude-opus-5-5`) at **low** effort, not Fable and not `~/.claude/settings.json`. Cursor Chat defaults to **agent** so it can edit. Chat may write files in the watched folder (Grok no `--deny Write`, Claude Write/Edit allowed, Codex `workspace-write`). Google Ads and outbound mail still need a clear yes.
 
 Each person uses their own CLI login. Never bake a Plyntr SuperGrok (or Cursor) account into the app.
 
@@ -67,7 +67,7 @@ Do not rewrite this section except to add the commit hash after the tag exists.
 - Times live in the right sidebar under Folder (collapsed to local time; click to compare Eastern, Central, Pacific). 12-hour US. DST via IANA. Not a titlebar strip.
 - Auto-install follows the active folder. Path A still lists Homebrew, Git, Agency Brain, Cloudflare Tunnel, a CLI, `agency-brain-sync`, and Brain Bridge for full seats. Path B lists Homebrew, Git, one signed-in CLI, and a status row for `plyntr-brain-sync` on that repo. Chat opens only after that path's gate. A Mac that already has that folder skips to Chat.
 - Long runs show a live Working strip (wheel, phase, elapsed time) plus a pulse on the chat tab. Tools update the phase. Setup polls use the same strip. The thread does not sit on a frozen Thinking label.
-- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.55**. Developer ID Application: Plyntr LLC. Shows the seat for the open brain, light or dark, wider sidebar grips, and a text editor for markdown.
+- Mac one-file installer: `npm run pack:mac` writes a signed arm64 dmg. Latest packed: **0.1.56**. Developer ID Application: Plyntr LLC. Dark mode keeps text on theme surfaces. Claude starts on Opus 5.5 low. Model lists come from the logged-in CLI.
 - Phone: Settings → Phone starts a loopback listener, `caffeinate -dims`, and a Cloudflare tunnel (named host `brain-phone.plyntr.com` when configured). Scan the QR or type the 6-digit code to link a phone. Linked phones stay until Remove.
 
 ## How Joe runs Inbox
@@ -123,7 +123,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 
 
-Skin is the face. Chat stays in the code, hidden. Terminal is a top tab only. Last tab can close after a confirm. Empty stage is the card color, not black. Claude tabs start on Opus 5 at low effort. Settings → Phone is a Cloudflare Tunnel remote of this Mac.
+Skin is the face. Chat stays in the code, hidden. Terminal is a top tab only. Last tab can close after a confirm. Empty stage is the card color, not black. Claude tabs start on Opus 5.5 at low effort. Settings → Phone is a Cloudflare Tunnel remote of this Mac.
 
 - [x] 2026-09-21 Joe: Phone WhatsApp-style pairing (QR, no email), named host stays, CLI picker on New, session list actually shows open chats. Done: 2026-09-21. Grok 4.6 xhigh APPROVE (cycle 2). Packed 0.1.23. Evidence: `phone-devices.json` + `/api/pair`, Settings QR/PIN, `#kind` New, full-width Open chats. Direct: https://github.com/Plyntr-LLC/brain-app/releases/latest/download/Brain-0.1.23-mac.dmg
 

@@ -12,6 +12,9 @@
   --warn-bg: #f8eedc;
   --titlebar: 52px;
   --rail: 230px;
+  --on-ink: #fffdf9;
+  --hover: #fff8f1;
+  --chrome: #efe8df;
 }
 :root[data-theme='dark'] {
   --ink: #f4efe8;
@@ -25,6 +28,9 @@
   --ok-bg: #1d3324;
   --warn: #e2c07a;
   --warn-bg: #3a2e18;
+  --on-ink: #1a1612;
+  --hover: #2a241c;
+  --chrome: #2a241c;
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
@@ -49,12 +55,11 @@ button, a.dl {
   text-decoration: none;
   display: inline-block;
 }
-button.primary { background: var(--ink); color: var(--card); border: 1px solid var(--ink); }
-:root[data-theme='dark'] button.primary { color: #1a1612; }
+button.primary { background: var(--ink); color: var(--on-ink); border: 1px solid var(--ink); }
 button.primary:disabled { opacity: 0.4; cursor: not-allowed; }
 button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
 button.linkish { background: none; border: 0; color: var(--orange-deep); padding: 0; font-size: 0.88rem; }
-a.dl { background: #fff; color: var(--ink); border: 1px solid var(--ink); }
+a.dl { background: var(--card); color: var(--ink); border: 1px solid var(--ink); }
 input, select, textarea {
   font-family: "Source Serif 4", Georgia, serif;
   font-size: 1.05rem;
@@ -62,7 +67,7 @@ input, select, textarea {
   border: 1px solid var(--line);
   border-radius: 2px;
   width: 100%;
-  background: #fff;
+  background: var(--card);
   color: var(--ink);
 }
 input[type='checkbox'],

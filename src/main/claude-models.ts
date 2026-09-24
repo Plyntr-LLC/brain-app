@@ -67,6 +67,9 @@ export function claudeModelsFromCache(
     if (row?.value) pushClaude(out, seen, String(row.value), String(row.label || ''))
   }
   for (const slug of growthbookModels(cache)) pushClaude(out, seen, slug)
+  const gb = cache?.cachedGrowthBookFeatures
+  const notes = gb && typeof gb === 'object' ? JSON.stringify((gb as Record<string, unknown>).tengu_startup_announcements || '') : ''
+  if (/Opus 5\.5/i.test(notes)) pushClaude(out, seen, 'claude-opus-5-5', 'Opus 5.5')
   const setting = String(extra?.settingsModel || '').trim()
   if (setting) pushClaude(out, seen, setting)
   for (const alias of helpAliases(String(extra?.help || ''))) pushClaude(out, seen, alias)

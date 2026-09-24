@@ -18,7 +18,7 @@
 }
 .update-note button { margin-left: auto; }
 .titlebar {
-  background: #efe8df;
+  background: var(--chrome);
   border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
@@ -116,7 +116,7 @@
   font-size: 0.78rem;
   word-break: break-all;
   user-select: all;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--line);
   padding: 0.5rem 0.6rem;
   margin: 0 0 0.55rem;
@@ -150,7 +150,7 @@
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--muted);
-  background: #efe8df;
+  background: var(--chrome);
   padding: 0.12rem 0.4rem;
   border-radius: 2px;
 }
@@ -194,7 +194,7 @@
   height: 1.05rem;
   border-radius: 2px;
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--card);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -204,7 +204,7 @@
 .step.done { color: var(--ok); }
 .step.done .mark { background: var(--ok-bg); border-color: #cfe0cb; color: var(--ok); }
 .step.now { color: var(--ink); }
-.step.now .mark { border-color: var(--ink); background: var(--ink); color: #fff; }
+.step.now .mark { border-color: var(--ink); background: var(--ink); color: var(--on-ink); }
 .step.blocked { opacity: 0.55; }
 .two-apps {
   margin: 0 0 1.1rem;
@@ -250,7 +250,7 @@
   padding: 0.85rem 0.95rem;
   margin: 0 0 0.6rem;
   cursor: pointer;
-  background: #fff;
+  background: var(--card);
   text-align: left;
   width: 100%;
 }
@@ -330,9 +330,9 @@
   padding: 0.85rem 0.7rem;
   text-align: center;
   cursor: pointer;
-  background: #fff;
+  background: var(--card);
 }
-.ai.on { border-color: var(--ink); background: #fff8f1; }
+.ai.on { border-color: var(--ink); background: var(--hover); }
 .ai strong { display: block; font-size: 0.95rem; }
 .ai span { display: block; font-size: 0.8rem; color: var(--muted); margin-top: 0.2rem; }
 .chat { display: flex; flex-direction: column; height: 100%; min-height: 480px; }
@@ -351,7 +351,7 @@
   background: var(--paper);
   border: 1px solid var(--line);
 }
-.bubble.me { align-self: flex-end; background: #fff; border-color: #cfc4b6; }
+.bubble.me { align-self: flex-end; background: var(--card); border-color: var(--line); }
 .composer {
   display: grid;
   grid-template-columns: 1fr auto auto auto;
@@ -426,7 +426,8 @@
   position: absolute;
   inset: 0;
   z-index: 8;
-  background: rgba(255, 253, 249, 0.92);
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  color: var(--ink);
   border: 2px dashed var(--orange);
   display: flex;
   align-items: center;
@@ -454,7 +455,7 @@
   border: 1px solid var(--line);
   color: var(--ink);
 }
-.demo button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.demo button.on { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
 .role-lock {
   font-size: 0.75rem;
   font-weight: 600;
@@ -479,7 +480,7 @@
   display: flex;
   align-items: stretch;
   gap: 0;
-  background: #efe8df;
+  background: var(--chrome);
   border-bottom: 1px solid var(--line);
   -webkit-app-region: no-drag;
   flex-shrink: 0;
@@ -538,7 +539,7 @@
   position: absolute;
   inset: 0;
   z-index: 30;
-  background: rgba(246, 241, 234, 0.72);
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -655,7 +656,7 @@ button.think-label:disabled { cursor: default; }
   font-family: "Schibsted Grotesk", sans-serif;
   font-size: 0.76rem;
   font-weight: 600;
-  background: #fff;
+  background: var(--card);
 }
 .worknote {
   display: flex;
@@ -919,7 +920,7 @@ button.think-label:disabled { cursor: default; }
   border-radius: 2px;
 }
 .explorer button.flink:hover,
-.refs button.flink:hover { background: #fff; }
+.refs button.flink:hover { background: var(--hover); }
 .explorer button.flink.turn,
 .explorer span.flink.turn { color: var(--orange-deep); font-weight: 700; }
 .explorer button.flink.turn.live,
@@ -1018,7 +1019,7 @@ button.runmeta-v:hover { color: var(--orange-deep); }
   color: var(--ink);
 }
 .runpick button.on { background: var(--paper); }
-.runpick button:hover { background: #fff8f1; }
+.runpick button:hover { background: var(--hover); }
 .explorer h2 .folderpick {
   display: block;
   width: 100%;
@@ -1198,7 +1199,7 @@ button.runmeta-v:hover { color: var(--orange-deep); }
   max-width: 28rem;
   padding: 0.55rem 0.7rem;
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--card);
   font-size: 0.88rem;
 }
 .skin-tool.live { border-color: var(--orange); }
