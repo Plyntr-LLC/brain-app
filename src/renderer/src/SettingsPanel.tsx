@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
+import { packLine, starterBlocksAdd } from '@shared/client-pack'
+import { PackSelect } from './PlyntrPath'
 import { asSeat, canTurnOnGithubSync, isTeamSeat, seatLabel, type SeatRole } from '@shared/contracts'
 import { displayPlyntrCode } from '@shared/plyntr-invite'
-import { plyntrPackageCopy } from '@shared/plyntr-package'
 import { canOfferPlyntrTransfer } from '@shared/plyntr-transfer'
 import { LocalSyncPanel } from './LocalSyncPanel'
 import { PlyntrCompanyScreen } from './PlyntrPath'
@@ -156,6 +157,8 @@ export function SettingsPanel({
   >([])
   const [rosters, setRosters] = useState<Record<string, Person[]>>({})
   const [companyLabels, setCompanyLabels] = useState<Record<string, string>>({})
+  const [companyPacks, setCompanyPacks] = useState<Record<string, string>>({})
+  const [brainPack, setBrainPack] = useState('')
   const [folderSync, setFolderSync] = useState('')
   const [openAdd, setOpenAdd] = useState(false)
   const [openCatalog, setOpenCatalog] = useState(false)
@@ -270,7 +273,9 @@ export function SettingsPanel({
       setSyncHint(health?.lastSync || '')
       }
       if (active.hasSeat) {
-        setPlyntrRows(await window.brain.plyntr.seats(active.brainId).catch(() => ({ seats: [], invites: [] })))
+        const seatRows = await window.brain.plyntr.seats(active.brainId).catch(() => ({ seats: [], invites: [], pack: '' }))
+        setPlyntrRows(seatRows)
+        if (seatRows.pack) setBrainPack(seatRows.pack)
         const again = await window.brain.plyntr.active().catch(() => null)
         if (again) {
           setPlyntrRole(String(again.role || ''))
@@ -307,10 +312,14 @@ export function SettingsPanel({
       if (s.superAdmin && s.email === 'joe@plyntr.com') {
         const companies = await window.brain.plyntr.companies().catch(() => [])
         const labels: Record<string, string> = {}
+        const packs: Record<string, string> = {}
         for (const company of companies) {
-          if (company.brainId && company.label) labels[company.brainId] = company.label
+          if (!company.brainId) continue
+          if (company.label) labels[company.brainId] = company.label
+          packs[company.brainId] = company.pack || ''
         }
         setCompanyLabels(labels)
+        setCompanyPacks(packs)
       }
       setLoaded(true)
       const [roster, projects, bridge, ver, skin, phoneNow] = await Promise.all([
@@ -441,6 +450,21 @@ export function SettingsPanel({
         <h3>{businessTitle(b, b.brainId ? companyLabels[b.brainId] : '')}</h3>
         <p className="biz-brain">Brain · {placeName(b.path, prettyName(b.name || b.slug))}</p>
         <p className="tiny">{channelLine(b)}</p>
+        {joe && superAdmin && b.brainId ? (
+          <PackSelect
+            value={companyPacks[b.brainId] || ''}
+            onChange={(next) => {
+              void window.brain.plyntr
+                .setPack(b.brainId || '', next)
+                .then((saved) => {
+                  setCompanyPacks((prev) => ({ ...prev, [saved.brainId]: saved.pack }))
+                  if (saved.brainId === plyntrBrainId) setBrainPack(saved.pack)
+                  setNote(packLine(saved.pack))
+                })
+                .catch((err) => setNote(String((err as Error).message || err)))
+            }}
+          />
+        ) : null}
         {users.length ? (
           users.map((p) => (
             <div className="set-row" key={p.email}>
@@ -562,6 +586,22 @@ export function SettingsPanel({
           <h3>{businessTitle({ name: brainName, path: brainPath, slug: brains.find((b) => b.current)?.slug || '' }, companyLabels[brains.find((b) => b.current)?.brainId || ''] || '')}</h3>
           <p className="biz-brain">Brain · {here}</p>
           <p className="tiny">{channelLine({ syncMode: folderSync, watching: brains.find((b) => b.current)?.watching })}</p>
+          {joe && superAdmin && (brains.find((b) => b.current)?.brainId || plyntrBrainId) ? (
+            <PackSelect
+              value={companyPacks[brains.find((b) => b.current)?.brainId || plyntrBrainId] || brainPack}
+              onChange={(next) => {
+                const id = brains.find((b) => b.current)?.brainId || plyntrBrainId
+                void window.brain.plyntr
+                  .setPack(id, next)
+                  .then((saved) => {
+                    setCompanyPacks((prev) => ({ ...prev, [saved.brainId]: saved.pack }))
+                    setBrainPack(saved.pack)
+                    setNote(packLine(saved.pack))
+                  })
+                  .catch((err) => setNote(String((err as Error).message || err)))
+              }}
+            />
+          ) : null}
           {localSyncOffer()}
           <p>
             Team is on this whole brain. Project only never clones HQ. This app copies only the folders you tick,
@@ -731,7 +771,7 @@ export function SettingsPanel({
                   Recover scout token
                 </button>
               ) : null}
-              <p className="tiny">{plyntrPackageCopy()}</p>
+              <p className="tiny">{packLine(companyPacks[plyntrBrainId] || brainPack)}</p>
               <p className="tiny">Create a code. It is shown once. If email is set up, they also get it in their inbox.</p>
               {canOfferPlyntrTransfer({
                 accountRole: plyntrAccountRole,
@@ -861,6 +901,19 @@ export function SettingsPanel({
                           }
                         }
                       }
+                    }
+                    const knownPack = companyPacks[plyntrBrainId] || brainPack
+                    const blocked = starterBlocksAdd(
+                      knownPack,
+                      [
+                        ...plyntrRows.seats,
+                        ...plyntrRows.invites.map((invite) => ({ role: invite.role, status: invite.status }))
+                      ],
+                      mintRole
+                    )
+                    if (blocked) {
+                      setNote(blocked)
+                      return
                     }
                     const res = await window.brain.plyntr.invite(plyntrBrainId, {
                       name: draft.name.trim(),
@@ -1071,6 +1124,22 @@ export function SettingsPanel({
           <h3>{businessTitle({ name: brainName, path: brainPath, slug: brains.find((b) => b.current)?.slug || '' }, companyLabels[brains.find((b) => b.current)?.brainId || ''] || '')}</h3>
           <p className="biz-brain">Brain · {here}</p>
           <p className="tiny">{channelLine({ syncMode: folderSync, watching: brains.find((b) => b.current)?.watching })}</p>
+          {joe && superAdmin && (brains.find((b) => b.current)?.brainId || plyntrBrainId) ? (
+            <PackSelect
+              value={companyPacks[brains.find((b) => b.current)?.brainId || plyntrBrainId] || brainPack}
+              onChange={(next) => {
+                const id = brains.find((b) => b.current)?.brainId || plyntrBrainId
+                void window.brain.plyntr
+                  .setPack(id, next)
+                  .then((saved) => {
+                    setCompanyPacks((prev) => ({ ...prev, [saved.brainId]: saved.pack }))
+                    setBrainPack(saved.pack)
+                    setNote(packLine(saved.pack))
+                  })
+                  .catch((err) => setNote(String((err as Error).message || err)))
+              }}
+            />
+          ) : null}
           {localSyncOffer()}
           <p>You are {seatLabel(seat || role)} in {here}. The owner adds people.</p>
           {(rosters[brainPath] || []).map((p) => (

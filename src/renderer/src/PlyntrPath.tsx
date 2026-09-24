@@ -1,8 +1,26 @@
 import { useEffect, useState } from 'react'
+import { CLIENT_PACKS, packLabel, packLine } from '@shared/client-pack'
 import { slugFromBusinessName } from '@shared/plyntr-invite'
 import { previousCreateStep } from '@shared/plyntr-wizard'
 import { orgStepCopy, orgUseError } from '@shared/plyntr-org-copy'
 import { resolvePlyntrRepoName } from '@shared/github-org'
+
+export function PackSelect({ value, onChange }: { value: string; onChange: (pack: string) => void }) {
+  return (
+    <label className="field">
+      Plan
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Not set yet</option>
+        {CLIENT_PACKS.map((id) => (
+          <option key={id} value={id}>
+            {packLabel(id)}
+          </option>
+        ))}
+      </select>
+      <span className="tiny">{packLine(value)}</span>
+    </label>
+  )
+}
 
 const PLATFORM =
   'Sign in to platform sync first: Settings → Add users → Email me a project-sync code, then Sign in, until you see This is the platform login.'
@@ -310,9 +328,10 @@ export function PlyntrCompanyScreen({
   const [ownerName, setOwnerName] = useState('')
   const [ownerEmail, setOwnerEmail] = useState('')
   const [memberRole, setMemberRole] = useState<MemberRole>('owner')
+  const [pack, setPack] = useState('standard')
   const [code, setCode] = useState('')
   const [emailed, setEmailed] = useState(false)
-  const [companies, setCompanies] = useState<{ brainId: string; label: string; slug: string; org: string; repo: string }[]>([])
+  const [companies, setCompanies] = useState<{ brainId: string; label: string; slug: string; org: string; repo: string; pack?: string }[]>([])
   const [details, setDetails] = useState<
     Record<string, { seats: { id: string; email: string; name: string; role: string; status: string }[]; invites: { inviteId: string; email: string; name: string; role: string; status: string }[] }>
   >({})
@@ -322,6 +341,7 @@ export function PlyntrCompanyScreen({
     slug: string
     org: string
     repo: string
+    pack?: string
     seats: { id: string; email: string; name: string; role: string; status: string }[]
     invites: { inviteId: string; email: string; name: string; role: string; status: string }[]
   } | null>(null)
@@ -408,6 +428,20 @@ export function PlyntrCompanyScreen({
                 <h3>{c.label}</h3>
                 <p className="biz-brain">Brain · {brain}</p>
                 <p className="tiny">Not on this computer yet</p>
+                <PackSelect
+                  value={c.pack || ''}
+                  onChange={(next) => {
+                    setBusy(true)
+                    setErr('')
+                    void window.brain.plyntr
+                      .setPack(c.brainId, next)
+                      .then(() => {
+                        setCompanies((rows) => rows.map((row) => (row.brainId === c.brainId ? { ...row, pack: next } : row)))
+                      })
+                      .catch((e) => setErr(String((e as Error).message || e)))
+                      .finally(() => setBusy(false))
+                  }}
+                />
                 {(peopleRow?.seats || [])
                   .filter((s) => s.status === 'active')
                   .map((s) => (
@@ -463,6 +497,7 @@ export function PlyntrCompanyScreen({
             Their email
             <input value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="ada@company.com" />
           </label>
+          <PackSelect value={pack} onChange={setPack} />
           <label className="field">
             Seat
             <select value={memberRole} onChange={(e) => setMemberRole(e.target.value as MemberRole)}>
@@ -596,6 +631,7 @@ export function PlyntrCompanyScreen({
               setOwnerName('')
               setOwnerEmail('')
               setMemberRole('owner')
+              setPack('standard')
               setPhase('form')
             }}
           >
@@ -623,7 +659,8 @@ export function PlyntrCompanyScreen({
                     label: label.trim(),
                     ownerName: ownerName.trim(),
                     ownerEmail: ownerEmail.trim(),
-                    role: memberRole
+                    role: memberRole,
+                    pack
                   })
                   setCode(created.code)
                   setEmailed(created.emailed)

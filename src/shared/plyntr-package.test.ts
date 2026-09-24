@@ -8,7 +8,7 @@ test('the Plyntr package is the seat caps, with no checkout', () => {
   assert.equal(PLYNTR_PACKAGE.projectCap, null)
   const copy = plyntrPackageCopy()
   assert.match(copy, /2 builders/)
-  assert.match(copy, /10 agency team/)
+  assert.doesNotMatch(copy, /10 agency team/)
   assert.match(copy, /no numeric cap/)
   assert.equal(/stripe|checkout|card/i.test(copy), false)
 })

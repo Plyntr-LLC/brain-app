@@ -132,6 +132,12 @@ export function onlySelectedInstall(selection: unknown): boolean {
   return sel === 'selected' || sel === 'selected_repositories'
 }
 
+/** The live service often says only that the app is installed. That must not stop sync. All repositories does. */
+export function bridgeSelectionBlocksSync(selection: unknown): boolean {
+  const sel = String(selection || '').toLowerCase()
+  return sel === 'all' || sel === 'all_repositories'
+}
+
 /** A repo address is not an install. GitHub has to say the app is installed on this repo. */
 export function githubInstallReady(
   st: {

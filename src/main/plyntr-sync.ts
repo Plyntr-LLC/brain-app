@@ -225,7 +225,15 @@ async function platformCall(platformToken: string, path: string, method: 'GET' |
   return json as Record<string, unknown>
 }
 
-export type PlyntrCompanyRow = { brainId: string; label: string; slug: string; org: string; repo: string; createdAt: string }
+export type PlyntrCompanyRow = {
+  brainId: string
+  label: string
+  slug: string
+  org: string
+  repo: string
+  createdAt: string
+  pack: string
+}
 
 export async function listPlyntrCompanies(platformToken: string): Promise<PlyntrCompanyRow[]> {
   const parsed = await platformCall(platformToken, '/v1/companies', 'GET')
@@ -238,7 +246,8 @@ export async function listPlyntrCompanies(platformToken: string): Promise<Plyntr
       slug: String(c.slug || ''),
       org: String(c.org || ''),
       repo: String(c.repo || ''),
-      createdAt: String(c.createdAt || '')
+      createdAt: String(c.createdAt || ''),
+      pack: String(c.pack || '')
     }
   })
 }
@@ -273,9 +282,18 @@ export async function claimPlyntrCompany(
   }
 }
 
+export async function setPlyntrCompanyPack(
+  platformToken: string,
+  brainId: string,
+  pack: string
+): Promise<{ brainId: string; pack: string }> {
+  const parsed = await platformCall(platformToken, `/v1/companies/${encodeURIComponent(brainId)}/pack`, 'POST', { pack })
+  return { brainId: String(parsed.brainId || brainId), pack: String(parsed.pack || '') }
+}
+
 export async function openPlyntrCompany(
   platformToken: string,
-  body: { label: string; ownerName: string; ownerEmail: string; role?: string }
+  body: { label: string; ownerName: string; ownerEmail: string; role?: string; pack?: string }
 ): Promise<{ brainId: string; repo: string; slug: string; label: string; seatToken: string; code: string; emailed: boolean; ownerEmail: string; ownerName: string; role: string }> {
   const parsed = (dryRun()
     ? dryRunPlyntrWorker('/v1/companies', body, '')

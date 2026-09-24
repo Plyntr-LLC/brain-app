@@ -6,6 +6,7 @@ import {
   clonePlan,
   githubAppInstallUrl,
   githubInstallReady,
+  bridgeSelectionBlocksSync,
   onlySelectedInstall,
   plyntrBrainSyncInstallUrl,
   plyntrGithubInstallReady,
@@ -203,6 +204,11 @@ test('onlySelectedInstall accepts a one-repo install', () => {
   assert.equal(onlySelectedInstall('all_repositories'), false)
   assert.equal(onlySelectedInstall(''), false)
   assert.equal(onlySelectedInstall(undefined), false)
+  assert.equal(bridgeSelectionBlocksSync('all'), true)
+  assert.equal(bridgeSelectionBlocksSync('all_repositories'), true)
+  assert.equal(bridgeSelectionBlocksSync('selected'), false)
+  assert.equal(bridgeSelectionBlocksSync(''), false)
+  assert.equal(bridgeSelectionBlocksSync(undefined), false)
 })
 
 test('githubInstallReady is true only when GitHub says the app is installed', () => {

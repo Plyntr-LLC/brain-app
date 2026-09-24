@@ -6,5 +6,5 @@ export const PLYNTR_PACKAGE = {
 } as const
 
 export function plyntrPackageCopy(): string {
-  return 'This brain includes 2 builders (owner and scout), 10 agency team seats, and project-only seats with no numeric cap.'
+  return 'At most 2 builders (owner and scout). People caps follow the plan on that business. Project-only seats have no numeric cap.'
 }

@@ -81,9 +81,9 @@ export function LocalSyncPanel({
       }
       const bridge = await window.brain.setup.bridgeOnRepo(named)
       const bridgeSel = String(bridge.repositorySelection || '').toLowerCase()
-      const bridgeSelected = bridge.skipped || bridgeSel === 'selected' || bridgeSel === 'selected_repositories'
-      if (!bridge.installed || !bridgeSelected) {
-        if (bridge.installed && !bridgeSelected) {
+      const bridgeAll = bridgeSel === 'all' || bridgeSel === 'all_repositories'
+      if (!bridge.installed || (!bridge.skipped && bridgeAll)) {
+        if (bridge.installed && bridgeAll) {
           setErr('Brain Bridge is not limited to this one repo. Choose Only select repositories, not All repositories.')
           return
         }

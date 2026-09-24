@@ -26,7 +26,7 @@ import {
   githubAppInstallUrl,
   githubInstallReady,
   plyntrCreateRepoUrl,
-  onlySelectedInstall,
+  bridgeSelectionBlocksSync,
   plyntrGithubInstallReady,
   plyntrInstallPin,
   reuseExistingFolder
@@ -112,6 +112,7 @@ import {
   invitePlyntrCompany,
   listPlyntrCompanies,
   openPlyntrCompany,
+  setPlyntrCompanyPack,
   readPlyntrCompany,
   placePlyntrBrain,
   plyntrBindUntilReady,
@@ -1239,7 +1240,7 @@ export function registerStubIpc(): void {
       throw new Error('Install Plyntr sync on this one repo first. Choose Only select repositories.')
     }
     const bridge = await bridgeInstallStatus(repo)
-    if (!bridge.installed || !onlySelectedInstall(bridge.repositorySelection)) {
+    if (!bridge.installed || bridgeSelectionBlocksSync(bridge.repositorySelection)) {
       throw new Error('Install Brain Bridge on this one repo. Choose Only select repositories, not All repositories.')
     }
     writePlyntrSyncFile(folder, repo, new Date().toISOString())
@@ -1409,7 +1410,11 @@ export function registerStubIpc(): void {
       email: claimed.email || session.email
     }
   })
-  ipcMain.handle('plyntr:openCompany', async (_e, body: { label: string; ownerName: string; ownerEmail: string; role?: string }) => {
+  ipcMain.handle('plyntr:setPack', async (_e, brainId: string, pack: string) => {
+    const session = platformSession()
+    return setPlyntrCompanyPack(session.token, String(brainId || ''), String(pack || ''))
+  })
+  ipcMain.handle('plyntr:openCompany', async (_e, body: { label: string; ownerName: string; ownerEmail: string; role?: string; pack?: string }) => {
     const session = platformSession()
     const created = await openPlyntrCompany(session.token, body)
     if (created.seatToken) {

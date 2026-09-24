@@ -457,8 +457,10 @@ const brain = {
       ipcRenderer.invoke('plyntr:createBrain', body) as Promise<{ brainId: string; repo: string; hasToken: boolean }>,
     companies: () =>
       ipcRenderer.invoke('plyntr:companies') as Promise<
-        { brainId: string; label: string; slug: string; org: string; repo: string; createdAt: string }[]
+        { brainId: string; label: string; slug: string; org: string; repo: string; createdAt: string; pack?: string }[]
       >,
+    setPack: (brainId: string, pack: string) =>
+      ipcRenderer.invoke('plyntr:setPack', brainId, pack) as Promise<{ brainId: string; pack: string }>,
     company: (brainId: string) =>
       ipcRenderer.invoke('plyntr:company', brainId) as Promise<{
         brainId: string
@@ -468,6 +470,7 @@ const brain = {
         repo: string
         seats: { id: string; email: string; name: string; role: string; status: string; bootstrap?: boolean }[]
         invites: { inviteId: string; email: string; name: string; role: string; status: string }[]
+        pack?: string
       }>,
     companyInvite: (brainId: string, body: { email: string; name: string; role: string; roots?: string[] }) =>
       ipcRenderer.invoke('plyntr:companyInvite', brainId, body) as Promise<{
@@ -483,7 +486,7 @@ const brain = {
         label: string
         email: string
       }>,
-    openCompany: (body: { label: string; ownerName: string; ownerEmail: string; role?: string }) =>
+    openCompany: (body: { label: string; ownerName: string; ownerEmail: string; role?: string; pack?: string }) =>
       ipcRenderer.invoke('plyntr:openCompany', body) as Promise<{
         brainId: string
         repo: string
@@ -542,6 +545,7 @@ const brain = {
           roots?: string[]
         }[]
         invites: { inviteId: string; email: string; name: string; role: string; status: string; expiresAt: string; roots?: string[] }[]
+        pack?: string
       }>,
     bind: (brainId: string) =>
       ipcRenderer.invoke('plyntr:bind', brainId) as Promise<{
