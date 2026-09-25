@@ -4,6 +4,7 @@ import type { Cap, LiveRun } from './acp-session'
 import { codexInput, type Attach } from './attach'
 import { asRecord, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 import { wrapPromptWithHooks } from './project-hooks'
+import { setupTrace } from './setup-trace'
 
 const RULES =
   'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
@@ -290,6 +291,17 @@ export async function codexPrompt(opts: {
   attachments?: Attach[]
   onEvent: (ev: StreamEvent) => void
 }): Promise<string> {
+  if (process.env.BRAIN_APP_SETUP_DRIVE === '1') {
+    const text = wrapPromptWithHooks({ cwd: opts.cwd, kind: 'gpt', sessionId: opts.tabId, text: opts.text })
+    const input = codexInput(text, opts.attachments || [])
+    const sent = String((input[0] as { text?: string } | undefined)?.text || text)
+    if (sent.includes('Explain this step.')) {
+      setupTrace({ event: 'prompt', kind: 'gpt', text: sent, appTools: [], sendsAppTools: false, cwd: opts.cwd })
+    }
+    opts.onEvent({ kind: 'text', data: 'Here is what this step is for.' })
+    opts.onEvent({ kind: 'done' })
+    return ''
+  }
   await codexWarm(opts)
   const pool = pools.get(opts.cwd)
   const tab = pool?.tabs.get(opts.tabId)
@@ -298,12 +310,15 @@ export async function codexPrompt(opts: {
   const gen = ++tab.promptGen
   tab.onEvent = opts.onEvent
   tab.text = ''
+  const sent = wrapPromptWithHooks({ cwd: opts.cwd, kind: 'gpt', sessionId: tab.threadId, text: opts.text })
+  const input = codexInput(sent, opts.attachments || [])
+  const sentText = String((input[0] as { text?: string } | undefined)?.text || sent)
+  if (sentText.includes('Explain this step.')) {
+    setupTrace({ event: 'prompt', kind: 'gpt', text: sentText, appTools: [], sendsAppTools: false, cwd: opts.cwd })
+  }
   const params: Record<string, unknown> = {
     threadId: tab.threadId,
-    input: codexInput(
-      wrapPromptWithHooks({ cwd: opts.cwd, kind: 'gpt', sessionId: tab.threadId, text: opts.text }),
-      opts.attachments || []
-    )
+    input
   }
   if (opts.model) params.model = opts.model
   if (opts.effort) params.effort = opts.effort

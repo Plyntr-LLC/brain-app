@@ -368,6 +368,31 @@ const brain = {
       name?: string
     }) =>
       ipcRenderer.invoke('setup:putFolderLocal', opts) as Promise<{ ok: boolean; brainPath?: string; seeded?: boolean }>,
+    tryOpen: (kind: AiKind, folder?: string) =>
+      ipcRenderer.invoke('setup:tryOpen', kind, folder) as Promise<{
+        opened: boolean
+        signedIn: boolean
+        git: boolean
+        model: string
+        effort: string
+        detail: string
+      }>,
+    onExplain: (fn: (text: string, token?: number) => void) => {
+      const h = (_e: unknown, payload: string | { text?: string; token?: number }) => {
+        if (typeof payload === 'string') fn(payload)
+        else fn(String(payload?.text || ''), payload?.token)
+      }
+      ipcRenderer.on('setup:explain-text', h)
+      return () => {
+        ipcRenderer.removeListener('setup:explain-text', h)
+      }
+    },
+    explain: (body: { heading: string; kinds: AiKind[]; strip?: boolean; cwd?: string; token?: number }) =>
+      ipcRenderer.invoke('setup:explain', body) as Promise<{ ok: boolean; cwd: string }>,
+    ensureDraft: (id: string) =>
+      ipcRenderer.invoke('setup:ensureDraft', id) as Promise<{ ok: boolean; path: string; sync: boolean; remote: boolean }>,
+    mergeDraft: (draft: string, clone: string) =>
+      ipcRenderer.invoke('setup:mergeDraft', draft, clone) as Promise<{ copied: string[]; left: string[] }>,
     enableLocalSync: (opts: { folder?: string; org?: string; repo?: string }) =>
       ipcRenderer.invoke('setup:enableLocalSync', opts) as Promise<{ ok: boolean; detail: string; repo: string }>,
     syncMode: (folder: string) => ipcRenderer.invoke('setup:syncMode', folder) as Promise<string>,
@@ -393,8 +418,8 @@ const brain = {
         reason?: string
         detail?: string
       }>,
-    status: () =>
-      ipcRenderer.invoke('setup:status') as Promise<{
+    status: (kind?: AiKind) =>
+      ipcRenderer.invoke('setup:status', kind) as Promise<{
         ready: boolean
         watching: boolean
         brainPath?: string | null

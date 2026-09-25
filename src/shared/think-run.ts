@@ -1,3 +1,4 @@
+import { specFromStreamEvent } from './skin/from-events.ts'
 import { isHiddenStreamKind, isProtocolNoise } from './skin/hidden-kinds.ts'
 
 export type ThreadMsg = {
@@ -17,13 +18,31 @@ export function splitsThinking(m: ThreadMsg): boolean {
     const text = String(m.text || '')
     return Boolean(text.trim()) && !isProtocolNoise(text)
   }
-  if (m.who === 'raw') {
-    const text = String(m.text || '')
-    if (!text.trim() || m.skinLabel === 'ignore') return false
-    if (isHiddenStreamKind(m.rawKind || '') || isProtocolNoise(text)) return false
-    return true
-  }
+  if (m.who === 'raw') return rawShows(m)
   return false
+}
+
+function rawComponent(m: ThreadMsg): string {
+  if (m.skinLabel && m.skinLabel !== 'RawFallback' && m.skinLabel !== 'ignore') return m.skinLabel
+  const spec = specFromStreamEvent({ kind: m.rawKind || '', data: String(m.text || '') })
+  return spec?.component || ''
+}
+
+function rawShows(m: ThreadMsg): boolean {
+  if (m.skinLabel === 'ignore' || isHiddenStreamKind(m.rawKind || '')) return false
+  return paintsThreadSpec(rawComponent(m), String(m.text || ''))
+}
+
+/** A row the thread actually draws. Raw fallbacks, blank text, and empty tool rows do not. */
+export function paintsThreadSpec(component: string, text = ''): boolean {
+  if (!component || component === 'RawFallback') return false
+  const body = String(text || '')
+  if (isProtocolNoise(body)) return false
+  if (component === 'AgentMessage' || component === 'Thought') {
+    return Boolean(body.trim())
+  }
+  if (!body.trim() && /tool|hook|raw/i.test(component)) return false
+  return true
 }
 
 export function appendThought<T extends ThreadMsg>(messages: T[], bit: string): T[] {

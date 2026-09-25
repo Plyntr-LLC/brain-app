@@ -13,6 +13,7 @@ import { grokAcpArgs, ensureGrokLeader, killGrokLeader } from './grok-leader'
 import { asRecord, asText, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 import { captureEvent, skinHint } from './skin/capture'
 import { captureToolHook, toolCaptureFromUpdate, wrapPromptWithHooks } from './project-hooks'
+import { setupTrace } from './setup-trace'
 import { GROK_DEFAULT_EFFORT } from '../shared/effort'
 
 const RULES =
@@ -46,6 +47,7 @@ type Tab = {
   configIds?: string[]
   contextTotal?: number
   promptId: number | null
+  appTools: unknown[]
   onEvent?: (ev: StreamEvent) => void
   text: string
   alwaysApprove?: boolean
@@ -835,6 +837,7 @@ export async function acpWarm(opts: {
       contextTotal: live.contextTotal,
       commands: live.commands,
       promptId: null,
+      appTools: [],
       text: ''
     })
     pool.bySid.set(sessionId, opts.tabId)
@@ -876,6 +879,7 @@ export async function acpResume(opts: {
       tabId: opts.tabId,
       sessionId: sid,
       promptId: null,
+      appTools: [],
       text: ''
     }
     tab.sessionId = sid
@@ -913,6 +917,27 @@ export async function acpPrompt(opts: {
   return acpPromptOnce(opts, false)
 }
 
+async function deliverAcpPrompt(
+  kind: 'grok' | 'cursor',
+  cwd: string,
+  sessionId: string,
+  text: string,
+  attachments: Attach[],
+  rpc: { request: (method: string, params: unknown, timeout: number) => Promise<unknown> }
+): Promise<void> {
+  const hooked = wrapPromptWithHooks({ cwd, kind, sessionId, text })
+  const prompt = acpPromptParts(hooked, attachments)
+  const sent = String((prompt[0] as { text?: string } | undefined)?.text || hooked)
+  const appTools: unknown[] = []
+  if (sent.includes('Explain this step.')) {
+    setupTrace({ event: 'prompt', kind, text: sent, appTools, sendsAppTools: true, cwd })
+  }
+  const body = sent.includes('Explain this step.')
+    ? { sessionId, prompt, appTools }
+    : { sessionId, prompt }
+  await rpc.request('session/prompt', body, 0)
+}
+
 async function acpPromptOnce(
   opts: {
     kind: 'grok' | 'cursor'
@@ -928,6 +953,14 @@ async function acpPromptOnce(
   },
   retried: boolean
 ): Promise<string> {
+  if (process.env.BRAIN_APP_SETUP_DRIVE === '1') {
+    await deliverAcpPrompt(opts.kind, opts.cwd, 'setup-drive', opts.text, opts.attachments || [], {
+      request: async () => ({ stopReason: 'end_turn' })
+    })
+    opts.onEvent({ kind: 'text', data: 'Here is what this step is for.' })
+    opts.onEvent({ kind: 'done' })
+    return ''
+  }
   try {
     await acpWarm(opts)
   } catch (e) {
@@ -956,19 +989,17 @@ async function acpPromptOnce(
   if (/^\s*\/compact\b/i.test(opts.text)) opts.onEvent({ kind: 'status', data: 'compacting' })
   let retry = false
   try {
-    const hooked = wrapPromptWithHooks({
-      cwd: opts.cwd,
-      kind: opts.kind,
-      sessionId: tab.sessionId,
-      text: opts.text
-    })
-    const prompt = acpPromptParts(hooked, opts.attachments || [])
     const result = asRecord(
-      await pool.rpc.request(
-        'session/prompt',
-        { sessionId: tab.sessionId, prompt },
-        0
-      )
+      await (async () => {
+        let raw: unknown = null
+        await deliverAcpPrompt(opts.kind, opts.cwd, tab.sessionId, opts.text, opts.attachments || [], {
+          request: async (method, params, timeout) => {
+            raw = await pool.rpc.request(method, params as never, timeout)
+            return raw
+          }
+        })
+        return raw
+      })()
     )
     const stop = String(result.stopReason || 'end_turn')
     if (stop !== 'cancelled' && stop !== 'end_turn' && !tab.text) {

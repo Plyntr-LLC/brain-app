@@ -53,6 +53,7 @@ import {
   type Sealed
 } from './phone-lib'
 import { phoneQrSvg } from './phone-qr'
+import { setupTrace } from './setup-trace'
 import { cancelWarm, closeWarm, promptWarm } from './warm'
 
 export type PhoneDeviceView = { id: string; label: string; lastSeen: number }
@@ -549,6 +550,7 @@ function startNamedTunnel(bin: string, named: NamedPhone, port: number): Promise
       const text = chunk.toString('utf8')
       if (!settled && /Registered tunnel connection|connIndex=|Connected to/i.test(text)) {
         settled = true
+        setupTrace({ event: 'phone', mode: 'named', host: named.host })
         resolve(named.origin)
       }
     }
@@ -590,6 +592,7 @@ function startQuickTunnel(bin: string, port: number): Promise<string> {
       const hit = parseTunnelUrl(text)
       if (hit && /Registered tunnel connection|Connected to/i.test(text) && !settled) {
         settled = true
+        setupTrace({ event: 'phone', mode: 'quick', host: new URL(hit).host })
         resolve(hit)
       }
     }

@@ -4,9 +4,11 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { AiKind } from '../shared/contracts'
 import { binEnv, resolveBin } from './ai-cli'
+import { driveOn } from './setup-pretend'
 
 /** True when this CLI can authenticate. Never reads or logs credential files. */
 export function cliSignedIn(kind: AiKind): boolean {
+  if (driveOn() && String(process.env.BRAIN_APP_PRETEND_SIGNED_OUT || '').trim()) return false
   const bin = resolveBin(kind)
   if (!bin) return false
   if (kind === 'grok') return existsSync(join(homedir(), '.grok', 'auth.json'))

@@ -1,5 +1,5 @@
-import { actionRisk, type SkinComponentId } from './catalog'
-import type { SkinAction, SkinInEvent, SkinSpec } from './spec'
+import { actionRisk, type SkinComponentId } from './catalog.ts'
+import type { SkinAction, SkinInEvent, SkinSpec } from './spec.ts'
 
 let seq = 0
 function nid(prefix: string): string {

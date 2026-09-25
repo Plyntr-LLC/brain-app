@@ -5,7 +5,7 @@ import { asSeat, canTurnOnGithubSync, GITHUB_NEW_ORG, type AiKind } from '../sha
 import { parseGithubHqRepo } from '../shared/github-org'
 import { openInApp } from './in-app-browse'
 import * as ads2ai from './ads2ai'
-import { homedir } from 'node:os'
+import { homedir, userInfo } from 'node:os'
 import {
   activateWatching,
   detectApp,
@@ -60,8 +60,12 @@ import {
 import { readSyncHealth } from './sync-health'
 import { isJoeSuperAdmin } from './super-admin'
 import { classifyLogin, type LoginVia } from './login-route'
-import { installNeed, isNeedId, listNeeds, loginCli, loginCliUntilDone } from './install'
+import { cloudflaredPresent, gitPresent, installNeed, isNeedId, listNeeds, loginCli, loginCliUntilDone } from './install'
 import { cliSignedIn } from './cli-auth'
+import { explainSetup } from './setup-explain'
+import { mergeDraftContext } from './setup-draft'
+import { agencyPretend, installPretend, isPretendJoinCode } from './setup-pretend'
+import { setupTrace } from './setup-trace'
 import * as ai from './ai-cli'
 import { asAttachBuf, inspectAttach, stashBytes } from './attach'
 import { browseDocs, listDir, matchExisting, readSafe, tree, underRoot, writeSafe } from './files'
@@ -104,6 +108,7 @@ import {
 import {
   copyDryRunFixture,
   seedLocalBrain,
+  seedSetupDraft,
   claimPlyntrCompany,
   createPlyntrBrain,
   dryRunProjectFolder,
@@ -822,13 +827,22 @@ export function registerStubIpc(): void {
     return { ok: true, org }
   })
   ipcMain.handle('setup:openAppInstall', async (_e, slug: string, org?: string) => {
+    setupTrace({ event: 'ipc', channel: 'setup:openAppInstall' })
+    if (process.env.BRAIN_APP_SETUP_DRIVE === '1') return { ok: true, url: 'https://github.com/apps/agency-brain-sync/installations/new' }
     stopClipboardOrgWatch()
     const look = String(org || '').trim() ? await ads2ai.lookupGithubAccount(org || '') : { ok: false as const }
     const url = githubAppInstallUrl(slug, look.ok ? look.id : undefined)
     openInApp(url, 'Install sharing on GitHub')
     return { ok: true, url }
   })
-  ipcMain.handle('setup:pollInstall', (_e, slug: string) => ads2ai.installStatus(slug))
+  ipcMain.handle('setup:pollInstall', (_e, slug: string) => {
+    const ag = agencyPretend()
+    if (ag) {
+      setupTrace({ event: 'agency', handler: 'setup:pollInstall', app: ag.app, bridge: ag.bridge, copy: ag.copy })
+      return { ok: true, installed: ag.app, repo: ag.app ? 'agency/example-brain' : '' }
+    }
+    return ads2ai.installStatus(slug)
+  })
   ipcMain.handle('setup:waitInstall', async (_e, slug: string) => {
     stopClipboardOrgWatch()
     const id = String(slug || '').trim()
@@ -883,6 +897,11 @@ export function registerStubIpc(): void {
   }
 
   ipcMain.handle('setup:bridgeStatus', async (_e, folder: string) => {
+    const ag = agencyPretend()
+    if (ag) {
+      setupTrace({ event: 'agency', handler: 'setup:bridgeStatus', app: ag.app, bridge: ag.bridge, copy: ag.copy })
+      return { ok: true, installed: ag.bridge, skipped: false, repo: 'agency/example-brain' }
+    }
     const bridgeMode = readSyncMode(String(folder || ''))
     if (bridgeMode === 'plyntr' || bridgeMode === 'local') {
       return { ok: true, installed: true, skipped: true, repo: '' }
@@ -909,6 +928,17 @@ export function registerStubIpc(): void {
   })
   ipcMain.handle('setup:openBridgeRepo', async (_e, repo: string) => openPinnedBridge(String(repo || '')))
   ipcMain.handle('setup:bridgeOnRepo', async (_e, repo: string) => {
+    const ag = agencyPretend()
+    if (ag) {
+      setupTrace({ event: 'agency', handler: 'setup:bridgeOnRepo', app: ag.app, bridge: ag.bridge, copy: ag.copy })
+      return {
+        ok: true,
+        installed: ag.bridge,
+        repositorySelection: ag.bridge ? 'selected' : '',
+        repo: String(repo || ''),
+        detail: ag.bridge ? '' : 'Brain Bridge is not on this repo yet.'
+      }
+    }
     const name = parseGithubHqRepo(String(repo || ''))
     if (!name) return { ok: false, installed: false, repo: '', detail: 'This brain has no GitHub repository name yet.' }
     if (dryRun()) return { ok: true, installed: true, skipped: true, repo: name }
@@ -926,6 +956,17 @@ export function registerStubIpc(): void {
     }
   })
   ipcMain.handle('setup:waitBridge', async (_e, folder: string) => {
+    const ag = agencyPretend()
+    if (ag) {
+      setupTrace({ event: 'agency', handler: 'setup:waitBridge', app: ag.app, bridge: ag.bridge, copy: ag.copy })
+      return {
+        ok: ag.bridge,
+        installed: ag.bridge,
+        skipped: false,
+        repo: 'agency/example-brain',
+        detail: ag.bridge ? '' : 'Brain Bridge is not installed on this repo yet.'
+      }
+    }
     if (dryRun()) return { ok: true, installed: true, skipped: true, repo: '' }
     const repo = hqRepoFromFolder(String(folder || ''))
     if (!repo) return { ok: false, installed: false, detail: 'This folder has no GitHub repo yet.' }
@@ -946,6 +987,71 @@ export function registerStubIpc(): void {
       detail: 'Brain Bridge is not installed on this repo yet. In the browser, click Install, choose Only select repositories, pick this repo, then try again.'
     }
   })
+  ipcMain.handle('setup:tryOpen', async (e, kind: AiKind, folder?: string) => {
+    const signedIn = cliSignedIn(kind)
+    const git = gitPresent()
+    const cloud = cloudflaredPresent()
+    const opened = Boolean(signedIn && git && cloud)
+    let model = ''
+    let effort = ''
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (win) {
+      try {
+        const painted = (await win.webContents.executeJavaScript(
+          `(() => {
+            const keys = [...document.querySelectorAll('.runmeta-k')].map((n) => (n.textContent || '').trim())
+            const vals = [...document.querySelectorAll('.runmeta-v')].map((n) => (n.textContent || '').trim())
+            const at = (name) => {
+              const i = keys.indexOf(name)
+              return i >= 0 ? vals[i] || '' : ''
+            }
+            return { model: at('Model'), effort: at('Effort') }
+          })()`
+        )) as { model?: string; effort?: string }
+        model = String(painted?.model || '')
+        effort = String(painted?.effort || '')
+      } catch {
+        model = ''
+        effort = ''
+      }
+    }
+    const detail = opened ? '' : !signedIn ? 'Sign in to the AI you picked, then Start setup again.' : !git ? 'Git is still missing.' : 'Cloudflare Tunnel is still missing.'
+    setupTrace({ event: 'chat-open', signedIn, git, opened, model, effort, folder: String(folder || '') })
+    return { opened, signedIn, git, model, effort, detail }
+  })
+  ipcMain.handle(
+    'setup:explain',
+    async (e, body: { heading?: string; kinds?: AiKind[]; strip?: boolean; cwd?: string; token?: number }) =>
+      explainSetup(
+        {
+          heading: String(body?.heading || ''),
+          kinds: Array.isArray(body?.kinds) ? body.kinds : [],
+          strip: Boolean(body?.strip),
+          cwd: body?.cwd,
+          token: Number.isFinite(body?.token) ? Number(body?.token) : undefined
+        },
+        BrowserWindow.fromWebContents(e.sender)
+      )
+  )
+  ipcMain.handle('setup:ensureDraft', async (_e, id: string) => {
+    const driveRoot = process.env.BRAIN_APP_SETUP_DRIVE === '1' ? String(process.env.BRAIN_APP_SETUP_ROOT || '').trim() : ''
+    const base = driveRoot
+      ? join(driveRoot, 'setup-drafts')
+      : join(userInfo().homedir, 'Library/Application Support/brain-app/setup-drafts')
+    const dest = join(base, String(id || 'draft'))
+    await seedSetupDraft(dest, gitPresent())
+    const { spawnSync } = await import('node:child_process')
+    const remote = spawnSync('git', ['remote'], { cwd: dest, encoding: 'utf8' })
+    const row = {
+      event: 'draft',
+      path: dest,
+      sync: existsSync(join(dest, '.team-config', 'sync.json')),
+      remote: Boolean(String(remote.stdout || '').trim())
+    }
+    setupTrace(row)
+    return { ok: true, path: dest, sync: row.sync, remote: row.remote }
+  })
+  ipcMain.handle('setup:mergeDraft', async (_e, draft: string, clone: string) => mergeDraftContext(String(draft || ''), String(clone || '')))
   ipcMain.handle('setup:bringFront', () => {
     bringAppFront()
     return { ok: true }
@@ -958,7 +1064,8 @@ export function registerStubIpc(): void {
   })
 
   async function settleSync(folder: string): Promise<void> {
-    if (dryRun() && readSyncMode(folder) !== 'plyntr') return
+    const drive = process.env.BRAIN_APP_SETUP_DRIVE === '1'
+    if (!drive && dryRun() && readSyncMode(folder) !== 'plyntr') return
     const watchingNow = readWatching()
     const choice = chooseWatcher({
       mode: readSyncMode(folder),
@@ -972,9 +1079,10 @@ export function registerStubIpc(): void {
       return
     }
     if (choice === 'activate') {
-      if (dryRun()) return
-      ensurePendingJoinForFolder(folder)
+      if (!drive && dryRun()) return
+      if (!dryRun()) ensurePendingJoinForFolder(folder)
       const watched = await activateWatching(folder)
+      if (drive) return
       if (watched.ok) {
         stopBrainSync()
         return
@@ -1042,6 +1150,23 @@ export function registerStubIpc(): void {
   ipcMain.handle(
     'setup:putFolder',
     async (_e, opts?: { teamSlug?: string; org?: string; retry?: boolean }) => {
+      const ag = agencyPretend()
+      if (ag) setupTrace({ event: 'agency', handler: 'setup:putFolder', app: ag.app, bridge: ag.bridge, copy: ag.copy })
+      if (ag && !ag.copy) {
+        return {
+          ok: false,
+          detail: 'The app is not installed on GitHub yet. Click Install in the browser, then try again.'
+        }
+      }
+      if (ag && ag.copy) {
+        const root = process.env.BRAIN_APP_SETUP_DRIVE === '1' ? String(process.env.BRAIN_APP_SETUP_ROOT || '').trim() : ''
+        const dest = join(root || join(homedir(), 'Projects'), 'setup-trace-agency-brain')
+        mkdirSync(dest, { recursive: true })
+        if (!existsSync(join(dest, 'AGENTS.md'))) writeFileSync(join(dest, 'AGENTS.md'), 'agency copy\n')
+        switchBrain(dest)
+        await settleSync(dest)
+        return { ok: true, brainPath: dest }
+      }
       const slug = String(opts?.teamSlug || '').trim()
       const org = String(opts?.org || '').trim()
       if (!slug) throw new Error('No team to clone. Finish GitHub first.')
@@ -1212,6 +1337,7 @@ export function registerStubIpc(): void {
     })
     saveRecent(dest)
     stopBrainSync()
+    setupTrace({ event: 'local', brainPath: dest, seeded })
     return { ok: true, brainPath: dest, seeded }
   }
 
@@ -1281,9 +1407,13 @@ export function registerStubIpc(): void {
     enableLocalSync(opts || {})
   )
   ipcMain.handle('setup:syncMode', async (_e, folder: string) => readSyncMode(String(folder || '')) || '')
-  ipcMain.handle('setup:openPlyntrInstall', async (_e, brainId: string, org?: string, repo?: string) =>
-    pinnedPlyntrInstall(brainId, org || '', repo || '')
-  )
+  ipcMain.handle('setup:openPlyntrInstall', async (_e, brainId: string, org?: string, repo?: string) => {
+    setupTrace({ event: 'ipc', channel: 'setup:openPlyntrInstall' })
+    if (process.env.BRAIN_APP_SETUP_DRIVE === '1') {
+      return { ok: true, url: 'https://github.com/apps/plyntr-brain-sync/installations/new' }
+    }
+    return pinnedPlyntrInstall(brainId, org || '', repo || '')
+  })
   ipcMain.handle('setup:openPlyntrRepo', async (_e, org: string, slug: string) => {
     const url = plyntrCreateRepoUrl(org, slug)
     openInApp(url, 'Create the GitHub repo')
@@ -1476,11 +1606,11 @@ export function registerStubIpc(): void {
     return openPlyntrProject(code)
   })
   ipcMain.handle('plyntr:resolve', async (_e, code: string) => {
-    if (authCodeRoute(code) !== 'plyntr' && !isPlyntrCompanyCode(code)) throw new Error('That code did not work.')
-    const resolved = await resolvePlyntrCode(normalizePlyntrInviteCode(code))
-    if (resolved.role === 'project') {
-      throw new Error('That code is for one project.')
+    const pretendJoin = isPretendJoinCode(code)
+    if (!pretendJoin && authCodeRoute(code) !== 'plyntr' && !isPlyntrCompanyCode(code)) {
+      throw new Error('That code did not work.')
     }
+    const resolved = await resolvePlyntrCode(normalizePlyntrInviteCode(code))
     const slug = resolved.repo.split('/')[1]?.replace(/-brain$/, '') || ''
     savePlyntrSeat(resolved.brainId, {
       seatToken: resolved.seatToken,
@@ -1523,7 +1653,7 @@ export function registerStubIpc(): void {
     }
   })
   ipcMain.handle('plyntr:installed', async (_e, brainId: string, repo: string) => {
-    const st = await plyntrInstalled(brainId, repo)
+    const st = installPretend(repo) || (await plyntrInstalled(brainId, repo))
     return {
       ready: plyntrGithubInstallReady(st, repo),
       installed: Boolean(st.installed),
@@ -1700,7 +1830,7 @@ export function registerStubIpc(): void {
   ipcMain.handle('ab:install', async () => installNeed('ab'))
   ipcMain.handle('ab:watching', async () => readWatching())
 
-  ipcMain.handle('setup:status', async () => listNeeds())
+  ipcMain.handle('setup:status', async (_e, kind?: AiKind) => listNeeds(kind))
   ipcMain.handle('setup:install', async (_e, id: string) => {
     if (!isNeedId(id)) return { ok: false, detail: 'Unknown tool.', wait: 'none' }
     return installNeed(id)

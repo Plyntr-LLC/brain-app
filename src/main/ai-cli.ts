@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import type { AiKind } from '../shared/contracts'
+import { driveOn } from './setup-pretend'
 
 export function extraPath(): string {
   const home = homedir()
@@ -72,11 +73,16 @@ export function resolveBin(kind: AiKind): string | null {
 }
 
 export function detect(): Record<AiKind, boolean> {
+  if (driveOn() && String(process.env.BRAIN_APP_PRETEND_NO_CLI || '').trim()) {
+    return { grok: false, claude: false, gpt: false, cursor: false }
+  }
+  const absent = driveOn() ? String(process.env.BRAIN_APP_PRETEND_ABSENT || '') : ''
+  const missing = new Set(absent.split(',').map((part) => part.trim()).filter(Boolean))
   return {
-    grok: Boolean(resolveBin('grok')),
-    claude: Boolean(resolveBin('claude')),
-    gpt: Boolean(resolveBin('gpt')),
-    cursor: Boolean(resolveBin('cursor'))
+    grok: !missing.has('grok') && Boolean(resolveBin('grok')),
+    claude: !missing.has('claude') && Boolean(resolveBin('claude')),
+    gpt: !missing.has('gpt') && Boolean(resolveBin('gpt')),
+    cursor: !missing.has('cursor') && Boolean(resolveBin('cursor'))
   }
 }
 

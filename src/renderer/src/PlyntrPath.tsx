@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CLIENT_PACKS, packLabel, packLine } from '@shared/client-pack'
 import { slugFromBusinessName } from '@shared/plyntr-invite'
 import { previousCreateStep } from '@shared/plyntr-wizard'
@@ -752,14 +752,28 @@ export function PlyntrCompanyScreen({
   )
 }
 
+function stepHeading(step: number): string {
+  if (step === 0) return 'Platform sign-in'
+  if (step === 1) return 'Business name'
+  if (step === 2) return 'Create a GitHub organization'
+  if (step === 3) return 'Create the brain'
+  if (step === 4) return 'Create the client brain repository'
+  if (step === 5) return 'Install Plyntr sync'
+  return 'Copy the folder'
+}
+
 export function PlyntrCreateScreen({
   initial,
   gateFirst,
+  picked,
+  onDraft,
   onCloned,
   onBindBack
 }: {
   initial: CreatePending | null
   gateFirst: boolean
+  picked?: string
+  onDraft?: (path: string) => void
   onCloned: (brainPath: string) => void
   onBindBack?: (fn: (() => boolean) | null) => void
 }) {
@@ -776,6 +790,8 @@ export function PlyntrCreateScreen({
   const [installOpened, setInstallOpened] = useState(false)
   const [bridgeOpened, setBridgeOpened] = useState(false)
   const [err, setErr] = useState('')
+  const [said, setSaid] = useState('')
+  const explainGen = useRef(0)
   const [busy, setBusy] = useState(false)
   const [nameAdvice, setNameAdvice] = useState<{
     preferred: string
@@ -784,6 +800,30 @@ export function PlyntrCreateScreen({
     suggestion: string
   } | null>(null)
   const createId = initial?.createId || ''
+  const draftPath = useRef('')
+  useEffect(() => {
+    const id = createId || 'company'
+    void window.brain.setup.ensureDraft(id).then((row) => {
+      draftPath.current = row.path
+      ;(window as unknown as { __setupDraft?: string }).__setupDraft = row.path
+      onDraft?.(row.path)
+    })
+  }, [createId])
+  useEffect(() => {
+    const token = ++explainGen.current
+    setSaid('')
+    const heading = stepHeading(step)
+    const keep = picked || 'grok'
+    const kinds = (['claude', 'grok', 'cursor', 'gpt'] as const).filter((kind) => kind !== keep)
+    void window.brain.setup.explain({ heading, kinds: [...kinds], strip: true, token })
+  }, [step, picked])
+  useEffect(
+    () =>
+      window.brain.setup.onExplain((bit, token) => {
+        setSaid((prev) => (token === explainGen.current ? prev + bit : prev))
+      }),
+    []
+  )
   const wantRepo = resolvePlyntrRepoName(org, slug, repo)
   useEffect(() => {
     if (!brainId) {
@@ -853,21 +893,8 @@ export function PlyntrCreateScreen({
   return (
     <>
       <p className="kicker">New company brain</p>
-      <h1>
-        {step === 0
-          ? 'Platform sign-in'
-          : step === 1
-            ? 'Business name'
-              : step === 2
-              ? 'Create a GitHub organization'
-              : step === 3
-                ? 'Create the brain'
-                : step === 4
-                  ? 'Create the client brain repository'
-                  : step === 5
-                    ? 'Install Plyntr sync'
-                    : 'Copy the folder'}
-      </h1>
+      <h1 data-setup-strip>{stepHeading(step)}</h1>
+      {said ? <p className="note">{said}</p> : null}
       {step === 0 ? <p>{PLATFORM}</p> : null}
       {step === 1 ? (
         <label className="field">
@@ -1149,6 +1176,15 @@ export function PlyntrCreateScreen({
                 slug,
                 repo: resolvePlyntrRepoName(org, slug, repo)
               })
+              if (draftPath.current && applied.brainPath) {
+                await window.brain.setup.mergeDraft(draftPath.current, applied.brainPath)
+                await window.brain.setup.explain({
+                  heading: stepHeading(6),
+                  kinds: [(picked || 'grok') as 'grok' | 'claude' | 'cursor' | 'gpt'],
+                  strip: false,
+                  cwd: applied.brainPath
+                })
+              }
               await save(7, { brainId })
               onCloned(applied.brainPath || '')
             } catch (e) {

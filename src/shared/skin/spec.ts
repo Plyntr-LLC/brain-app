@@ -1,4 +1,4 @@
-import type { SkinActionId, SkinComponentId, SkinRisk } from './catalog'
+import type { SkinActionId, SkinComponentId, SkinRisk } from './catalog.ts'
 
 export type SkinAction = { id: SkinActionId; label: string; risk: SkinRisk }
 

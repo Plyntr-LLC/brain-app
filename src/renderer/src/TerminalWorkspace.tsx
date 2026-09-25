@@ -14,7 +14,8 @@ import { SkinCard } from './skin/Registry'
 import { skinPtyId } from './skin/SkinTerm'
 import { specFromStreamEvent } from '../../shared/skin/from-events'
 import { isHiddenStreamKind, isProtocolNoise } from '../../shared/skin/hidden-kinds'
-import { appendThought, collapseAdjacentThinks } from '../../shared/think-run'
+import { isSkinComponent } from '../../shared/skin/catalog'
+import { appendThought, collapseAdjacentThinks, paintsThreadSpec } from '../../shared/think-run'
 
 type Mode = 'chat' | 'term'
 type Attach = { path: string; name: string; mime: string; preview?: string }
@@ -697,12 +698,18 @@ function ChatPane({
         'permission',
         'plan'
       ])
+      const rawSpec = specFromStreamEvent({ kind: ev.kind, data: ev.data })
+      const rawComponent =
+        ev.skinLabel && isSkinComponent(ev.skinLabel) && ev.skinLabel !== 'RawFallback'
+          ? ev.skinLabel
+          : rawSpec?.component
       if (
         ev.kind &&
         !known.has(ev.kind) &&
         !isHiddenStreamKind(ev.kind) &&
         ev.skinLabel !== 'ignore' &&
-        specFromStreamEvent({ kind: ev.kind, data: ev.data })
+        rawComponent &&
+        paintsThreadSpec(rawComponent, ev.data || '')
       ) {
         setMessages((m) => [
           ...m,

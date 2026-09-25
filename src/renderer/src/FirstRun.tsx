@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { STEPS, type AiKind, type PathKind, type Session } from '@shared/contracts'
+import { prettyEffort } from '@shared/effort'
+import { agencyVerifyButtons, plyntrJoinButtons } from '@shared/setup-guide'
 import { blankSession, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
 import { SettingsPanel } from './SettingsPanel'
@@ -89,6 +91,17 @@ export function FirstRun() {
   const bridgeOnce = useRef('')
   const folderPutKey = useRef('')
   const navStack = useRef<string[]>([])
+  const channelRef = useRef<string | undefined>(s.channel)
+  const localJoin = useRef<{ brainId: string; repo: string; slug: string; role: string; email: string; name: string } | null>(null)
+  const waitJoin = useRef<{ brainId: string; repo: string; slug: string; role: string; pending: boolean } | null>(null)
+  const skipAgencyDraft = useRef(false)
+  const driveApi = useRef<{
+    setChannel: (channel: string) => void
+    join: (row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) => Promise<void>
+    pick: (kind: AiKind) => void
+    read: () => { screen: string; buttons: string[]; strip: string; model: string; effort: string }
+  } | null>(null)
+  channelRef.current = s.channel
   const [folderCopyBusy, setFolderCopyBusy] = useState(false)
 
   function defaultBackScreen(current: string, session: Session): string | null {
@@ -196,7 +209,11 @@ export function FirstRun() {
         screen,
         ai: prev.ai || pick
       }))
-    })().catch(() => {})
+    })()
+      .catch(() => {})
+      .finally(() => {
+        ;(window as unknown as { __brainBoot?: boolean }).__brainBoot = true
+      })
   }, [])
 
   useEffect(() => {
@@ -349,14 +366,49 @@ export function FirstRun() {
     const slug = patch?.team?.slug || s.team?.slug
     const orgLogin = patch?.orgLogin || s.orgLogin || org
     let fail = ''
-    const existingPath = String(patch?.brainPath || s.brainPath || '').trim()
+    const existingPath =
+      patch && Object.prototype.hasOwnProperty.call(patch, 'brainPath')
+        ? String(patch.brainPath || '').trim()
+        : String(s.brainPath || '').trim()
+    const role = patch?.role || s.role
+    if (!skipAgencyDraft.current && !existingPath && (patch?.channel || s.channel) === 'agency' && role === 'owner') {
+      const draft = await window.brain.setup.ensureDraft(`agency-${slug || 'owner'}`)
+      const d0 = await window.brain.ai.detect()
+      const who: AiKind | undefined = patch?.ai || (d0.grok ? 'grok' : d0.claude ? 'claude' : d0.cursor ? 'cursor' : d0.gpt ? 'gpt' : undefined)
+      const team = { slug: slug || 'agency-trace', name: 'Agency', role: 'owner' as const }
+      if (!who) {
+        go('aipick', { brainPath: draft.path, channel: 'agency', role: 'owner', team })
+        return
+      }
+      const gate = await window.brain.setup.tryOpen(who, draft.path)
+      if (!gate.opened) {
+        setErr(gate.detail || 'Chat stays closed until Git, Cloudflare Tunnel, and that AI are ready.')
+        go('needs', { brainPath: draft.path, ai: who, channel: 'agency', role: 'owner', team })
+        return
+      }
+      go('chat', {
+        brainPath: draft.path,
+        ai: who,
+        channel: 'agency',
+        role: 'owner',
+        team
+      })
+      return
+    }
+    skipAgencyDraft.current = false
     const applied = existingPath
       ? { ok: true as const, brainPath: existingPath }
       : slug
         ? await (async () => {
             setFolderCopyBusy(true)
             try {
-              return await window.brain.setup.putFolder({ teamSlug: slug, org: orgLogin })
+              const result = await window.brain.setup.putFolder({ teamSlug: slug, org: orgLogin })
+              if (result && result.ok === false) {
+                fail = result.detail || 'The app is not installed on GitHub yet.'
+                setErr(fail)
+                return null
+              }
+              return result
             } catch (e) {
               fail = String((e as Error).message || e)
               setErr(fail)
@@ -375,12 +427,11 @@ export function FirstRun() {
     const d = await window.brain.ai.detect()
     setDetected(d)
     const pick: AiKind | undefined = d.grok ? 'grok' : d.claude ? 'claude' : d.cursor ? 'cursor' : d.gpt ? 'gpt' : undefined
-    const signed = pick ? Boolean((await window.brain.ai.signedIn(pick)).signedIn) : false
     const brainPath = fail ? undefined : applied?.brainPath || s.brainPath || patch?.brainPath || st.brainPath || undefined
     const next = { ...patch, ai: patch?.ai || pick, brainPath }
     if (!brainPath) {
-      if (/not installed on GitHub/i.test(fail) && s.screen !== 'github') {
-        go('github', { ...next, path: 'create' })
+      if (/not installed on GitHub/i.test(fail)) {
+        go('github-verify', { ...next, path: 'create' })
         return
       }
       if (/empty folder|not in the repo/i.test(fail)) {
@@ -397,13 +448,30 @@ export function FirstRun() {
       return
     }
     if (await holdForBridge(next)) return
-    const abMissing = st.items.some((i) => i.id === 'ab' && !i.present)
-    if (!st.ready || abMissing) {
-      go('needs', next)
+    go('needs', { ...next, ai: pick, abWatching: st.watching })
+  }
+
+  async function continueFromDraft() {
+    const role = s.role || 'owner'
+    const slug = s.team?.slug || 'agency-trace'
+    const app = (await window.brain.setup.pollInstall(slug).catch(() => null)) as { installed?: boolean; repo?: string } | null
+    const repo = String(app?.repo || 'agency/example-brain')
+    const bridge = await window.brain.setup.bridgeOnRepo(repo).catch(() => null)
+    if (!app?.installed) {
+      go('github-verify', { channel: 'agency', role, team: s.team })
       return
     }
-    if (pick && signed && st.watching) go('chat', { ...next, abWatching: true })
-    else go('aipick', { ...next, abWatching: st.watching })
+    if (!bridge?.installed) {
+      go('bridge', { channel: 'agency', role, team: s.team })
+      return
+    }
+    if (role === 'owner') skipAgencyDraft.current = true
+    await afterMembership({
+      team: s.team || { slug, name: 'Agency', role },
+      role,
+      brainPath: '',
+      channel: 'agency'
+    })
   }
 
   async function holdForBridge(patch?: Partial<Session>): Promise<boolean> {
@@ -535,25 +603,16 @@ export function FirstRun() {
   }
 
   async function finishPlyntrJoin(row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) {
-    if (s.channel === 'local') {
-      const applied = await window.brain.setup.putFolderLocal({
-        brainId: row.brainId,
-        slug: row.slug,
-        repo: row.repo,
-        org: String(row.repo || '').split('/')[0] || '',
-        email: row.email,
-        name: row.name
-      })
-      go('needs', {
-        brainPath: applied.brainPath,
+    const channel = channelRef.current
+    if (channel === 'local') {
+      localJoin.current = row
+      go('aipick', {
+        channel: 'local',
         role: row.role,
         email: row.email,
         business: row.name || row.slug,
-        channel: 'local'
+        brainPath: ''
       })
-      if (applied.seeded) {
-        setErr('This computer has the client brain template. It is not a GitHub copy, and nothing syncs yet.')
-      }
       return
     }
     const repo = String(row.repo || '')
@@ -566,24 +625,116 @@ export function FirstRun() {
         repo,
         org: repo.split('/')[0]
       })
-      go('needs', { brainPath: applied.brainPath, role: row.role, email: row.email, business: row.name || row.slug })
+      go('aipick', {
+        brainPath: applied.brainPath,
+        role: row.role,
+        email: row.email,
+        business: row.name || row.slug,
+        channel: 'plyntr'
+      })
       return
     }
-    const org = pendingRepo ? '' : repo.split('/')[0]
-    const next = {
-      createId: `c-${Date.now()}`,
-      wizardStep: 2,
-      label: row.name || row.slug,
-      org,
-      slug: row.slug,
-      scoutEmail: row.email,
-      brainId: row.brainId
-    }
-    await window.brain.plyntr.saveCreate(next)
-    setPlyntrCreate(next)
-    setCreateGate(false)
-    go('plyntr-create')
+    waitJoin.current = { brainId: row.brainId, repo, slug: row.slug, role: row.role, pending: pendingRepo }
+    go('plyntr-wait', {
+      role: row.role,
+      email: row.email,
+      business: row.name || row.slug,
+      brainPath: '',
+      channel: 'plyntr',
+      orgLogin: pendingRepo ? '' : repo.split('/')[0],
+      team: { slug: row.slug, name: row.name || row.slug, role: row.role }
+    })
+    setPlyntrCreate(null)
   }
+
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has('setupDrive')) return
+    const api = {
+      setChannel(channel: string) {
+        channelRef.current = channel
+        setS((prev) => ({ ...prev, channel: channel as Session['channel'] }))
+      },
+      async join(row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) {
+        await finishPlyntrJoin(row)
+      },
+      pick(kind: AiKind) {
+        setS((prev) => ({ ...prev, ai: kind, screen: 'needs' }))
+      },
+      role(role: string) {
+        setS((prev) => ({ ...prev, role }))
+      },
+      go(screen: string) {
+        go(screen)
+      },
+      bareNeeds() {
+        setS((prev) => ({ ...prev, screen: 'needs', ai: undefined, channel: 'local' }))
+      },
+      async continueAgency() {
+        skipAgencyDraft.current = true
+        await afterMembership({
+          team: { slug: 'agency-trace', name: 'Agency', role: 'owner' },
+          role: 'owner',
+          brainPath: '',
+          channel: 'agency'
+        })
+      },
+      async agency(role: string) {
+        setS((prev) => ({
+          ...prev,
+          role,
+          channel: 'agency',
+          brainPath: '',
+          team: { slug: 'agency-trace', name: 'Agency', role }
+        }))
+        await new Promise((r) => setTimeout(r, 30))
+        await afterMembership({ team: { slug: 'agency-trace', name: 'Agency', role }, role, brainPath: '', channel: 'agency' })
+      },
+      create(row: {
+        createId: string
+        wizardStep: number
+        label: string
+        org: string
+        slug: string
+        scoutEmail: string
+        brainId?: string
+      }) {
+        setCreateGate(false)
+        setPlyntrCreate(row)
+        go('plyntr-create', { channel: 'plyntr', role: 'owner', ai: 'grok' })
+      },
+      async click(label: string) {
+        const btn = [...document.querySelectorAll('[data-setup-button]')].find(
+          (node) => (node.textContent || '').trim() === label
+        ) as HTMLButtonElement | undefined
+        btn?.click()
+      },
+      read() {
+        const el = document.querySelector('[data-setup-screen]')
+        const keys = [...document.querySelectorAll('.runmeta-k')].map((node) => (node.textContent || '').trim())
+        const vals = [...document.querySelectorAll('.runmeta-v')].map((node) => (node.textContent || '').trim())
+        const at = (name: string) => {
+          const i = keys.indexOf(name)
+          return i >= 0 ? vals[i] || '' : ''
+        }
+        const primary = document.querySelector('[data-setup-screen="needs"] .primary') as HTMLButtonElement | null
+        const app = document.querySelector('.app')
+        return {
+          screen: el?.getAttribute('data-setup-screen') || '',
+          buttons: [...document.querySelectorAll('[data-setup-button]')].map((node) => (node.textContent || '').trim()),
+          strip: (document.querySelector('[data-setup-strip]')?.textContent || '').trim(),
+          model: at('Model'),
+          effort: at('Effort'),
+          h1: (el?.querySelector('h1')?.textContent || '').trim(),
+          primary: (primary?.textContent || '').trim(),
+          primaryDisabled: Boolean(primary?.disabled),
+          role: app?.getAttribute('data-setup-role') || '',
+          path: app?.getAttribute('data-setup-path') || '',
+          radios: document.querySelectorAll('[data-setup-screen="needs"] input[name="setup-cli"]').length
+        }
+      }
+    }
+    ;(window as unknown as { __brainDrive?: typeof api }).__brainDrive = api
+  })
 
   async function continuePlyntrJoin() {
     setErr('')
@@ -694,7 +845,7 @@ export function FirstRun() {
   }, [s.brainPath])
 
   return (
-    <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${!railOpen && s.screen !== 'chat' ? 'rail-off' : ''} ${updatedLine ? 'has-update' : ''}`}>
+    <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${!railOpen && s.screen !== 'chat' ? 'rail-off' : ''} ${updatedLine ? 'has-update' : ''}`} data-setup-role={s.role || ''} data-setup-path={s.brainPath || ''}>
       <div className="titlebar">
         <span>{title}</span>
         {s.role ? (
@@ -783,6 +934,14 @@ export function FirstRun() {
         </aside>
         ) : null}
         <section className="main">
+          <div className="runmeta" data-setup-meta="1">
+            <div className="runmeta-k">Model</div>
+            <button type="button" className="runmeta-v">
+              {s.ai === 'claude' ? 'Claude' : s.ai === 'cursor' ? 'Cursor' : s.ai === 'gpt' ? 'ChatGPT' : s.ai === 'grok' ? 'Grok' : 'Choose one'}
+            </button>
+            <div className="runmeta-k">Effort</div>
+            <button type="button" className="runmeta-v">{prettyEffort(undefined, s.ai || 'grok')}</button>
+          </div>
           {s.screen !== 'chat' && s.screen !== 'fork' ? (
             <div className="setup-back-row">
               <button type="button" className="ghost setup-back" onClick={() => goBack()}>
@@ -837,32 +996,128 @@ export function FirstRun() {
             />
           )}
           {s.screen === 'plyntr-create' && (
+            <div data-setup-screen="plyntr-create">
             <PlyntrCreateScreen
               initial={plyntrCreate}
               gateFirst={createGate}
+              picked={s.ai || 'grok'}
               onBindBack={(fn) => {
                 plyntrWizardBack.current = fn
               }}
+              onDraft={(path) => setS((prev) => ({ ...prev, brainPath: path }))}
               onCloned={(brainPath) => {
-                go('needs', { brainPath, role: 'scout', path: 'create' })
+                go('aipick', { brainPath, role: 'owner', path: 'create', channel: 'plyntr' })
               }}
             />
+            </div>
+          )}
+          {s.screen === 'plyntr-wait' && (
+            <div data-setup-screen="plyntr-wait">
+              <p className="kicker">GitHub</p>
+              <h1>This brain is not ready to copy yet.</h1>
+              <p>GitHub has to show this one repository, with Only select repositories. Chat stays closed until then.</p>
+              {err ? <p className="note">{err}</p> : null}
+              <div className="actions">
+                {plyntrJoinButtons({
+                  role: waitJoin.current?.role || s.role || '',
+                  pending: Boolean(waitJoin.current?.pending)
+                }).map((label) => (
+                  <button
+                    key={label}
+                    className={label === 'Check again' ? 'primary' : 'ghost'}
+                    type="button"
+                    data-setup-button={label}
+                    onClick={() => {
+                      const row = waitJoin.current
+                      if (!row) return
+                      if (label === 'Open GitHub') {
+                        void window.brain.setup.openPlyntrInstall(row.brainId, s.orgLogin, row.repo)
+                        return
+                      }
+                      void window.brain.plyntr.installed(row.brainId, row.repo).then((st) => {
+                        if (st?.ready) {
+                          void finishPlyntrJoin({
+                            brainId: row.brainId,
+                            repo: row.repo,
+                            slug: row.slug,
+                            role: row.role,
+                            email: s.email,
+                            name: s.business
+                          })
+                        }
+                      })
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {s.screen === 'github-verify' && (
+            <div data-setup-screen="github-verify">
+              <p className="kicker">GitHub</p>
+              <h1>The GitHub app is not installed yet.</h1>
+              <p>Chat stays on this setup until GitHub says the app is installed.</p>
+              {err ? <p className="note">{err}</p> : null}
+              <div className="actions">
+                {agencyVerifyButtons(s.role || '').map((label) => (
+                  <button
+                    key={label}
+                    className="primary"
+                    type="button"
+                    data-setup-button={label}
+                    onClick={() => {
+                      void (async () => {
+                        if (label === 'Open GitHub') await window.brain.setup.openAppInstall(s.team?.slug || 'agency-trace', s.orgLogin)
+                        await continueFromDraft()
+                      })()
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
           {s.screen === 'needs' && (
             <>
             {err ? <p className="note">{err}</p> : null}
             <SetupNeeds
-              onReady={({ ready, watching, ai, brainPath }) => {
+              picked={s.ai}
+              onPick={(ai) => setS((prev) => ({ ...prev, ai }))}
+              hideAgency={s.channel === 'local' || s.channel === 'plyntr'}
+              onReady={async ({ watching, ai, brainPath }) => {
                 const pick = ai || s.ai
-                void (async () => {
-                  const signed = pick ? Boolean((await window.brain.ai.signedIn(pick)).signedIn) : false
-                  const path = brainPath || s.brainPath
-                  if (!path) return
-                  const patch = { abWatching: watching || Boolean(path), brainPath: path, ai: pick }
-                  if (await holdForBridge(patch)) return
-                  if (ready && signed) go('chat', patch)
-                  else go('aipick', patch)
-                })()
+                const drafted = String(s.brainPath || '')
+                let path = drafted.includes('setup-drafts') ? drafted : String(brainPath || '') || drafted
+                if (s.channel === 'local' && localJoin.current) {
+                  const applied = await window.brain.setup.putFolderLocal({
+                    brainId: localJoin.current.brainId,
+                    slug: localJoin.current.slug,
+                    repo: localJoin.current.repo,
+                    org: String(localJoin.current.repo || '').split('/')[0] || '',
+                    email: localJoin.current.email,
+                    name: localJoin.current.name
+                  })
+                  path = applied.brainPath || path
+                  localJoin.current = null
+                  setS((prev) => ({ ...prev, brainPath: path }))
+                }
+                if (!String(path || '').trim() || !pick) return false
+                const gate = await window.brain.setup.tryOpen(pick, path)
+                if (!gate.opened) {
+                  setErr(gate.detail || 'Chat stays closed until Git, Cloudflare Tunnel, and that AI are ready.')
+                  return false
+                }
+                const patch = { abWatching: watching || Boolean(path), brainPath: path, ai: pick }
+                if (String(path).includes('setup-drafts')) {
+                  go('chat', patch)
+                  return true
+                }
+                if (await holdForBridge(patch)) return true
+                go('chat', patch)
+                return true
               }}
               onNeedFolder={() => (s.channel === 'local' ? go('plyntr-code') : go('github'))}
             />
@@ -1309,7 +1564,7 @@ export function FirstRun() {
             </>
           )}
           {s.screen === 'bridge' && (
-            <>
+            <div data-setup-screen="bridge">
               <p className="kicker">GitHub</p>
               <h1>Install Brain Bridge on this repo.</h1>
               <p>
@@ -1337,7 +1592,7 @@ export function FirstRun() {
                   Install Brain Bridge
                 </button>
               </div>
-            </>
+            </div>
           )}
           {s.screen === 'abapply' && (
             <>
@@ -1384,7 +1639,7 @@ export function FirstRun() {
             </>
           )}
           {s.screen === 'aipick' && (
-            <>
+            <div data-setup-screen="cli">
               <p className="kicker">Talking</p>
               <h1>Which AI should this use?</h1>
               <p>Pick who you start with. You can open the others later from + in the tab bar.</p>
@@ -1397,8 +1652,10 @@ export function FirstRun() {
               </div>
               <div className="ai-grid">
                 {([['claude', 'Claude'], ['grok', 'Grok'], ['cursor', 'Cursor'], ['gpt', 'ChatGPT']] as const).map(([id, n]) => (
-                  <button type="button" key={id} className={`ai ${s.ai === id ? 'on' : ''}`} onClick={() => setS({ ...s, ai: id })} disabled={detected[id] === false}>
-                    <strong>{n}</strong><span>{detected[id] === false ? 'not found' : detected[id] ? 'ready' : ''}</span>
+                  <button type="button" key={id} className={`ai ${s.ai === id ? 'on' : ''}`} data-setup-button={n} onClick={() => setS({ ...s, ai: id })}>
+                    <strong>{n}</strong>
+                    {detected[id] === false || detected[id] ? ' ' : null}
+                    <span>{detected[id] === false ? 'not installed yet' : detected[id] ? 'ready' : ''}</span>
                   </button>
                 ))}
               </div>
@@ -1412,20 +1669,16 @@ export function FirstRun() {
                       setErr('Pick Claude, Grok, Cursor, or ChatGPT.')
                       return
                     }
-                    if (detected[s.ai] === false) {
-                      setErr('Install Grok, Claude, Cursor, or ChatGPT on this computer, then pick it here.')
-                      return
-                    }
-                    go('aiwork')
+                    go('needs')
                   }}
                 >
                   Continue with {s.ai === 'gpt' ? 'ChatGPT' : s.ai ? s.ai[0].toUpperCase() + s.ai.slice(1) : '…'}
                 </button>
               </div>
-            </>
+            </div>
           )}
           {s.screen === 'aiwork' && (
-            <>
+            <div data-setup-screen="aiwork">
               <p className="kicker">Working</p>
               <h1>
                 Opening{' '}
@@ -1486,10 +1739,19 @@ export function FirstRun() {
                   Open sign-in again
                 </button>
               </div>
-            </>
+            </div>
           )}
           {s.screen === 'chat' && (
-            <TerminalWorkspace session={s} showInvite={showInvite} setShowInvite={setShowInvite} railOpen={railOpen} setRailOpen={setRailOpen} />
+            <div data-setup-screen="chat">
+              {s.channel === 'agency' && String(s.brainPath || '').includes('setup-drafts') ? (
+                <div className="actions">
+                  <button className="primary" type="button" data-setup-button="Continue" onClick={() => void continueFromDraft()}>
+                    Continue
+                  </button>
+                </div>
+              ) : null}
+              <TerminalWorkspace session={s} showInvite={showInvite} setShowInvite={setShowInvite} railOpen={railOpen} setRailOpen={setRailOpen} />
+            </div>
           )}
         </section>
       </div>

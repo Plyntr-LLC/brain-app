@@ -60,7 +60,9 @@ const EMPTY_BRAIN =
   'GitHub copied an empty folder. The brain files are not in the repo yet. Wait a minute on GitHub, then tap Try again.'
 
 export function defaultBrainDest(slug: string): string {
-  return join(homedir(), 'Projects', `${String(slug || '').trim()}-brain`)
+  const name = `${String(slug || '').trim()}-brain`
+  const root = process.env.BRAIN_APP_SETUP_DRIVE === '1' ? String(process.env.BRAIN_APP_SETUP_ROOT || '').trim() : ''
+  return join(root || join(homedir(), 'Projects'), name)
 }
 
 /** Remove a half-finished checkout with no brain files so the next copy can start clean. */

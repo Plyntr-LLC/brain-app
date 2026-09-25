@@ -4,6 +4,7 @@ import { isHiddenStreamKind, isProtocolNoise } from '../../../shared/skin/hidden
 import { isSkinComponent } from '../../../shared/skin/catalog'
 import type { SkinSpec } from '../../../shared/skin/spec'
 import type { AiKind } from '@shared/contracts'
+import { paintsThreadSpec } from '../../../shared/think-run'
 import { cleanThink, stripAnsi, type FileHit } from '../ptyChat'
 import { SkinCard } from './Registry'
 import { SkinTerm } from './SkinTerm'
@@ -112,18 +113,29 @@ export function SkinPane({
               source: m.rawKind || 'raw'
             }
       }
-      if (s) specs.push({ spec: s })
+      if (s && paintsThreadSpec(s.component, String(s.props.text || s.props.data || ''))) specs.push({ spec: s })
     } else if (m.who === 'think') {
       const text = cleanThink(m.text || '')
       if (!text) return
-      const prev = specs[specs.length - 1]
-      if (prev?.spec.component === 'Thought') {
-        const prior = String(prev.spec.props.text || '')
-        prev.spec = {
-          ...prev.spec,
-          props: { ...prev.spec.props, text: prior ? prior + '\n\n' + text : text }
+      let prevAt = -1
+      for (let j = specs.length - 1; j >= 0; j--) {
+        if (specs[j].spec.component === 'Thought') {
+          prevAt = j
+          break
         }
-        prev.thinkLive = thinkIsLive(messages, i, busy)
+        if (paintsThreadSpec(specs[j].spec.component, String(specs[j].spec.props.text || specs[j].spec.props.data || ''))) break
+      }
+      if (prevAt >= 0) {
+        const prev = specs[prevAt]
+        const prior = String(prev.spec.props.text || '')
+        specs[prevAt] = {
+          ...prev,
+          thinkLive: thinkIsLive(messages, i, busy),
+          spec: {
+            ...prev.spec,
+            props: { ...prev.spec.props, text: prior ? prior + '\n\n' + text : text }
+          }
+        }
         return
       }
       const s = specFromStreamEvent({ kind: 'thought', data: text })

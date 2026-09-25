@@ -9,6 +9,7 @@ import { plyntrGitToken } from './plyntr-sync'
 import { brainIdForSlug, seatTokenForFolder } from './plyntr-seats'
 import { brainRowForPath } from './brains'
 import { readSyncManifest, readSyncMode, syncModesConflict } from './sync-manifest'
+import { setupTrace } from './setup-trace'
 import { AB_OWNS_PLYNTR, gitCredentialForMode } from './watcher-choice'
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -143,6 +144,7 @@ export function startBrainSync(folder: string): void {
     }
     return
   }
+  setupTrace({ event: 'watcher', fn: 'startBrainSync', folder })
   if (cwd !== folder) {
     lastTick = ''
     lastFolder = ''

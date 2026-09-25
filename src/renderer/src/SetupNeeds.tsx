@@ -50,13 +50,23 @@ function pickAi(items: ToolNeed[], wanted?: Record<string, boolean>): AiKind | u
 
 export function SetupNeeds({
   onReady,
-  onNeedFolder
+  onNeedFolder,
+  onPick,
+  picked,
+  hideAgency
 }: {
-  onReady: (info: { ready: boolean; watching: boolean; ai?: AiKind; brainPath?: string }) => void
+  onReady: (info: { ready: boolean; watching: boolean; ai?: AiKind; brainPath?: string }) => void | Promise<boolean | void>
   onNeedFolder?: () => void
+  onPick?: (ai: AiKind) => void
+  picked?: AiKind
+  hideAgency?: boolean
 }) {
   const [items, setItems] = useState<ToolNeed[]>([])
-  const [wantCli, setWantCli] = useState<Record<string, boolean>>({ grok: true, claude: true, cursor: true, gpt: true })
+  const [wantCli, setWantCli] = useState<Record<string, boolean>>(() =>
+    picked
+      ? { grok: picked === 'grok', claude: picked === 'claude', cursor: picked === 'cursor', gpt: picked === 'gpt' }
+      : { grok: false, claude: false, cursor: false, gpt: false }
+  )
   const [watching, setWatching] = useState(false)
   const [brainPath, setBrainPath] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
@@ -66,17 +76,53 @@ export function SetupNeeds({
   const [banner, setBanner] = useState('')
   const [note, setNote] = useState('')
   const [err, setErr] = useState('')
+  const [said, setSaid] = useState('')
   const [waitSec, setWaitSec] = useState(0)
   const stop = useRef(false)
   const skipWait = useRef(false)
 
+  const choice = CLI_IDS.find((id) => wantCli[id]) as AiKind | undefined
+  const explainGen = useRef(0)
+
+  useEffect(() => {
+    setWantCli(
+      picked
+        ? { grok: picked === 'grok', claude: picked === 'claude', cursor: picked === 'cursor', gpt: picked === 'gpt' }
+        : { grok: false, claude: false, cursor: false, gpt: false }
+    )
+  }, [picked])
+
   useEffect(() => {
     stop.current = false
-    void refresh()
     return () => {
       stop.current = true
     }
   }, [])
+
+  useEffect(() => {
+    void refresh(choice)
+  }, [choice])
+
+  useEffect(() => {
+    const token = ++explainGen.current
+    setSaid('')
+    if (phase === 'run' || !choice) return
+    let live = true
+    void window.brain.ai.signedIn(choice).then((row) => {
+      if (!live || token !== explainGen.current || !row.signedIn) return
+      void window.brain.setup.explain({ heading: 'This computer', kinds: [choice], strip: false, token })
+    })
+    return () => {
+      live = false
+    }
+  }, [choice, phase])
+  useEffect(
+    () =>
+      window.brain.setup.onExplain((bit, token) => {
+        setSaid((prev) => (token === explainGen.current ? prev + bit : prev))
+      }),
+    []
+  )
 
   useEffect(() => {
     if (phase !== 'run') {
@@ -88,8 +134,8 @@ export function SetupNeeds({
     return () => clearInterval(t)
   }, [phase])
 
-  async function refresh(): Promise<Status> {
-    const st = await window.brain.setup.status()
+  async function refresh(which: AiKind | undefined = choice): Promise<Status> {
+    const st = await window.brain.setup.status(which)
     setItems(st.items)
     setWatching(st.watching)
     setBrainPath(st.brainPath || null)
@@ -163,18 +209,25 @@ export function SetupNeeds({
     setPhase('run')
     stop.current = false
     try {
-      const first = await refresh()
-      const abMissing = first.items.some((i) => i.id === 'ab' && !i.present)
-      if (first.ready && !abMissing) {
-        onReady(asReady(first, { ready: true, watching: Boolean(first.brainPath || first.watching) }, wantCli))
+      const chosen = CLI_IDS.find((id) => wantCli[id]) as AiKind | undefined
+      if (!chosen) {
+        setErr('Pick Grok, Claude, Cursor, or ChatGPT.')
         return
       }
-      const missing = first.items.filter((i) => {
-        if (i.present) return false
-        if (CLI_IDS.includes(i.id) && wantCli[i.id] === false) return false
-        return true
-      })
-      const required = new Set(['brew', 'git', ...(first.items.some((i) => i.id === 'cloudflared') ? ['cloudflared'] : [])])
+      const first = await refresh(chosen)
+      const allow = new Set(['brew', 'git', 'cloudflared', chosen])
+      const visible = hideAgency ? first.items.filter((item) => item.id !== 'ab') : first.items
+      const gitReady = visible.some((item) => item.id === 'git' && item.present)
+      const tunnelReady = visible.some((item) => item.id === 'cloudflared' && item.present)
+      const chosenPresent = first.items.some((item) => item.id === chosen && item.present)
+      const brewMissing = visible.some((item) => item.id === 'brew' && !item.present)
+      if (first.ready && gitReady && tunnelReady && chosenPresent && !brewMissing) {
+        const opened = await onReady(asReady(first, { ready: true, watching: Boolean(first.brainPath || first.watching) }, wantCli))
+        if (opened === false) setPhase('review')
+        return
+      }
+      const missing = visible.filter((item) => !item.present && allow.has(item.id))
+      const required = new Set(['brew', 'git', 'cloudflared'])
       for (const item of missing) {
         if (stop.current) {
           setPhase('review')
@@ -190,7 +243,7 @@ export function SetupNeeds({
           setNote(String((e as Error).message || e))
         }
       }
-      const st = await refresh()
+      const st = await refresh(chosen)
       setBusyId('')
       setBusyLabel('')
       setBanner('')
@@ -200,27 +253,16 @@ export function SetupNeeds({
         setErr('Install Grok, Claude, Cursor, or ChatGPT. Chat needs one of them. Then Start setup again.')
         return
       }
-      const abStillMissing = st.items.some((i) => i.id === 'ab' && !i.present)
-      if (st.ready && !abStillMissing) {
-        onReady(asReady(st, { ready: true, watching: Boolean(st.brainPath || st.watching) }, wantCli))
-        return
-      }
-      if ((st.brainPath || st.watching) && ai) {
-        onReady(asReady(st, { ready: false, watching: Boolean(st.brainPath || st.watching) }, wantCli))
-        return
-      }
-      setPhase('review')
-      if (!st.brainPath && !st.watching) {
-        setErr('The shared folder is not on this computer yet. Finish GitHub, then Recheck.')
-        return
-      }
-      setNote('Still missing a watched folder or an AI tool. Finish the open installer, then Start setup again.')
+      const opened = await onReady(asReady(st, { ready: st.ready, watching: Boolean(st.brainPath || st.watching) }, wantCli))
+      if (opened === false) setPhase('review')
+      return
     } catch (e) {
+      setErr(String((e as Error).message || e))
+    } finally {
       setPhase('review')
       setBusyId('')
       setBusyLabel('')
       setBanner('')
-      setErr(String((e as Error).message || e))
     }
   }
 
@@ -229,14 +271,17 @@ export function SetupNeeds({
   const cliMissing = missing.some((i) => i.id === 'grok' || i.id === 'claude' || i.id === 'cursor' || i.id === 'gpt')
   const running = phase === 'run'
 
+  const shown = hideAgency ? items.filter((item) => item.id !== 'ab') : items
+
   return (
-    <>
+    <div data-setup-screen="needs">
       <p className="kicker">This computer</p>
       <h1>{running ? 'Setting up this computer.' : 'One setup, then Chat.'}</h1>
       <p>
         We install what’s missing with the official installers. Nothing here spends money. Grok, Claude, Cursor, and ChatGPT
         still bill your own accounts when you sign in.
       </p>
+      {said ? <p className="note">{said}</p> : null}
       {banner ? <p className="note">{banner}</p> : null}
       {running ? <WorkPulse label={busyLabel ? `Installing ${busyLabel}` : 'Setting up'} seconds={waitSec} /> : null}
       {!running && loaded && (warns.length > 0 || cliMissing) ? (
@@ -277,16 +322,20 @@ export function SetupNeeds({
       ) : null}
       {!running && loaded ? (
         <div className="warn-box">
-          <h3>AI tools to install</h3>
-          <p>All of them are selected. Uncheck any you do not want on this computer.</p>
+          <h3>One AI for this setup</h3>
+          <p>Pick one. Start setup installs that one, plus Git and Cloudflare Tunnel if they are missing.</p>
           {CLI_IDS.map((id) => {
             const row = items.find((i) => i.id === id)
             return (
               <label key={id} className="need-row">
                 <input
-                  type="checkbox"
-                  checked={wantCli[id] !== false}
-                  onChange={(e) => setWantCli((prev) => ({ ...prev, [id]: e.target.checked }))}
+                  type="radio"
+                  name="setup-cli"
+                  checked={wantCli[id] === true}
+                  onChange={() => {
+                    setWantCli({ grok: id === 'grok', claude: id === 'claude', cursor: id === 'cursor', gpt: id === 'gpt' })
+                    onPick?.(id as AiKind)
+                  }}
                 />
                 <span>
                   {row?.label || id}
@@ -298,7 +347,7 @@ export function SetupNeeds({
         </div>
       ) : null}
       <ul className="setup-list">
-        {items.map((n) => (
+        {shown.map((n) => (
           <li key={n.id} className={n.present ? 'got' : busyId === n.id ? 'now' : ''}>
             <span>{n.present ? '✓' : busyId === n.id ? '·' : '○'}</span>
             <span>
@@ -354,6 +403,6 @@ export function SetupNeeds({
           </button>
         ) : null}
       </div>
-    </>
+    </div>
   )
 }

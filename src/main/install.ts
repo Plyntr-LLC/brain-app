@@ -18,6 +18,8 @@ import { plyntrInstalled } from './plyntr-sync'
 import { brainIdForSlug } from './plyntr-seats'
 import { readSyncManifest, readSyncMode } from './sync-manifest'
 import { plyntrGithubInstallReady } from './setup-folder'
+import { absentIds, forcedPresent, pretendExit } from './setup-pretend'
+import { setupTrace } from './setup-trace'
 import type { AiKind } from '../shared/contracts'
 
 export type NeedId = 'brew' | 'git' | 'ab' | 'cloudflared' | 'grok' | 'claude' | 'cursor' | 'gpt' | 'plyntr-github'
@@ -47,7 +49,14 @@ function brewBin(): string | null {
   return null
 }
 
-function gitPresent(): boolean {
+function brewPresent(): boolean {
+  if (absentIds().has('brew')) return false
+  return Boolean(brewBin())
+}
+
+export function gitPresent(): boolean {
+  if (absentIds().has('git')) return false
+  if (forcedPresent('git')) return true
   if (process.platform === 'win32') {
     const env = binEnv()
     const dirs = String(env.PATH || '').split(';')
@@ -64,7 +73,9 @@ function gitPresent(): boolean {
   }
 }
 
-function cloudflaredPresent(): boolean {
+export function cloudflaredPresent(): boolean {
+  if (absentIds().has('cloudflared')) return false
+  if (forcedPresent('cloudflared')) return true
   const extra = '/opt/homebrew/bin:/usr/local/bin'
   const env = { ...process.env, PATH: `${process.env.PATH || ''}:${extra}` }
   try {
@@ -80,7 +91,7 @@ function cloudflaredPresent(): boolean {
   }
 }
 
-export async function listNeeds(): Promise<{ ready: boolean; watching: boolean; brainPath: string | null; items: NeedItem[] }> {
+export async function listNeeds(picked?: AiKind): Promise<{ ready: boolean; watching: boolean; brainPath: string | null; items: NeedItem[] }> {
   const ai = detectAi()
   const watchingInfo = readWatching()
   const watching = Boolean(watchingInfo.brainPath)
@@ -108,7 +119,7 @@ export async function listNeeds(): Promise<{ ready: boolean; watching: boolean; 
       id: 'brew',
       label: 'Homebrew',
       line: 'Lets this Mac install the other tools.',
-      present: Boolean(brewBin()),
+      present: brewPresent(),
       warn: 'A password window will open, with dots and Cancel. Terminal stays open so you can watch the install.',
       accept: 'Type your Mac password in the window. Dots show as you type. Cancel stops the install.'
     })
@@ -169,23 +180,31 @@ export async function listNeeds(): Promise<{ ready: boolean; watching: boolean; 
   const folderPath = currentBrainFolder() || watchingInfo.brainPath || loadAccount()?.folder || null
   const folder = Boolean(folderPath)
   const mode = readSyncMode(folderPath || '')
+  const finish = (
+    ready: boolean,
+    kept: NeedItem[],
+    path: string | null
+  ): { ready: boolean; watching: boolean; brainPath: string | null; items: NeedItem[] } => {
+    const git = kept.find((item) => item.id === 'git')
+    const tunnel = kept.find((item) => item.id === 'cloudflared')
+    setupTrace({
+      event: 'needs',
+      ready,
+      git: Boolean(git?.present),
+      cloudflared: Boolean(tunnel?.present),
+      picked: picked || '',
+      mode: mode || ''
+    })
+    return { ready, watching, brainPath: path, items: kept }
+  }
   if (mode === 'local') {
-    const kept = items.filter((i) => i.id !== 'ab' && i.id !== 'cloudflared')
-    const signed =
-      (ai.grok && cliSignedIn('grok')) ||
-      (ai.claude && cliSignedIn('claude')) ||
-      (ai.cursor && cliSignedIn('cursor')) ||
-      (ai.gpt && cliSignedIn('gpt'))
+    const kept = items.filter((i) => i.id !== 'ab')
+    const signed = picked ? Boolean(ai[picked] && cliSignedIn(picked)) : (ai.grok && cliSignedIn('grok')) || (ai.claude && cliSignedIn('claude')) || (ai.cursor && cliSignedIn('cursor')) || (ai.gpt && cliSignedIn('gpt'))
     const marker = Boolean(folderPath && hasBrainMarker(folderPath))
-    return {
-      ready: Boolean(folderPath) && gitPresent() && signed && marker,
-      watching,
-      brainPath: folderPath,
-      items: kept
-    }
+    return finish(Boolean(folderPath) && gitPresent() && cloudflaredPresent() && signed && marker, kept, folderPath)
   }
   if (mode === 'plyntr') {
-    const kept = items.filter((i) => i.id !== 'ab' && i.id !== 'cloudflared')
+    const kept = items.filter((i) => i.id !== 'ab')
     const manifest = folderPath ? readSyncManifest(folderPath) : null
     const repo = manifest?.ok ? manifest.manifest.repo : ''
     const row = folderPath ? brainRowForPath(folderPath) : null
@@ -207,25 +226,16 @@ export async function listNeeds(): Promise<{ ready: boolean; watching: boolean; 
       warn: '',
       accept: ''
     })
-    const signed =
-      (ai.grok && cliSignedIn('grok')) ||
-      (ai.claude && cliSignedIn('claude')) ||
-      (ai.cursor && cliSignedIn('cursor')) ||
-      (ai.gpt && cliSignedIn('gpt'))
+    const signed = picked ? Boolean(ai[picked] && cliSignedIn(picked)) : (ai.grok && cliSignedIn('grok')) || (ai.claude && cliSignedIn('claude')) || (ai.cursor && cliSignedIn('cursor')) || (ai.gpt && cliSignedIn('gpt'))
     const marker = Boolean(folderPath && hasBrainMarker(folderPath))
-    return {
-      ready: Boolean(folderPath) && gitPresent() && signed && marker && gh,
-      watching,
-      brainPath: folderPath,
-      items: kept
-    }
+    return finish(
+      Boolean(folderPath) && gitPresent() && cloudflaredPresent() && signed && marker && gh,
+      kept,
+      folderPath
+    )
   }
-  return {
-    ready: folder && hasCli && gitPresent() && cloudflaredPresent(),
-    watching,
-    brainPath: folderPath,
-    items
-  }
+  const pickedPresent = picked ? Boolean(ai[picked]) : hasCli
+  return finish(Boolean(folder && pickedPresent && gitPresent() && cloudflaredPresent()), items, folderPath)
 }
 
 function run(cmd: string, args: string[], timeoutMs = 8 * 60_000): Promise<{ code: number; out: string }> {
@@ -416,7 +426,21 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
   const win32 = process.platform === 'win32'
   if (id === 'brew') {
     if (win32) return { ok: true, detail: 'Homebrew is a Mac tool. Skipped on Windows.', wait: 'none' }
-    if (brewBin()) return { ok: true, detail: 'Homebrew is already here.', wait: 'none' }
+    const stub = pretendExit('brew')
+    if (brewPresent() && stub === null) {
+      setupTrace({ event: 'install', id: 'brew', ok: true, presentAfter: true })
+      return { ok: true, detail: 'Homebrew is already here.', wait: 'none' }
+    }
+    if (stub !== null) {
+      const presentAfter = brewPresent()
+      setupTrace({ event: 'install', id: 'brew', ok: presentAfter, presentAfter })
+      return {
+        ok: presentAfter,
+        detail: presentAfter ? 'Homebrew is already here.' : 'Homebrew did not install.',
+        wait: 'none'
+      }
+    }
+    if (brewPresent()) return { ok: true, detail: 'Homebrew is already here.', wait: 'none' }
     const dir = mkdtempSync(join(tmpdir(), 'brain-brew-'))
     const file = join(dir, 'install-homebrew.command')
     writeFileSync(
@@ -448,17 +472,28 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
     }
   }
   if (id === 'git') {
-    if (gitPresent()) return { ok: true, detail: 'Git is already here.', wait: 'none' }
-    if (win32) {
-      const r = await win('winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements')
-      return { ok: r.code === 0 || gitPresent(), detail: r.out.slice(-800), wait: gitPresent() ? 'none' : 'present' }
+    const stub = pretendExit('git')
+    if (gitPresent() && stub === null) {
+      setupTrace({ event: 'install', id: 'git', ok: true, presentAfter: true })
+      return { ok: true, detail: 'Git is already here.', wait: 'none' }
     }
-    const r = await run('/usr/bin/xcode-select', ['--install'])
-    if (gitPresent()) return { ok: true, detail: 'Git is already here.', wait: 'none' }
+    let detail = ''
+    if (stub === null) {
+      if (win32) {
+        const r = await win('winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements')
+        detail = r.out.slice(-800)
+      } else {
+        await run('/usr/bin/xcode-select', ['--install'])
+      }
+    }
+    const presentAfter = gitPresent()
+    setupTrace({ event: 'install', id: 'git', ok: presentAfter, presentAfter })
     return {
-      ok: r.code === 0 || r.code === 1,
-      detail: 'Apple’s tools installer should be open. Click Install. We will continue when it finishes.',
-      wait: 'present'
+      ok: presentAfter,
+      detail: presentAfter
+        ? 'Git is already here.'
+        : detail || (win32 ? 'Git did not install.' : 'Apple’s tools installer should be open. Click Install. We will continue when it finishes.'),
+      wait: presentAfter ? 'none' : 'present'
     }
   }
   if (id === 'ab') {
@@ -482,26 +517,46 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
     }
   }
   if (id === 'cloudflared') {
-    if (cloudflaredPresent()) return { ok: true, detail: 'Cloudflare Tunnel is already here.', wait: 'none' }
-    if (win32) {
-      const r = await win(
-        'winget install --id Cloudflare.cloudflared -e --accept-source-agreements --accept-package-agreements'
-      )
-      const here = cloudflaredPresent()
-      return {
-        ok: here,
-        detail: here ? 'Cloudflare Tunnel is installed.' : r.out.slice(-800) || 'Cloudflare Tunnel did not install.',
-        wait: 'none'
+    const stub = pretendExit('cloudflared')
+    if (cloudflaredPresent() && stub === null) {
+      setupTrace({ event: 'install', id: 'cloudflared', ok: true, presentAfter: true })
+      return { ok: true, detail: 'Cloudflare Tunnel is already here.', wait: 'none' }
+    }
+    let detail = ''
+    if (stub === null) {
+      if (win32) {
+        const r = await win(
+          'winget install --id Cloudflare.cloudflared -e --accept-source-agreements --accept-package-agreements'
+        )
+        detail = r.out.slice(-800)
+      } else {
+        const brew = brewBin()
+        if (!brew) {
+          setupTrace({ event: 'install', id: 'cloudflared', ok: false, presentAfter: false })
+          return { ok: false, detail: 'Homebrew first, then Cloudflare Tunnel.', wait: 'none' }
+        }
+        const r = await run(brew, ['install', 'cloudflared'])
+        detail = r.out.slice(-800)
       }
     }
-    const brew = brewBin()
-    if (!brew) return { ok: false, detail: 'Homebrew first, then Cloudflare Tunnel.', wait: 'none' }
-    const r = await run(brew, ['install', 'cloudflared'])
-    const here = cloudflaredPresent()
+    const presentAfter = cloudflaredPresent()
+    setupTrace({ event: 'install', id: 'cloudflared', ok: presentAfter, presentAfter })
     return {
-      ok: here,
-      detail: here ? 'Cloudflare Tunnel is installed.' : r.out.slice(-800) || 'Cloudflare Tunnel did not install.',
+      ok: presentAfter,
+      detail: presentAfter ? 'Cloudflare Tunnel is installed.' : detail || 'Cloudflare Tunnel did not install.',
       wait: 'none'
+    }
+  }
+  if (id === 'grok' || id === 'claude' || id === 'cursor' || id === 'gpt') {
+    const stub = pretendExit(id)
+    if (stub !== null) {
+      const presentAfter = Boolean(detectAi()[id])
+      setupTrace({ event: 'install', id, ok: presentAfter, presentAfter })
+      return {
+        ok: presentAfter,
+        detail: presentAfter ? 'Already here.' : 'That installer did not leave the CLI on this computer.',
+        wait: 'none'
+      }
     }
   }
   if (id === 'grok') {

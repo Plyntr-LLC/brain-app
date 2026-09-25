@@ -7,6 +7,7 @@ import { plyntrDeviceId, savePlyntrSeat, seatForBrain, seatTokenForBrain } from 
 import { listedRoleForSeat, transferUsesOwnerToken } from '../shared/plyntr-transfer'
 import { normalizePlyntrInviteCode, slugFromBusinessName } from '../shared/plyntr-invite'
 import { dryRunInstalledBody, dryRunPlyntrBind, dryRunProjectInvite, type PlyntrBindActor } from './plyntr-dry-run'
+import { driveOn } from './setup-pretend'
 
 const ORIGIN = 'https://brain-sync.joe-84a.workers.dev'
 
@@ -123,15 +124,66 @@ function dryRunPlyntrWorker(path: string, body: Record<string, unknown> | null, 
     const code = normalizePlyntrInviteCode(String(body?.code || ''))
     if (code === 'PR0J3CT12X') {
       return {
-        seatToken: '',
+        seatToken: 'pbt_dry_project_real',
         role: 'project',
         email: 'pat@example.com',
         name: 'Pat',
         repo: 'plyntr-fixture/plyntr-fixture-brain',
         label: 'Plyntr fixture',
-        brainId: 'dry-brain',
+        brainId: 'project-real',
         bootstrap: false,
         roots: ['projects/fixture/']
+      }
+    }
+    if ((code === 'TEAMJOIN1' || code === 'PROJJOIN1' || code === 'OWNRJOIN1' || code === 'OWNRPEND1') && !driveOn()) {
+      fail(400, { error: 'bad', detail: 'That code did not work.' })
+    }
+    if (code === 'TEAMJOIN1') {
+      return {
+        seatToken: 'pbt_dry_team',
+        role: 'team',
+        email: 'team@example.com',
+        name: 'Team',
+        repo: 'plyntr-fixture/plyntr-fixture-brain',
+        label: 'Plyntr fixture',
+        brainId: 'team-join',
+        bootstrap: false
+      }
+    }
+    if (code === 'PROJJOIN1') {
+      return {
+        seatToken: 'pbt_dry_project',
+        role: 'project',
+        email: 'project@example.com',
+        name: 'Project',
+        repo: 'plyntr-fixture/plyntr-fixture-brain',
+        label: 'Plyntr fixture',
+        brainId: 'project-join',
+        bootstrap: false
+      }
+    }
+    if (code === 'OWNRJOIN1') {
+      return {
+        seatToken: 'pbt_dry_owner',
+        role: 'owner',
+        email: 'owner@example.com',
+        name: 'Owner',
+        repo: 'plyntr-fixture/plyntr-fixture-brain',
+        label: 'Plyntr fixture',
+        brainId: 'owner-join',
+        bootstrap: false
+      }
+    }
+    if (code === 'OWNRPEND1') {
+      return {
+        seatToken: 'pbt_dry_pending',
+        role: 'owner',
+        email: 'owner@example.com',
+        name: 'Owner',
+        repo: 'pending/dry-brain',
+        label: 'Pending brain',
+        brainId: 'owner-pending',
+        bootstrap: false
       }
     }
     if (code !== 'TESTTEST12') fail(400, { error: 'bad', detail: 'That code did not work.' })
@@ -370,7 +422,8 @@ export function dryRunProjectFolder(resolved: PlyntrResolved): {
   teamSlug: string
   roots: string[]
 } {
-  const dest = join(homedir(), 'Projects', 'plyntr-project-dry-run')
+  const root = process.env.BRAIN_APP_SETUP_DRIVE === '1' ? String(process.env.BRAIN_APP_SETUP_ROOT || '').trim() : ''
+  const dest = join(root || join(homedir(), 'Projects'), 'plyntr-project-dry-run')
   mkdirSync(dest, { recursive: true })
   return {
     ok: true,
@@ -548,6 +601,22 @@ function git(cwd: string, args: string[]): Promise<void> {
     child.on('error', reject)
     child.on('close', (code) => (code === 0 ? resolve() : reject(new Error('git init failed'))))
   })
+}
+
+export function fixtureBrainRoot(): string {
+  return fixtureRoot()
+}
+
+export async function seedSetupDraft(dest: string, withGit: boolean): Promise<string> {
+  mkdirSync(dest, { recursive: true })
+  if (!existsSync(join(dest, 'AGENTS.md'))) cpSync(fixtureRoot(), dest, { recursive: true })
+  const syncPath = join(dest, '.team-config', 'sync.json')
+  if (existsSync(syncPath)) rmSync(syncPath)
+  if (withGit && !existsSync(join(dest, '.git'))) {
+    await git(dest, ['init'])
+    await git(dest, ['remote', 'remove', 'origin']).catch(() => {})
+  }
+  return dest
 }
 
 export async function seedLocalBrain(dest: string): Promise<void> {

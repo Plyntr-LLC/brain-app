@@ -4,6 +4,7 @@ import { binEnv, resolveBin } from './ai-cli'
 import { claudeContent, type Attach } from './attach'
 import { asRecord, asText, fileHits, spawnBin } from './line-rpc'
 import { captureToolHook, wrapPromptWithHooks } from './project-hooks'
+import { setupTrace } from './setup-trace'
 
 const RULES =
   'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
@@ -121,6 +122,9 @@ function attach(s: Sess): void {
 }
 
 function writeUser(s: Sess, text: string, files: Attach[] = []): void {
+  if (text.includes('Explain this step.')) {
+    setupTrace({ event: 'prompt', kind: 'claude', text, appTools: [], sendsAppTools: false, cwd: s.cwd })
+  }
   const stdin = s.proc.stdin
   if (!stdin || stdin.destroyed) throw new Error('Claude stdin is closed')
   stdin.write(
@@ -209,6 +213,28 @@ export async function claudePrompt(opts: {
   attachments?: Attach[]
   onEvent: (ev: StreamEvent) => void
 }): Promise<string> {
+  if (process.env.BRAIN_APP_SETUP_DRIVE === '1') {
+    const text = wrapPromptWithHooks({ cwd: opts.cwd, kind: 'claude', sessionId: opts.tabId, text: opts.text })
+    const proc = { stdin: { destroyed: false, write: () => true } } as unknown as Sess['proc']
+    writeUser(
+      {
+        tabId: opts.tabId,
+        cwd: opts.cwd,
+        proc,
+        buf: '',
+        waiting: null,
+        text: '',
+        dead: false,
+        n: 0,
+        promptGen: 0
+      },
+      text,
+      opts.attachments || []
+    )
+    opts.onEvent({ kind: 'text', data: 'Here is what this step is for.' })
+    opts.onEvent({ kind: 'done' })
+    return ''
+  }
   await claudeWarm(opts)
   const s = sessions.get(opts.tabId)
   if (!s || s.dead) throw new Error('Claude session is not ready')

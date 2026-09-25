@@ -1,3 +1,4 @@
+import './setup-drive-home'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { appAllowList, attachMainLinks, installGuestLinkPolicy } from './link-policy'
 import { join } from 'node:path'
@@ -79,7 +80,9 @@ export function createWindow(): BrowserWindow {
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    win.loadURL(process.env.ELECTRON_RENDERER_URL)
+    const base = process.env.ELECTRON_RENDERER_URL
+    const drive = process.env.BRAIN_APP_SETUP_DRIVE === '1'
+    win.loadURL(drive ? `${base}${base.includes('?') ? '&' : '?'}setupDrive=1` : base)
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'))
   }
@@ -94,6 +97,11 @@ function pushHealth(): void {
 
 app.whenReady().then(() => {
   if (process.env.BRAIN_CHECK_WINDOW === '1') return
+  if (process.env.BRAIN_APP_SETUP_DRIVE === '1') {
+    const win = createWindow()
+    void import('./setup-drive').then((mod) => mod.runSetupDrive(win))
+    return
+  }
   recordLaunchVersion()
   createWindow()
   startTray(() => mainWin)

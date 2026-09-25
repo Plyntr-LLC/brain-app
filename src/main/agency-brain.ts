@@ -12,6 +12,7 @@ import {
   type AgencyProfile
 } from './agency-config'
 import { getPendingJoin } from './join-pending'
+import { setupTrace } from './setup-trace'
 
 const execFileP = promisify(execFile)
 
@@ -376,6 +377,10 @@ export function accountFieldsForFolder(folder: string): {
 export async function activateWatching(folder: string): Promise<{ ok: boolean; detail: string }> {
   const path = String(folder || '').trim()
   if (!path || !existsSync(path)) return { ok: false, detail: 'That brain folder is not on this computer.' }
+  setupTrace({ event: 'watcher', fn: 'activateWatching', folder: path })
+  if (process.env.BRAIN_APP_SETUP_DRIVE === '1') {
+    return { ok: true, detail: 'Setup drive leaves Agency Brain’s setup file alone.' }
+  }
   const ident = readTeamIdentity(path)
   const incoming = profileFromJoin(path)
   let cfg = loadFullConfig()
