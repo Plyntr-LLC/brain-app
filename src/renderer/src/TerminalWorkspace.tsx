@@ -14,6 +14,7 @@ import { SkinCard } from './skin/Registry'
 import { skinPtyId } from './skin/SkinTerm'
 import { specFromStreamEvent } from '../../shared/skin/from-events'
 import { isHiddenStreamKind, isProtocolNoise } from '../../shared/skin/hidden-kinds'
+import { appendThought, collapseAdjacentThinks } from '../../shared/think-run'
 
 type Mode = 'chat' | 'term'
 type Attach = { path: string; name: string; mime: string; preview?: string }
@@ -560,16 +561,8 @@ function ChatPane({
       if (ev.kind === 'thought' && ev.data) {
         setWaitLabel('Thinking')
         const bit = ev.data
-        setMessages((msgs) => {
-          const next = [...msgs]
-          const last = next[next.length - 1]
-          if (turn.current.think && last && last.who === 'think') last.text += bit
-          else {
-            turn.current.think = true
-            next.push({ who: 'think', text: bit })
-          }
-          return next
-        })
+        turn.current.think = true
+        setMessages((msgs) => appendThought(msgs, bit))
       }
       if (ev.kind === 'text' && ev.data) {
         setWaitLabel('Writing')
@@ -1604,7 +1597,7 @@ function ChatPane({
       />
       {!skinOn ? (
       <div className="thread" ref={thread} onScroll={onThreadScroll}>
-        {messages.map((m, i) =>
+        {collapseAdjacentThinks(messages).map((m, i, view) =>
           m.who === 'plan' && m.steps?.length ? (
             <ol className="skin-plan" key={i}>
               {m.steps.map((s, j) => (
@@ -1640,9 +1633,9 @@ function ChatPane({
               key={i}
             >
               {m.who === 'think' && (
-                <div className={`think-label ${busy && messages[messages.length - 1] === m ? 'live' : ''}`}>
+                <div className={`think-label ${busy && i === view.length - 1 ? 'live' : ''}`}>
                   Thinking
-                  {busy && messages[messages.length - 1] === m ? <span className="dots" /> : null}
+                  {busy && i === view.length - 1 ? <span className="dots" /> : null}
                 </div>
               )}
               {m.who === 'sys' && <div className="think-label">Command</div>}

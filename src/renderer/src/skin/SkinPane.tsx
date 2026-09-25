@@ -116,6 +116,16 @@ export function SkinPane({
     } else if (m.who === 'think') {
       const text = cleanThink(m.text || '')
       if (!text) return
+      const prev = specs[specs.length - 1]
+      if (prev?.spec.component === 'Thought') {
+        const prior = String(prev.spec.props.text || '')
+        prev.spec = {
+          ...prev.spec,
+          props: { ...prev.spec.props, text: prior ? prior + '\n\n' + text : text }
+        }
+        prev.thinkLive = thinkIsLive(messages, i, busy)
+        return
+      }
       const s = specFromStreamEvent({ kind: 'thought', data: text })
       if (s) specs.push({ spec: s, thinkKey: 't-' + i, thinkLive: thinkIsLive(messages, i, busy) })
     } else if (m.who === 'sys' && m.text) {

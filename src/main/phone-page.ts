@@ -461,13 +461,26 @@ export function phonePageHtml(): string {
         }
         if (m.who === 'think') {
           if (!m.html) continue
-          const live = thinkLive(list, i)
+          let html = m.html
+          let last = i
+          for (let k = i + 1; k < list.length; k++) {
+            const n = list[k]
+            if (n.who === 'think') {
+              if (n.html) html += n.html
+              last = k
+              continue
+            }
+            if (n.who === 'me' || n.who === 'sys' || isFileSys(n) || n.html) break
+            last = k
+          }
+          i = last
+          const live = thinkLive(list, last)
           const key = active + '-t-' + i
           const open = openThink[key] === true || (openThink[key] !== false && live)
           bits.push(
             '<div class="bubble think"><button type="button" class="think-label" data-think="' + esc(key) + '">Thinking' +
               (open ? '' : ' · show') + '</button>' +
-              (open ? '<div class="mdbody think-body">' + m.html + '</div>' : '') +
+              (open ? '<div class="mdbody think-body">' + html + '</div>' : '') +
             '</div>'
           )
           continue

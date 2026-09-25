@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto'
 import { app, BrowserWindow, ipcMain } from 'electron'
 import type { AiKind } from '../shared/contracts'
 import { phonePaintHtml } from '../shared/md'
+import { appendThought } from '../shared/think-run'
 import { readWatching } from './agency-brain'
 import { MAX_ATTACH, stashBytes, type Attach } from './attach'
 import { stopPrompt } from './ai-cli'
@@ -623,9 +624,9 @@ function applyLiveEvent(ev: ChatFanPayload): void {
     if (last && last.who === 'brain') last.text += ev.data
     else list.push({ who: 'brain', text: ev.data })
   } else if (ev.kind === 'thought' && ev.data) {
-    const last = list[list.length - 1]
-    if (last && last.who === 'think') last.text += ev.data
-    else list.push({ who: 'think', text: ev.data })
+    const folded = appendThought(list, ev.data)
+    list.length = 0
+    list.push(...folded)
   } else if (ev.kind === 'error' && ev.data) {
     list.push({ who: 'brain', text: ev.data })
   } else if (ev.kind === 'file' && ev.path) {
