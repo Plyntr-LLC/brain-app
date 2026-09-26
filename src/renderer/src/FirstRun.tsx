@@ -848,7 +848,7 @@ export function FirstRun() {
     <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${!railOpen && s.screen !== 'chat' ? 'rail-off' : ''} ${updatedLine ? 'has-update' : ''}`} data-setup-role={s.role || ''} data-setup-path={s.brainPath || ''}>
       <div className="titlebar">
         <span>{title}</span>
-        {s.role ? (
+        {s.role && !brainSeat ? (
           <span className="role-lock">
             {s.role === 'project' ? 'Project only' : s.role === 'team' || s.role === 'member' ? 'Team' : s.role === 'scout' ? 'Scout' : 'Owner'}
             {s.brainKind === 'project' ? ' · project' : s.brainKind === 'hq' ? ' · HQ' : ''}
@@ -862,8 +862,8 @@ export function FirstRun() {
                 : 'Agency Brain · watching this folder'
               : 'Folder not syncing')}
         </span>
-        {brainSeat ? <span className="role-lock">This brain · {brainSeat}</span> : null}
-        {s.email ? (
+        {brainSeat ? <span className="seat-pill">{brainSeat}</span> : null}
+        {s.email && !brainSeat ? (
           <span className="tiny" style={{ marginLeft: 'auto' }}>
             {superAdmin ? 'Super admin · ' : ''}
             {s.email}

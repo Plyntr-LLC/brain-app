@@ -23,33 +23,20 @@ export function whenSync(raw: string): string {
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
+function syncLine(hq: HqAgentHealth): string {
+  if (hq.offline) return 'Offline'
+  if (hq.error === 'unauthorized') return 'Not syncing'
+  if (hq.error) return hq.error
+  if (hq.openOnly) return 'Open in this window'
+  if (!hq.lastSync) return 'Waiting for first sync'
+  return `Last sync ${whenSync(hq.lastSync)}`
+}
+
 export function paintHealth(hq: HqAgentHealth, watching: boolean): SyncHealth {
   if (hq.present) {
-    if (hq.offline) {
-      return { ok: false, line: `${hq.label}: offline`, lastSync: hq.lastSync, offline: true, error: hq.error }
-    }
-    if (hq.error) {
-      return { ok: false, line: `${hq.label}: ${hq.error}`, lastSync: hq.lastSync, offline: false, error: hq.error }
-    }
-    if (hq.openOnly) {
-      return { ok: true, line: `${hq.label} · this window`, lastSync: hq.lastSync, offline: false, error: '' }
-    }
-    if (!hq.lastSync) {
-      return {
-        ok: false,
-        line: `${hq.label}: waiting for first sync`,
-        lastSync: '',
-        offline: false,
-        error: ''
-      }
-    }
-    return {
-      ok: true,
-      line: `${hq.label}: last sync ${whenSync(hq.lastSync)}`,
-      lastSync: hq.lastSync,
-      offline: false,
-      error: ''
-    }
+    const line = syncLine(hq)
+    const ok = !hq.offline && !hq.error && (hq.openOnly || Boolean(hq.lastSync))
+    return { ok, line, lastSync: hq.lastSync, offline: hq.offline, error: hq.error }
   }
   if (watching) {
     return { ok: true, line: 'Agency Brain · watching this folder', lastSync: '', offline: false, error: '' }

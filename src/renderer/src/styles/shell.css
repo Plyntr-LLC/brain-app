@@ -498,6 +498,14 @@
   color: var(--ink);
 }
 .demo button.on { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+.seat-pill {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--card);
+  padding: 0.2rem 0.45rem;
+  border-radius: 2px;
+}
 .role-lock {
   font-size: 0.75rem;
   font-weight: 600;
