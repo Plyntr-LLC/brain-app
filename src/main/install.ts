@@ -2,8 +2,9 @@ import { spawn, spawnSync } from 'node:child_process'
 import { chmodSync, copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { bringAppFront } from './bring-front'
 import { cliSignedIn } from './cli-auth'
-import { homedir, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { binRuns, cloudflaredUserBin as userBinAt, fallbackUserDataDir, resolveCloudflaredBin as resolveCf } from './cloudflared-bin'
 import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
 import { app, shell } from 'electron'
@@ -73,44 +74,20 @@ export function gitPresent(): boolean {
   }
 }
 
-function cloudflaredUserBin(): string {
+function userDataDir(): string {
   try {
-    return join(app.getPath('userData'), 'bin', 'cloudflared')
+    return app.getPath('userData')
   } catch {
-    return join(homedir(), 'Library/Application Support/Brain/bin/cloudflared')
+    return fallbackUserDataDir()
   }
 }
 
-function binRuns(path: string): boolean {
-  try {
-    return spawnSync(path, ['--version'], { stdio: 'ignore' }).status === 0
-  } catch {
-    return false
-  }
+function cloudflaredUserBin(): string {
+  return userBinAt(userDataDir())
 }
 
 export function resolveCloudflaredBin(): string | null {
-  const named = [
-    process.env.CLOUDFLARED_BIN,
-    cloudflaredUserBin(),
-    join(homedir(), '.local/bin/cloudflared'),
-    '/opt/homebrew/bin/cloudflared',
-    '/usr/local/bin/cloudflared'
-  ]
-  for (const p of named) {
-    if (p && existsSync(p) && binRuns(p)) return p
-  }
-  const extra = `${dirname(cloudflaredUserBin())}:/opt/homebrew/bin:/usr/local/bin`
-  try {
-    const r = spawnSync('which', ['cloudflared'], {
-      encoding: 'utf8',
-      env: { ...process.env, PATH: `${process.env.PATH || ''}:${extra}` }
-    })
-    const out = String(r.stdout || '').trim()
-    return r.status === 0 && out && binRuns(out) ? out : null
-  } catch {
-    return null
-  }
+  return resolveCf({ userDataDir: userDataDir() })
 }
 
 export function cloudflaredMacUrl(arch = process.arch): string {
@@ -122,8 +99,7 @@ export function cloudflaredMacUrl(arch = process.arch): string {
 export function cloudflaredPresent(): boolean {
   if (absentIds().has('cloudflared')) return false
   if (forcedPresent('cloudflared')) return true
-  const bin = resolveCloudflaredBin()
-  return Boolean(bin && binRuns(bin))
+  return resolveCloudflaredBin() !== null
 }
 
 async function installCloudflaredMac(): Promise<InstallResult> {
