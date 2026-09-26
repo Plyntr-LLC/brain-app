@@ -413,11 +413,14 @@ export async function requestHqCode(email: string): Promise<{ ok: boolean }> {
   if (!key.includes('@')) throw new Error('Type your work email first.')
   const mod = await loadAgent()
   const api = mod.createApi({ origin: HQ_SYNC_ORIGIN, getToken: () => '' })
-  await api.json('/auth/code', {
+  const res = await api.json('/auth/code', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email: key })
   })
+  if (!res.ok) {
+    throw new Error(String((res.body && (res.body.detail || res.body.error)) || 'Could not send that code.'))
+  }
   return { ok: true }
 }
 

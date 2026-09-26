@@ -139,6 +139,10 @@ export function SettingsPanel({
   )
   const [hq, setHq] = useState<HqStatus | null>(null)
   const [hqCode, setHqCode] = useState('')
+  const [hqEmail, setHqEmail] = useState('')
+  const hqEmailReady = useRef(false)
+  const [hqMailNote, setHqMailNote] = useState('')
+  const [projectFold, setProjectFold] = useState(false)
   const [hqRepo, setHqRepo] = useState('')
   const [folderRepo, setFolderRepo] = useState('')
   const [hqBusy, setHqBusy] = useState(false)
@@ -221,6 +225,13 @@ export function SettingsPanel({
       setShell({ email: row.email || email, flag: row.flag, signedIn: row.signedIn || [], keyless: row.keyless || [], local: row.local })
     }).catch(() => {})
   }, [email, brains, superAdmin])
+  useEffect(() => {
+    if (hqEmailReady.current) return
+    const next = (email || shell.email || '').trim()
+    if (!next.includes('@')) return
+    setHqEmail(next)
+    hqEmailReady.current = true
+  }, [email, shell.email])
   const canAddUsers = joe || !isTeamSeat(seat || role)
   const [plyntrMode, setPlyntrMode] = useState(false)
   const [plyntrBrainId, setPlyntrBrainId] = useState('')
@@ -692,51 +703,68 @@ export function SettingsPanel({
             />
           ) : null}
           {localSyncOffer()}
-          <p>
-            Team is on this whole brain. Project only never clones HQ. This app copies only the folders you tick,
-            keeps them in sync in the background, and deletes those folders if you remove access.
-          </p>
           <div className="set-block">
+            <FoldHead title="Project-only people" open={projectFold} onToggle={() => setProjectFold((v) => !v)} />
+            {projectFold ? (
+              <>
+            <p>
+              GitHub apps on this repo keep the whole-brain copy in sync. They do not add project-only people.
+              Open this only when someone should get a few folders, not this whole brain. Project-only never clones HQ.
+              This app copies the folders you tick, keeps them in sync, and deletes those folders if you remove access.
+            </p>
             <p className="tiny">
               {hq?.signedIn
                 ? [
-                    `Project sync signed in as ${hq.email}`,
+                    `Project-only sign-in is ${hq.email}`,
                     hq.hq_repo ? hq.hq_repo : '',
                     folderRepo && hq.hq_repo && folderRepo !== hq.hq_repo ? `This folder is ${folderRepo}` : ''
                   ]
                     .filter(Boolean)
                     .join('. ') + '.'
-                : 'To add Project only people, sign in for project sync with a code to your owner email.'}
+                : 'Email a six-digit code to the owner email used for Brain Bridge, then paste it. This is not your Plyntr team login, and it is not the GitHub apps on the repo.'}
             </p>
             {!hq?.signedIn ? (
               <>
                 <label className="field">
-                  Project-sync code
+                  Brain Bridge owner email
+                  <input
+                    value={hqEmail}
+                    onChange={(e) => {
+                      hqEmailReady.current = true
+                      setHqEmail(e.target.value)
+                    }}
+                    placeholder="you@company.com"
+                    autoComplete="email"
+                  />
+                </label>
+                <label className="field">
+                  Project-only code
                   <input value={hqCode} onChange={(e) => setHqCode(e.target.value)} placeholder="184 392" />
                 </label>
                 <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
                   <button
                     className="ghost"
                     type="button"
-                    disabled={!email.includes('@')}
                     onClick={async () => {
+                      const sendTo = hqEmail.trim() || email.trim() || shell.email.trim()
                       try {
-                        await window.brain.hqSync.ownerRequestCode(email)
-                        setNote('Check that inbox for a six-digit code. It lasts ten minutes.')
+                        await window.brain.hqSync.ownerRequestCode(sendTo)
+                        setHqMailNote('Check that inbox for a six-digit code. It lasts ten minutes.')
                       } catch (e) {
-                        setNote(String((e as Error).message || e))
+                        setHqMailNote(String((e as Error).message || e))
                       }
                     }}
                   >
-                    Email me a project-sync code
+                    Email me a project-only code
                   </button>
                   <button
                     className="primary"
                     type="button"
                     disabled={hqCode.replace(/\s/g, '').length < 4}
                     onClick={async () => {
+                      const signInEmail = hqEmail.trim() || email.trim() || shell.email.trim()
                       try {
-                        await window.brain.hqSync.ownerLogin({ email, code: hqCode })
+                        await window.brain.hqSync.ownerLogin({ email: signInEmail, code: hqCode })
                         const st = await window.brain.hqSync.ownerStatus()
                         setHq(st)
                         const watched = await window.brain.hqSync.watchedRepo().catch(() => '')
@@ -745,15 +773,17 @@ export function SettingsPanel({
                         if (st.projects.length) {
                           setLiveProjects(st.projects.map((p) => ({ id: p.slug, name: prettyName(p.slug) })))
                         }
-                        setNote('Project sync is on. Add Project only people below.')
+                        setHqMailNote('')
+                        setNote('Project-only sign-in is on. Add those people below.')
                       } catch (e) {
-                        setNote(String((e as Error).message || e))
+                        setHqMailNote(String((e as Error).message || e))
                       }
                     }}
                   >
                     Sign in
                   </button>
                 </div>
+                {hqMailNote ? <p className="tiny">{hqMailNote}</p> : null}
               </>
             ) : hq.kind === 'platform' ? (
               <p className="tiny">
@@ -827,6 +857,10 @@ export function SettingsPanel({
                     </div>
                   ))}
               </>
+            )}
+              </>
+            ) : (
+              <p className="tiny">Skip this unless you are adding someone who gets folders, not the whole brain.</p>
             )}
           </div>
           {plyntrMode ? (

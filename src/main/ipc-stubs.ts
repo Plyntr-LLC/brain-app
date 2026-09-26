@@ -1264,7 +1264,7 @@ export function registerStubIpc(): void {
   )
 
   const PLATFORM_GATE =
-    'Sign in to platform sync first: Settings → Add users → Email me a project-sync code, then Sign in, until you see This is the platform login.'
+    'Sign in to platform sync first: Settings → Add users → open Project-only people → Email me a project-only code, then Sign in, until you see This is the platform login.'
 
   async function putFolderPlyntr(opts: { brainId?: string; org?: string; slug?: string; repo?: string }) {
     const brainId = String(opts.brainId || '').trim()
@@ -2146,7 +2146,7 @@ export function registerStubIpc(): void {
     const watching = readWatching()
     const folder = String(cwd || currentBrainFolder() || watching.brainPath || '')
     const place = folder.split(/[/\\]/).filter(Boolean).pop() || 'this brain'
-    return takeFirstWelcome(folder, place)
+    return takeFirstWelcome(folder, place, getAccount()?.role)
   })
   ipcMain.handle('slash:list', async (_e, cwd?: string, kind?: string) => {
     const watching = readWatching()

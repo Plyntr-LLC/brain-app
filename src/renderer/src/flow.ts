@@ -3,7 +3,7 @@ import { OWNER_NEEDS, STEPS, TEAM_NEED, type NeedId, type PathKind, type Session
 export function blankSession(path: PathKind, dryRun: boolean): Session {
   return {
     path,
-    screen: 'fork',
+    screen: 'boot',
     email: '',
     teams: [],
     business: path === 'join' || path === 'second' ? "Harold's Books" : '',
@@ -19,7 +19,7 @@ const settingUpNewBrain = ['plyntr-code', 'plyntr-project', 'plyntr-create']
 export function stepState(s: Session, id: (typeof STEPS)[number]['id']): 'now' | 'done' | 'blocked' | '' {
   if (id === 'signed') {
     if (s.screen === 'plyntr-create') return 'done'
-    if (['fork', 'welcome', 'email', 'otp', 'plyntr-code', 'plyntr-project'].includes(s.screen)) return 'now'
+    if (['boot', 'fork', 'welcome', 'email', 'otp', 'plyntr-code', 'plyntr-project'].includes(s.screen)) return 'now'
     return 'done'
   }
   if (id === 'ab') {

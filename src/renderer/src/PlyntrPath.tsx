@@ -23,7 +23,7 @@ export function PackSelect({ value, onChange }: { value: string; onChange: (pack
 }
 
 const PLATFORM =
-  'Plyntr staff only. Open Settings, then Add users. Click Email me a code, paste the code, and click Sign in. Then come back and click Next.'
+  'Plyntr staff only. Open Settings, then Add users, then Project-only people. Email a code, paste it, and Sign in. Then come back and click Next.'
 const NO_REPO = 'This brain has no GitHub repository name yet.'
 
 type CreatePending = {
@@ -70,18 +70,20 @@ export function ForkScreen({
         </button>
       ) : null}
       {err ? <p className="note">{err}</p> : null}
+      <div className="choice-stack">
       <button className="choice" type="button" onClick={onPlyntr}>
         <h3>Plyntr Brain</h3>
-        <p>Pick this if Plyntr or your owner emailed you a code. Plyntr keeps backup copies, and your team can share this brain.</p>
+        <p>Plyntr or your owner emailed you a code. The team shares this brain, with a backup.</p>
       </button>
       <button className="choice" type="button" onClick={onAgency}>
         <h3>Plyntr Brain with Agency Brain sync</h3>
-        <p>Pick this if your agency uses Agency Brain and gave you a setup code like BR4-7XK.</p>
+        <p>Your agency uses Agency Brain and gave you a setup code like BR4-7XK.</p>
       </button>
       <button className="choice" type="button" onClick={onLocal}>
-        <h3>Plyntr Brain local only setup</h3>
-        <p>Keeps the brain on this Mac only. No backup and no sharing yet. You can turn on sync later in Settings.</p>
+        <h3>Plyntr Brain on this Mac only</h3>
+        <p>Stays on this computer. No backup and no sharing yet. You can turn on sync later in Settings.</p>
       </button>
+      </div>
     </>
   )
 }

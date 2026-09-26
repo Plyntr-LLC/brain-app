@@ -212,7 +212,9 @@ export function FirstRun() {
         ai: prev.ai || pick
       }))
     })()
-      .catch(() => {})
+      .catch(() => {
+        setS((prev) => ({ ...prev, screen: prev.screen === 'boot' ? 'fork' : prev.screen }))
+      })
       .finally(() => {
         ;(window as unknown as { __brainBoot?: boolean }).__brainBoot = true
       })
@@ -863,7 +865,7 @@ export function FirstRun() {
   }, [s.brainPath])
 
   return (
-    <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${!railOpen && s.screen !== 'chat' ? 'rail-off' : ''} ${updatedLine ? 'has-update' : ''}`} data-setup-role={s.role || ''} data-setup-path={s.brainPath || ''}>
+    <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${s.screen === 'boot' || (!railOpen && s.screen !== 'chat') ? 'rail-off' : ''} ${updatedLine ? 'has-update' : ''}`} data-setup-role={s.role || ''} data-setup-path={s.brainPath || ''}>
       <div className="titlebar">
         <span>{title}</span>
         {s.role && !openBrainAccountLabel(activeSeat) ? (
@@ -929,7 +931,7 @@ export function FirstRun() {
         </>
       )}
       <div className="body">
-        {s.screen !== 'chat' ? (
+        {s.screen !== 'chat' && s.screen !== 'boot' ? (
         <aside className="rail">
           <h2>Where you are</h2>
           {STEPS.map((st) => {
@@ -945,7 +947,7 @@ export function FirstRun() {
         </aside>
         ) : null}
         <section className="main">
-          {s.screen !== 'chat' ? (
+          {s.screen !== 'chat' && s.screen !== 'boot' ? (
           <div className="runmeta" data-setup-meta="1">
             <div className="runmeta-k">Model</div>
             <button type="button" className="runmeta-v">
@@ -955,19 +957,25 @@ export function FirstRun() {
             <button type="button" className="runmeta-v">{prettyEffort(undefined, s.ai || 'grok')}</button>
           </div>
           ) : null}
-          {s.screen !== 'chat' && s.screen !== 'fork' ? (
+          {s.screen !== 'chat' && s.screen !== 'fork' && s.screen !== 'boot' ? (
             <div className="setup-back-row">
               <button type="button" className="ghost setup-back" onClick={() => goBack()}>
                 Back
               </button>
             </div>
           ) : null}
-          {s.screen !== 'chat' ? <TwoApps channel={s.channel} /> : null}
-          {s.screen !== 'chat' && s.dryRun ? (
+          {s.screen !== 'chat' && s.screen !== 'boot' ? <TwoApps channel={s.channel} /> : null}
+          {s.screen !== 'chat' && s.screen !== 'boot' && s.dryRun ? (
             <div className="demo">
               <span>Dev dry-run. New GitHub short names and clones stay off until you pack the app.</span>
             </div>
           ) : null}
+          {s.screen === 'boot' && (
+            <div data-setup-screen="boot">
+              <p className="kicker">This computer</p>
+              <h1>Opening…</h1>
+            </div>
+          )}
           {s.screen === 'fork' && (
             <ForkScreen
               pendingCreate={Boolean(plyntrCreate)}

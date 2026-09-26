@@ -1,7 +1,6 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { app } from 'electron'
-import { contextNamesLookNew, firstChatWelcome } from '../shared/first-chat'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { FIRST_CHAT_MARKER, firstChatWelcome, shouldOfferFirstChat } from '../shared/first-chat'
 
 function contextNames(root: string): string[] {
   const out: string[] = []
@@ -25,20 +24,35 @@ function contextNames(root: string): string[] {
   return out
 }
 
-/** Returns the welcome once per folder, and only when context is still the blank template. */
-export function takeFirstWelcome(folder: string, place: string): { show: boolean; text: string } {
-  const dir = String(folder || '').trim()
-  if (!dir || !contextNamesLookNew(contextNames(dir))) return { show: false, text: '' }
-  const file = join(app.getPath('userData'), 'first-chat.json')
-  let seen: Record<string, boolean> = {}
+function agentsText(root: string): string {
   try {
-    const raw = JSON.parse(readFileSync(file, 'utf8')) as Record<string, boolean>
-    if (raw && typeof raw === 'object') seen = raw
+    return readFileSync(join(root, 'AGENTS.md'), 'utf8')
   } catch {
-    seen = {}
+    return ''
   }
-  if (seen[dir]) return { show: false, text: '' }
-  seen[dir] = true
-  writeFileSync(file, JSON.stringify(seen))
+}
+
+function writeMarker(root: string): void {
+  const file = join(root, FIRST_CHAT_MARKER)
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, `${new Date().toISOString()}\n`)
+}
+
+/** Returns the welcome once per brain, and only when context is still the blank template. */
+export function takeFirstWelcome(folder: string, place: string, role?: string): { show: boolean; text: string } {
+  const dir = String(folder || '').trim()
+  if (!dir) return { show: false, text: '' }
+  const offer = shouldOfferFirstChat({
+    relPaths: contextNames(dir),
+    agentsMd: agentsText(dir),
+    markerPresent: existsSync(join(dir, FIRST_CHAT_MARKER)),
+    role
+  })
+  if (!offer) return { show: false, text: '' }
+  try {
+    writeMarker(dir)
+  } catch {
+    /* folder may be read-only; still show once on this Mac */
+  }
   return { show: true, text: firstChatWelcome(place) }
 }

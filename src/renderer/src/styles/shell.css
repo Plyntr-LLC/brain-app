@@ -376,12 +376,21 @@
   font-size: 0.85rem;
 }
 .actions {
-  margin-top: auto;
+  margin-top: 1.25rem;
   display: flex;
   gap: 0.5rem;
   align-items: center;
   flex-wrap: wrap;
-  padding-top: 1rem;
+  padding-top: 0.15rem;
+}
+.choice-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0.85rem 0 0;
+}
+.choice-stack .choice {
+  margin: 0;
 }
 .choice {
   border: 1px solid var(--line);
