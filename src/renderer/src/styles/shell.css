@@ -197,7 +197,16 @@
 .app.chat-on.rail-off .body { grid-template-columns: 1fr; }
 .app.chat-on .rail { display: none; }
 .app.chat-on .main { padding: 0; overflow: hidden; display: flex; min-height: 0; }
-.app.chat-on .main > .workspace { flex: 1; min-height: 0; }
+.app.chat-on .main > .workspace,
+.app.chat-on .main > [data-setup-screen="chat"] {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.app.chat-on .main > [data-setup-screen="chat"] > .workspace { flex: 1; min-height: 0; height: auto; }
+.app.chat-on .main > [data-setup-screen="chat"] > .actions { margin-top: 0; flex-shrink: 0; }
 .app.rail-off .body { grid-template-columns: 0 1fr; }
 .app.rail-off .rail { overflow: hidden; padding: 0; border: 0; }
 .rail {
