@@ -9,6 +9,7 @@ import { acpPromptParts, type Attach } from './attach'
 import { underRoot } from './files'
 import { brainWriteBlock } from './write-guard'
 import { roleForBrainWrite } from './write-guard-role'
+import { brainIdForFolder, roleForKeylessWrite } from './plyntr-seats'
 import { grokAcpArgs, ensureGrokLeader, killGrokLeader } from './grok-leader'
 import { asRecord, asText, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 import { captureEvent, skinHint } from './skin/capture'
@@ -507,7 +508,7 @@ function handleReq(pool: Pool, msg: RpcMsg): void {
       pool.rpc.error(msg.id, -32603, 'That file is not in this folder.')
       return
     }
-    const blocked = brainWriteBlock(roleForBrainWrite(pool.cwd), pool.cwd, abs)
+    const blocked = brainWriteBlock(brainIdForFolder(pool.cwd) ? roleForBrainWrite(pool.cwd) : roleForKeylessWrite(pool.cwd), pool.cwd, abs)
     if (blocked) {
       pool.rpc.error(msg.id, -32603, blocked)
       return

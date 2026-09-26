@@ -31,7 +31,8 @@ import {
   plyntrInstallPin,
   reuseExistingFolder
 } from './setup-folder'
-import { brainRowForPath, currentBrainFolder, folderForSlug, listBrains, rememberBrain, switchBrain } from './brains'
+import { adoptFolder as recordKeyless, brainRowForPath, currentBrainFolder, folderForSlug, listBrains, rememberBrain, switchBrain } from './brains'
+import { acceptBrainCode, bindBrainFolder, initShellVault, listAllowed, logoutShell as logoutVault, resumeShellAccount as resumeVault, seatForId, setFlag, shellEmail, shellView, signInEmailOnly, switchShellBrain as switchVault } from './shell-vault'
 import { clearPendingJoin, getPendingJoin, pendingFromInvite, setPendingJoin } from './join-pending'
 import { ensurePendingJoinForFolder } from './watch-handoff'
 import { bringAppFront, clipOrgLogin, stopClipboardOrgWatch, watchClipboardOrg } from './bring-front'
@@ -93,11 +94,13 @@ import { listedRoleForSeat, plyntrSessionRole } from '../shared/plyntr-transfer'
 import { readSyncManifest, readSyncMode } from './sync-manifest'
 import { AB_OWNS_PLYNTR, chooseWatcher } from './watcher-choice'
 import {
+  brainIdForFolder,
   clearPendingCreate,
   clearPendingJoinPlyntr,
   loginToken,
   readPendingCreate,
   readPendingJoin as readPendingPlyntrJoin,
+  roleForKeylessWrite,
   savePlyntrSeat,
   seatForBrain,
   seatTokenForBrain,
@@ -316,6 +319,8 @@ function joinCodeError(err: unknown): Error {
 
 export function registerStubIpc(): void {
   loadAccount()
+  initShellVault(app.getPath('userData'))
+  ensureShell()
   ipcMain.handle('env:get', async () => {
     const watching = readWatching()
     const folder = currentBrainFolder() || watching.brainPath
@@ -420,9 +425,44 @@ export function registerStubIpc(): void {
     return listProjectFolders(folder || currentBrainFolder() || watching.brainPath || acct?.folder || null)
   })
   ipcMain.handle('brains:list', () => listBrains())
-  ipcMain.handle('brains:switch', async (_e, folder: string) => {
-    assertJoeSuper('switch brains')
+  ipcMain.handle('shell:view', () => {
+    refreshFlag()
+    const folder = currentBrainFolder()
+    const known = folder ? brainRowForPath(folder) : null
+    const allowed = listAllowed()
+    const id = known?.brainId && allowed.includes(known.brainId) ? known.brainId : folder && allowed.includes(folder) ? folder : ''
+    const live = id ? seatForId(id) : { email: '', label: '', token: '' }
+    return {
+      ...shellView(),
+      seat: { email: live.email || '', label: live.label || '', token: live.token ? 'seat' : '' }
+    }
+  })
+  /** Startup only: an install that already has account.json signs that shell in once. Codes never call this. */
+  function ensureShell(): void {
+    const acct = getAccount() || loadAccount()
+    if (acct?.email && !shellEmail()) signInEmailOnly(acct.email)
+    refreshFlag()
+  }
+  function refreshFlag(): void {
+    setFlag(isJoeSuperAdmin(getAccount() || loadAccount(), getSettings()))
+  }
+  function switchShellBrain(selectedFolderId: string) {
+    refreshFlag()
+    const known = brainRowForPath(selectedFolderId) || listBrains().find((b) => b.brainId && b.brainId === selectedFolderId) || null
+    const folder = known?.path || selectedFolderId
+    if (!folder || !existsSync(folder)) throw new Error('That brain folder is not on this computer.')
+    if (known?.brainId) {
+      switchVault(known.brainId)
+      bindBrainFolder(folder, known.brainId)
+    } else {
+      const view = shellView()
+      if (view.email === 'joe@plyntr.com' && view.flag) recordKeyless(folder, 'agency-seat')
+      switchVault(folder)
+    }
     return adoptFolder(folder)
+  }
+  ipcMain.handle('brains:switch', (_e, selectedFolderId: string) => {
+    return switchShellBrain(selectedFolderId)
   })
   ipcMain.handle('brains:add', async (_e, opts: { code?: string }) => {
     assertJoeSuper('add a company brain')
@@ -494,7 +534,7 @@ export function registerStubIpc(): void {
       brains
     }
     if (folder) {
-      const blocked = brainWriteBlock(roleForBrainWrite(folder), folder, join(folder, '.team-config', 'roles.json'))
+      const blocked = brainWriteBlock(brainIdForFolder(folder) ? roleForBrainWrite(folder) : roleForKeylessWrite(folder), folder, join(folder, '.team-config', 'roles.json'))
       if (blocked) return { people: loadTeam(), roster: { ok: false, detail: blocked } }
     }
     if (row.role === 'project') {
@@ -575,15 +615,18 @@ export function registerStubIpc(): void {
     async function asProject() {
       const joined = await joinProject({ email: key, code })
       saveAccount({
-        email: joined.email,
+        email: key,
+        appEmail: key,
         name: joined.name,
-        token: `local:${joined.email}`,
+        token: `local:${key}`,
         role: 'project',
         source: 'hq-sync',
         folder: joined.brainPath,
         brains: joined.roots
       })
       saveRecent(joined.brainPath)
+      const codeEmail = String(joined.email || key).toLowerCase()
+      acceptBrainCode('', key, codeEmail, 'project', '')
       return {
         ok: true,
         via: 'hq-sync' as const,
@@ -597,24 +640,28 @@ export function registerStubIpc(): void {
 
     async function asAgency() {
       const res = await ads2ai.verifyCode(key, code)
-    saveAccount({
-      email: String(res.member.email || key).toLowerCase(),
-      appEmail: String(res.member.email || key).toLowerCase(),
-      appName: res.member.name || '',
-      name: res.member.name || '',
-      token: res.token,
-      source: 'ads2ai'
-    })
+      saveAccount({
+        email: key,
+        appEmail: key,
+        appName: res.member.name || '',
+        name: res.member.name || '',
+        token: res.token,
+        source: 'ads2ai'
+      })
       const teams = (await ads2ai.myTeams(res.token)).teams || []
+      const codeEmail = String(res.member.email || key).toLowerCase()
+      acceptBrainCode('', key, codeEmail, '', '')
       return { ok: true, via: 'ads2ai' as const, member: res.member, teams, role: '' }
     }
 
     if (authCodeRoute(code) === 'plyntr') {
       const resolved = await resolvePlyntrCode(normalizePlyntrInviteCode(code))
+      const slug = resolved.repo.split('/')[1]?.replace(/-brain$/, '') || ''
       if (resolved.role === 'project') {
         const joined = dryRun()
           ? dryRunProjectFolder(resolved)
           : await joinProject({ email: resolved.email, code: normalizePlyntrInviteCode(code) })
+        acceptBrainCode(resolved.brainId, key, resolved.email, resolved.role, resolved.seatToken, slug, resolved.repo)
         saveAccount({
           email: joined.email,
           name: joined.name,
@@ -635,15 +682,6 @@ export function registerStubIpc(): void {
           role: 'project' as const
         }
       }
-      const slug = resolved.repo.split('/')[1]?.replace(/-brain$/, '') || ''
-      savePlyntrSeat(resolved.brainId, {
-        seatToken: resolved.seatToken,
-        slug,
-        email: resolved.email,
-        role: resolved.role,
-        repo: resolved.repo,
-        bootstrap: resolved.bootstrap
-      })
       writePendingJoin({
         brainId: resolved.brainId,
         repo: resolved.repo,
@@ -655,6 +693,7 @@ export function registerStubIpc(): void {
         bootstrap: resolved.bootstrap,
         wizardStep: 5
       })
+      acceptBrainCode(resolved.brainId, key, resolved.email, resolved.role, resolved.seatToken, slug, resolved.repo)
       const current = getAccount() || loadAccount()
       if (!isJoeSuperAdmin(current, getSettings())) {
         saveAccount({
@@ -696,9 +735,13 @@ export function registerStubIpc(): void {
       source: acct.source || ''
     }
   })
-  ipcMain.handle('auth:logout', () => {
-    stopBrainSync()
+  function logoutShell(): void {
+    logoutVault()
     clearAccount()
+  }
+  ipcMain.handle('auth:logout', () => {
+    logoutShell()
+    stopBrainSync()
     return { ok: true }
   })
   ipcMain.handle('auth:joinFolder', async (_e, emailRaw: string, folderRaw?: string) => {
@@ -1479,29 +1522,37 @@ export function registerStubIpc(): void {
     const session = loadOwnerSession()
     if (!session) throw new Error(PLATFORM_GATE)
     const created = await createPlyntrBrain(session.token, body)
-    if (created.seatToken) {
-      savePlyntrSeat(created.brainId, {
-        seatToken: created.seatToken,
-        slug: body.slug,
-        email: body.scoutEmail,
-        role: 'scout',
-        repo: created.repo,
-        bootstrap: true
-      })
-      const acct = getAccount() || loadAccount()
-      saveAccount({
-        email: body.scoutEmail,
-        appEmail: acct?.appEmail || body.scoutEmail,
-        name: acct?.name || body.scoutEmail,
-        token: acct?.source === 'plyntr' && acct.token.startsWith('login:') ? acct.token : loginToken(),
-        role: 'scout',
-        source: 'plyntr',
-        folder: acct?.folder || '',
-        brains: acct?.brains || []
-      })
+    const hasToken = storeSetupSeat(session.email, created.brainId, created.seatToken, {
+      email: String(body.scoutEmail || '').trim().toLowerCase(),
+      role: 'scout',
+      slug: created.slug,
+      repo: created.repo
+    })
+    return {
+      brainId: created.brainId,
+      repo: created.repo,
+      slug: created.slug || body.slug,
+      label: created.label || body.label,
+      email: body.scoutEmail,
+      code: created.code,
+      emailed: created.emailed,
+      role: String(created.role || 'scout'),
+      hasToken
     }
-    return { brainId: created.brainId, repo: created.repo, hasToken: Boolean(created.seatToken) }
   })
+  /** Store a company setup seat for the signed-in shell. Stores nothing without a string token, seat email and role. Signs in the platform email only when no shell is signed in. True when the vault now holds this token for the brain. */
+  function storeSetupSeat(
+    platformEmail: string,
+    brainId: string,
+    token: unknown,
+    seat: { email: string; role: string; slug?: string; repo?: string }
+  ): boolean {
+    const id = String(brainId || '').trim()
+    if (!id || typeof token !== 'string' || !token.trim() || !String(seat.email || '').trim() || !String(seat.role || '').trim()) return false
+    if (!shellEmail()) signInEmailOnly(platformEmail)
+    savePlyntrSeat(id, { seatToken: token, email: seat.email, role: seat.role, slug: seat.slug || '', repo: seat.repo || '' })
+    return seatForBrain(id)?.seatToken === token
+  }
   function platformSession(): { token: string; email: string } {
     if (!isJoeSuperAdmin(getAccount() || loadAccount(), getSettings())) {
       throw new Error('Only the Plyntr superadmin can add a company.')
@@ -1522,22 +1573,22 @@ export function registerStubIpc(): void {
   ipcMain.handle('plyntr:claimCompany', async (_e, brainId: string) => {
     const session = platformSession()
     const claimed = await claimPlyntrCompany(session.token, String(brainId || ''))
-    if (claimed.seatToken) {
-      savePlyntrSeat(claimed.brainId, {
-        seatToken: claimed.seatToken,
-        slug: claimed.slug,
-        email: claimed.email || session.email,
-        role: 'scout',
-        repo: claimed.repo,
-        bootstrap: true
-      })
-    }
+    const hasToken = storeSetupSeat(session.email, claimed.brainId, claimed.seatToken, {
+      email: claimed.email,
+      role: claimed.role,
+      slug: claimed.slug,
+      repo: claimed.repo
+    })
     return {
       brainId: claimed.brainId,
       repo: claimed.repo,
       slug: claimed.slug,
       label: claimed.label,
-      email: claimed.email || session.email
+      email: claimed.email,
+      role: claimed.role,
+      code: claimed.code,
+      bootstrap: claimed.bootstrap,
+      hasToken
     }
   })
   ipcMain.handle('plyntr:setPack', async (_e, brainId: string, pack: string) => {
@@ -1547,17 +1598,24 @@ export function registerStubIpc(): void {
   ipcMain.handle('plyntr:openCompany', async (_e, body: { label: string; ownerName: string; ownerEmail: string; role?: string; pack?: string }) => {
     const session = platformSession()
     const created = await openPlyntrCompany(session.token, body)
-    if (created.seatToken) {
-      savePlyntrSeat(created.brainId, {
-        seatToken: created.seatToken,
-        slug: created.slug,
-        email: session.email,
-        role: 'scout',
-        repo: created.repo,
-        bootstrap: true
-      })
+    const hasToken = storeSetupSeat(session.email, created.brainId, created.seatToken, {
+      email: created.ownerEmail,
+      role: created.role,
+      slug: created.slug,
+      repo: created.repo
+    })
+    return {
+      brainId: created.brainId,
+      repo: created.repo,
+      slug: created.slug,
+      label: created.label,
+      code: created.code,
+      emailed: created.emailed,
+      ownerEmail: created.ownerEmail,
+      ownerName: created.ownerName,
+      role: created.role,
+      hasToken
     }
-    return created
   })
   ipcMain.handle('plyntr:emailCode', async (_e, email: string) => emailPlyntrCode(email))
   ipcMain.handle('plyntr:place', async (_e, body: { brainId: string; org: string }) => {
@@ -1588,38 +1646,29 @@ export function registerStubIpc(): void {
   }
 
   ipcMain.handle('plyntr:hasSeat', (_e, brainId: string) => Boolean(seatTokenForBrain(String(brainId || ''))))
-  ipcMain.handle('plyntr:resumeAccount', (_e, which: 'create' | 'join') => {
-    if (which === 'create') {
-      if (!isPlatformOwnerSession()) throw new Error(PLATFORM_GATE)
-      const pending = readPendingCreate()
-      const resumed = pending?.brainId ? resumePlyntrAccount(pending.brainId) : { ok: true, email: '', role: 'scout' }
-      return resumed
-    }
+  function resumeShellAccount() {
+    const email = resumeVault()
+    if (email) return { ok: true, email, role: '' }
+    const pending = readPendingCreate()
+    if (pending?.brainId && isPlatformOwnerSession()) return resumePlyntrAccount(pending.brainId)
     const join = readPendingPlyntrJoin()
-    if (!join?.brainId) throw new Error('That join is not waiting.')
-    const resumed = resumePlyntrAccount(join.brainId)
-    if (!resumed.ok) throw new Error('Sign in with the Plyntr code again.')
-    return resumed
+    if (join?.brainId) return resumePlyntrAccount(join.brainId)
+    return { ok: false, email: '', role: '' }
+  }
+  ipcMain.handle('plyntr:resumeAccount', () => {
+    return resumeShellAccount()
   })
   ipcMain.handle('plyntr:joinProject', async (_e, code: string) => {
     if (authCodeRoute(code) !== 'plyntr') throw new Error('That code did not work.')
     return openPlyntrProject(code)
   })
-  ipcMain.handle('plyntr:resolve', async (_e, code: string) => {
+  ipcMain.handle('plyntr:resolve', async (_e, code: string, typedRaw?: string) => {
     const pretendJoin = isPretendJoinCode(code)
     if (!pretendJoin && authCodeRoute(code) !== 'plyntr' && !isPlyntrCompanyCode(code)) {
       throw new Error('That code did not work.')
     }
     const resolved = await resolvePlyntrCode(normalizePlyntrInviteCode(code))
     const slug = resolved.repo.split('/')[1]?.replace(/-brain$/, '') || ''
-    savePlyntrSeat(resolved.brainId, {
-      seatToken: resolved.seatToken,
-      slug,
-      email: resolved.email,
-      role: resolved.role,
-      repo: resolved.repo,
-      bootstrap: resolved.bootstrap
-    })
     writePendingJoin({
       brainId: resolved.brainId,
       repo: resolved.repo,
@@ -1631,6 +1680,12 @@ export function registerStubIpc(): void {
       bootstrap: resolved.bootstrap,
       wizardStep: 5
     })
+    const brainId = resolved.brainId
+    const typedEmail = String(typedRaw || '').trim().toLowerCase() || resolved.email
+    const codeEmail = resolved.email
+    const role = resolved.role
+    const token = resolved.seatToken
+    acceptBrainCode(brainId, typedEmail, codeEmail, role, token, slug, resolved.repo)
     const current = getAccount() || loadAccount()
     if (!isJoeSuperAdmin(current, getSettings())) {
       saveAccount({
@@ -1649,7 +1704,8 @@ export function registerStubIpc(): void {
       name: resolved.name,
       label: resolved.label,
       slug,
-      bootstrap: resolved.bootstrap
+      bootstrap: resolved.bootstrap,
+      hasToken: Boolean(token)
     }
   })
   ipcMain.handle('plyntr:installed', async (_e, brainId: string, repo: string) => {
@@ -1852,7 +1908,7 @@ export function registerStubIpc(): void {
   ipcMain.handle('files:read', async (_e, root: string, abs: string) => readSafe(root, abs))
   ipcMain.handle('files:write', async (_e, root: string, abs: string, text: string) => {
     const folder = String(root || '')
-    const block = brainWriteBlock(roleForBrainWrite(folder), folder, String(abs || ''))
+    const block = brainWriteBlock(brainIdForFolder(folder) ? roleForBrainWrite(folder) : roleForKeylessWrite(folder), folder, String(abs || ''))
     if (block) throw new Error(block)
     return writeSafe(folder, String(abs || ''), String(text ?? ''))
   })
@@ -2102,7 +2158,7 @@ export function registerStubIpc(): void {
     if (r.canceled || !r.filePath) return null
     const brain = currentBrainFolder()
     if (brain) {
-      const blocked = brainWriteBlock(roleForBrainWrite(brain), brain, r.filePath)
+      const blocked = brainWriteBlock(brainIdForFolder(brain) ? roleForBrainWrite(brain) : roleForKeylessWrite(brain), brain, r.filePath)
       if (blocked) throw new Error(blocked)
     }
     writeFileSync(r.filePath, String(text || ''))

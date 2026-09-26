@@ -5,6 +5,7 @@ import { app } from 'electron'
 import { forgetMissingBrainFolders, readTeamIdentity, readWatching } from './agency-brain'
 import { mergeBrainRows, pickActivePath, type BrainRow } from './brains-pick'
 import { getAccount } from './session-token'
+import { rememberKeylessFolder } from './shell-vault'
 
 export type { BrainRow } from './brains-pick'
 export { mergeBrainRows, pickActivePath } from './brains-pick'
@@ -175,6 +176,10 @@ export function folderForSlug(slug: string): string | null {
     if (existsSync(p) && readTeamIdentity(p)?.slug.toLowerCase() === want) return p
   }
   return null
+}
+
+export function adoptFolder(folder: string, label = ''): void {
+  rememberKeylessFolder(folder, label)
 }
 
 export function switchBrain(folder: string): { path: string; name: string; slug: string } {

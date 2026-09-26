@@ -8,6 +8,9 @@ import { isAbsolute, relative, resolve, sep } from 'node:path'
 export const TEAM_WRITE_REFUSAL =
   'Team can read skills and team config. Brain.app will not write those files. The CLI on this Mac can still write them until a later hook.'
 
+export const NO_SEAT_WRITE_REFUSAL =
+  'This login has no seat on this brain. Brain.app will not write skills or team config. Sign in to this brain first.'
+
 export function isAgencyTeamRole(role?: string | null): boolean {
   const r = String(role || '').trim().toLowerCase()
   return r === 'team' || r === 'member'
@@ -27,13 +30,14 @@ export function isProtectedBrainPath(relPosix: string): boolean {
   return top === 'skills' || top === '.team-config'
 }
 
-/** Empty when this write is allowed. A sentence when agency team is writing a protected path. */
+/** Empty when this write is allowed. A sentence when agency team, or a login with no seat on this brain, is writing a protected path. */
 export function brainWriteBlock(role: string | null | undefined, root: string, target: string): string | null {
-  if (!isAgencyTeamRole(role)) return null
+  const noSeat = !String(role || '').trim()
+  if (!noSeat && !isAgencyTeamRole(role)) return null
   const base = String(root || '').trim()
   const path = String(target || '').trim()
   if (!base || !path) return null
   const rel = posixRel(base, path)
   if (rel == null || !isProtectedBrainPath(rel)) return null
-  return TEAM_WRITE_REFUSAL
+  return noSeat ? NO_SEAT_WRITE_REFUSAL : TEAM_WRITE_REFUSAL
 }

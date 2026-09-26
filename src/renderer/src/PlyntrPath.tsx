@@ -268,7 +268,7 @@ export function PlyntrCodeScreen({
               setErr('')
               try {
                 try {
-                  const row = await window.brain.plyntr.resolve(code)
+                  const row = await window.brain.plyntr.resolve(code, email)
                   await onJoin(row)
                 } catch (e) {
                   const msg = String((e as Error).message || e)
@@ -956,7 +956,7 @@ export function PlyntrCreateScreen({
               }
             }}
           >
-            Recover scout token
+            Sign in to this brain
           </button>
         ) : null}
         {step === 2 && org.trim() ? (
@@ -1088,7 +1088,7 @@ export function PlyntrCreateScreen({
                   setRepo(res.repo)
                   setHasSeat(false)
                   await save(3, { scoutEmail, brainId: res.brainId })
-                  setErr('The scout token did not come back. Use Recover scout token.')
+                  setErr('The scout token did not come back. Sign in to this brain.')
                   return
                 }
                 setBrainId(res.brainId)

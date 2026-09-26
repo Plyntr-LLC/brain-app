@@ -103,6 +103,24 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Inbox
 
+- [x] 2026-09-26 Joe: Shell login for every person. The Brain.app account stays signed in and holds that person's brains. Each brain has its own sign-in and key, and the open brain uses only the role that person has there. Switching brains stays available from the shell, including when the open brain's role is smaller. Adding a company stays super admin. Today `brains:switch` is super admin only, and other people do not get the switcher. Done: 2026-09-26. Evidence: Brain.app 0.1.66.
+
+  Files: `src/main/shell-vault.ts`, `src/shared/shell-switch.ts`, `scripts/check-shell-switch.ts`, `src/main/ipc-stubs.ts`, `src/main/brains.ts`, `src/main/plyntr-seats.ts` (vault readers, `brainIdForFolder` and `roleForKeylessWrite`, which `ipc-stubs.ts` and `acp-session.ts` import), `src/main/plyntr-sync.ts` (git bearer, company reply fields), `src/main/write-guard-role.ts`, `src/main/write-guard.ts` and `src/main/write-guard.test.ts` (the no-seat refusal), `src/main/acp-session.ts` (agent writes use the same guard), `src/preload/index.ts` (`shellView`, `resolve` typed email, company return types), `src/renderer/src/FirstRun.tsx`, `src/renderer/src/PlyntrPath.tsx`, `src/renderer/src/SettingsPanel.tsx`.
+
+  Approved by Opus 5.5 medium, 2026-09-26. Check: `node --experimental-strip-types scripts/check-shell-switch.ts`. It drives the real main modules and IPC handlers with Electron stubbed. It does not import only the vault; the review asked for that change.
+
+  Where the plan's wording could not hold as written, the check enforces this instead:
+  - Code routes (agency verify, project verify, Plyntr verify, `plyntr:resolve`) each call `acceptBrainCode(` once, with the five values as separate arguments. They do not literally `return acceptBrainCode(`, because each handler has to return route data.
+  - `auth:logout` is `logoutShell()`, `stopBrainSync()`, `return { ok: true }`.
+  - `write-guard-role.ts` has one function, `roleForBrainWrite(brainId)`, and its body is exactly `return roleForBrainWriteFromVault(brainId)`. The plan names both forms; this uses the wrapper form.
+  - `acceptBrainCode` takes two optional trailing arguments, `slug` and `repo`, after the five code values. That keeps slug-to-brain lookup working now that the code is stored only once.
+
+  Risks for Joe:
+  - Brain.app refuses writes to `skills/` and `.team-config/` when the folder has a brain id and this login has no seat on it. A folder with no brain id (Agency Brain, Path A, and local folders with no Plyntr brain id) reads the role from its own `.team-config/roles.json` for the signed-in shell email. Agency team is refused there, and so is a login that is not on that file or no login at all. joe@plyntr.com is owner on `agency-brain`, so Joe keeps Add user, role changes, the file editor, Save as and agent writes there. A local folder with no `roles.json` cannot get its first one through Brain.app. A local-only Plyntr brain made from a code has a brain id and keeps the seat check. The CLI can still write anywhere.
+  - Company setup (`openCompany`, `claimCompany`, `createBrain`) stores the worker's seat token through `savePlyntrSeat` for the signed-in shell (signing in the platform email first only when no shell is signed in) and returns `hasToken: true` only when it was stored. A reply with no seat token stores nothing and returns `hasToken: false`. The token never reaches the renderer. Check c13 and c13b lock this.
+  - Startup: an install with `account.json` and an empty vault signs that email in once. That is also the only way Joe's old seats get imported. A code typed later with a different email does not change that shell.
+  - Upgrade: the old `plyntr-seats.json` is imported only for joe@plyntr.com, and only into an empty vault. Anyone else loses their stored Plyntr seats and must redeem a code again. `storeOwnedSeat` drops a seat when no shell is signed in; startup signs in the `account.json` email, so that only happens after Log out.
+
 - [x] 2026-09-24 Joe: Client-brain seat packs. Replace the flat "10 agency team" cap with the commercial pack on that brain. Source sheet: `agency-brain/context/products/client-brain-offer-sheet.html`. No card and no per-seat charge in the app. Plyntr sets the pack when they pay. Changing the pack is how the cap lifts. Done: 2026-09-24. Evidence: Brain.app 0.1.59 selector; worker `ca08e234-f85c-439a-b7a6-10c89f671bf4` stores the plan. rose wine read back `standard`.
 
   Packs:

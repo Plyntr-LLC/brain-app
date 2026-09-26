@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import { brainRowForPath, currentBrainFolder } from './brains'
 import { readSyncManifest } from './sync-manifest'
-import { readTeamIdentity } from './agency-brain'
+import { readTeamIdentity, readTeamMember } from './agency-brain'
+import { brainRow, idForSlug, seatTokenForBrainFromVault, seatTokenForFolderFromVault, shellEmail, storeOwnedSeat, useFolderLookup } from './shell-vault'
 
 export type PlyntrSeat = {
   seatToken: string
@@ -66,14 +67,6 @@ function readJson<T>(path: string): T | null {
   }
 }
 
-function loadSeats(): SeatFile {
-  const raw = readJson<SeatFile>(userFile('plyntr-seats.json'))
-  return {
-    byBrain: raw?.byBrain && typeof raw.byBrain === 'object' ? raw.byBrain : {},
-    slugToBrain: raw?.slugToBrain && typeof raw.slugToBrain === 'object' ? raw.slugToBrain : {}
-  }
-}
-
 export function plyntrDeviceId(): string {
   return createHash('sha256').update(app.getPath('userData')).digest('hex').slice(0, 32)
 }
@@ -85,39 +78,43 @@ export function loginToken(): string {
 export function savePlyntrSeat(brainId: string, seat: PlyntrSeat): void {
   const id = String(brainId || '').trim()
   if (!id || !seat.seatToken) return
-  const file = loadSeats()
-  file.byBrain[id] = seat
-  if (seat.slug) file.slugToBrain[seat.slug.toLowerCase()] = id
-  writeJson(userFile('plyntr-seats.json'), file)
+  storeOwnedSeat(id, seat.email, seat.role, seat.seatToken, seat.slug || '', seat.repo || '')
 }
 
 export function seatTokenForBrain(brainId: string): string {
-  const row = loadSeats().byBrain[String(brainId || '').trim()]
-  return String(row?.seatToken || '')
+  return seatTokenForBrainFromVault(brainId)
 }
 
 export function seatForBrain(brainId: string): PlyntrSeat | null {
-  return loadSeats().byBrain[String(brainId || '').trim()] || null
+  const hit = brainRow(String(brainId || '').trim())
+  if (!hit || hit.owner !== shellEmail()) return null
+  return { seatToken: hit.token, email: hit.email, role: hit.role, slug: hit.slug || '', repo: hit.repo || '' }
 }
 
 export function brainIdForSlug(slug: string): string {
-  return loadSeats().slugToBrain[String(slug || '').trim().toLowerCase()] || ''
+  return idForSlug(slug)
+}
+
+/** Brain id for a folder: its brains.json row, then the slug of a Plyntr sync folder. Empty for Agency Brain and local folders with no brain id. */
+export function brainIdForFolder(folder: string): string {
+  const row = brainRowForPath(folder)
+  if (row?.brainId) return row.brainId
+  const manifest = readSyncManifest(folder)
+  const ident = readTeamIdentity(folder)
+  if (manifest?.ok && manifest.manifest.mode === 'plyntr' && ident?.slug) return brainIdForSlug(ident.slug)
+  return ''
+}
+
+useFolderLookup(brainIdForFolder)
+
+/** Role on a folder with no brain id: this shell's row in the folder's team file. Empty with no login or no row, and the guard then refuses protected paths. */
+export function roleForKeylessWrite(folder: string): string {
+  const email = shellEmail()
+  return email ? readTeamMember(folder, email)?.role || '' : ''
 }
 
 export function seatTokenForFolder(folder: string): string {
-  const row = brainRowForPath(folder)
-  if (row?.brainId) {
-    const token = seatTokenForBrain(row.brainId)
-    if (token) return token
-  }
-  if (row?.seatToken) return row.seatToken
-  const manifest = readSyncManifest(folder)
-  const ident = readTeamIdentity(folder)
-  if (manifest?.ok && manifest.manifest.mode === 'plyntr' && ident?.slug) {
-    const id = brainIdForSlug(ident.slug)
-    if (id) return seatTokenForBrain(id)
-  }
-  return ''
+  return seatTokenForFolderFromVault(folder)
 }
 
 export function seatTokenForActiveBrain(): string {

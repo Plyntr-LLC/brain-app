@@ -5,6 +5,7 @@ import { PackSelect } from './PlyntrPath'
 import { asSeat, canTurnOnGithubSync, isTeamSeat, seatLabel, type SeatRole } from '@shared/contracts'
 import { displayPlyntrCode } from '@shared/plyntr-invite'
 import { canOfferPlyntrTransfer } from '@shared/plyntr-transfer'
+import { allowedFolders, isJoeSuperAdmin, showBrainSwitch } from '@shared/shell-switch'
 import { LocalSyncPanel } from './LocalSyncPanel'
 import { PlyntrCompanyScreen } from './PlyntrPath'
 
@@ -211,6 +212,12 @@ export function SettingsPanel({
   const [phoneBusy, setPhoneBusy] = useState(false)
   const [phoneNote, setPhoneNote] = useState('')
   const joe = email === 'joe@plyntr.com'
+  const [shell, setShell] = useState({ email: '', flag: false, signedIn: [] as string[], keyless: [] as string[] })
+  useEffect(() => {
+    void window.brain.shellView?.().then((row) => {
+      setShell({ email: row.email || email, flag: row.flag, signedIn: row.signedIn || [], keyless: row.keyless || [] })
+    }).catch(() => {})
+  }, [email, brains, superAdmin])
   const canAddUsers = joe || !isTeamSeat(seat || role)
   const [plyntrMode, setPlyntrMode] = useState(false)
   const [plyntrBrainId, setPlyntrBrainId] = useState('')
@@ -552,7 +559,7 @@ export function SettingsPanel({
         ) : (
           <p className="tiny">No people listed in this folder yet.</p>
         )}
-        {joe && superAdmin ? (
+        {showBrainSwitch(shell) ? (
           <button
             type="button"
             className="ghost"
@@ -616,7 +623,7 @@ export function SettingsPanel({
             Light or dark
           </button>
         </p>
-        {joe && superAdmin && brains.length ? (
+        {showBrainSwitch(shell) ? (
           <label className="field" style={{ marginTop: '0.7rem', marginBottom: 0 }}>
             Switch brain
             <select
@@ -635,12 +642,17 @@ export function SettingsPanel({
                 }
               }}
             >
-              {brains.map((b) => (
-                <option key={b.path} value={b.path}>
-                  {placeName(b.path, prettyName(b.name || b.slug || ''))}
-                  {b.watching ? ' · Agency Brain watching' : ''}
-                </option>
-              ))}
+              {allowedFolders(shell).map((id) => {
+                const b = brains.find((row) => row.path === id || row.brainId === id)
+                const path = b?.path || id
+                const name = b ? placeName(b.path, prettyName(b.name || b.slug || '')) : id
+                return (
+                  <option key={id} value={path}>
+                    {name}
+                    {b?.watching ? ' · Agency Brain watching' : ''}
+                  </option>
+                )
+              })}
             </select>
           </label>
         ) : null}
@@ -843,7 +855,7 @@ export function SettingsPanel({
                     }
                   }}
                 >
-                  Recover scout token
+                  Sign in to this brain
                 </button>
               ) : null}
               <p className="tiny">{packLine(companyPacks[plyntrBrainId] || brainPack)}</p>
@@ -1348,7 +1360,7 @@ export function SettingsPanel({
         </p>
       ) : null}
 
-      {joe && superAdmin ? (
+      {isJoeSuperAdmin(shell) ? (
         <section className="set-block">
           <FoldHead
             kicker="Ads2AI"

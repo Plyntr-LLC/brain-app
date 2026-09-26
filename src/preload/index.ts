@@ -127,6 +127,14 @@ const brain = {
     clients: () => ipcRenderer.invoke('settings:clients') as Promise<Record<string, unknown>[]>,
     saveClients: (clients: unknown[]) => ipcRenderer.invoke('settings:saveClients', clients)
   },
+  shellView: () =>
+    ipcRenderer.invoke('shell:view') as Promise<{
+      email: string
+      flag: boolean
+      signedIn: string[]
+      keyless: string[]
+      seat: { email?: string; label?: string; token?: string }
+    }>,
   brains: {
     list: () =>
       ipcRenderer.invoke('brains:list') as Promise<
@@ -479,7 +487,17 @@ const brain = {
     resumeAccount: (which: 'create' | 'join') =>
       ipcRenderer.invoke('plyntr:resumeAccount', which) as Promise<{ ok: boolean; email: string; role: string }>,
     createBrain: (body: { label: string; org: string; slug: string; scoutEmail: string; rotate?: boolean }) =>
-      ipcRenderer.invoke('plyntr:createBrain', body) as Promise<{ brainId: string; repo: string; hasToken: boolean }>,
+      ipcRenderer.invoke('plyntr:createBrain', body) as Promise<{
+        brainId: string
+        repo: string
+        slug: string
+        label: string
+        email: string
+        code: string
+        emailed: boolean
+        role: string
+        hasToken: boolean
+      }>,
     companies: () =>
       ipcRenderer.invoke('plyntr:companies') as Promise<
         { brainId: string; label: string; slug: string; org: string; repo: string; createdAt: string; pack?: string }[]
@@ -510,6 +528,10 @@ const brain = {
         slug: string
         label: string
         email: string
+        role: string
+        code: string
+        bootstrap: boolean
+        hasToken: boolean
       }>,
     openCompany: (body: { label: string; ownerName: string; ownerEmail: string; role?: string; pack?: string }) =>
       ipcRenderer.invoke('plyntr:openCompany', body) as Promise<{
@@ -522,13 +544,14 @@ const brain = {
         ownerEmail: string
         ownerName: string
         role: string
+        hasToken: boolean
       }>,
     emailCode: (email: string) =>
       ipcRenderer.invoke('plyntr:emailCode', email) as Promise<{ ok: boolean; emailed: boolean; role: string }>,
     place: (body: { brainId: string; org: string }) =>
       ipcRenderer.invoke('plyntr:place', body) as Promise<{ repo: string; slug: string; org: string }>,
-    resolve: (code: string) =>
-      ipcRenderer.invoke('plyntr:resolve', code) as Promise<{
+    resolve: (code: string, typedEmail?: string) =>
+      ipcRenderer.invoke('plyntr:resolve', code, typedEmail || '') as Promise<{
         brainId: string
         repo: string
         role: string
@@ -537,6 +560,7 @@ const brain = {
         label: string
         slug: string
         bootstrap: boolean
+        hasToken: boolean
       }>,
     joinProject: (code: string) =>
       ipcRenderer.invoke('plyntr:joinProject', code) as Promise<{

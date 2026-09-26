@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import test from 'node:test'
-import { TEAM_WRITE_REFUSAL, brainWriteBlock } from './write-guard.ts'
+import { NO_SEAT_WRITE_REFUSAL, TEAM_WRITE_REFUSAL, brainWriteBlock } from './write-guard.ts'
 
 const root = '/tmp/acme-brain'
 
@@ -28,6 +28,11 @@ test('agency team can still write the rest of the repo', () => {
   assert.equal(brainWriteBlock('team', root, join(root, 'code', 'app.ts')), null)
   assert.equal(brainWriteBlock('team', root, join(root, 'AGENTS.md')), null)
   assert.equal(brainWriteBlock('team', root, join(root, 'skills', '..', 'clients', 'a.md')), null)
-  assert.equal(brainWriteBlock('', root, join(root, 'skills', 'a.md')), null)
   assert.equal(brainWriteBlock('team', root, '/tmp/elsewhere/skills/a.md'), null)
+})
+
+test('a login with no seat on this brain cannot write skills or team config', () => {
+  assert.equal(brainWriteBlock('', root, join(root, 'skills', 'a.md')), NO_SEAT_WRITE_REFUSAL)
+  assert.equal(brainWriteBlock(null, root, join(root, '.team-config', 'roles.json')), NO_SEAT_WRITE_REFUSAL)
+  assert.equal(brainWriteBlock('', root, join(root, 'clients', 'a.md')), null)
 })

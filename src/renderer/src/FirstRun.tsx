@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { STEPS, type AiKind, type PathKind, type Session } from '@shared/contracts'
 import { prettyEffort } from '@shared/effort'
 import { agencyVerifyButtons, plyntrJoinButtons } from '@shared/setup-guide'
+import { openBrainAccountLabel } from '@shared/shell-switch'
 import { blankSession, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
 import { SettingsPanel } from './SettingsPanel'
@@ -67,7 +68,7 @@ export function FirstRun() {
   const [showInvite, setShowInvite] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
   const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('brain-theme') === 'dark' ? 'dark' : 'light'))
-  const [brainSeat, setBrainSeat] = useState('')
+  const [activeSeat, setActiveSeat] = useState<{ email?: string; label?: string; token?: string }>({ email: '', label: '', token: '' })
   const [superAdmin, setSuperAdmin] = useState(false)
   const [waitSec, setWaitSec] = useState(0)
   const [updatedLine, setUpdatedLine] = useState('')
@@ -822,23 +823,17 @@ export function FirstRun() {
 
   useEffect(() => {
     if (!s.brainPath) {
-      setBrainSeat('')
+      setActiveSeat({ email: '', label: '', token: '' })
       return
     }
     let live = true
-    void window.brain.plyntr
-      .active()
-      .then((row) => {
-        if (!live) return
-        if (row.syncMode === 'plyntr' && row.seatEmail) {
-          const role =
-            row.role === 'project' ? 'Project only' : row.role === 'scout' ? 'Scout' : row.role === 'team' ? 'Team' : row.role === 'owner' ? 'Owner' : row.role
-          setBrainSeat(role ? `${row.seatEmail} · ${role}` : row.seatEmail)
-        } else setBrainSeat('')
-      })
-      .catch(() => {
-        if (live) setBrainSeat('')
-      })
+    void window.brain.shellView().then((view) => {
+      if (!live) return
+      const seat = view.seat || {}
+      setActiveSeat({ email: seat.email || '', label: seat.label || '', token: seat.token ? 'seat' : '' })
+    }).catch(() => {
+      if (live) setActiveSeat({ email: '', label: '', token: '' })
+    })
     return () => {
       live = false
     }
@@ -848,7 +843,7 @@ export function FirstRun() {
     <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${!railOpen && s.screen !== 'chat' ? 'rail-off' : ''} ${updatedLine ? 'has-update' : ''}`} data-setup-role={s.role || ''} data-setup-path={s.brainPath || ''}>
       <div className="titlebar">
         <span>{title}</span>
-        {s.role && !brainSeat ? (
+        {s.role && !openBrainAccountLabel(activeSeat) ? (
           <span className="role-lock">
             {s.role === 'project' ? 'Project only' : s.role === 'team' || s.role === 'member' ? 'Team' : s.role === 'scout' ? 'Scout' : 'Owner'}
             {s.brainKind === 'project' ? ' · project' : s.brainKind === 'hq' ? ' · HQ' : ''}
@@ -862,13 +857,7 @@ export function FirstRun() {
                 : 'Agency Brain · watching this folder'
               : 'Folder not syncing')}
         </span>
-        {brainSeat ? <span className="seat-pill">{brainSeat}</span> : null}
-        {s.email && !brainSeat ? (
-          <span className="tiny" style={{ marginLeft: 'auto' }}>
-            {superAdmin ? 'Super admin · ' : ''}
-            {s.email}
-          </span>
-        ) : null}
+        {openBrainAccountLabel(activeSeat) ? <span className="seat-pill">{openBrainAccountLabel(activeSeat)}</span> : null}
         <button type="button" className="ghost title-set" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
           {theme === 'dark' ? 'Light' : 'Dark'}
         </button>
@@ -903,13 +892,12 @@ export function FirstRun() {
             onBeginCompanySetup={(row) => {
               void (async () => {
                 setShowInvite(false)
-                const acct = await window.brain.auth.session()
                 await finishPlyntrJoin({
                   brainId: row.brainId,
                   repo: row.repo,
                   slug: row.slug,
-                  role: 'scout',
-                  email: acct.email || row.ownerEmail,
+                  role: 'owner',
+                  email: row.ownerEmail,
                   name: row.label
                 })
               })()

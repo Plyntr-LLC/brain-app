@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { redact } from './clone'
 import { plyntrDeviceId, savePlyntrSeat, seatForBrain, seatTokenForBrain } from './plyntr-seats'
+import { gitSyncTokenFromVault } from './shell-vault'
 import { listedRoleForSeat, transferUsesOwnerToken } from '../shared/plyntr-transfer'
 import { normalizePlyntrInviteCode, slugFromBusinessName } from '../shared/plyntr-invite'
 import { dryRunInstalledBody, dryRunPlyntrBind, dryRunProjectInvite, type PlyntrBindActor } from './plyntr-dry-run'
@@ -225,10 +226,14 @@ function dryRunPlyntrWorker(path: string, body: Record<string, unknown> | null, 
   fail(404, { error: 'not found' })
 }
 
+function gitBearer(activeSeatId: string): string {
+  return gitSyncTokenFromVault(activeSeatId)
+}
+
 async function call(path: string, opts: { method: string; brainId?: string; body?: Record<string, unknown>; repo?: string; token?: string }): Promise<unknown> {
   const repoQuery = String(opts.repo || '')
   if (dryRun()) return dryRunPlyntrWorker(path, opts.body || null, repoQuery)
-  const token = opts.token || (opts.brainId ? seatTokenForBrain(opts.brainId) : '')
+  const token = path === '/v1/git/token' ? gitBearer(String(opts.brainId || '')) : opts.token || (opts.brainId ? seatTokenForBrain(opts.brainId) : '')
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers.Authorization = `Bearer ${token}`
   const url = new URL(path, ORIGIN)
@@ -247,19 +252,33 @@ async function call(path: string, opts: { method: string; brainId?: string; body
 export async function createPlyntrBrain(
   platformToken: string,
   body: { label: string; org: string; slug: string; scoutEmail: string; rotate?: boolean }
-): Promise<{ brainId: string; repo: string; seatToken: string | null; role?: string; bootstrap?: boolean }> {
+): Promise<{ brainId: string; repo: string; slug: string; label: string; code: string; emailed: boolean; seatToken: string | null; role?: string; bootstrap?: boolean }> {
   if (dryRun()) return dryRunPlyntrWorker('/v1/brains', body, '') as never
   const r = await fetch(`${ORIGIN}/v1/brains`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${platformToken}` },
     body: JSON.stringify(body)
   })
-  const parsed = (await r.json().catch(() => ({}))) as { error?: string; detail?: string; brainId?: string; repo?: string; seatToken?: string | null }
+  const parsed = (await r.json().catch(() => ({}))) as {
+    error?: string
+    detail?: string
+    brainId?: string
+    repo?: string
+    slug?: string
+    label?: string
+    code?: string
+    emailed?: boolean
+    seatToken?: string | null
+  }
   if (!r.ok) fail(r.status, parsed)
   return {
     brainId: String(parsed.brainId || ''),
     repo: String(parsed.repo || ''),
-    seatToken: parsed.seatToken ? String(parsed.seatToken) : null,
+    slug: String(parsed.slug || ''),
+    label: String(parsed.label || ''),
+    code: String(parsed.code || ''),
+    emailed: Boolean(parsed.emailed),
+    seatToken: typeof parsed.seatToken === 'string' && parsed.seatToken ? parsed.seatToken : null,
     role: 'scout',
     bootstrap: true
   }
@@ -320,16 +339,17 @@ export async function invitePlyntrCompany(
 export async function claimPlyntrCompany(
   platformToken: string,
   brainId: string
-): Promise<{ brainId: string; seatToken: string; role: string; email: string; repo: string; slug: string; label: string; bootstrap: boolean }> {
+): Promise<{ brainId: string; seatToken: string; role: string; email: string; repo: string; slug: string; label: string; code: string; bootstrap: boolean }> {
   const parsed = await platformCall(platformToken, `/v1/companies/${encodeURIComponent(brainId)}/mac`, 'POST', {})
   return {
     brainId: String(parsed.brainId || brainId),
-    seatToken: String(parsed.seatToken || ''),
-    role: String(parsed.role || 'scout'),
+    seatToken: typeof parsed.seatToken === 'string' ? parsed.seatToken : '',
+    role: String(parsed.role || ''),
     email: String(parsed.email || ''),
     repo: String(parsed.repo || ''),
     slug: String(parsed.slug || ''),
     label: String(parsed.label || ''),
+    code: String(parsed.code || ''),
     bootstrap: Boolean(parsed.bootstrap)
   }
 }
@@ -375,7 +395,7 @@ export async function openPlyntrCompany(
     repo: String(parsed.repo || ''),
     slug: String(parsed.slug || ''),
     label: String(parsed.label || body.label),
-    seatToken: String(parsed.seatToken || ''),
+    seatToken: typeof parsed.seatToken === 'string' ? parsed.seatToken : '',
     code: String(parsed.code || ''),
     emailed: Boolean(parsed.emailed),
     ownerEmail: String(parsed.ownerEmail || body.ownerEmail),
