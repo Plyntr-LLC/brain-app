@@ -360,6 +360,32 @@ function shQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
+/** Open Terminal with a password dialog. Silent spawn cannot ask for a Mac password. */
+async function openAskpassInstall(opts: { dialog: string; echo: string; runLine: string }): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), 'brain-install-'))
+  const file = join(dir, 'install.command')
+  writeFileSync(
+    file,
+    [
+      '#!/bin/bash',
+      'set -e',
+      'ASK=$(mktemp)',
+      'cat > "$ASK" << \'EOF\'',
+      '#!/bin/bash',
+      `osascript -e 'display dialog "${opts.dialog}" default answer "" with hidden answer with title "Brain" buttons {"Cancel", "OK"} default button "OK"' -e 'text returned of result'`,
+      'EOF',
+      'chmod 700 "$ASK"',
+      'export SUDO_ASKPASS="$ASK"',
+      `echo ${JSON.stringify(opts.echo)}`,
+      opts.runLine,
+      'rm -f "$ASK"',
+      'echo "Done. You can close this window."'
+    ].join('\n'),
+    { mode: 0o755 }
+  )
+  return shell.openPath(file)
+}
+
 /** Open this CLI’s own sign-in. Browser or Terminal may appear. */
 export async function loginCli(kind: AiKind): Promise<{ ok: boolean; detail: string; marker?: string }> {
   const bin = resolveBin(kind)
@@ -535,8 +561,20 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
           setupTrace({ event: 'install', id: 'cloudflared', ok: false, presentAfter: false })
           return { ok: false, detail: 'Homebrew first, then Cloudflare Tunnel.', wait: 'none' }
         }
-        const r = await run(brew, ['install', 'cloudflared'])
-        detail = r.out.slice(-800)
+        const opened = await openAskpassInstall({
+          dialog: 'Brain needs your Mac password to install Cloudflare Tunnel.',
+          echo: 'Installing Cloudflare Tunnel. A password window will open if this Mac asks. Dots show as you type. Cancel stops the install.',
+          runLine: `${shQuote(brew)} install cloudflared`
+        })
+        const presentAfter = cloudflaredPresent()
+        setupTrace({ event: 'install', id: 'cloudflared', ok: !opened, presentAfter })
+        if (opened) return { ok: false, detail: opened, wait: 'none' }
+        return {
+          ok: true,
+          detail:
+            'Cloudflare Tunnel’s installer is in Terminal. A password window will open if this Mac asks. We continue when it finishes.',
+          wait: 'present'
+        }
       }
     }
     const presentAfter = cloudflaredPresent()

@@ -17,5 +17,5 @@
     }
   },
   "include": ["src/renderer/src/**/*", "src/shared/**/*.ts"],
-  "exclude": ["src/shared/effort.test.ts", "src/shared/skin/hidden-kinds.test.ts", "src/shared/plyntr-package.test.ts", "src/shared/plyntr-transfer.test.ts", "src/shared/plyntr-wizard.test.ts", "src/shared/plyntr-org-copy.test.ts", "src/shared/think-run.test.ts"]
+  "exclude": ["src/shared/effort.test.ts", "src/shared/skin/hidden-kinds.test.ts", "src/shared/plyntr-package.test.ts", "src/shared/plyntr-transfer.test.ts", "src/shared/plyntr-wizard.test.ts", "src/shared/plyntr-org-copy.test.ts", "src/shared/setup-guide.test.ts", "src/shared/think-run.test.ts"]
 }

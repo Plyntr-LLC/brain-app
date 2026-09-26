@@ -68,6 +68,12 @@ export function orgUseError(
 /** Platform calls that answer 401/403 throw this text, so the company screen can send Joe back to sign in. */
 export const PLATFORM_AUTH = 'Plyntr platform sign-in expired. Sign in to platform sync first.'
 
+/** Electron wraps IPC throws as `Error invoking remote method 'channel': Error: …`. Setup screens should show the inner line. */
+export function ipcErrorText(err: unknown): string {
+  const text = String((err as Error)?.message || err || '')
+  return text.replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^(?:\w*Error:\s*)+/, '').trim()
+}
+
 /** How the company screen shows a failed company list. Only fetch/network failures get the offline note. */
 export function companiesLoadError(message: string): { login: boolean; note: string } {
   const text = String(message || '')
@@ -75,6 +81,6 @@ export function companiesLoadError(message: string): { login: boolean; note: str
   if (/TypeError|fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|network/i.test(text)) {
     return { login: false, note: 'Could not reach Plyntr for the company list. The brains on this computer are still listed.' }
   }
-  const short = text.replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^(?:\w*Error:\s*)+/, '').trim()
+  const short = ipcErrorText(text)
   return { login: false, note: `Could not load the company list. ${short || 'Try again.'}` }
 }

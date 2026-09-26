@@ -82,19 +82,16 @@ function nowIn(row: {
 }
 
 function FoldHead({
-  kicker,
   title,
   open,
   onToggle
 }: {
-  kicker: string
   title: string
   open: boolean
   onToggle: () => void
 }) {
   return (
     <button type="button" className="set-fold" onClick={onToggle} aria-expanded={open}>
-      <p className="kicker">{kicker}</p>
       <h3 className="set-h">{title}</h3>
     </button>
   )
@@ -699,7 +696,7 @@ export function SettingsPanel({
             Team is on this whole brain. Project only never clones HQ. This app copies only the folders you tick,
             keeps them in sync in the background, and deletes those folders if you remove access.
           </p>
-          <div className="set-block" style={{ padding: 0 }}>
+          <div className="set-block">
             <p className="tiny">
               {hq?.signedIn
                 ? [
@@ -1249,8 +1246,7 @@ export function SettingsPanel({
 
 
       {email && brainPath ? (
-      <section className="set-block" style={{ borderTop: 0, paddingTop: 0 }}>
-        <p className="kicker">Phone</p>
+      <section className="set-block">
         <h3 className="set-h">Use Brain from your phone</h3>
         <p>
           Works on cellular or any wifi. This Mac has to stay on, with Brain.app open, and plugged in. Closing the lid
@@ -1368,7 +1364,6 @@ export function SettingsPanel({
       {isJoeSuperAdmin(shell) ? (
         <section className="set-block">
           <FoldHead
-            kicker="Ads2AI"
             title="Add a new company brain"
             open={openAdd}
             onToggle={() => {
@@ -1537,7 +1532,6 @@ export function SettingsPanel({
 
       {canMove ? (
         <section className="set-block">
-          <p className="kicker">Plyntr sync</p>
           <h3 className="set-h">Move this brain to Plyntr sync</h3>
           <p>
             Install Plyntr sync on this same GitHub organization, not Plyntr LLC. Keep Only select repositories. Do not
@@ -1573,7 +1567,6 @@ export function SettingsPanel({
       {joe ? (
         <section className="set-block">
           <FoldHead
-            kicker="Skin captures"
             title="Catalog school"
             open={openCatalog}
             onToggle={() => setOpenCatalog((v) => !v)}

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AiKind } from '@shared/contracts'
+import { ipcErrorText } from '@shared/plyntr-org-copy'
+import { recheckMissingLine } from '@shared/setup-guide'
 import { WorkPulse } from './WorkPulse'
 
 type ToolNeed = {
@@ -240,7 +242,7 @@ export function SetupNeeds({
           await runOne(item)
         } catch (e) {
           if (required.has(item.id)) throw e
-          setNote(String((e as Error).message || e))
+          setNote(ipcErrorText(e))
         }
       }
       const st = await refresh(chosen)
@@ -257,7 +259,7 @@ export function SetupNeeds({
       if (opened === false) setPhase('review')
       return
     } catch (e) {
-      setErr(String((e as Error).message || e))
+      setErr(ipcErrorText(e))
     } finally {
       setPhase('review')
       setBusyId('')
@@ -381,7 +383,7 @@ export function SetupNeeds({
             else if (st.watching && ai && st.brainPath) onReady(asReady(st, { ready: false, watching: true }, wantCli))
             else if (!st.brainPath && onNeedFolder) {
               setErr('The shared folder is not here yet. Use Back to GitHub copy, or finish GitHub in the browser.')
-            } else setErr('Still missing a required piece. Finish the open installer, then Recheck.')
+            } else setErr(recheckMissingLine(st.items, wantCli))
           }}
         >
           {running ? 'I finished that window' : 'Recheck'}

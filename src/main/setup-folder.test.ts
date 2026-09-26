@@ -50,11 +50,12 @@ test('reuseExistingFolder never returns a different team folder', () => {
 test('setup lists Agency Brain and still reaches ready without it', () => {
   const src = readFileSync(new URL('./install.ts', import.meta.url), 'utf8')
   assert.match(src, /label: 'Agency Brain'/)
-  assert.match(src, /ready: folder && hasCli && gitPresent\(\) && cloudflaredPresent\(\)/)
+  assert.match(src, /Boolean\(folder && pickedPresent && gitPresent\(\) && cloudflaredPresent\(\)\)/)
   assert.match(src, /currentBrainFolder\(\)/)
   assert.match(src, /id: 'cloudflared'/)
   assert.match(src, /cloudflaredPresent\(\)/)
   assert.match(src, /SUDO_ASKPASS/)
+  assert.match(src, /Cloudflare Tunnel’s installer is in Terminal/)
   const ipc = readFileSync(new URL('./ipc-stubs.ts', import.meta.url), 'utf8')
   assert.match(ipc, /clone skipped in dry-run/)
   assert.match(ipc, /switchBrain\(cloned\.dest\)/)

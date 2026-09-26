@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { CLIENT_PACKS, packLabel, packLine } from '@shared/client-pack'
 import { slugFromBusinessName } from '@shared/plyntr-invite'
 import { previousCreateStep } from '@shared/plyntr-wizard'
-import { companiesLoadError, orgStepCopy, orgUseError } from '@shared/plyntr-org-copy'
+import { companiesLoadError, ipcErrorText, orgStepCopy, orgUseError } from '@shared/plyntr-org-copy'
 import { resolvePlyntrRepoName } from '@shared/github-org'
 
 export function PackSelect({ value, onChange }: { value: string; onChange: (pack: string) => void }) {
@@ -147,7 +147,7 @@ export function PlyntrProjectScreen({
                 setMode('sent')
                 if (!sent.emailed) setErr('You are on file. Email did not send. Ask for the code directly.')
               } catch (e) {
-                setErr(String((e as Error).message || e))
+                setErr(ipcErrorText(e))
               } finally {
                 setBusy(false)
               }
@@ -167,7 +167,7 @@ export function PlyntrProjectScreen({
                 const row = await window.brain.plyntr.joinProject(code)
                 await onJoin(row)
               } catch (e) {
-                setErr(String((e as Error).message || e))
+                setErr(ipcErrorText(e))
               } finally {
                 setBusy(false)
               }
@@ -250,7 +250,7 @@ export function PlyntrCodeScreen({
                 setMode('sent')
                 if (!sent.emailed) setErr('You are on file. Email did not send. Ask for the code directly.')
               } catch (e) {
-                setErr(String((e as Error).message || e))
+                setErr(ipcErrorText(e))
               } finally {
                 setBusy(false)
               }
@@ -271,7 +271,7 @@ export function PlyntrCodeScreen({
                   const row = await window.brain.plyntr.resolve(code, email)
                   await onJoin(row)
                 } catch (e) {
-                  const msg = String((e as Error).message || e)
+                  const msg = ipcErrorText(e)
                   if (onProject && /one project/i.test(msg)) {
                     const row = await window.brain.plyntr.joinProject(code)
                     await onProject(row)
@@ -280,7 +280,7 @@ export function PlyntrCodeScreen({
                   throw e
                 }
               } catch (e) {
-                setErr(String((e as Error).message || e))
+                setErr(ipcErrorText(e))
               } finally {
                 setBusy(false)
               }
@@ -408,7 +408,7 @@ export function PlyntrCompanyScreen({
   return (
     <>
       {embedded ? null : <p className="kicker">New company</p>}
-      {embedded ? <h3 className="set-h">{title}</h3> : <h1>{title}</h1>}
+      {embedded && phase === 'list' ? null : embedded ? <h3 className="set-h">{title}</h3> : <h1>{title}</h1>}
       {phase === 'login' ? (
         <>
           <p>This Mac needs the platform login before it can add a company. We email a code to you, you paste it here, and setup continues on the next screen.</p>
@@ -443,7 +443,7 @@ export function PlyntrCompanyScreen({
                       .then(() => {
                         setCompanies((rows) => rows.map((row) => (row.brainId === c.brainId ? { ...row, pack: next } : row)))
                       })
-                      .catch((e) => setErr(String((e as Error).message || e)))
+                      .catch((e) => setErr(ipcErrorText(e)))
                       .finally(() => setBusy(false))
                   }}
                 />
@@ -475,7 +475,7 @@ export function PlyntrCompanyScreen({
                     setErr('')
                     setCode('')
                     void openCompanyRow(c.brainId)
-                      .catch((e) => setErr(String((e as Error).message || e)))
+                      .catch((e) => setErr(ipcErrorText(e)))
                       .finally(() => setBusy(false))
                   }}
                 >
@@ -587,7 +587,7 @@ export function PlyntrCompanyScreen({
                   await window.brain.hqSync.ownerRequestCode(email)
                   setHint('Check that inbox. Paste the code here, then Sign in.')
                 } catch (e) {
-                  setErr(String((e as Error).message || e))
+                  setErr(ipcErrorText(e))
                 } finally {
                   setBusy(false)
                 }
@@ -616,7 +616,7 @@ export function PlyntrCompanyScreen({
                   await loadCompanies()
                   setHint('')
                 } catch (e) {
-                  setErr(String((e as Error).message || e))
+                  setErr(ipcErrorText(e))
                 } finally {
                   setBusy(false)
                 }
@@ -671,7 +671,7 @@ export function PlyntrCompanyScreen({
                   setEmailed(created.emailed)
                   await openCompanyRow(created.brainId)
                 } catch (e) {
-                  setErr(String((e as Error).message || e))
+                  setErr(ipcErrorText(e))
                 } finally {
                   setBusy(false)
                 }
@@ -690,7 +690,7 @@ export function PlyntrCompanyScreen({
                 setCode('')
                 setBusy(true)
                 void loadCompanies()
-                  .catch((e) => setErr(String((e as Error).message || e)))
+                  .catch((e) => setErr(ipcErrorText(e)))
                   .finally(() => setBusy(false))
               }}
             >
@@ -717,7 +717,7 @@ export function PlyntrCompanyScreen({
                   setAddRole('team')
                   await openCompanyRow(people.brainId)
                 } catch (e) {
-                  setErr(String((e as Error).message || e))
+                  setErr(ipcErrorText(e))
                 } finally {
                   setBusy(false)
                 }
@@ -743,7 +743,7 @@ export function PlyntrCompanyScreen({
                     repo: claimed.repo || people.repo
                   })
                 } catch (e) {
-                  setErr(String((e as Error).message || e))
+                  setErr(ipcErrorText(e))
                   setBusy(false)
                 }
               }}
@@ -955,7 +955,7 @@ export function PlyntrCreateScreen({
                 setHasSeat(true)
                 await save(4, { brainId: res.brainId })
               } catch (e) {
-                setErr(String((e as Error).message || e))
+                setErr(ipcErrorText(e))
               } finally {
                 setBusy(false)
               }
@@ -1193,7 +1193,7 @@ export function PlyntrCreateScreen({
               await save(7, { brainId })
               onCloned(applied.brainPath || '')
             } catch (e) {
-              setErr(String((e as Error).message || e))
+              setErr(ipcErrorText(e))
             } finally {
               setBusy(false)
             }

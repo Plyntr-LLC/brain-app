@@ -48,6 +48,25 @@ export function chatOpened(signedIn: boolean, git: boolean, cloudflared: boolean
   return Boolean(signedIn && git && cloudflared)
 }
 
+/** Recheck copy when setup is not ready. Do not tell people to finish an installer that never opened. */
+export function recheckMissingLine(
+  items: { id: string; label: string; present: boolean }[],
+  wantCli: Record<string, boolean>
+): string {
+  const need = new Set(['git', 'brew', 'cloudflared'])
+  for (const id of ['grok', 'claude', 'cursor', 'gpt']) {
+    if (wantCli[id]) need.add(id)
+  }
+  const names = items.filter((row) => need.has(row.id) && !row.present).map((row) => row.label)
+  if (names.length === 1) {
+    return `${names[0]} is still missing. If no installer window opened, click Start setup again.`
+  }
+  if (names.length) {
+    return `${names.join(', ')} are still missing. If no installer window opened, click Start setup again.`
+  }
+  return 'Chat is not ready yet. Sign in to the AI you picked, then Recheck.'
+}
+
 const SKIP_PREFIX = ['skills/', '.grok/', '.team-config/', '.git/']
 
 export function draftFileAction(

@@ -35,6 +35,7 @@
     "src/shared/plyntr-transfer.test.ts",
     "src/shared/plyntr-wizard.test.ts",
     "src/shared/plyntr-org-copy.test.ts",
+    "src/shared/setup-guide.test.ts",
     "src/shared/skin/hidden-kinds.test.ts",
     "src/main/project-hooks.test.ts",
     "src/main/sync-manifest.test.ts",

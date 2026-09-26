@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ipcErrorText } from '@shared/plyntr-org-copy'
 
 export function LocalSyncPanel({
   brainId,
@@ -53,7 +54,7 @@ export function LocalSyncPanel({
       setNamed(created.repo)
       setStep('apps')
     } catch (e) {
-      setErr(String((e as Error).message || e))
+      setErr(ipcErrorText(e))
     } finally {
       setBusy(false)
     }
@@ -99,7 +100,7 @@ export function LocalSyncPanel({
       const turned = await window.brain.setup.enableLocalSync({ folder, org, repo: named })
       onDone(turned.detail || 'GitHub sync is on.')
     } catch (e) {
-      setErr(String((e as Error).message || e))
+      setErr(ipcErrorText(e))
     } finally {
       setBusy(false)
     }

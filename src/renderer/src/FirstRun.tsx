@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { STEPS, type AiKind, type PathKind, type Session } from '@shared/contracts'
 import { prettyEffort } from '@shared/effort'
+import { ipcErrorText } from '@shared/plyntr-org-copy'
 import { agencyVerifyButtons, plyntrJoinButtons } from '@shared/setup-guide'
 import { openBrainAccountLabel } from '@shared/shell-switch'
 import { blankSession, stepState } from './flow'
@@ -288,7 +289,7 @@ export function FirstRun() {
       })
       .catch((e) => {
         setAway(null)
-        setErr(String((e as Error).message || e))
+        setErr(ipcErrorText(e))
       })
   }, [s.screen, s.ai])
 
@@ -312,7 +313,7 @@ export function FirstRun() {
       const applied = await window.brain.setup.putFolder({ teamSlug: slug, org: s.orgLogin || org }).catch((e) => {
         folderPutKey.current = ''
         setFolderCopyBusy(false)
-        if (!stop) setErr(String((e as Error).message || e))
+        if (!stop) setErr(ipcErrorText(e))
         return null
       })
       setFolderCopyBusy(false)
@@ -356,7 +357,7 @@ export function FirstRun() {
       setS((p) => ({ ...p, brainPath: applied.brainPath || p.brainPath, abWatching: true }))
       await afterMembership({ brainPath: applied.brainPath, team: s.team, orgLogin: s.orgLogin || org })
     } catch (e) {
-      setErr(String((e as Error).message || e))
+      setErr(ipcErrorText(e))
       folderPutKey.current = ''
     } finally {
       setFolderCopyBusy(false)
@@ -411,7 +412,7 @@ export function FirstRun() {
               }
               return result
             } catch (e) {
-              fail = String((e as Error).message || e)
+              fail = ipcErrorText(e)
               setErr(fail)
               folderPutKey.current = ''
               return null
@@ -420,7 +421,7 @@ export function FirstRun() {
             }
           })()
         : await window.brain.setup.applyFolder().catch((e) => {
-            fail = String((e as Error).message || e)
+            fail = ipcErrorText(e)
             setErr(fail)
             return null
           })
@@ -529,7 +530,7 @@ export function FirstRun() {
     } catch (e) {
       setAway(null)
       bridgeOnce.current = ''
-      setErr(String((e as Error).message || e))
+      setErr(ipcErrorText(e))
     }
   }
 
@@ -599,7 +600,7 @@ export function FirstRun() {
       })
     } catch (e) {
       setAway(null)
-      setErr(String((e as Error).message || e))
+      setErr(ipcErrorText(e))
     }
   }
 
@@ -750,7 +751,7 @@ export function FirstRun() {
       }
       await finishPlyntrJoin(pend.join)
     } catch (e) {
-      setErr(String((e as Error).message || e))
+      setErr(ipcErrorText(e))
     }
   }
 
@@ -776,7 +777,7 @@ export function FirstRun() {
       }
       go('plyntr-create')
     } catch (e) {
-      setErr(String((e as Error).message || e))
+      setErr(ipcErrorText(e))
     }
   }
 
@@ -1174,7 +1175,7 @@ export function FirstRun() {
                         try {
                           await window.brain.setup.ensureRepo(slug)
                         } catch (e) {
-                          setErr(String((e as Error).message || e))
+                          setErr(ipcErrorText(e))
                           return
                         }
                         go('abapply', { ...patch, path: 'second' })
@@ -1182,7 +1183,7 @@ export function FirstRun() {
                       }
                       go('github', { ...patch, path: 'create' })
                     } catch (e) {
-                      const msg = String((e as Error).message || e)
+                      const msg = ipcErrorText(e)
                       if (/not found|404/i.test(msg)) setErr("I couldn't find that code. Check the invite and type it exactly.")
                       else if (/expired|410/i.test(msg)) setErr('That code has expired. Ask for a fresh one.')
                       else if (/github app|409/i.test(msg)) setErr("This brain isn't fully set up on GitHub yet. Give it a few minutes, then try again.")
@@ -1233,7 +1234,7 @@ export function FirstRun() {
                       setLoginVia(sent.via)
                       go('otp')
                     } catch (e) {
-                      setErr(String((e as Error).message || e))
+                      setErr(ipcErrorText(e))
                     }
                   }}
                 >
@@ -1269,7 +1270,7 @@ export function FirstRun() {
                         const res = await window.brain.hqSync.openExisting()
                         await afterProject(res)
                       } catch (e) {
-                        setErr(String((e as Error).message || e))
+                        setErr(ipcErrorText(e))
                       }
                     }}
                   >
@@ -1380,7 +1381,7 @@ export function FirstRun() {
                       }
                       go('choice', patch)
                     } catch (e) {
-                      setErr(String((e as Error).message || e))
+                      setErr(ipcErrorText(e))
                     }
                   }}
                 >
@@ -1398,7 +1399,7 @@ export function FirstRun() {
                       setLoginVia(sent.via)
                       setErr('Check that inbox for a six-digit code. It lasts ten minutes.')
                     } catch (e) {
-                      setErr(String((e as Error).message || e))
+                      setErr(ipcErrorText(e))
                     }
                   }}
                 >
@@ -1501,7 +1502,7 @@ export function FirstRun() {
                     setAway('github-org')
                     setErr('')
                     const r = await window.brain.setup.openCreateOrg().catch((e) => {
-                      setErr(String((e as Error).message || e))
+                      setErr(ipcErrorText(e))
                       return null
                     })
                     setAway(null)
@@ -1722,7 +1723,7 @@ export function FirstRun() {
                       })
                       .catch((e) => {
                         setAway(null)
-                        setErr(String((e as Error).message || e))
+                        setErr(ipcErrorText(e))
                       })
                   }}
                 >
