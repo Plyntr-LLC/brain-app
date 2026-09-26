@@ -7,6 +7,7 @@ import { plyntrDeviceId, savePlyntrSeat, seatForBrain, seatTokenForBrain } from 
 import { gitSyncTokenFromVault } from './shell-vault'
 import { listedRoleForSeat, transferUsesOwnerToken } from '../shared/plyntr-transfer'
 import { normalizePlyntrInviteCode, slugFromBusinessName } from '../shared/plyntr-invite'
+import { PLATFORM_AUTH } from '../shared/plyntr-org-copy'
 import { dryRunInstalledBody, dryRunPlyntrBind, dryRunProjectInvite, type PlyntrBindActor } from './plyntr-dry-run'
 import { driveOn } from './setup-pretend'
 
@@ -259,6 +260,7 @@ export async function createPlyntrBrain(
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${platformToken}` },
     body: JSON.stringify(body)
   })
+  if (r.status === 401 || r.status === 403) throw new Error(PLATFORM_AUTH)
   const parsed = (await r.json().catch(() => ({}))) as {
     error?: string
     detail?: string
@@ -291,6 +293,7 @@ async function platformCall(platformToken: string, path: string, method: 'GET' |
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${platformToken}` },
     body: body ? JSON.stringify(body) : undefined
   })
+  if (r.status === 401 || r.status === 403) throw new Error(PLATFORM_AUTH)
   const json = (await r.json().catch(() => ({}))) as { error?: string; detail?: string }
   if (!r.ok) fail(r.status, json)
   return json as Record<string, unknown>
@@ -375,6 +378,7 @@ export async function openPlyntrCompany(
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${platformToken}` },
           body: JSON.stringify(body)
         })
+        if (r.status === 401 || r.status === 403) throw new Error(PLATFORM_AUTH)
         const json = (await r.json().catch(() => ({}))) as { error?: string; detail?: string }
         if (!r.ok) fail(r.status, json)
         return json

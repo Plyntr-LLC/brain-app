@@ -133,6 +133,7 @@ const brain = {
       flag: boolean
       signedIn: string[]
       keyless: string[]
+      local?: { path: string; brainId?: string }[]
       seat: { email?: string; label?: string; token?: string }
     }>,
   brains: {

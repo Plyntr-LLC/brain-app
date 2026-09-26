@@ -5,7 +5,7 @@ import { PackSelect } from './PlyntrPath'
 import { asSeat, canTurnOnGithubSync, isTeamSeat, seatLabel, type SeatRole } from '@shared/contracts'
 import { displayPlyntrCode } from '@shared/plyntr-invite'
 import { canOfferPlyntrTransfer } from '@shared/plyntr-transfer'
-import { allowedFolders, isJoeSuperAdmin, showBrainSwitch } from '@shared/shell-switch'
+import { allowedFolders, isJoeSuperAdmin, showBrainSwitch, switchOption } from '@shared/shell-switch'
 import { LocalSyncPanel } from './LocalSyncPanel'
 import { PlyntrCompanyScreen } from './PlyntrPath'
 
@@ -212,10 +212,16 @@ export function SettingsPanel({
   const [phoneBusy, setPhoneBusy] = useState(false)
   const [phoneNote, setPhoneNote] = useState('')
   const joe = email === 'joe@plyntr.com'
-  const [shell, setShell] = useState({ email: '', flag: false, signedIn: [] as string[], keyless: [] as string[] })
+  const [shell, setShell] = useState({
+    email: '',
+    flag: false,
+    signedIn: [] as string[],
+    keyless: [] as string[],
+    local: undefined as { path: string; brainId?: string }[] | undefined
+  })
   useEffect(() => {
     void window.brain.shellView?.().then((row) => {
-      setShell({ email: row.email || email, flag: row.flag, signedIn: row.signedIn || [], keyless: row.keyless || [] })
+      setShell({ email: row.email || email, flag: row.flag, signedIn: row.signedIn || [], keyless: row.keyless || [], local: row.local })
     }).catch(() => {})
   }, [email, brains, superAdmin])
   const canAddUsers = joe || !isTeamSeat(seat || role)
@@ -643,8 +649,7 @@ export function SettingsPanel({
               }}
             >
               {allowedFolders(shell).map((id) => {
-                const b = brains.find((row) => row.path === id || row.brainId === id)
-                const path = b?.path || id
+                const { path, brain: b } = switchOption(id, brains)
                 const name = b ? placeName(b.path, prettyName(b.name || b.slug || '')) : id
                 return (
                   <option key={id} value={path}>

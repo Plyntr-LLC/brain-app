@@ -64,3 +64,17 @@ export function orgUseError(
   }
   return look.detail || 'That GitHub name is not an organization yet. Paste the address bar after you create it.'
 }
+
+/** Platform calls that answer 401/403 throw this text, so the company screen can send Joe back to sign in. */
+export const PLATFORM_AUTH = 'Plyntr platform sign-in expired. Sign in to platform sync first.'
+
+/** How the company screen shows a failed company list. Only fetch/network failures get the offline note. */
+export function companiesLoadError(message: string): { login: boolean; note: string } {
+  const text = String(message || '')
+  if (text.includes('Sign in to platform sync first')) return { login: true, note: '' }
+  if (/TypeError|fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|network/i.test(text)) {
+    return { login: false, note: 'Could not reach Plyntr for the company list. The brains on this computer are still listed.' }
+  }
+  const short = text.replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^(?:\w*Error:\s*)+/, '').trim()
+  return { login: false, note: `Could not load the company list. ${short || 'Try again.'}` }
+}

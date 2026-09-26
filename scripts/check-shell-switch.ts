@@ -88,11 +88,18 @@ const bearers: string[] = []
 // Company setup routes answer from here, keyed by method and path.
 const companyReplies: Record<string, Record<string, unknown>> = {}
 const platformBearers: string[] = []
+// Company routes that answer with a bare status, keyed by method and path, to test 401/403.
+const companyStatus: Record<string, number> = {}
 g.fetch = (async (input: string | URL, init?: RequestInit) => {
   const url = new URL(String(input))
   const headers = (init?.headers || {}) as Record<string, string>
   if (url.pathname === '/v1/invites/resolve' && nextCode) {
     return new Response(JSON.stringify(nextCode), { status: 200 })
+  }
+  const status = companyStatus[`${init?.method || 'GET'} ${url.pathname}`]
+  if (status) {
+    platformBearers.push(String(headers.Authorization || '').replace(/^Bearer /, ''))
+    return new Response(JSON.stringify({ error: 'unauthorized' }), { status })
   }
   const company = companyReplies[`${init?.method || 'GET'} ${url.pathname}`]
   if (company) {
@@ -130,7 +137,8 @@ const brainSync = await import('../src/main/brain-sync.ts')
 const sessionToken = await import('../src/main/session-token.ts')
 const brainsMod = await import('../src/main/brains.ts')
 const ipcStubs = await import('../src/main/ipc-stubs.ts')
-const { allowedFolders, isJoeSuperAdmin, openBrainAccountLabel, showAddCompany, showBrainSwitch } = await import('../src/shared/shell-switch.ts')
+const { allowedFolders, isJoeSuperAdmin, openBrainAccountLabel, showAddCompany, showBrainSwitch, switchOption } = await import('../src/shared/shell-switch.ts')
+const { companiesLoadError, PLATFORM_AUTH } = await import('../src/shared/plyntr-org-copy.ts')
 ipcStubs.registerStubIpc()
 
 const out: Record<string, unknown> = {}
@@ -928,6 +936,34 @@ fresh()
   for (const k of Object.keys(companyReplies)) delete companyReplies[k]
 }
 
+// Item 13c. A real 401 or 403 from the worker reaches the company screen as PLATFORM_AUTH and sends it back to sign in.
+fresh()
+{
+  platformBearers.length = 0
+  writeFileSync(join(vault.vaultDir(), 'hq-owner.json'), JSON.stringify({ email: 'joe@plyntr.com', token: 'platform-secret', kind: 'platform' }))
+  sessionToken.saveAccount({ email: 'joe@plyntr.com', appEmail: 'joe@plyntr.com', token: 'login:joe', role: 'owner', source: 'plyntr' })
+  vault.signInEmailOnly('joe@plyntr.com')
+  const before = vaultBytes()
+  for (const status of [401, 403]) {
+    const calls: [string, string, unknown[]][] = [
+      ['GET /v1/companies', 'plyntr:companies', []],
+      ['GET /v1/companies/c1', 'plyntr:company', ['c1']],
+      ['POST /v1/companies', 'plyntr:openCompany', [{ label: 'Denied', ownerName: 'Boss', ownerEmail: 'boss@client.com' }]],
+      ['POST /v1/brains', 'plyntr:createBrain', [{ label: 'Denied', org: 'org', slug: 'denied', scoutEmail: 'scout@plyntr.com' }]]
+    ]
+    for (const [route, name, args] of calls) {
+      companyStatus[route] = status
+      const err = await ipcThrows(name, ...args)
+      delete companyStatus[route]
+      eq(`c13c ${name} ${status}`, err, PLATFORM_AUTH)
+      eq(`c13c ${name} ${status} screen`, companiesLoadError(`Error invoking remote method '${name}': Error: ${err}`), { login: true, note: '' })
+    }
+  }
+  eq('c13c platform bearer', platformBearers, Array(8).fill('platform-secret'))
+  eq('c13c vault unchanged', vaultBytes(), before)
+  sessionToken.clearAccount()
+}
+
 // Item 13b. With no shell signed in, setup signs in the platform email first and stores the seat there.
 // With another shell signed in, setup stores the seat for that shell and does not change it.
 for (const shell of ['', 'ada@client.com']) {
@@ -977,6 +1013,92 @@ fresh()
   const err = await ipcThrows('brains:switch', 'not-on-disk')
   eq('s8b missing refused', Boolean(err), true)
   eq('s8b missing bytes', vaultBytes(), before)
+}
+
+// Item 9. Joe with one keyed brain and one local folder with no brainId (never remembered as keyless)
+// still sees Switch brain, from shell:view alone. A normal shell never sees the other folder.
+fresh()
+{
+  vault.signInEmailOnly('joe@plyntr.com')
+  sessionToken.saveAccount({ email: 'joe@plyntr.com', token: 'login:joe', role: 'owner', source: 'plyntr' })
+  vault.setFlag(true)
+  vault.acceptBrainCode('rose-l', 'joe@plyntr.com', 'plyntrllc@gmail.com', 'owner', 'rose-l-token')
+  const keyed = brainFolder('rose-l')
+  const agency = brainFolder('')
+  brainsMod.rememberBrain({ path: agency, name: 'Plyntr', slug: 'plyntr' })
+  eq('s9L keyless empty', view().keyless, [])
+  const joeView = (await ipc('shell:view')) as Parameters<typeof allowedFolders>[0]
+  eq('s9L joe flag', isJoeSuperAdmin(joeView), true)
+  eq('s9L joe show', showBrainSwitch(joeView), true)
+  const joeList = allowedFolders(joeView)
+  eq('s9L joe list has both', [joeList.includes(keyed), joeList.includes(agency)], [true, true])
+  // The Settings select, built as SettingsPanel builds it: allowedFolders(shell).map(id => switchOption(id, brains)).
+  // This Mac's shape: rose keyed and signed in, agency-brain on disk with no brainId.
+  type ListRow = { path: string; brainId?: string; current?: boolean }
+  // brains:list also carries Agency Brain's own folders on the host (on Joe's Mac, agency-brain with no brainId).
+  const selectOptions = async (): Promise<{ values: string[]; selected: string; rows: ListRow[] }> => {
+    const shell = (await ipc('shell:view')) as Parameters<typeof allowedFolders>[0]
+    const rows = (await ipc('brains:list')) as ListRow[]
+    const values = allowedFolders(shell).map((id) => switchOption(id, rows)).map((opt) => opt.path)
+    return { values, selected: rows.find((b) => b.current)?.path || '', rows }
+  }
+  const macSelect = await selectOptions()
+  const hostOnly = macSelect.rows.map((b) => b.path).filter((p) => p !== keyed && p !== agency && existsSync(p))
+  eq('s9L mac select options', macSelect.values, [keyed, agency, ...hostOnly])
+  eq('s9L mac select every local folder', macSelect.rows.filter((b) => existsSync(b.path)).every((b) => macSelect.values.includes(b.path)), true)
+  eq('s9L mac keyless folder has no brainId', macSelect.rows.find((b) => b.path === agency)?.brainId || '', '')
+  out.s9LHostFolders = hostOnly.length
+  eq('s9L mac select one per folder', new Set(macSelect.values).size, macSelect.values.length)
+  eq('s9L mac select current listed', macSelect.values.includes(macSelect.selected), true)
+  eq('s9L option by brainId maps to path', switchOption('rose-l', [{ path: keyed, brainId: 'rose-l' }]).path, keyed)
+  eq('s9L option by path keeps keyed row', switchOption(keyed, [{ path: agency }, { path: keyed, brainId: 'rose-l' }]).brain?.brainId, 'rose-l')
+  const roseRow = rowBytes('rose-l')
+  let threw = ''
+  try {
+    const opened = (await ipc('brains:switch', agency)) as { path: string }
+    eq('s9L keyless opened', opened.path, agency)
+  } catch (err) {
+    threw = String((err as Error).message || err)
+  }
+  eq('s9L keyless switch threw', threw, '')
+  eq('s9L keyed row intact', rowBytes('rose-l'), roseRow)
+  eq('s9L keyless remembered', view().keyless.includes(agency), true)
+  eq('s9L keyless no token', [vault.activeToken(), vault.activeRole()], ['', ''])
+  const back = (await ipc('brains:switch', keyed)) as { path: string }
+  eq('s9L keyed back', [back.path, vault.activeSeatId(), vault.activeToken()], [keyed, 'rose-l', 'rose-l-token'])
+  const backSelect = await selectOptions()
+  eq('s9L select after switches', [backSelect.values, backSelect.selected], [[keyed, agency, ...hostOnly], keyed])
+
+  // A keyed company folder on this Mac that Joe is not signed into: listed, but switching refuses and is never keyless.
+  const stranger = brainFolder('stranger-l')
+  eq('s9L stranger listed for joe', (await selectOptions()).values.includes(stranger), true)
+  const strangerRow = rowBytes('stranger-l')
+  const refused = await ipcThrows('brains:switch', stranger)
+  eq('s9L stranger refused', refused, 'Sign in to that brain first.')
+  const refusedById = await ipcThrows('brains:switch', 'stranger-l')
+  eq('s9L stranger by id refused', refusedById, 'Sign in to that brain first.')
+  eq('s9L stranger not keyless', view().keyless.includes(stranger), false)
+  eq('s9L stranger id not keyless', view().keyless.includes('stranger-l'), false)
+  eq('s9L stranger keeps open brain', [vault.activeSeatId(), vault.activeToken()], ['rose-l', 'rose-l-token'])
+  eq('s9L stranger row intact', rowBytes('stranger-l'), strangerRow)
+
+  vault.signInEmailOnly('ada@client.com')
+  sessionToken.saveAccount({ email: 'ada@client.com', token: 'login:ada', role: 'owner', source: 'plyntr' })
+  vault.acceptBrainCode('ada-l', 'ada@client.com', 'ada@client.com', 'owner', 'ada-l-token')
+  const adaFolder = brainFolder('ada-l')
+  const adaView = (await ipc('shell:view')) as Parameters<typeof allowedFolders>[0]
+  eq('s9L ada list', allowedFolders(adaView), [adaFolder])
+  eq('s9L ada show', showBrainSwitch(adaView), false)
+  // Company list failures: only network errors get the offline note; auth goes back to sign in.
+  eq('s9L companies network', companiesLoadError("Error invoking remote method 'plyntr:companies': TypeError: fetch failed").login, false)
+  eq('s9L companies network note', companiesLoadError('TypeError: fetch failed').note.startsWith('Could not reach Plyntr'), true)
+  eq('s9L companies auth', companiesLoadError(`Error invoking remote method 'plyntr:companies': Error: ${PLATFORM_AUTH}`), { login: true, note: '' })
+  eq('s9L companies gate', companiesLoadError('Sign in to platform sync first: Settings').login, true)
+  eq('s9L companies server', companiesLoadError("Error invoking remote method 'plyntr:companies': Error: Worker failed"), {
+    login: false,
+    note: 'Could not load the company list. Worker failed'
+  })
+  sessionToken.clearAccount()
 }
 
 // 14. Log out through the real handler. F: the sync timer stops and both rows stay.

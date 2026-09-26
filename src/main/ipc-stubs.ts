@@ -432,8 +432,10 @@ export function registerStubIpc(): void {
     const allowed = listAllowed()
     const id = known?.brainId && allowed.includes(known.brainId) ? known.brainId : folder && allowed.includes(folder) ? folder : ''
     const live = id ? seatForId(id) : { email: '', label: '', token: '' }
+    const local = listBrains().filter((b) => b.path && existsSync(b.path)).map((b) => ({ path: b.path, brainId: b.brainId || '' }))
     return {
       ...shellView(),
+      local,
       seat: { email: live.email || '', label: live.label || '', token: live.token ? 'seat' : '' }
     }
   })
@@ -451,12 +453,16 @@ export function registerStubIpc(): void {
     const known = brainRowForPath(selectedFolderId) || listBrains().find((b) => b.brainId && b.brainId === selectedFolderId) || null
     const folder = known?.path || selectedFolderId
     if (!folder || !existsSync(folder)) throw new Error('That brain folder is not on this computer.')
+    const view = shellView()
+    const joe = view.email === 'joe@plyntr.com' && view.flag
     if (known?.brainId) {
+      // A keyed folder opens only with that brain's own sign-in and key, never as keyless.
+      if (joe && !view.signedIn.includes(known.brainId)) throw new Error('Sign in to that brain first.')
       switchVault(known.brainId)
       bindBrainFolder(folder, known.brainId)
     } else {
-      const view = shellView()
-      if (view.email === 'joe@plyntr.com' && view.flag) recordKeyless(folder, 'agency-seat')
+      // Joe can open any brain folder on this Mac. One with no brainId is remembered by path.
+      if (joe) recordKeyless(folder, 'agency-seat')
       switchVault(folder)
     }
     return adoptFolder(folder)

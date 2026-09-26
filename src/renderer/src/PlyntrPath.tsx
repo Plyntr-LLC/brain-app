@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { CLIENT_PACKS, packLabel, packLine } from '@shared/client-pack'
 import { slugFromBusinessName } from '@shared/plyntr-invite'
 import { previousCreateStep } from '@shared/plyntr-wizard'
-import { orgStepCopy, orgUseError } from '@shared/plyntr-org-copy'
+import { companiesLoadError, orgStepCopy, orgUseError } from '@shared/plyntr-org-copy'
 import { resolvePlyntrRepoName } from '@shared/github-org'
 
 export function PackSelect({ value, onChange }: { value: string; onChange: (pack: string) => void }) {
@@ -385,7 +385,12 @@ export function PlyntrCompanyScreen({
         return
       }
       void loadCompanies().catch((e) => {
-        setErr(String((e as Error).message || e))
+        const failed = companiesLoadError(String((e as Error).message || e))
+        if (failed.login) {
+          setPhase('login')
+          return
+        }
+        setErr(failed.note)
         setPhase('list')
       })
     })
@@ -479,7 +484,7 @@ export function PlyntrCompanyScreen({
               </section>
             )
           })}
-          {companies.length === 0 ? <p className="tiny">Every company brain is already on this computer, or there are no companies yet.</p> : null}
+          {companies.length === 0 && !err ? <p className="tiny">Every company brain is already on this computer, or there are no companies yet.</p> : null}
         </>
       ) : null}
       {phase === 'form' ? (
