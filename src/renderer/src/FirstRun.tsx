@@ -934,6 +934,7 @@ export function FirstRun() {
         </aside>
         ) : null}
         <section className="main">
+          {s.screen !== 'chat' ? (
           <div className="runmeta" data-setup-meta="1">
             <div className="runmeta-k">Model</div>
             <button type="button" className="runmeta-v">
@@ -942,6 +943,7 @@ export function FirstRun() {
             <div className="runmeta-k">Effort</div>
             <button type="button" className="runmeta-v">{prettyEffort(undefined, s.ai || 'grok')}</button>
           </div>
+          ) : null}
           {s.screen !== 'chat' && s.screen !== 'fork' ? (
             <div className="setup-back-row">
               <button type="button" className="ghost setup-back" onClick={() => goBack()}>
