@@ -23,7 +23,7 @@ export function PackSelect({ value, onChange }: { value: string; onChange: (pack
 }
 
 const PLATFORM =
-  'Sign in to platform sync first: Settings → Add users → Email me a project-sync code, then Sign in, until you see This is the platform login.'
+  'Plyntr staff only. Open Settings, then Add users. Click Email me a code, paste the code, and click Sign in. Then come back and click Next.'
 const NO_REPO = 'This brain has no GitHub repository name yet.'
 
 type CreatePending = {
@@ -71,16 +71,16 @@ export function ForkScreen({
       ) : null}
       {err ? <p className="note">{err}</p> : null}
       <button className="choice" type="button" onClick={onPlyntr}>
-        <h3>Plyntr Brain setup</h3>
-        <p>Plyntr keeps backup copies, and more than one person can use this brain.</p>
+        <h3>Plyntr Brain</h3>
+        <p>Pick this if Plyntr or your owner emailed you a code. Plyntr keeps backup copies, and your team can share this brain.</p>
       </button>
       <button className="choice" type="button" onClick={onAgency}>
         <h3>Plyntr Brain with Agency Brain sync</h3>
-        <p>Use the setup code from Your Clients. Agency Brain keeps the copy in sync.</p>
+        <p>Pick this if your agency uses Agency Brain and gave you a setup code like BR4-7XK.</p>
       </button>
       <button className="choice" type="button" onClick={onLocal}>
         <h3>Plyntr Brain local only setup</h3>
-        <p>Copy the client brain onto this computer. No GitHub apps and no sync. An owner or a scout can add GitHub sync later in Settings.</p>
+        <p>Keeps the brain on this Mac only. No backup and no sharing yet. You can turn on sync later in Settings.</p>
       </button>
     </>
   )
@@ -145,7 +145,7 @@ export function PlyntrProjectScreen({
                 const sent = await window.brain.plyntr.emailCode(email)
                 setSentRole(sent.role || '')
                 setMode('sent')
-                if (!sent.emailed) setErr('You are on file. Email did not send. Ask for the code directly.')
+                if (!sent.emailed) setErr('We found you, but the email did not send. Ask the person who invited you for the code.')
               } catch (e) {
                 setErr(ipcErrorText(e))
               } finally {
@@ -208,15 +208,14 @@ export function PlyntrCodeScreen({
       {mode === 'code' ? (
         <p>
           {local
-            ? 'Paste the code you were given. This copies the client brain here and does not set up GitHub.'
-            : 'Paste the code you were given after you were added.'}
+            ? 'Paste the code from your invite email. This copies your brain onto this Mac. No GitHub needed.'
+            : 'Paste the 6-digit code from your Plyntr invite email.'}
         </p>
       ) : mode === 'sent' ? (
         <p>Check {email}. Paste that code here.</p>
       ) : (
         <p>
-          Type the email you were added with. A code is sent only after Plyntr, your owner, or a scout has already set
-          you up. If that has not happened, nothing is emailed.
+          Type the email you were invited with. If no email arrives in a few minutes, ask the person who invited you.
         </p>
       )}
       {mode === 'code' || mode === 'sent' ? (
@@ -248,7 +247,7 @@ export function PlyntrCodeScreen({
                 const sent = await window.brain.plyntr.emailCode(email)
                 setSentRole(sent.role || '')
                 setMode('sent')
-                if (!sent.emailed) setErr('You are on file. Email did not send. Ask for the code directly.')
+                if (!sent.emailed) setErr('We found you, but the email did not send. Ask the person who invited you for the code.')
               } catch (e) {
                 setErr(ipcErrorText(e))
               } finally {
@@ -909,6 +908,7 @@ export function PlyntrCreateScreen({
       ) : null}
       {step === 2 ? (
         <>
+          <p>You need a free GitHub account. If GitHub asks, sign up.</p>
           <p>{orgStepCopy(label, slug, nameAdvice, org)}</p>
           <label className="field">
             Short name
@@ -916,7 +916,7 @@ export function PlyntrCreateScreen({
           </label>
         </>
       ) : null}
-      {step === 3 && !brainId ? <p className="tiny">This creates your scout seat. The code for the client comes later in Settings.</p> : null}
+      {step === 3 && !brainId ? <p className="tiny">This makes you the setup person for this brain. You get the client’s code later in Settings.</p> : null}
       {step === 4 ? (
         <p>
           This Mac creates {wantRepo || `${org}/${slug}-brain`}. You do not make an empty repository. After Plyntr sync is installed
@@ -924,13 +924,13 @@ export function PlyntrCreateScreen({
         </p>
       ) : null}
       {step === 5 ? (
-        <p>
-          Install Plyntr sync on {org}, then install Brain Bridge on the same repository. GitHub should show {org} with{' '}
-          {wantRepo} already checked. Keep Only select repositories. Do not choose All repositories. If the page says
-          Plyntr LLC, do not click Install. Close that page and click Open GitHub again. After both are on {wantRepo},
-          this Mac copies the client brain template onto this computer.
-        </p>
+        <ol>
+          <li>Install Plyntr sync on {org}. Keep Only select repositories, and pick {wantRepo}.</li>
+          <li>Then install Brain Bridge on that same repository.</li>
+          <li>Never pick All repositories. If the page says Plyntr LLC, close it and click Open GitHub again.</li>
+        </ol>
       ) : null}
+      {step === 6 ? <p>This copies your brain onto this Mac. It takes about a minute.</p> : null}
       {err ? <p className="note">{err}</p> : null}
       <div className="actions">
         {step === 3 ? (
@@ -947,7 +947,7 @@ export function PlyntrCreateScreen({
                   setRepo(res.repo)
                   setHasSeat(false)
                   await save(3, { brainId: res.brainId, scoutEmail: email })
-                  setErr('The scout token did not come back. Try Recover again.')
+                  setErr('Plyntr did not finish creating your seat. Click Try again.')
                   return
                 }
                 setBrainId(res.brainId)
@@ -961,7 +961,7 @@ export function PlyntrCreateScreen({
               }
             }}
           >
-            Sign in to this brain
+            Try again
           </button>
         ) : null}
         {step === 2 && org.trim() ? (
@@ -1093,7 +1093,7 @@ export function PlyntrCreateScreen({
                   setRepo(res.repo)
                   setHasSeat(false)
                   await save(3, { scoutEmail, brainId: res.brainId })
-                  setErr('The scout token did not come back. Sign in to this brain.')
+                  setErr('Plyntr did not finish creating your seat. Click Try again.')
                   return
                 }
                 setBrainId(res.brainId)
@@ -1164,7 +1164,9 @@ export function PlyntrCreateScreen({
                       return
                     }
                     setBridgeOpened(true)
-                    setErr('')
+                    setErr(
+                      `Plyntr sync is on. A second GitHub page opened for Brain Bridge. Click Install, keep Only select repositories, pick ${want}, then click Check GitHub.`
+                    )
                     return
                   }
                   setErr(
@@ -1199,10 +1201,14 @@ export function PlyntrCreateScreen({
             }
           }}
         >
-          {step === 2 && !org.trim()
+          {busy && step === 6
+            ? 'Copying…'
+            : step === 2 && !org.trim()
             ? 'Open GitHub'
             : step === 2
               ? 'Use this organization'
+              : step === 3
+                ? 'Create the brain'
               : step === 4
                 ? 'Create the repository'
                   : step === 5 && !installOpened

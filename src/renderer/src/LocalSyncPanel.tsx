@@ -72,7 +72,7 @@ export function LocalSyncPanel({
         const opened = await window.brain.setup.openPlyntrInstall(brainId, org, named)
         setOpenedSync(true)
         if (!opened.ok) setErr(opened.detail || 'Could not open the Plyntr sync install page.')
-        else setErr('In the browser, click Install, then Only select repositories. Come back and check again.')
+        else setErr('In the browser, click Install, then Only select repositories. Then click Check GitHub.')
         return
       }
       const installed = await window.brain.plyntr.installed(brainId, named)
@@ -91,7 +91,7 @@ export function LocalSyncPanel({
         if (!openedBridge) {
           await window.brain.setup.openBridgeRepo(named)
           setOpenedBridge(true)
-          setErr('Install Brain Bridge on this same repository. Only select repositories. Then check again.')
+          setErr('Install Brain Bridge on this same repository. Only select repositories. Then click Check GitHub.')
           return
         }
         setErr(bridge.detail || 'Brain Bridge is not on this repository yet.')
@@ -110,9 +110,8 @@ export function LocalSyncPanel({
     <div className="biz-sync">
       <h3 className="set-h">GitHub sync</h3>
       <p>
-        This brain is only on this computer. Set up GitHub sync when you want backup copies and more than one person
-        editing. Create a GitHub organization, or use one you already have, then install Plyntr sync and Brain Bridge
-        on this one repository. Choose Only select repositories.
+        Right now this brain is only on this Mac. Turn on sync for backups and sharing. You need a free GitHub account.
+        We walk you through two GitHub pages.
       </p>
       {step === 'org' ? (
         <label className="field">
@@ -144,7 +143,7 @@ export function LocalSyncPanel({
           </>
         ) : (
           <button className="primary" type="button" disabled={busy} onClick={() => void installApps()}>
-            {busy ? 'Checking GitHub…' : openedSync ? 'Check GitHub' : 'Install the apps'}
+            {busy ? 'Checking GitHub…' : openedSync ? 'Check GitHub' : 'Open GitHub to install.'}
           </button>
         )}
       </div>

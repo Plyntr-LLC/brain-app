@@ -48,6 +48,18 @@ export function chatOpened(signedIn: boolean, git: boolean, cloudflared: boolean
   return Boolean(signedIn && git && cloudflared)
 }
 
+export function pickedAiName(wantCli: Record<string, boolean>): string {
+  if (wantCli.grok) return 'Grok'
+  if (wantCli.claude) return 'Claude'
+  if (wantCli.cursor) return 'Cursor'
+  if (wantCli.gpt) return 'ChatGPT'
+  return 'the AI you picked'
+}
+
+export function stillInstallingLine(label: string): string {
+  return `${label} is not installed yet. If Terminal or Apple's installer is still working, wait for it to finish, then click Recheck. If no window opened, click Start setup again.`
+}
+
 /** Recheck copy when setup is not ready. Do not tell people to finish an installer that never opened. */
 export function recheckMissingLine(
   items: { id: string; label: string; present: boolean }[],
@@ -59,12 +71,12 @@ export function recheckMissingLine(
   }
   const names = items.filter((row) => need.has(row.id) && !row.present).map((row) => row.label)
   if (names.length === 1) {
-    return `${names[0]} is still missing. If no installer window opened, click Start setup again.`
+    return `Still missing: ${names[0]}. Click Start setup to install it.`
   }
   if (names.length) {
-    return `${names.join(', ')} are still missing. If no installer window opened, click Start setup again.`
+    return `Still missing: ${names.join(', ')}. Click Start setup to install them.`
   }
-  return 'Chat is not ready yet. Sign in to the AI you picked, then Recheck.'
+  return `Next, sign in to ${pickedAiName(wantCli)}. A browser opens.`
 }
 
 const SKIP_PREFIX = ['skills/', '.grok/', '.team-config/', '.git/']

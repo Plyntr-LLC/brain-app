@@ -111,8 +111,8 @@ export async function listNeeds(picked?: AiKind): Promise<{ ready: boolean; watc
     present: gitPresent(),
     warn: win32
       ? 'Windows may ask to allow the Git installer. Click Yes.'
-      : 'Apple will open a window called Install Command Line Developer Tools. Click Install and wait until it finishes.',
-    accept: win32 ? 'Click Yes if Windows asks to allow the Git installer.' : 'Click Install on Apple’s tools window.'
+      : 'Apple opens a window called Install Command Line Developer Tools. Click Install, then Agree. It can take 10 minutes or more.',
+    accept: win32 ? 'Click Yes if Windows asks to allow the Git installer.' : 'Click Install, then Agree, on Apple’s tools window.'
   })
   if (process.platform === 'darwin') {
     items.push({
@@ -120,14 +120,14 @@ export async function listNeeds(picked?: AiKind): Promise<{ ready: boolean; watc
       label: 'Homebrew',
       line: 'Lets this Mac install the other tools.',
       present: brewPresent(),
-      warn: 'A password window will open, with dots and Cancel. Terminal stays open so you can watch the install.',
-      accept: 'Type your Mac password in the window. Dots show as you type. Cancel stops the install.'
+      warn: 'Terminal opens (a window full of text). Press Return when it asks. Type your Mac password in the Brain password box. It takes 5 to 10 minutes. Ignore Next steps at the end.',
+      accept: 'In Terminal, press Return if asked. Then type your Mac password in the Brain box.'
     })
   }
   items.push({
     id: 'ab',
     label: 'Agency Brain',
-    line: 'Mike Rhodes’ watcher. This app installs it. When the folder is copied here, this app writes his setup too. If it is not installed, this app syncs the folder itself.',
+    line: 'Optional. Keeps the shared folder in sync. If it is not installed, this app syncs the folder itself.',
     present: detectApp().installed,
     warn: win32
       ? 'Windows may ask to allow the installer. Click Yes.'
@@ -137,16 +137,16 @@ export async function listNeeds(picked?: AiKind): Promise<{ ready: boolean; watc
   items.push({
     id: 'cloudflared',
     label: 'Cloudflare Tunnel',
-    line: 'Lets Phone work from a phone on cellular. Installed with Homebrew (or winget on Windows).',
+    line: 'Lets you use Brain from your phone, even away from Wi-Fi.',
     present: cloudflaredPresent(),
     warn: win32
       ? 'Windows may ask to allow the installer. Click Yes.'
-      : 'Homebrew may ask for your Mac password in Terminal.',
-    accept: win32 ? 'Click Yes if Windows asks to allow the installer.' : 'Type your Mac password in Terminal if asked.'
+      : 'Terminal opens and installs it. This usually needs no password. Wait until Terminal says Done.',
+    accept: win32 ? 'Click Yes if Windows asks to allow the installer.' : 'Wait until Terminal says Done. This usually needs no password.'
   })
   items.push({
     id: 'grok',
-    label: 'Grok CLI',
+    label: 'Grok',
     line: 'Official xAI installer. You sign in with your own SuperGrok later.',
     present: ai.grok,
     warn: cliWin.warn,
@@ -154,7 +154,7 @@ export async function listNeeds(picked?: AiKind): Promise<{ ready: boolean; watc
   })
   items.push({
     id: 'claude',
-    label: 'Claude Code',
+    label: 'Claude',
     line: 'Official Anthropic installer. You sign in with your own Claude later.',
     present: ai.claude,
     warn: cliWin.warn,
@@ -162,16 +162,16 @@ export async function listNeeds(picked?: AiKind): Promise<{ ready: boolean; watc
   })
   items.push({
     id: 'cursor',
-    label: 'Cursor CLI',
-    line: 'Official Cursor installer (cursor-agent). You sign in with your own Cursor later.',
+    label: 'Cursor',
+    line: 'Official Cursor installer. You sign in with your own Cursor later.',
     present: ai.cursor,
     warn: cliWin.warn,
     accept: cliWin.accept
   })
   items.push({
     id: 'gpt',
-    label: 'Codex CLI',
-    line: 'ChatGPT’s command-line tool. Needs Homebrew or npm already on this computer.',
+    label: 'ChatGPT',
+    line: 'Uses your ChatGPT account.',
     present: ai.gpt,
     warn: cliWin.warn,
     accept: cliWin.accept
@@ -221,7 +221,7 @@ export async function listNeeds(picked?: AiKind): Promise<{ ready: boolean; watc
       id: 'plyntr-github',
       kind: 'status',
       label: 'GitHub app on this repo',
-      line: 'plyntr-brain-sync on this one repo. Only select repositories.',
+      line: 'Plyntr’s GitHub app, allowed on this brain only.',
       present: gh,
       warn: '',
       accept: ''
@@ -481,7 +481,7 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
         'EOF',
         'chmod 700 "$ASK"',
         'export SUDO_ASKPASS="$ASK"',
-        'echo "Installing Homebrew. A password window will open. Dots show as you type. Cancel stops the install."',
+        'echo "Installing Homebrew. Press Return if Terminal asks. Type your Mac password in the Brain password box. It takes 5 to 10 minutes. Ignore Next steps at the end."',
         '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"',
         'rm -f "$ASK"',
         'echo "Done. You can close this window."'
@@ -559,11 +559,11 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
         const brew = brewBin()
         if (!brew) {
           setupTrace({ event: 'install', id: 'cloudflared', ok: false, presentAfter: false })
-          return { ok: false, detail: 'Homebrew first, then Cloudflare Tunnel.', wait: 'none' }
+          return { ok: false, detail: 'Homebrew is not installed yet. Click Start setup to install it first.', wait: 'none' }
         }
         const opened = await openAskpassInstall({
           dialog: 'Brain needs your Mac password to install Cloudflare Tunnel.',
-          echo: 'Installing Cloudflare Tunnel. A password window will open if this Mac asks. Dots show as you type. Cancel stops the install.',
+          echo: 'Installing Cloudflare Tunnel. This usually needs no password. Wait until Terminal says Done.',
           runLine: `${shQuote(brew)} install cloudflared`
         })
         const presentAfter = cloudflaredPresent()
@@ -572,7 +572,7 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
         return {
           ok: true,
           detail:
-            'Cloudflare Tunnel’s installer is in Terminal. A password window will open if this Mac asks. We continue when it finishes.',
+            'Cloudflare Tunnel’s installer is in Terminal. This usually needs no password. Wait until Terminal says Done.',
           wait: 'present'
         }
       }
@@ -598,28 +598,28 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
     }
   }
   if (id === 'grok') {
-    if (detectAi().grok) return { ok: true, detail: 'Grok CLI is already here.', wait: 'none' }
+    if (detectAi().grok) return { ok: true, detail: 'Grok is already here.', wait: 'none' }
     const r = win32
       ? await win('npm install -g @xai-official/grok')
       : await bash('curl -fsSL https://x.ai/cli/install.sh | bash')
     return { ok: detectAi().grok || r.code === 0, detail: r.out.slice(-800) || 'Grok installer finished.', wait: 'none' }
   }
   if (id === 'claude') {
-    if (detectAi().claude) return { ok: true, detail: 'Claude Code is already here.', wait: 'none' }
+    if (detectAi().claude) return { ok: true, detail: 'Claude is already here.', wait: 'none' }
     const r = win32
       ? await win('irm https://claude.ai/install.ps1 | iex')
       : await bash('curl -fsSL https://claude.ai/install.sh | bash')
     return { ok: detectAi().claude || r.code === 0, detail: r.out.slice(-800) || 'Claude installer finished.', wait: 'none' }
   }
   if (id === 'cursor') {
-    if (detectAi().cursor) return { ok: true, detail: 'Cursor CLI is already here.', wait: 'none' }
+    if (detectAi().cursor) return { ok: true, detail: 'Cursor is already here.', wait: 'none' }
     const r = win32
       ? await win("irm 'https://cursor.com/install?win32=true' | iex")
       : await bash('curl https://cursor.com/install -fsS | bash')
     return { ok: detectAi().cursor || r.code === 0, detail: r.out.slice(-800) || 'Cursor installer finished.', wait: 'none' }
   }
   if (id === 'gpt') {
-    if (detectAi().gpt) return { ok: true, detail: 'Codex CLI is already here.', wait: 'none' }
+    if (detectAi().gpt) return { ok: true, detail: 'ChatGPT is already here.', wait: 'none' }
     const brew = brewBin()
     if (brew && !win32) {
       const r = await run(brew, ['install', 'codex'])

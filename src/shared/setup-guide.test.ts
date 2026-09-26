@@ -11,7 +11,7 @@ test('recheck names the missing tool instead of a phantom installer', () => {
       ],
       { grok: true }
     ),
-    'Cloudflare Tunnel is still missing. If no installer window opened, click Start setup again.'
+    'Still missing: Cloudflare Tunnel. Click Start setup to install it.'
   )
   assert.equal(
     recheckMissingLine(
@@ -22,6 +22,6 @@ test('recheck names the missing tool instead of a phantom installer', () => {
       ],
       { grok: true }
     ),
-    'Chat is not ready yet. Sign in to the AI you picked, then Recheck.'
+    'Next, sign in to Grok. A browser opens.'
   )
 })

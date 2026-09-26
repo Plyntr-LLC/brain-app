@@ -1064,7 +1064,14 @@ export function registerStubIpc(): void {
         effort = ''
       }
     }
-    const detail = opened ? '' : !signedIn ? 'Sign in to the AI you picked, then Start setup again.' : !git ? 'Git is still missing.' : 'Cloudflare Tunnel is still missing.'
+    const aiName = kind === 'gpt' ? 'ChatGPT' : kind === 'cursor' ? 'Cursor' : kind === 'claude' ? 'Claude' : kind === 'grok' ? 'Grok' : 'the AI you picked'
+    const detail = opened
+      ? ''
+      : !signedIn
+        ? `Next, sign in to ${aiName}. A browser opens.`
+        : !git
+          ? 'Git is still missing.'
+          : 'Cloudflare Tunnel is still missing.'
     setupTrace({ event: 'chat-open', signedIn, git, opened, model, effort, folder: String(folder || '') })
     return { opened, signedIn, git, model, effort, detail }
   })

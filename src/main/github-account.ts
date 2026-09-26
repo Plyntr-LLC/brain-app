@@ -70,7 +70,7 @@ export async function lookupGithubAccount(login: string): Promise<{
     return {
       ok: false,
       reason: 'personal-account',
-      detail: `${body?.login || name} is already a person's GitHub login, so an organization cannot use that name. Choose a different organization name, then paste the address bar.`,
+      detail: `${body?.login || name} is already a person's GitHub login, so an organization cannot use that name. Choose a different organization name, then copy the web address at the top of the browser and paste it here.`,
       login: body?.login || name,
       type: body?.type
     }

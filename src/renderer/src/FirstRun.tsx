@@ -260,6 +260,21 @@ export function FirstRun() {
     })
   }
 
+  async function openChatOrSignIn(
+    pick: AiKind,
+    path: string,
+    patch: Partial<Session>
+  ): Promise<'chat' | 'sign-in' | 'blocked'> {
+    const gate = await window.brain.setup.tryOpen(pick, path)
+    if (gate.opened) return 'chat'
+    if (!gate.signedIn && gate.git) {
+      go('aiwork', { ...patch, brainPath: path, ai: pick })
+      return 'sign-in'
+    }
+    setErr(gate.detail || 'Chat stays closed until Git, Cloudflare Tunnel, and that AI are ready.')
+    return 'blocked'
+  }
+
   useEffect(() => {
     if (!showInvite) return
     const onKey = (e: KeyboardEvent) => {
@@ -382,9 +397,15 @@ export function FirstRun() {
         go('aipick', { brainPath: draft.path, channel: 'agency', role: 'owner', team })
         return
       }
-      const gate = await window.brain.setup.tryOpen(who, draft.path)
-      if (!gate.opened) {
-        setErr(gate.detail || 'Chat stays closed until Git, Cloudflare Tunnel, and that AI are ready.')
+      const routed = await openChatOrSignIn(who, draft.path, {
+        brainPath: draft.path,
+        ai: who,
+        channel: 'agency',
+        role: 'owner',
+        team
+      })
+      if (routed === 'sign-in') return
+      if (routed === 'blocked') {
         go('needs', { brainPath: draft.path, ai: who, channel: 'agency', role: 'owner', team })
         return
       }
@@ -526,6 +547,7 @@ export function FirstRun() {
         return
       }
       if (pick && signed) go('chat', next)
+      else if (pick) go('aiwork', next)
       else go('aipick', next)
     } catch (e) {
       setAway(null)
@@ -1006,7 +1028,11 @@ export function FirstRun() {
             <div data-setup-screen="plyntr-wait">
               <p className="kicker">GitHub</p>
               <h1>This brain is not ready to copy yet.</h1>
-              <p>GitHub has to show this one repository, with Only select repositories. Chat stays closed until then.</p>
+              <p>
+                {waitJoin.current?.role === 'team' || waitJoin.current?.role === 'project' || waitJoin.current?.pending
+                  ? 'Your owner has not finished connecting this brain to GitHub. Ask them to finish, then click Check again.'
+                  : `Click Open GitHub. Click Install, choose Only select repositories, and pick ${waitJoin.current?.repo || 'this brain'}. Then click Check GitHub.`}
+              </p>
               {err ? <p className="note">{err}</p> : null}
               <div className="actions">
                 {plyntrJoinButtons({
@@ -1035,7 +1061,7 @@ export function FirstRun() {
                             email: s.email,
                             name: s.business
                           })
-                        }
+                        } else setErr('Not ready yet. Try again in a minute.')
                       })
                     }}
                   >
@@ -1049,7 +1075,11 @@ export function FirstRun() {
             <div data-setup-screen="github-verify">
               <p className="kicker">GitHub</p>
               <h1>The GitHub app is not installed yet.</h1>
-              <p>Chat stays on this setup until GitHub says the app is installed.</p>
+              <p>
+                {s.role === 'team' || s.role === 'project'
+                  ? 'Ask your owner to install the GitHub app, then click Check again.'
+                  : 'Click Open GitHub, click Install, choose Only select repositories.'}
+              </p>
               {err ? <p className="note">{err}</p> : null}
               <div className="actions">
                 {agencyVerifyButtons(s.role || '').map((label) => (
@@ -1078,6 +1108,8 @@ export function FirstRun() {
               picked={s.ai}
               onPick={(ai) => setS((prev) => ({ ...prev, ai }))}
               hideAgency={s.channel === 'local' || s.channel === 'plyntr'}
+              folderMissing={s.channel === 'local' ? 'code' : 'github'}
+              onNeedSignIn={(ai) => go('aiwork', { ai, brainPath: s.brainPath })}
               onReady={async ({ watching, ai, brainPath }) => {
                 const pick = ai || s.ai
                 const drafted = String(s.brainPath || '')
@@ -1096,12 +1128,10 @@ export function FirstRun() {
                   setS((prev) => ({ ...prev, brainPath: path }))
                 }
                 if (!String(path || '').trim() || !pick) return false
-                const gate = await window.brain.setup.tryOpen(pick, path)
-                if (!gate.opened) {
-                  setErr(gate.detail || 'Chat stays closed until Git, Cloudflare Tunnel, and that AI are ready.')
-                  return false
-                }
                 const patch = { abWatching: watching || Boolean(path), brainPath: path, ai: pick }
+                const routed = await openChatOrSignIn(pick, path, patch)
+                if (routed === 'blocked') return false
+                if (routed === 'sign-in') return true
                 if (String(path).includes('setup-drafts')) {
                   go('chat', patch)
                   return true
@@ -1129,7 +1159,7 @@ export function FirstRun() {
                   autoCorrect="off"
                 />
               </label>
-              <p className="tiny">Six letters and numbers, from the invite or from Your Clients.</p>
+              <p className="tiny">Six letters and numbers, from your invite email.</p>
               {err && <p className="note">{err}</p>}
               <div className="actions">
                 <button
@@ -1208,10 +1238,7 @@ export function FirstRun() {
             <>
               <p className="kicker">Sign in</p>
               <h1>Sign in with your email.</h1>
-              <p>
-                Owners, scouts, and agency team get a setup code. Project only people get a code from this app. You do
-                not pick which. Type the email you were invited with.
-              </p>
+              <p>Type the email you were invited with. We email you a sign-in code.</p>
               <label className="field">
                 Your email
                 <input value={s.email} onChange={(e) => setS({ ...s, email: e.target.value })} placeholder="you@company.com" />
@@ -1418,7 +1445,7 @@ export function FirstRun() {
               <p>Teammates never see this.</p>
               <button type="button" className={`choice ${choice === 'new' ? 'on' : ''}`} onClick={() => setChoice('new')}>
                 <h3>I'm setting this brain up</h3>
-                <p>First time. We copy this team’s brain onto this computer, then GitHub if needed, then the conversation.</p>
+                <p>First time. We put this brain on GitHub, copy it to this Mac, then open Chat.</p>
               </button>
               <button type="button" className={`choice ${choice === 'existing' ? 'on' : ''}`} onClick={() => setChoice('existing')}>
                 <h3>It's already set up. I need it on this computer.</h3>
@@ -1454,7 +1481,7 @@ export function FirstRun() {
               <label className="field">Business name
                 <input value={s.business} onChange={(e) => setS({ ...s, business: e.target.value })} placeholder="Harold's Books" />
               </label>
-              <p className="tiny">A name people will recognise. Next we put a private copy on GitHub, then on this computer.</p>
+              <p className="tiny">A name people will recognize. Next we put a private copy on GitHub, then on this computer.</p>
               {err && <p className="note">{err}</p>}
               <div className="actions">
                 <button className="primary" type="button" onClick={() => {
@@ -1480,8 +1507,8 @@ export function FirstRun() {
               <h1>Company short name, then install our GitHub app.</h1>
               <p className="muted">
                 This is not your business name. It is the one-word GitHub handle (like <strong>harolds-books</strong>).
-                After that, GitHub opens an Install page. Choose <strong>Only select repositories</strong>, never All
-                repositories.
+                You need a free GitHub account. If GitHub asks, sign up. After that, GitHub opens an Install page. Choose{' '}
+                <strong>Only select repositories</strong>, never All repositories.
               </p>
               <AwayBanner kind={away} />
               {!away ? (
@@ -1509,6 +1536,10 @@ export function FirstRun() {
                     const login = String(r?.org || '').trim()
                     if (login) {
                       setOrg(login)
+                      if (!githubOnlySelected) {
+                        setErr('Check the box below first.')
+                        return
+                      }
                       await installOnGithub(login)
                     }
                   }}
@@ -1559,9 +1590,9 @@ export function FirstRun() {
               <p className="kicker">GitHub</p>
               <h1>Install Brain Bridge on this repo.</h1>
               <p>
-                GitHub does not have Brain Bridge on this repository yet. The browser opens the install page. Click
-                Install. Choose Only select repositories. Pick this repo. We stay here until GitHub says it is
-                installed. Chat stays closed until then.
+                Brain Bridge is our second GitHub app. It lets this Mac save changes back to the shared copy. The browser
+                opens the install page. Click Install. Choose Only select repositories. Pick this repo. We stay here
+                until GitHub says it is installed.
               </p>
               <AwayBanner kind={away} />
               <label className="field" style={{ flexDirection: 'row', alignItems: 'flex-start', gap: '0.5rem' }}>
@@ -1594,7 +1625,7 @@ export function FirstRun() {
                 <p>
                   {s.brainPath
                     ? s.brainPath
-                    : 'We copy from GitHub into ~/Projects. Next you will see One setup: Git, Cloudflare, Agency Brain, and your AI tool.'}
+                    : 'We copy it into the Projects folder in your home folder. Next: Git, Homebrew, Cloudflare Tunnel, and your AI.'}
                 </p>
               </div>
               <p className="tiny">
@@ -1631,14 +1662,14 @@ export function FirstRun() {
           )}
           {s.screen === 'aipick' && (
             <div data-setup-screen="cli">
-              <p className="kicker">Talking</p>
+              <p className="kicker">Your AI</p>
               <h1>Which AI should this use?</h1>
               <p>Pick who you start with. You can open the others later from + in the tab bar.</p>
               <div className="warn-box">
-                <h3>A browser or Terminal may open</h3>
+                <h3>Next: install, then sign in</h3>
                 <p>
-                  The first time, that AI asks you to sign in with your own account. Finish that sign-in. We bring you
-                  back here.
+                  Next we install it. Then you sign in with your own paid account (for example Claude Pro). A browser
+                  opens for that.
                 </p>
               </div>
               <div className="ai-grid">
@@ -1646,7 +1677,7 @@ export function FirstRun() {
                   <button type="button" key={id} className={`ai ${s.ai === id ? 'on' : ''}`} data-setup-button={n} onClick={() => setS({ ...s, ai: id })}>
                     <strong>{n}</strong>
                     {detected[id] === false || detected[id] ? ' ' : null}
-                    <span>{detected[id] === false ? 'not installed yet' : detected[id] ? 'ready' : ''}</span>
+                    <span>{detected[id] === false ? 'not installed yet' : detected[id] ? 'installed' : ''}</span>
                   </button>
                 ))}
               </div>

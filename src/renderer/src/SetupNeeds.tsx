@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AiKind } from '@shared/contracts'
 import { ipcErrorText } from '@shared/plyntr-org-copy'
-import { recheckMissingLine } from '@shared/setup-guide'
+import { recheckMissingLine, stillInstallingLine } from '@shared/setup-guide'
 import { WorkPulse } from './WorkPulse'
 
 type ToolNeed = {
@@ -53,15 +53,19 @@ function pickAi(items: ToolNeed[], wanted?: Record<string, boolean>): AiKind | u
 export function SetupNeeds({
   onReady,
   onNeedFolder,
+  onNeedSignIn,
   onPick,
   picked,
-  hideAgency
+  hideAgency,
+  folderMissing
 }: {
   onReady: (info: { ready: boolean; watching: boolean; ai?: AiKind; brainPath?: string }) => void | Promise<boolean | void>
   onNeedFolder?: () => void
+  onNeedSignIn?: (ai: AiKind) => void
   onPick?: (ai: AiKind) => void
   picked?: AiKind
   hideAgency?: boolean
+  folderMissing?: 'github' | 'code'
 }) {
   const [items, setItems] = useState<ToolNeed[]>([])
   const [wantCli, setWantCli] = useState<Record<string, boolean>>(() =>
@@ -146,7 +150,7 @@ export function SetupNeeds({
   }
 
   async function pollUntil(test: (st: Status) => boolean, waiting: string): Promise<boolean> {
-    for (let i = 0; i < 400; i++) {
+    for (let i = 0; i < 800; i++) {
       if (stop.current) return false
       const st = await refresh()
       if (test(st)) return true
@@ -192,7 +196,7 @@ export function SetupNeeds({
             : Boolean(st.items.find((i) => i.id === item.id)?.present),
         r.wait === 'watching'
           ? 'Waiting on Agency Brain. Sign in there and pick the shared folder. We continue when it is watching.'
-          : `Waiting on ${item.label}. ${item.accept || 'Finish that window, then we continue.'}`
+          : `Waiting on ${item.label}. If Terminal or Apple's installer is still working, wait. If no window opened, click Check now.`
       )
       await window.brain.setup.bringFront()
       if (stop.current) return
@@ -200,7 +204,7 @@ export function SetupNeeds({
         throw new Error(
           r.wait === 'watching'
             ? 'Agency Brain is not watching a folder yet. Finish sign-in there, then Recheck.'
-            : `${item.label} is still missing. Finish that installer, then Start setup again.`
+            : stillInstallingLine(item.label)
         )
       }
     }
@@ -280,8 +284,8 @@ export function SetupNeeds({
       <p className="kicker">This computer</p>
       <h1>{running ? 'Setting up this computer.' : 'One setup, then Chat.'}</h1>
       <p>
-        We install what’s missing with the official installers. Nothing here spends money. Grok, Claude, Cursor, and ChatGPT
-        still bill your own accounts when you sign in.
+        We install what’s missing with the official installers. Some steps open Terminal, a window full of text. That is
+        normal. Nothing here spends money. Grok, Claude, Cursor, and ChatGPT still bill your own accounts when you sign in.
       </p>
       {said ? <p className="note">{said}</p> : null}
       {banner ? <p className="note">{banner}</p> : null}
@@ -291,7 +295,7 @@ export function SetupNeeds({
           <h3>Before we start: you will need to allow access</h3>
           {warns.length > 0 ? (
             <>
-              <p>macOS, Windows, or the installer will ask. Accept those so setup can finish. We pause at each one.</p>
+              <p>Your Mac will ask a few times. Accept each one. We pause at each step.</p>
               <ol>
                 {warns.map((i) => (
                   <li key={i.id}>
@@ -312,11 +316,15 @@ export function SetupNeeds({
       {!running && loaded && missing.length === 0 && !watching && !brainPath ? (
         <div className="warn-box">
           <h3>The shared folder is not on this computer yet</h3>
-          <p>Finish GitHub (Only select repositories), then Recheck. This app copies the folder and keeps it in sync.</p>
+          <p>
+            {folderMissing === 'code'
+              ? 'Your brain is not on this Mac yet. Go back and paste your code.'
+              : 'Finish GitHub (Only select repositories), then Recheck. This app copies the folder and keeps it in sync.'}
+          </p>
           {onNeedFolder ? (
             <p>
               <button type="button" className="linkish" onClick={() => onNeedFolder()}>
-                Back to GitHub copy
+                {folderMissing === 'code' ? 'Back to code' : 'Back to GitHub copy'}
               </button>
             </p>
           ) : null}
@@ -325,7 +333,7 @@ export function SetupNeeds({
       {!running && loaded ? (
         <div className="warn-box">
           <h3>One AI for this setup</h3>
-          <p>Pick one. Start setup installs that one, plus Git and Cloudflare Tunnel if they are missing.</p>
+          <p>Pick one. Start setup installs that one, plus Git, Homebrew, and Cloudflare Tunnel if they are missing.</p>
           {CLI_IDS.map((id) => {
             const row = items.find((i) => i.id === id)
             return (
@@ -355,7 +363,7 @@ export function SetupNeeds({
             <span>
               <strong>
                 {n.label}
-                {n.present ? ' · ready' : busyId === n.id ? ' · now' : ''}
+                {n.present ? ' · installed' : busyId === n.id ? ' · now' : ''}
               </strong>
               <span className="muted"> {n.line}</span>
             </span>
@@ -382,11 +390,19 @@ export function SetupNeeds({
             if (st.ready && !abMissing) onReady(asReady(st, { ready: true, watching: true }, wantCli))
             else if (st.watching && ai && st.brainPath) onReady(asReady(st, { ready: false, watching: true }, wantCli))
             else if (!st.brainPath && onNeedFolder) {
-              setErr('The shared folder is not here yet. Use Back to GitHub copy, or finish GitHub in the browser.')
-            } else setErr(recheckMissingLine(st.items, wantCli))
+              setErr(
+                folderMissing === 'code'
+                  ? 'Your brain is not on this Mac yet. Go back and paste your code.'
+                  : 'The shared folder is not here yet. Use Back to GitHub copy, or finish GitHub in the browser.'
+              )
+            } else {
+              const line = recheckMissingLine(st.items, wantCli)
+              if (choice && onNeedSignIn && /sign in/i.test(line)) onNeedSignIn(choice)
+              else setErr(line)
+            }
           }}
         >
-          {running ? 'I finished that window' : 'Recheck'}
+          {running ? 'Check now' : 'Recheck'}
         </button>
         {running ? (
           <button
