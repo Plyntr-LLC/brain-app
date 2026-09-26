@@ -1,12 +1,12 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { createWriteStream, existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { bringAppFront } from './bring-front'
 import { cliSignedIn } from './cli-auth'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
-import { shell } from 'electron'
+import { app, shell } from 'electron'
 import { DOWNLOAD_AB } from '../shared/contracts'
 import { detectApp, readWatching } from './agency-brain'
 import { brainRowForPath, currentBrainFolder } from './brains'
@@ -73,21 +73,93 @@ export function gitPresent(): boolean {
   }
 }
 
+function cloudflaredUserBin(): string {
+  try {
+    return join(app.getPath('userData'), 'bin', 'cloudflared')
+  } catch {
+    return join(homedir(), 'Library/Application Support/Brain/bin/cloudflared')
+  }
+}
+
+function binRuns(path: string): boolean {
+  try {
+    return spawnSync(path, ['--version'], { stdio: 'ignore' }).status === 0
+  } catch {
+    return false
+  }
+}
+
+export function resolveCloudflaredBin(): string | null {
+  const named = [
+    process.env.CLOUDFLARED_BIN,
+    cloudflaredUserBin(),
+    join(homedir(), '.local/bin/cloudflared'),
+    '/opt/homebrew/bin/cloudflared',
+    '/usr/local/bin/cloudflared'
+  ]
+  for (const p of named) {
+    if (p && existsSync(p) && binRuns(p)) return p
+  }
+  const extra = `${dirname(cloudflaredUserBin())}:/opt/homebrew/bin:/usr/local/bin`
+  try {
+    const r = spawnSync('which', ['cloudflared'], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${process.env.PATH || ''}:${extra}` }
+    })
+    const out = String(r.stdout || '').trim()
+    return r.status === 0 && out && binRuns(out) ? out : null
+  } catch {
+    return null
+  }
+}
+
+export function cloudflaredMacUrl(arch = process.arch): string {
+  return arch === 'arm64'
+    ? 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz'
+    : 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz'
+}
+
 export function cloudflaredPresent(): boolean {
   if (absentIds().has('cloudflared')) return false
   if (forcedPresent('cloudflared')) return true
-  const extra = '/opt/homebrew/bin:/usr/local/bin'
-  const env = { ...process.env, PATH: `${process.env.PATH || ''}:${extra}` }
+  const bin = resolveCloudflaredBin()
+  return Boolean(bin && binRuns(bin))
+}
+
+async function installCloudflaredMac(): Promise<InstallResult> {
+  const dest = cloudflaredUserBin()
+  mkdirSync(join(dest, '..'), { recursive: true })
+  const tmp = mkdtempSync(join(tmpdir(), 'brain-cf-'))
+  const tgz = join(tmp, 'cf.tgz')
   try {
-    if (spawnSync('cloudflared', ['--version'], { stdio: 'ignore', env }).status === 0) return true
-  } catch {
-    /* */
-  }
-  try {
-    const r = spawnSync('which', ['cloudflared'], { encoding: 'utf8', env })
-    return r.status === 0 && Boolean(String(r.stdout || '').trim())
-  } catch {
-    return false
+    const res = await fetch(cloudflaredMacUrl(), { redirect: 'follow', signal: AbortSignal.timeout(120_000) })
+    if (!res.ok) {
+      return { ok: false, detail: `Could not download Cloudflare Tunnel (${res.status}). Try again when this Mac is online.`, wait: 'none' }
+    }
+    writeFileSync(tgz, Buffer.from(await res.arrayBuffer()))
+    const unpacked = spawnSync('/usr/bin/tar', ['-xzf', tgz, '-C', tmp], { encoding: 'utf8' })
+    if (unpacked.status !== 0) {
+      return { ok: false, detail: String(unpacked.stderr || '').trim() || 'Could not unpack Cloudflare Tunnel.', wait: 'none' }
+    }
+    const src = existsSync(join(tmp, 'cloudflared')) ? join(tmp, 'cloudflared') : ''
+    if (!src) return { ok: false, detail: 'The Cloudflare download did not include the tunnel tool.', wait: 'none' }
+    copyFileSync(src, dest)
+    chmodSync(dest, 0o755)
+    spawnSync('/usr/bin/xattr', ['-d', 'com.apple.quarantine', dest], { stdio: 'ignore' })
+    const ok = binRuns(dest)
+    return {
+      ok,
+      detail: ok ? 'Cloudflare Tunnel is installed.' : 'Downloaded Cloudflare Tunnel, but this Mac would not run it.',
+      wait: 'none'
+    }
+  } catch (e) {
+    const name = String((e as { name?: string })?.name || '')
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      return { ok: false, detail: 'Could not download Cloudflare Tunnel. Try again when this Mac is online.', wait: 'none' }
+    }
+    return { ok: false, detail: String((e as Error)?.message || e || 'Could not install Cloudflare Tunnel.'), wait: 'none' }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
   }
 }
 
@@ -141,8 +213,8 @@ export async function listNeeds(picked?: AiKind): Promise<{ ready: boolean; watc
     present: cloudflaredPresent(),
     warn: win32
       ? 'Windows may ask to allow the installer. Click Yes.'
-      : 'Terminal opens and installs it. This usually needs no password. Wait until Terminal says Done.',
-    accept: win32 ? 'Click Yes if Windows asks to allow the installer.' : 'Wait until Terminal says Done. This usually needs no password.'
+      : 'This Mac downloads Cloudflare’s official tool. No password, and no Terminal.',
+    accept: win32 ? 'Click Yes if Windows asks to allow the installer.' : 'Stay on this screen. It takes about a minute.'
   })
   items.push({
     id: 'grok',
@@ -556,25 +628,9 @@ export async function installNeed(id: NeedId): Promise<InstallResult> {
         )
         detail = r.out.slice(-800)
       } else {
-        const brew = brewBin()
-        if (!brew) {
-          setupTrace({ event: 'install', id: 'cloudflared', ok: false, presentAfter: false })
-          return { ok: false, detail: 'Homebrew is not installed yet. Click Start setup to install it first.', wait: 'none' }
-        }
-        const opened = await openAskpassInstall({
-          dialog: 'Brain needs your Mac password to install Cloudflare Tunnel.',
-          echo: 'Installing Cloudflare Tunnel. This usually needs no password. Wait until Terminal says Done.',
-          runLine: `${shQuote(brew)} install cloudflared`
-        })
-        const presentAfter = cloudflaredPresent()
-        setupTrace({ event: 'install', id: 'cloudflared', ok: !opened, presentAfter })
-        if (opened) return { ok: false, detail: opened, wait: 'none' }
-        return {
-          ok: true,
-          detail:
-            'Cloudflare Tunnel’s installer is in Terminal. This usually needs no password. Wait until Terminal says Done.',
-          wait: 'present'
-        }
+        const put = await installCloudflaredMac()
+        setupTrace({ event: 'install', id: 'cloudflared', ok: put.ok, presentAfter: cloudflaredPresent() })
+        return put
       }
     }
     const presentAfter = cloudflaredPresent()

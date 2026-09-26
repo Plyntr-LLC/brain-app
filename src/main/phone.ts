@@ -1,4 +1,4 @@
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
@@ -54,6 +54,7 @@ import {
 } from './phone-lib'
 import { phoneQrSvg } from './phone-qr'
 import { setupTrace } from './setup-trace'
+import { resolveCloudflaredBin } from './install'
 import { cancelWarm, closeWarm, promptWarm } from './warm'
 
 export type PhoneDeviceView = { id: string; label: string; lastSeen: number }
@@ -490,20 +491,7 @@ function namedPhone(): NamedPhone | null {
 }
 
 function cloudflaredBin(): string | null {
-  const extra = '/opt/homebrew/bin:/usr/local/bin'
-  const named = [process.env.CLOUDFLARED_BIN, '/opt/homebrew/bin/cloudflared', '/usr/local/bin/cloudflared']
-  for (const p of named) {
-    if (p && existsSync(p)) return p
-  }
-  try {
-    const out = execFileSync('which', ['cloudflared'], {
-      encoding: 'utf8',
-      env: { ...process.env, PATH: `${process.env.PATH || ''}:${extra}` }
-    }).trim()
-    return out || null
-  } catch {
-    return null
-  }
+  return resolveCloudflaredBin()
 }
 
 function spawnCaffeine(): void {
@@ -518,7 +506,7 @@ function startTunnel(port: number): Promise<string> {
   const bin = cloudflaredBin()
   if (!bin) {
     return Promise.reject(
-      new Error('cloudflared is not on this Mac. In Terminal: brew install cloudflared')
+      new Error('Cloudflare Tunnel is not on this Mac. Finish setup, then try Phone again.')
     )
   }
   const named = namedPhone()
