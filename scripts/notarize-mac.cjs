@@ -55,3 +55,6 @@ if (existsSync(zip)) {
   )
   if (z.status) process.exit(z.status)
 }
+
+const { syncFromRepo } = require('./sync-mac-update-yml.cjs')
+syncFromRepo(root)

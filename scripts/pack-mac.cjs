@@ -35,6 +35,8 @@ const r = spawnSync('npx', args, { stdio: 'inherit', env: process.env })
 if (r.status) process.exit(r.status)
 
 const pkg = require('../package.json')
+const { syncFromRepo } = require('./sync-mac-update-yml.cjs')
+syncFromRepo(root)
 const dmg = join(root, 'dist', `Brain-${pkg.version}-mac.dmg`)
 if (existsSync(dmg)) console.log(`One file: ${dmg}`)
 else console.log('Look in dist/ for the .dmg.')
