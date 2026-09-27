@@ -1526,3 +1526,151 @@ button.runmeta-v:hover { color: var(--orange-deep); }
 }
 .skin-raw-bar button { color: #f3eee8; }
 .skin-raw-host { height: 9rem; }
+
+/* First-run: editorial paper-and-ink polish. Scoped away from Chat. */
+.app:not(.chat-on) .main > [data-setup-screen]:not([data-setup-screen='chat']) {
+  max-width: 40rem;
+}
+.main [data-setup-screen]:not([data-setup-screen='chat']) .kicker,
+.main > .kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--orange-deep);
+  margin: 0 0 0.7rem;
+}
+.main [data-setup-screen]:not([data-setup-screen='chat']) .kicker::before,
+.main > .kicker::before {
+  content: '';
+  width: 1.4rem;
+  height: 2px;
+  background: var(--orange);
+  flex-shrink: 0;
+}
+.main [data-setup-screen]:not([data-setup-screen='chat']) h1 {
+  font-size: 1.95rem;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  margin: 0 0 0.75rem;
+}
+.main [data-setup-screen]:not([data-setup-screen='chat']) > p:not(.tiny):not(.note):not(.kicker) {
+  font-size: 1.06rem;
+  line-height: 1.55;
+  color: color-mix(in srgb, var(--ink) 86%, var(--muted));
+  max-width: 36rem;
+}
+.two-apps {
+  font-size: 0.78rem;
+  letter-spacing: 0.01em;
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* Fork choices: numbered index cards. */
+.choice-stack {
+  counter-reset: choice;
+  gap: 0.6rem;
+  margin: 1.4rem 0 0;
+}
+.choice-stack .choice {
+  counter-increment: choice;
+  position: relative;
+  display: grid;
+  grid-template-columns: 2.1rem 1fr 1.2rem;
+  grid-template-rows: auto auto;
+  column-gap: 0.5rem;
+  align-items: baseline;
+  padding: 1rem 1.05rem 1rem 0.95rem;
+  border-color: var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font-weight: 400;
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+.choice-stack .choice::before {
+  content: counter(choice, decimal-leading-zero);
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  font-family: "Schibsted Grotesk", sans-serif;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  padding-top: 0.12rem;
+  transition: color 140ms ease;
+}
+.choice-stack .choice::after {
+  content: '→';
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+  font-family: "Schibsted Grotesk", sans-serif;
+  font-size: 1rem;
+  color: var(--muted);
+  opacity: 0.5;
+  transition: transform 140ms ease, opacity 140ms ease, color 140ms ease;
+}
+.choice-stack .choice h3 {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: 1.08rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin: 0 0 0.25rem;
+}
+.choice-stack .choice p {
+  grid-column: 2 / span 2;
+  grid-row: 2;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 0.97rem;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+.choice-stack .choice:hover,
+.choice-stack .choice:focus-visible {
+  border-color: var(--ink);
+  background: var(--hover);
+  box-shadow: inset 3px 0 0 var(--orange);
+}
+.choice-stack .choice:focus-visible { box-shadow: inset 3px 0 0 var(--orange), var(--focus); }
+.choice-stack .choice:hover::before,
+.choice-stack .choice:focus-visible::before { color: var(--orange-deep); }
+.choice-stack .choice:hover::after,
+.choice-stack .choice:focus-visible::after {
+  opacity: 1;
+  color: var(--orange-deep);
+  transform: translateX(3px);
+}
+.choice-stack .choice:active { background: var(--paper); }
+[data-setup-screen='fork'] > .primary { margin: 0.2rem 0.5rem 0.4rem 0; }
+
+/* Rail: a quiet ledger of steps. */
+.rail h2 {
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+.rail .step { position: relative; }
+.rail .step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: calc(0.525rem - 0.5px);
+  top: calc(1.05rem + 0.08rem + 2px);
+  bottom: calc(-0.65rem + 2px);
+  width: 1px;
+  background: var(--line);
+}
+.rail .step.done:not(:last-child)::after { background: var(--ok-line); }
+.rail .step.now span:last-child { font-weight: 700; }
+
+/* Setup checklist glyphs. */
+.setup-list li > span:first-child {
+  font-family: "Schibsted Grotesk", sans-serif;
+  font-weight: 700;
+  color: var(--muted);
+  text-align: center;
+}
+.setup-list li.got > span:first-child { color: var(--ok); }
+.setup-list li.now > span:first-child { color: var(--orange); }
+.setup-list li { padding: 0.15rem 0; }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { CLIENT_PACKS, packLabel, packLine } from '@shared/client-pack'
-import { slugFromBusinessName } from '@shared/plyntr-invite'
+import { inviteTryOrder, slugFromBusinessName } from '@shared/plyntr-invite'
 import { onePerPerson } from '@shared/plyntr-transfer'
 import { previousCreateStep } from '@shared/plyntr-wizard'
 import { companiesLoadError, ipcErrorText, orgStepCopy, orgUseError } from '@shared/plyntr-org-copy'
@@ -41,8 +41,8 @@ export function ForkScreen({
   pendingCreate,
   pendingJoin,
   err,
-  onPlyntr,
-  onAgency,
+  onSignIn,
+  onCode,
   onLocal,
   onContinueCreate,
   onContinueJoin
@@ -50,8 +50,8 @@ export function ForkScreen({
   pendingCreate: boolean
   pendingJoin: boolean
   err: string
-  onPlyntr: () => void
-  onAgency: () => void
+  onSignIn: () => void
+  onCode: () => void
   onLocal: () => void
   onContinueCreate: () => void
   onContinueJoin: () => void
@@ -59,7 +59,8 @@ export function ForkScreen({
   return (
     <>
       <p className="kicker">Start</p>
-      <h1>How do you want to set this up?</h1>
+      <h1>Set up Brain on this Mac.</h1>
+      <p>Pick one. Sign in if you already use Brain, paste the code someone sent you, or keep a brain on this computer only.</p>
       {pendingCreate ? (
         <button className="primary" type="button" onClick={onContinueCreate}>
           Continue company brain setup
@@ -72,17 +73,17 @@ export function ForkScreen({
       ) : null}
       {err ? <p className="note">{err}</p> : null}
       <div className="choice-stack">
-      <button className="choice" type="button" onClick={onPlyntr}>
-        <h3>Plyntr Brain</h3>
-        <p>Plyntr or your owner emailed you a code. The team shares this brain, with a backup.</p>
+      <button className="choice" type="button" data-setup-button="Sign in" onClick={onSignIn}>
+        <h3>Sign in</h3>
+        <p>You already use Brain. We email a sign-in code to the address you were invited with.</p>
       </button>
-      <button className="choice" type="button" onClick={onAgency}>
-        <h3>Plyntr Brain with Agency Brain sync</h3>
-        <p>Your agency uses Agency Brain and gave you a setup code like BR4-7XK.</p>
+      <button className="choice" type="button" data-setup-button="I have a code" onClick={onCode}>
+        <h3>I have a code</h3>
+        <p>Paste the invite. Agency Brain or Plyntr, same box. We figure out the rest.</p>
       </button>
-      <button className="choice" type="button" onClick={onLocal}>
-        <h3>Plyntr Brain on this Mac only</h3>
-        <p>Stays on this computer. No backup and no sharing yet. You can turn on sync later in Settings.</p>
+      <button className="choice" type="button" data-setup-button="This computer only" onClick={onLocal}>
+        <h3>This computer only</h3>
+        <p>Copies the brain onto this Mac with no backup and no sharing yet. You can turn on sync later in Settings.</p>
       </button>
       </div>
     </>
@@ -110,7 +111,7 @@ export function PlyntrProjectScreen({
         <p>
           Check {email}.
           {sentRole && sentRole !== 'project'
-            ? ' That email is for the whole brain. Paste the code under I have a Plyntr code.'
+            ? ' That email is for the whole brain. Go back and paste it under I have a code.'
             : ' Paste the code from that email here.'}
         </p>
       ) : (
@@ -190,11 +191,19 @@ export function PlyntrProjectScreen({
 export function PlyntrCodeScreen({
   onJoin,
   onProject,
+  onAgency,
   startInEmail,
   local
 }: {
   onJoin: (row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) => Promise<void>
   onProject?: (row: { email: string; name: string; brainPath: string; teamName: string; roots?: string[] }) => Promise<void>
+  onAgency?: (res: {
+    teamSlug: string
+    teamName: string
+    kind?: string
+    repoUrl?: string
+    member: { email?: string; name?: string; role?: string }
+  }) => Promise<void>
   startInEmail?: boolean
   local?: boolean
 }) {
@@ -206,13 +215,13 @@ export function PlyntrCodeScreen({
   const [busy, setBusy] = useState(false)
   return (
     <>
-      <p className="kicker">{local ? 'This computer only' : 'Plyntr'}</p>
-      <h1>{mode === 'code' ? 'Paste the code from Plyntr.' : 'Email me the code.'}</h1>
+      <p className="kicker">{local ? 'This computer only' : 'Your code'}</p>
+      <h1>{mode === 'code' ? 'Paste your code.' : 'Email me the code.'}</h1>
       {mode === 'code' ? (
         <p>
           {local
             ? 'Paste the code from your invite email. This copies your brain onto this Mac. No GitHub needed.'
-            : 'Paste the 6-digit code from your Plyntr invite email.'}
+            : 'Paste the invite you were sent. Agency Brain or Plyntr, same box.'}
         </p>
       ) : mode === 'sent' ? (
         <p>Check {email}. Paste that code here.</p>
@@ -224,7 +233,7 @@ export function PlyntrCodeScreen({
       {mode === 'code' || mode === 'sent' ? (
         <label className="field">
           Code
-          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="184392" inputMode="numeric" />
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Paste the code" autoCapitalize="characters" autoCorrect="off" />
         </label>
       ) : (
         <label className="field">
@@ -269,18 +278,34 @@ export function PlyntrCodeScreen({
               setBusy(true)
               setErr('')
               try {
-                try {
-                  const row = await window.brain.plyntr.resolve(code, email)
-                  await onJoin(row)
-                } catch (e) {
-                  const msg = ipcErrorText(e)
-                  if (onProject && /one project/i.test(msg)) {
-                    const row = await window.brain.plyntr.joinProject(code)
-                    await onProject(row)
-                    return
+                const order = local ? (['plyntr'] as const) : inviteTryOrder(code)
+                let last = 'That code did not work.'
+                for (const kind of order) {
+                  try {
+                    if (kind === 'plyntr') {
+                      try {
+                        const row = await window.brain.plyntr.resolve(code, email)
+                        await onJoin(row)
+                        return
+                      } catch (e) {
+                        const msg = ipcErrorText(e)
+                        if (onProject && /one project/i.test(msg)) {
+                          const row = await window.brain.plyntr.joinProject(code)
+                          await onProject(row)
+                          return
+                        }
+                        last = msg
+                      }
+                    } else if (onAgency) {
+                      const res = await window.brain.auth.resolveCode(code)
+                      await onAgency(res)
+                      return
+                    }
+                  } catch (e) {
+                    last = ipcErrorText(e)
                   }
-                  throw e
                 }
+                setErr(last)
               } catch (e) {
                 setErr(ipcErrorText(e))
               } finally {

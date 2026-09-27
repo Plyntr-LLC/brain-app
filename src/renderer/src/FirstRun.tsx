@@ -628,6 +628,54 @@ export function FirstRun() {
     }
   }
 
+  async function finishAgencyInvite(res: {
+    teamSlug: string
+    teamName: string
+    kind?: string
+    repoUrl?: string
+    member: { email?: string; name?: string; role?: string }
+  }): Promise<void> {
+    const role = String(res.member?.role || 'team').toLowerCase()
+    const kind = (res.kind === 'client' ? 'client' : 'agency') as 'client' | 'agency'
+    const business = res.teamName || res.teamSlug || ''
+    const email = String(res.member?.email || '')
+    const canBuild = kind === 'client' ? role === 'owner' : role === 'owner' || role === 'scout' || role === 'head_scout'
+    const slug = String(res.teamSlug || '').trim()
+    const patch = {
+      email,
+      business,
+      kind,
+      role,
+      member: { email, name: String(res.member?.name || ''), role },
+      team: { slug, name: business, role, kind, repoUrl: res.repoUrl || '' },
+      path: (!canBuild ? 'join' : 'second') as PathKind,
+      channel: 'agency' as const
+    }
+    if (!canBuild) {
+      go('hello', { ...patch, path: 'join' })
+      return
+    }
+    const inst = slug
+      ? ((await window.brain.setup.pollInstall(slug).catch(() => null)) as {
+          installed?: boolean
+          repoUrl?: string
+          repo?: string
+        } | null)
+      : null
+    const repoReady = inst?.installed === true && Boolean(String(inst?.repoUrl || inst?.repo || '').trim())
+    if (repoReady && slug) {
+      try {
+        await window.brain.setup.ensureRepo(slug)
+      } catch (e) {
+        setErr(ipcErrorText(e))
+        return
+      }
+      go('abapply', { ...patch, path: 'second' })
+      return
+    }
+    go('github', { ...patch, path: 'create' })
+  }
+
   async function finishPlyntrJoin(row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) {
     const channel = channelRef.current
     if (channel === 'local') {
@@ -977,18 +1025,19 @@ export function FirstRun() {
             </div>
           )}
           {s.screen === 'fork' && (
+            <div data-setup-screen="fork">
             <ForkScreen
               pendingCreate={Boolean(plyntrCreate)}
               pendingJoin={plyntrJoin}
               err={err}
-              onPlyntr={() => {
+              onSignIn={() => {
+                setLoginVia('')
+                go('email')
+              }}
+              onCode={() => {
                 setLoginVia('')
                 setCodeStartsInEmail(false)
                 go('plyntr-code', { channel: 'plyntr' })
-              }}
-              onAgency={() => {
-                setLoginVia('ads2ai')
-                go('welcome', { channel: 'agency' })
               }}
               onLocal={() => {
                 setLoginVia('')
@@ -998,16 +1047,20 @@ export function FirstRun() {
               onContinueCreate={() => void openPlyntrCreate()}
               onContinueJoin={() => void continuePlyntrJoin()}
             />
+            </div>
           )}
           {s.screen === 'plyntr-code' && (
+            <div data-setup-screen="plyntr-code">
             <PlyntrCodeScreen
               local={s.channel === 'local'}
               startInEmail={codeStartsInEmail}
               onJoin={finishPlyntrJoin}
+              onAgency={s.channel === 'local' ? undefined : finishAgencyInvite}
               onProject={async (row) => {
                 await afterProject(row)
               }}
             />
+            </div>
           )}
           {s.screen === 'plyntr-project' && (
             <PlyntrProjectScreen
@@ -1180,46 +1233,7 @@ export function FirstRun() {
                     }
                     try {
                       const res = await window.brain.auth.resolveCode(setupCode)
-                      const role = String(res.member?.role || 'team').toLowerCase()
-                      const kind = (res.kind === 'client' ? 'client' : 'agency') as 'client' | 'agency'
-                      const business = res.teamName || res.teamSlug || ''
-                      const email = res.member?.email || ''
-                      const canBuild =
-                        kind === 'client' ? role === 'owner' : role === 'owner' || role === 'scout' || role === 'head_scout'
-                      const slug = String(res.teamSlug || '').trim()
-                      const patch = {
-                        email,
-                        business,
-                        kind,
-                        role,
-                        member: res.member,
-                        team: { slug, name: business, role, kind, repoUrl: res.repoUrl },
-                        path: (!canBuild ? 'join' : 'second') as PathKind
-                      }
-                      if (!canBuild) {
-                        go('hello', { ...patch, path: 'join' })
-                        return
-                      }
-                      const inst = slug
-                        ? ((await window.brain.setup.pollInstall(slug).catch(() => null)) as {
-                            installed?: boolean
-                            repoUrl?: string
-                          } | null)
-                        : null
-                      const repoReady =
-                        inst?.installed === true &&
-                        Boolean(String(inst?.repoUrl || (inst as { repo?: string })?.repo || '').trim())
-                      if (repoReady && slug) {
-                        try {
-                          await window.brain.setup.ensureRepo(slug)
-                        } catch (e) {
-                          setErr(ipcErrorText(e))
-                          return
-                        }
-                        go('abapply', { ...patch, path: 'second' })
-                        return
-                      }
-                      go('github', { ...patch, path: 'create' })
+                      await finishAgencyInvite(res)
                     } catch (e) {
                       const msg = ipcErrorText(e)
                       if (/not found|404/i.test(msg)) setErr("I couldn't find that code. Check the invite and type it exactly.")
@@ -1288,8 +1302,11 @@ export function FirstRun() {
                 >
                   I already have a code
                 </button>
-                <button className="linkish" type="button" onClick={() => go('welcome')}>
-                  I have a setup code
+                <button className="linkish" type="button" onClick={() => {
+                  setCodeStartsInEmail(false)
+                  go('plyntr-code')
+                }}>
+                  I have an invite code instead
                 </button>
                 {watching ? (
                   <button className="ghost" type="button" onClick={() => void useFolderOnThisComputer()}>

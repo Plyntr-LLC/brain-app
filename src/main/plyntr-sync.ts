@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { redact } from './clone'
 import { plyntrDeviceId, savePlyntrSeat, seatForBrain, seatTokenForBrain } from './plyntr-seats'
-import { gitSyncTokenFromVault } from './shell-vault'
+import { gitSyncTokenFromVault, shellEmail, signInEmailOnly } from './shell-vault'
+import { isPlatformOwnerSession, loadOwnerSession } from './hq-sync'
 import { listedRoleForSeat, transferUsesOwnerToken } from '../shared/plyntr-transfer'
 import { normalizePlyntrInviteCode, slugFromBusinessName } from '../shared/plyntr-invite'
 import { PLATFORM_AUTH } from '../shared/plyntr-org-copy'
@@ -258,7 +259,7 @@ export async function createPlyntrBrain(
   const r = await fetch(`${ORIGIN}/v1/brains`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${platformToken}` },
-    body: JSON.stringify(body)
+    body: JSON.stringify({ ...body, deviceId: plyntrDeviceId() })
   })
   if (r.status === 401 || r.status === 403) throw new Error(PLATFORM_AUTH)
   const parsed = (await r.json().catch(() => ({}))) as {
@@ -343,7 +344,9 @@ export async function claimPlyntrCompany(
   platformToken: string,
   brainId: string
 ): Promise<{ brainId: string; seatToken: string; role: string; email: string; repo: string; slug: string; label: string; code: string; bootstrap: boolean }> {
-  const parsed = await platformCall(platformToken, `/v1/companies/${encodeURIComponent(brainId)}/mac`, 'POST', {})
+  const parsed = await platformCall(platformToken, `/v1/companies/${encodeURIComponent(brainId)}/mac`, 'POST', {
+    deviceId: plyntrDeviceId()
+  })
   return {
     brainId: String(parsed.brainId || brainId),
     seatToken: typeof parsed.seatToken === 'string' ? parsed.seatToken : '',
@@ -432,8 +435,37 @@ export async function plyntrInstalled(brainId: string, repo: string): Promise<Pl
 }
 
 export async function plyntrGitToken(brainId: string): Promise<{ token: string; repo: string }> {
+  try {
+    return await fetchPlyntrGitToken(brainId)
+  } catch (err) {
+    if (String((err as Error).message || err) !== 'unauthorized') throw err
+    const healed = await healPlyntrSeat(brainId)
+    if (!healed) throw new Error('Sign in to this brain again.')
+    return await fetchPlyntrGitToken(brainId)
+  }
+}
+
+async function fetchPlyntrGitToken(brainId: string): Promise<{ token: string; repo: string }> {
   const body = (await call('/v1/git/token', { method: 'POST', brainId, body: {} })) as { token?: string; repo?: string }
   return { token: String(body.token || ''), repo: String(body.repo || '') }
+}
+
+async function healPlyntrSeat(brainId: string): Promise<boolean> {
+  if (dryRun() || !isPlatformOwnerSession()) return false
+  const session = loadOwnerSession()
+  if (!session) return false
+  const claimed = await claimPlyntrCompany(session.token, brainId)
+  if (!claimed.seatToken) return false
+  if (!shellEmail()) signInEmailOnly(session.email)
+  savePlyntrSeat(brainId, {
+    seatToken: claimed.seatToken,
+    slug: claimed.slug,
+    email: claimed.email,
+    role: claimed.role || 'scout',
+    repo: claimed.repo,
+    bootstrap: claimed.bootstrap
+  })
+  return seatForBrain(brainId)?.seatToken === claimed.seatToken
 }
 
 export function dryRunProjectFolder(resolved: PlyntrResolved): {

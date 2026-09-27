@@ -89,7 +89,7 @@ import { cancelWarm, closeWarm, forkSession, promptWarm, resetWarm, resumeSessio
 import { justUpdated } from './update'
 import { contextBlurb, grokCli, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
 import { clearAccount, getAccount, getMemberToken, loadAccount, saveAccount } from './session-token'
-import { authCodeRoute, isPlyntrCompanyCode, normalizePlyntrInviteCode } from '../shared/plyntr-invite'
+import { authCodeRoute, normalizePlyntrInviteCode } from '../shared/plyntr-invite'
 import { listedRoleForSeat, plyntrSessionRole } from '../shared/plyntr-transfer'
 import { readSyncManifest, readSyncMode } from './sync-manifest'
 import { AB_OWNS_PLYNTR, chooseWatcher } from './watcher-choice'
@@ -224,7 +224,7 @@ async function openPlyntrProject(code: string) {
   const normalized = normalizePlyntrInviteCode(code)
   const resolved = await resolvePlyntrCode(normalized)
   if (resolved.role !== 'project') {
-    throw new Error('That code is for a full seat. Use I have a Plyntr code.')
+    throw new Error('That code is for a full seat. Go back and paste it under I have a code.')
   }
   const joined = dryRun()
     ? dryRunProjectFolder(resolved)
@@ -562,7 +562,7 @@ export function registerStubIpc(): void {
 
   ipcMain.handle('auth:resolveCode', async (_e, raw: string) => {
     if (authCodeRoute(raw) === 'plyntr') {
-      throw new Error('That is a Plyntr code. Go back and choose Plyntr sync only.')
+      throw new Error('That code did not work.')
     }
     const code = String(raw || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase()
     const res = await ads2ai.resolveInvite(code)
@@ -1677,7 +1677,7 @@ export function registerStubIpc(): void {
   })
   ipcMain.handle('plyntr:resolve', async (_e, code: string, typedRaw?: string) => {
     const pretendJoin = isPretendJoinCode(code)
-    if (!pretendJoin && authCodeRoute(code) !== 'plyntr' && !isPlyntrCompanyCode(code)) {
+    if (!pretendJoin && !normalizePlyntrInviteCode(code)) {
       throw new Error('That code did not work.')
     }
     const resolved = await resolvePlyntrCode(normalizePlyntrInviteCode(code))
@@ -1834,10 +1834,6 @@ export function registerStubIpc(): void {
         const session = loadOwnerSession()
         if (!session) throw new Error(PLATFORM_GATE)
         const existing = brainRowForPath(folder)
-        if (existing?.brainId && seatTokenForBrain(existing.brainId)) {
-          issuedId = existing.brainId
-          return { brainId: existing.brainId, hasToken: true }
-        }
         const body = {
           label: ident?.name || parts.slug,
           org: parts.org,

@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { brainRowForPath, currentBrainFolder } from './brains'
@@ -68,7 +68,13 @@ function readJson<T>(path: string): T | null {
 }
 
 export function plyntrDeviceId(): string {
-  return createHash('sha256').update(app.getPath('userData')).digest('hex').slice(0, 32)
+  const path = userFile('plyntr-device-id.json')
+  const existing = readJson<{ id?: string }>(path)
+  const id = String(existing?.id || '').trim().toLowerCase()
+  if (/^[a-f0-9]{32}$/.test(id)) return id
+  const next = randomBytes(16).toString('hex')
+  writeJson(path, { id: next })
+  return next
 }
 
 export function loginToken(): string {

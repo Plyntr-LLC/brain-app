@@ -10,6 +10,15 @@ export function authCodeRoute(raw: string): 'plyntr' | 'other' {
   return normalizePlyntrInviteCode(raw).length === PLYNTR_INVITE_LEN ? 'plyntr' : 'other'
 }
 
+/** Which systems to try, in order, so first-run never asks Agency Brain vs Plyntr. */
+export function inviteTryOrder(raw: string): Array<'plyntr' | 'agency'> {
+  const n = normalizePlyntrInviteCode(raw)
+  if (n.length === PLYNTR_INVITE_LEN) return ['plyntr']
+  if (/^\d{6}$/.test(n)) return ['plyntr', 'agency']
+  if (n.length === 6) return ['agency', 'plyntr']
+  return ['plyntr', 'agency']
+}
+
 /** Company setup codes are six digits. Seat and project codes stay ten characters. */
 export function isPlyntrCompanyCode(raw: string): boolean {
   return /^\d{6}$/.test(normalizePlyntrInviteCode(raw))
