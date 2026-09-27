@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { binEnv, resolveBin } from './ai-cli'
 import { claudeModelsFromCache } from './claude-models'
-import { formatClaudeStats, formatClaudeUsage, readClaudeStats } from './claude-usage'
+import { formatClaudeStats, formatClaudeUsage, readClaudeStats, type ClaudeOAuthRaw } from './claude-usage'
 import { listCodexCaps } from './codex-app'
 import { formatCodexLimits, readCodexLimits } from './codex-usage'
 import { grokLeaderSocket } from './grok-args'
@@ -363,9 +363,9 @@ function cursorStateDb(): string {
   return join(homedir(), '.config', 'Cursor', 'User', 'globalStorage', 'state.vscdb')
 }
 
-function runSplit(bin: string, args: string[]): Promise<{ out: string; err: string; code: number }> {
+function runSplit(bin: string, args: string[], timeoutMs = 0): Promise<{ out: string; err: string; code: number }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], ...(timeoutMs ? { timeout: timeoutMs } : {}) })
     let out = ''
     let err = ''
     child.stdout.on('data', (d) => {
@@ -533,23 +533,114 @@ async function cursorPlanBlurb(): Promise<string> {
   }
 }
 
-async function claudeAccountBlurb(cwd: string): Promise<string> {
+const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** The claude.ai login Claude Code keeps on this Mac. Only the access token is kept; nothing here is logged. */
+async function claudeOAuthToken(home = homedir()): Promise<{ token?: string; error?: string }> {
+  let raw = ''
+  // `security` exits 44 when the item is missing. Anything else (Deny, or no click before the
+  // timeout on a Keychain prompt) means the sign-in is there but Brain was not let in.
+  let keychainBlocked = false
+  if (process.platform === 'darwin') {
+    try {
+      const r = await runSplit('/usr/bin/security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], 30_000)
+      if (r.code === 0) raw = r.out.trim()
+      else keychainBlocked = r.code !== 44
+    } catch {
+      /* */
+    }
+  }
+  if (!raw) {
+    try {
+      raw = readFileSync(join(home, '.claude', '.credentials.json'), 'utf8')
+    } catch {
+      /* */
+    }
+  }
+  if (!raw && keychainBlocked) {
+    return { error: 'Brain could not read the Claude sign-in from the Keychain. Allow it in the Keychain prompt, then try /usage again.' }
+  }
+  if (!raw) return { error: 'No Claude sign-in was found on this Mac.' }
+  let oauth: Record<string, unknown>
+  try {
+    const o = JSON.parse(raw) as { claudeAiOauth?: Record<string, unknown> }
+    oauth = o.claudeAiOauth && typeof o.claudeAiOauth === 'object' ? o.claudeAiOauth : {}
+  } catch {
+    return { error: 'The Claude sign-in on this Mac could not be read.' }
+  }
+  const token = typeof oauth.accessToken === 'string' ? oauth.accessToken.trim() : ''
+  if (!token) return { error: 'This Mac is not signed into Claude with a claude.ai account.' }
+  const exp = Number(oauth.expiresAt)
+  if (Number.isFinite(exp) && exp > 0 && exp < Date.now()) {
+    return { error: 'The Claude sign-in on this Mac has expired. Send one Claude message to refresh it, then try /usage again.' }
+  }
+  return { token }
+}
+
+function claudeOrgUuid(home = homedir()): string {
+  try {
+    const o = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8')) as { oauthAccount?: { organizationUuid?: unknown } }
+    const id = String(o.oauthAccount?.organizationUuid || '').trim()
+    return UUID.test(id) ? id : ''
+  } catch {
+    return ''
+  }
+}
+
+/** Same request the Claude Code TUI `/usage` makes. Runs in main so the token never reaches the renderer. */
+export async function fetchClaudeOAuthUsage(): Promise<ClaudeOAuthRaw> {
+  const login = await claudeOAuthToken()
+  if (!login.token) return { error: login.error }
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${login.token}`,
+    'Content-Type': 'application/json',
+    'anthropic-beta': 'oauth-2025-04-20'
+  }
+  const org = claudeOrgUuid()
+  if (org) headers['x-organization-uuid'] = org
+  try {
+    const res = await fetch(CLAUDE_USAGE_URL, { headers, signal: AbortSignal.timeout(5000) })
+    if (res.status === 401 || res.status === 403) {
+      return { error: 'Claude did not accept the sign-in on this Mac. Send one Claude message to refresh it, then try /usage again.' }
+    }
+    if (!res.ok) return { error: `Claude answered ${res.status}.` }
+    return { usage: await res.json() }
+  } catch (e) {
+    return { error: (e as Error)?.name === 'TimeoutError' ? 'Claude did not answer in time.' : 'Could not reach Claude. Check this Mac is online.' }
+  }
+}
+
+/** `claude auth status --json` as an object, or a plain sentence when it cannot be read. */
+async function claudeAuthStatus(cwd: string): Promise<Record<string, unknown> | string> {
   const bin = resolveBin('claude')
   if (!bin) return 'Claude is not installed on this computer.'
   try {
     const raw = await run(bin, ['auth', 'status', '--json'], cwd)
     const start = raw.indexOf('{')
-    if (start < 0) return 'Could not read Claude usage.'
-    const o = JSON.parse(raw.slice(start)) as Record<string, unknown>
-    return formatClaudeUsage(o, cwd)
-  } catch (e) {
-    return `Could not read Claude usage.\n${String((e as Error).message || e)}`
+    if (start < 0) return {}
+    return JSON.parse(raw.slice(start)) as Record<string, unknown>
+  } catch {
+    return {}
   }
 }
 
-async function claudeUsageBlurb(cwd: string): Promise<string> {
-  const account = await claudeAccountBlurb(cwd)
-  return [account, formatClaudeStats(readClaudeStats())].filter(Boolean).join('\n\n')
+export type ClaudeUsageDeps = {
+  status?: () => Promise<Record<string, unknown> | string>
+  fetchUsage?: () => Promise<ClaudeOAuthRaw>
+  stats?: Record<string, unknown> | null
+  timeZone?: string
+}
+
+export async function claudeUsageBlurb(cwd: string, deps: ClaudeUsageDeps = {}): Promise<string> {
+  const [status, oauth] = await Promise.all([
+    (deps.status || (() => claudeAuthStatus(cwd)))(),
+    (deps.fetchUsage || fetchClaudeOAuthUsage)().catch((): ClaudeOAuthRaw => ({ error: 'Could not load the usage meter.' }))
+  ])
+  if (typeof status === 'string') return status
+  const account = formatClaudeUsage(status, cwd, oauth, { timeZone: deps.timeZone })
+  const stats = deps.stats === undefined ? readClaudeStats() : deps.stats
+  return [account, formatClaudeStats(stats)].filter(Boolean).join('\n\n')
 }
 
 export function gptUsageBlurb(cwd: string, home = homedir()): string {

@@ -37,16 +37,20 @@ import {
   mintToken,
   offerFresh,
   openJson,
+  freeLocalPort,
   parseTunnelUrl,
   phonePairUrl,
   pickChatTab,
   pinChatId,
   rateHit,
+  readyFromMetrics,
   sealJson,
   shownPhoneLine,
+  stopChild,
   unknownEmptyChats,
   tokenFromRequest,
   tokenOk,
+  tunnelLogSaysUp,
   underDir,
   type PhoneAttach,
   type PhoneQueueItem,
@@ -84,6 +88,7 @@ type PhoneDevice = {
 let server: Server | null = null
 let tunnel: ChildProcess | null = null
 let caffeine: ChildProcess | null = null
+let stopping: Promise<unknown> | null = null
 let localPort = 0
 let origin = ''
 let on = false
@@ -496,13 +501,14 @@ function cloudflaredBin(): string | null {
 
 function spawnCaffeine(): void {
   if (process.platform !== 'darwin') return
-  caffeine = spawn('caffeinate', ['-dims'], { stdio: ['ignore', 'ignore', 'ignore'] })
-  caffeine.on('exit', () => {
-    if (caffeine) caffeine = null
+  const child = spawn('caffeinate', ['-dims'], { stdio: ['ignore', 'ignore', 'ignore'] })
+  caffeine = child
+  child.on('exit', () => {
+    if (caffeine === child) caffeine = null
   })
 }
 
-function startTunnel(port: number): Promise<string> {
+function startTunnel(port: number, alive: () => boolean): Promise<string> {
   const bin = cloudflaredBin()
   if (!bin) {
     return Promise.reject(
@@ -510,19 +516,102 @@ function startTunnel(port: number): Promise<string> {
     )
   }
   const named = namedPhone()
-  if (named) return startNamedTunnel(bin, named, port)
+  if (named) return startNamedTunnel(bin, named, port, alive)
   return startQuickTunnel(bin, port)
 }
 
-function startNamedTunnel(bin: string, named: NamedPhone, port: number): Promise<string> {
+// cloudflared runs connectivity pre-checks before it dials (about 10s on a good line, longer on a
+// slow one), then registers up to four edge connections. 25s was not enough headroom.
+const NAMED_TUNNEL_MS = 90_000
+const QUICK_TUNNEL_MS = 45_000
+
+/**
+ * Exit handler for a tunnel child. A start that is still waiting always fails at once. Only the child
+ * that is still `tunnel` may touch Phone state, so an old child exiting late cannot clobber a new one.
+ */
+function onTunnelExit(child: ChildProcess, pending: () => boolean, fail: (err: Error) => void): void {
+  child.on('exit', (code) => {
+    const current = tunnel === child
+    if (current) tunnel = null
+    if (pending()) {
+      fail(new Error(code ? `The tunnel quit (${code}).` : 'The tunnel quit.'))
+      return
+    }
+    if (current && on) {
+      origin = ''
+      detail = 'The tunnel quit. Turn Phone off and on.'
+      pushStatus()
+    }
+  })
+}
+
+/** cloudflared's own `/ready`: 200 once Cloudflare has a registered connection to this connector. */
+async function metricsReady(port: number): Promise<boolean> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/ready`, { signal: AbortSignal.timeout(1500) })
+    return readyFromMetrics(res.status, await res.text())
+  } catch {
+    return false
+  }
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * A cloudflared for this same named tunnel left over from a crash or force quit is a second
+ * connector. Stop it (and wait) before starting ours.
+ */
+async function stopStrayNamedTunnels(tokenFile: string): Promise<void> {
+  const pattern = `cloudflared.*--token-file ${tokenFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`
+  const pids = await new Promise<number[]>((resolve) => {
+    const child = spawn('/usr/bin/pgrep', ['-f', pattern], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 })
+    let out = ''
+    child.stdout?.on('data', (d) => (out += String(d)))
+    child.on('error', () => resolve([]))
+    child.on('close', () => resolve(out.split(/\s+/).map(Number).filter((n) => n > 0 && n !== process.pid)))
+  })
+  if (!pids.length) return
+  setupTrace({ event: 'phone', stray: pids.length })
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGTERM')
+    } catch {
+      /* */
+    }
+  }
+  for (let i = 0; i < 25 && pids.some(pidAlive); i++) await new Promise((r) => setTimeout(r, 200))
+  for (const pid of pids.filter(pidAlive)) {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      /* */
+    }
+  }
+}
+
+async function startNamedTunnel(bin: string, named: NamedPhone, port: number, alive: () => boolean): Promise<string> {
+  await stopStrayNamedTunnels(named.tokenFile)
+  const metricsPort = await freeLocalPort()
+  if (!alive()) throw new Error('Phone was turned off.')
   return new Promise((resolve, reject) => {
     let settled = false
     const extra = '/opt/homebrew/bin:/usr/local/bin'
-    tunnel = spawn(
+    const child = spawn(
       bin,
       [
         'tunnel',
         '--no-autoupdate',
+        '--grace-period',
+        '2s',
+        '--metrics',
+        `127.0.0.1:${metricsPort}`,
         'run',
         '--token-file',
         named.tokenFile,
@@ -534,34 +623,38 @@ function startNamedTunnel(bin: string, named: NamedPhone, port: number): Promise
         stdio: ['ignore', 'pipe', 'pipe']
       }
     )
-    const tryParse = (chunk: Buffer) => {
-      const text = chunk.toString('utf8')
-      if (!settled && /Registered tunnel connection|connIndex=|Connected to/i.test(text)) {
-        settled = true
-        setupTrace({ event: 'phone', mode: 'named', host: named.host })
-        resolve(named.origin)
-      }
+    tunnel = child
+    const up = (via: string) => {
+      if (settled || tunnel !== child) return
+      settled = true
+      clearInterval(poll)
+      clearTimeout(timer)
+      setupTrace({ event: 'phone', mode: 'named', host: named.host, via })
+      resolve(named.origin)
     }
-    tunnel.stdout?.on('data', tryParse)
-    tunnel.stderr?.on('data', tryParse)
-    tunnel.on('exit', (code) => {
-      tunnel = null
-      if (!settled) {
-        settled = true
-        reject(new Error(code ? `The tunnel quit (${code}).` : 'The tunnel quit.'))
-        return
-      }
-      if (on) {
-        origin = ''
-        detail = 'The tunnel quit. Turn Phone off and on.'
-        pushStatus()
-      }
-    })
-    setTimeout(() => {
+    const fail = (err: Error) => {
       if (settled) return
       settled = true
-      reject(new Error('The named tunnel did not come up. Check this Mac is online.'))
-    }, 25_000)
+      clearInterval(poll)
+      clearTimeout(timer)
+      reject(err)
+    }
+    const tryParse = (chunk: Buffer) => {
+      if (tunnelLogSaysUp(chunk.toString('utf8'))) up('log')
+    }
+    child.stdout?.on('data', tryParse)
+    child.stderr?.on('data', tryParse)
+    onTunnelExit(child, () => !settled, fail)
+    const poll = setInterval(() => {
+      void metricsReady(metricsPort).then((ok) => ok && up('ready'))
+    }, 1500)
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      clearInterval(poll)
+      if (tunnel === child) tunnel = null
+      void stopChild(child).then(() => reject(new Error('The named tunnel did not come up. Check this Mac is online.')))
+    }, NAMED_TUNNEL_MS)
   })
 }
 
@@ -570,40 +663,37 @@ function startQuickTunnel(bin: string, port: number): Promise<string> {
     let settled = false
     const buf: string[] = []
     const extra = '/opt/homebrew/bin:/usr/local/bin'
-    tunnel = spawn(bin, ['tunnel', '--url', `http://127.0.0.1:${port}`, '--no-autoupdate'], {
+    const child = spawn(bin, ['tunnel', '--no-autoupdate', '--grace-period', '2s', '--url', `http://127.0.0.1:${port}`], {
       env: { ...process.env, PATH: `${process.env.PATH || ''}:${extra}` },
       stdio: ['ignore', 'pipe', 'pipe']
     })
+    tunnel = child
+    const fail = (err: Error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(err)
+    }
     const tryParse = (chunk: Buffer) => {
       buf.push(chunk.toString('utf8'))
       const text = buf.join('')
       const hit = parseTunnelUrl(text)
-      if (hit && /Registered tunnel connection|Connected to/i.test(text) && !settled) {
+      if (hit && tunnelLogSaysUp(text) && !settled && tunnel === child) {
         settled = true
+        clearTimeout(timer)
         setupTrace({ event: 'phone', mode: 'quick', host: new URL(hit).host })
         resolve(hit)
       }
     }
-    tunnel.stdout?.on('data', tryParse)
-    tunnel.stderr?.on('data', tryParse)
-    tunnel.on('exit', (code) => {
-      tunnel = null
-      if (!settled) {
-        settled = true
-        reject(new Error(code ? `The tunnel quit (${code}).` : 'The tunnel quit.'))
-        return
-      }
-      if (on) {
-        origin = ''
-        detail = 'The tunnel quit. Turn Phone off and on.'
-        pushStatus()
-      }
-    })
-    setTimeout(() => {
+    child.stdout?.on('data', tryParse)
+    child.stderr?.on('data', tryParse)
+    onTunnelExit(child, () => !settled, fail)
+    const timer = setTimeout(() => {
       if (settled) return
       settled = true
-      reject(new Error('The tunnel did not come up. Check this Mac is online.'))
-    }, 25_000)
+      if (tunnel === child) tunnel = null
+      void stopChild(child).then(() => reject(new Error('The tunnel did not come up. Check this Mac is online.')))
+    }, QUICK_TUNNEL_MS)
   })
 }
 
@@ -1011,15 +1101,6 @@ function listenLocal(port = 0): Promise<number> {
   })
 }
 
-function killProc(proc: ChildProcess | null): void {
-  if (!proc) return
-  try {
-    proc.kill('SIGTERM')
-  } catch {
-    /* */
-  }
-}
-
 export async function stopPhone(): Promise<PhoneStatus> {
   boot += 1
   on = false
@@ -1029,10 +1110,17 @@ export async function stopPhone(): Promise<PhoneStatus> {
   lastSeen = 0
   offer = null
   stashed.clear()
-  killProc(tunnel)
+  // Wait for the old cloudflared to be gone before anyone starts another connector for the same tunnel.
+  // A second stop (Stop, then Start at once) waits on the first one's children too.
+  const oldTunnel = tunnel
+  const oldCaffeine = caffeine
   tunnel = null
-  killProc(caffeine)
   caffeine = null
+  const prior = stopping
+  const mine = Promise.all([prior, stopChild(oldTunnel), stopChild(oldCaffeine, { graceMs: 1000 })])
+  stopping = mine
+  await mine
+  if (stopping === mine) stopping = null
   await new Promise<void>((resolve) => {
     if (!server) return resolve()
     server.close(() => resolve())
@@ -1062,11 +1150,12 @@ export async function startPhone(): Promise<PhoneStatus> {
     localPort = await listenLocal(namedPhone()?.port || 0)
     if (mine !== boot) return status()
     spawnCaffeine()
-    origin = await startTunnel(localPort)
+    origin = await startTunnel(localPort, () => mine === boot)
     if (mine !== boot) {
-      killProc(tunnel)
+      const late = tunnel
       tunnel = null
       origin = ''
+      await stopChild(late)
       return status()
     }
     mintOffer()
@@ -1076,6 +1165,7 @@ export async function startPhone(): Promise<PhoneStatus> {
     return status()
   } catch (err) {
     const msg = String((err as Error).message || err)
+    if (mine !== boot) return status()
     await stopPhone()
     writePhonePrefEnabled(false)
     detail = msg

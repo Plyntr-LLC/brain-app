@@ -1,5 +1,7 @@
+import type { ChildProcess } from 'node:child_process'
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { realpathSync, statSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { isAbsolute, relative, resolve } from 'node:path'
 
 export const PHONE_TOKEN_MS = 12 * 60 * 60 * 1000
@@ -32,6 +34,73 @@ export function tokenFresh(at: number, now = Date.now()): boolean {
 export function parseTunnelUrl(text: string): string | null {
   const m = String(text || '').match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i)
   return m ? m[0].replace(/\/$/, '').toLowerCase() : null
+}
+
+/**
+ * A cloudflared log chunk that says an edge connection is registered (plain or JSON log).
+ * `connIndex=` alone is not enough: cloudflared prints it on dial failures and on `Unregistered`.
+ */
+export function tunnelLogSaysUp(text: string): boolean {
+  for (const line of String(text || '').split('\n')) {
+    if (/unregister/i.test(line) || /\b(ERR|error|failed)\b/i.test(line)) continue
+    if (/(^|[^A-Za-z])Registered tunnel connection\b/.test(line)) return true
+    if (/\bConnection [0-9a-f-]{8,} registered\b/i.test(line)) return true
+  }
+  return false
+}
+
+/** cloudflared `--metrics` `/ready`: 200 with at least one ready connection means Cloudflare routes to this connector. */
+export function readyFromMetrics(status: number, body: string): boolean {
+  if (status !== 200) return false
+  try {
+    const n = Number((JSON.parse(String(body || '')) as { readyConnections?: unknown }).readyConnections)
+    return Number.isFinite(n) ? n > 0 : true
+  } catch {
+    return true
+  }
+}
+
+/** A loopback port nothing is listening on right now. */
+export function freeLocalPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const s = createServer()
+    s.once('error', reject)
+    s.listen(0, '127.0.0.1', () => {
+      const addr = s.address()
+      const port = addr && typeof addr === 'object' ? addr.port : 0
+      s.close(() => (port ? resolve(port) : reject(new Error('Could not pick a local port.'))))
+    })
+  })
+}
+
+/**
+ * Stop a child and wait until it has exited. SIGTERM, a second SIGTERM after `graceMs` (cloudflared
+ * skips its shutdown grace period on the second signal), then SIGKILL. Never waits past `capMs`.
+ */
+export function stopChild(proc: ChildProcess | null, opts: { graceMs?: number; killMs?: number; capMs?: number } = {}): Promise<void> {
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve()
+  const graceMs = opts.graceMs ?? 3000
+  const killMs = opts.killMs ?? graceMs + 2000
+  const capMs = opts.capMs ?? killMs + 2000
+  return new Promise((resolve) => {
+    const timers: NodeJS.Timeout[] = []
+    const done = () => {
+      timers.forEach(clearTimeout)
+      resolve()
+    }
+    const send = (sig: NodeJS.Signals) => {
+      try {
+        proc.kill(sig)
+      } catch {
+        /* */
+      }
+    }
+    proc.once('exit', done)
+    send('SIGTERM')
+    timers.push(setTimeout(() => send('SIGTERM'), graceMs))
+    timers.push(setTimeout(() => send('SIGKILL'), killMs))
+    timers.push(setTimeout(done, capMs))
+  })
 }
 
 export function phonePairUrl(origin: string, p: string): string {

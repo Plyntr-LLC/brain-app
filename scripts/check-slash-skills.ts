@@ -104,9 +104,9 @@ const { formatCodexLimits, readCodexLimits } = (await import(src('codex-usage.ts
 const { gptUsageBlurb } = (await import(src('slash.ts'))) as typeof import('../src/main/slash.ts')
 const { routeLine } = (await import(pathToFileURL(join(rootRepo, 'src', 'shared', 'slash-route.ts')).href)) as typeof import('../src/shared/slash-route.ts')
 const { APP_SLASH } = (await import(pathToFileURL(join(rootRepo, 'src', 'shared', 'slash-lanes.ts')).href)) as typeof import('../src/shared/slash-lanes.ts')
-const { formatClaudeStats, formatClaudeUsage } = (await import(src('claude-usage.ts'))) as typeof import('../src/main/claude-usage.ts')
+const { formatClaudeStats, formatClaudeUsage, formatClaudeOAuthUsage } = (await import(src('claude-usage.ts'))) as typeof import('../src/main/claude-usage.ts')
 const { formatGrokAccount, formatGrokSession, grokUsageText } = (await import(src('grok-usage.ts'))) as typeof import('../src/main/grok-usage.ts')
-const { grokUsageBlurb } = (await import(src('slash.ts'))) as typeof import('../src/main/slash.ts')
+const { grokUsageBlurb, claudeUsageBlurb } = (await import(src('slash.ts'))) as typeof import('../src/main/slash.ts')
 const { PLAN_APPROVE, PLAN_KEEP } = (await import(src('grok-plan.ts'))) as typeof import('../src/main/grok-plan.ts')
 const { handleReq, handleNote, answerPlanAsk, adoptLoadedSession, onPoolExit } = (await import(src('acp-session.ts'))) as typeof import('../src/main/acp-session.ts')
 const { newPlanControls, controlTimedOut, controlAnswered } = (await import(src('claude-plan.ts'))) as typeof import('../src/main/claude-plan.ts')
@@ -231,6 +231,69 @@ const claudeText = [
 check('Claude usage has no grok.com', !claudeText.includes('grok.com'))
 check('Claude usage keeps claude.ai usage link', claudeText.includes('claude.ai/settings/usage'))
 check('Claude usage labels this Mac cache', claudeText.includes('This Mac’s Claude Code cache'))
+
+// Claude account `/usage`: fake `GET /api/oauth/usage` bodies. Never a live account or keychain.
+const claudeOAuthBody = {
+  five_hour: { utilization: 42, resets_at: '2026-09-27T21:00:00Z' },
+  seven_day: { utilization: 1, resets_at: '2026-10-02T13:00:00Z' },
+  seven_day_sonnet: { utilization: 3, resets_at: '2026-10-02T13:00:00Z' },
+  limits: [
+    { kind: 'session', group: 'session', percent: 42, resets_at: '2026-09-27T21:00:00Z', severity: 'normal', is_active: true },
+    { kind: 'weekly_scoped', group: 'weekly', percent: 20, resets_at: '2026-10-02T13:00:00Z', scope: { model: { display_name: 'Fable' } }, severity: 'normal', is_active: false }
+  ],
+  extra_usage: { is_enabled: true, monthly_limit: 5000, used_credits: 1234, utilization: 24.68, currency: 'USD' }
+}
+const claudeStatus = { loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max', email: 'ada@example.com' }
+const claudeLive = await claudeUsageBlurb(cwd, {
+  status: async () => claudeStatus,
+  fetchUsage: async () => ({ usage: claudeOAuthBody }),
+  stats: { totalSessions: 3, modelUsage: { 'claude-opus-5-5': { inputTokens: 100 } } },
+  timeZone: 'America/New_York'
+})
+check('Claude /usage shows 5-hour percent', claudeLive.includes('Session (5-hour) used: 42%'), claudeLive)
+check('Claude /usage shows weekly percent (1 means 1%, not a fraction)', claudeLive.includes('Weekly (all models) used: 1%'), claudeLive)
+check('Claude /usage shows Sonnet and model weekly rows', claudeLive.includes('Weekly (Sonnet only) used: 3%') && claudeLive.includes('Weekly (Fable) used: 20%'))
+check('Claude /usage shows reset in local time', /Session resets: Sun, Sep 27, 5:00\sPM/.test(claudeLive) && /Weekly resets: Fri, Oct 2, 9:00\sAM/.test(claudeLive), claudeLive)
+check('Claude /usage shows one weekly reset line', claudeLive.split('Weekly resets:').length === 2)
+check('Claude /usage shows credits left from the tighter window', claudeLive.includes('Credits left: 58%'))
+check('Claude /usage shows extra usage in dollars', claudeLive.includes('Extra usage: $12.34 of $50.00 this month'))
+check('Claude /usage keeps plan, email, link, folder', claudeLive.includes('Plan: Claude Max') && claudeLive.includes('Email: ada@example.com') && claudeLive.includes('https://claude.ai/settings/usage') && claudeLive.includes(`This folder: ${cwd}`))
+check('Claude /usage has no grok.com', !/grok\.com|Grok/.test(claudeLive))
+check('Claude /usage stats-cache is an extra block after the meter', claudeLive.indexOf('Session (5-hour) used') < claudeLive.indexOf('This Mac’s Claude Code cache'))
+check('Claude /usage drops the no-meter sentence when the meter loaded', !claudeLive.includes('Session limits and billing live on the Claude account'))
+const claudeBlocks = panelBlocks(claudeLive)
+const claudeMeters = claudeBlocks.flatMap((b) => b.rows).filter((r) => r.kind === 'row' && r.percent != null) as { key: string; percent?: number }[]
+check('Claude /usage popup heading is Claude account', claudeBlocks[0]?.heading === 'Claude account')
+check(
+  'Claude /usage popup draws meters for 5-hour and weekly',
+  claudeMeters.some((r) => r.key === 'Session (5-hour) used' && r.percent === 42) && claudeMeters.some((r) => r.key === 'Weekly (all models) used' && r.percent === 1),
+  JSON.stringify(claudeMeters)
+)
+const claudeHeaderShape = formatClaudeOAuthUsage(
+  { rateLimitType: 'five_hour', resetsAt: 1790000000, unifiedWindows: { five_hour: { utilization: 0.37, resetsAt: 1790000000 }, seven_day: { utilization: 0.5, resetsAt: 1790500000 } } },
+  { timeZone: 'America/New_York' }
+).join('\n')
+check('Claude header-shape fractions become percents', claudeHeaderShape.includes('Session (5-hour) used: 37%') && claudeHeaderShape.includes('Weekly (all models) used: 50%'), claudeHeaderShape)
+check('Claude limits[] alone still gives the session meter', formatClaudeOAuthUsage({ limits: claudeOAuthBody.limits }).includes('Session (5-hour) used: 42%'))
+const claudeDown = await claudeUsageBlurb(cwd, {
+  status: async () => claudeStatus,
+  fetchUsage: async () => ({ error: 'Could not reach Claude. Check this Mac is online.' }),
+  stats: null
+})
+check(
+  'Claude /usage fetch failure says so and keeps plan + link',
+  claudeDown.includes('Could not load the usage meter. Could not reach Claude.') && claudeDown.includes('Plan: Claude Max') && claudeDown.includes('https://claude.ai/settings/usage') && !/used: \d/.test(claudeDown),
+  claudeDown
+)
+const claudeThrow = await claudeUsageBlurb(cwd, {
+  status: async () => claudeStatus,
+  fetchUsage: async () => {
+    throw new Error('TypeError: fetch failed at node:internal')
+  },
+  stats: null
+})
+check('Claude /usage never shows a raw fetch stack', !claudeThrow.includes('node:internal') && claudeThrow.includes('Could not load the usage meter.'), claudeThrow)
+check('Claude /usage extra usage off', formatClaudeOAuthUsage({ five_hour: { utilization: 5 }, extra_usage: { is_enabled: false } }).includes('Extra usage: Off'))
 
 // Grok account `/usage`: fake `_x.ai/billing` + `_x.ai/auth/check_subscription` replies. Never a live account.
 const grokBillingWeekly = {
@@ -458,6 +521,8 @@ const out = [
   '',
   '--- Claude usage fixture ---',
   claudeText,
+  '',
+  claudeLive,
   '',
   '--- Grok usage fixture ---',
   grokText,

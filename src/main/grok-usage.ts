@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { resetLabel } from './usage-time.ts'
 
 // Grok TUI `/usage` reads the account allowance from the agent's own `_x.ai/billing` ACP
 // extension (the agent calls grok.com with its signed-in login). Brain asks the same warm
@@ -18,19 +19,6 @@ function periodName(type: unknown): string {
   if (t.includes('MONTH')) return 'Monthly'
   if (t.includes('DAY')) return 'Daily'
   return ''
-}
-
-export function resetLabel(iso: unknown, timeZone?: string): string {
-  const d = new Date(String(iso || ''))
-  if (Number.isNaN(d.getTime())) return ''
-  return d.toLocaleString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    ...(timeZone ? { timeZone } : {})
-  })
 }
 
 /** `starting`: the Grok agent is not running yet, or did not finish booting in time. Not an empty account. */
