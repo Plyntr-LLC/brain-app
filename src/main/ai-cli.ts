@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import type { AiKind } from '../shared/contracts'
+import { cursorReachArgs, PROJECT_DIR_ENV } from '../shared/chat-reach'
 import { driveOn } from './setup-pretend'
 
 export function extraPath(): string {
@@ -22,19 +23,22 @@ export function extraPath(): string {
   return dirs.filter(Boolean).join(delimiter)
 }
 
-export function binEnv(cwd?: string): NodeJS.ProcessEnv {
+/** Env for Chat, Skin and helper CLIs. Never pins a CLI to one folder, same as the login Terminal. */
+export function binEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: homedir(),
     PATH: `${extraPath()}${delimiter}${process.env.PATH || ''}`
   }
-  const root = String(cwd || '').trim()
-  if (root) {
-    env.CLAUDE_PROJECT_DIR = root
-    env.CURSOR_PROJECT_DIR = root
-    env.GROK_WORKSPACE_ROOT = root
-    env.CODEX_PROJECT_DIR = root
-  }
+  for (const k of PROJECT_DIR_ENV) delete env[k]
+  return env
+}
+
+/** Factory and project hook scripts only: binEnv plus the four project-dir vars set to root. */
+export function projectBinEnv(root: string): NodeJS.ProcessEnv {
+  const env = binEnv()
+  const dir = String(root || '').trim()
+  if (dir) for (const k of PROJECT_DIR_ENV) env[k] = dir
   return env
 }
 
@@ -205,9 +209,7 @@ export function promptStream(opts: {
         : opts.kind === 'cursor'
           ? [
               '-p',
-              '--trust',
-              '--workspace',
-              opts.cwd,
+              ...cursorReachArgs(opts.cwd, homedir()),
               '--output-format',
               'text',
               ...(opts.model ? ['--model', opts.model] : []),
@@ -218,7 +220,7 @@ export function promptStream(opts: {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
       cwd: opts.cwd,
-      env: binEnv(opts.cwd),
+      env: binEnv(),
       stdio: ['ignore', 'pipe', 'pipe']
     })
     if (opts.tabId) {

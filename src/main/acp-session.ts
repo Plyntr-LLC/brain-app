@@ -1,9 +1,11 @@
+import { homedir } from 'node:os'
 import { app, BrowserWindow } from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute } from 'node:path'
 import type { AiKind } from '../shared/contracts'
 import type { SessionCmd, StreamEvent } from './ai-cli'
-import { binEnv, resolveBin } from './ai-cli'
+import { CHAT_RULES, cursorReachArgs } from '../shared/chat-reach'
+import { binEnv, projectBinEnv, resolveBin } from './ai-cli'
 import { loginCli } from './install'
 import { acpPromptParts, type Attach } from './attach'
 import { brainRootFor } from './brain-root'
@@ -31,8 +33,7 @@ import { captureToolHook, toolCaptureFromUpdate, wrapPromptWithHooks } from './p
 import { setupTrace } from './setup-trace'
 import { GROK_DEFAULT_EFFORT } from '../shared/effort'
 
-const RULES =
-  'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
+const RULES = CHAT_RULES
 
 /** Factory session rules. Role, tier, and phase ride in each turn's brief, not here. */
 const FACTORY_RULES =
@@ -297,7 +298,7 @@ export function sessionNewParams(kind: 'grok' | 'cursor', cwd: string, lane: Lan
 /** Env for every Factory child: shims first on PATH, no ANTHROPIC_API_KEY. */
 function factoryChildEnv(brainPath: string): NodeJS.ProcessEnv {
   const shims = ensureShims(factoryShimDir())
-  return factoryEnv(binEnv(brainPath), shims)
+  return factoryEnv(projectBinEnv(brainPath), shims)
 }
 
 setGrokFactoryLeaderEnv(() => {
@@ -305,7 +306,7 @@ setGrokFactoryLeaderEnv(() => {
   return env
 })
 
-async function spawnArgs(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat'): Promise<string[]> {
+export async function spawnArgs(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat'): Promise<string[]> {
   if (lane === 'factory') {
     if (kind !== 'grok') throw new Error('Factory runs on Grok only in this version.')
     const useLeader = await ensureGrokFactoryLeader()
@@ -315,7 +316,7 @@ async function spawnArgs(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'cha
     const useLeader = await ensureGrokLeader()
     return grokAcpArgs(cwd, useLeader)
   }
-  return ['--trust', '--workspace', cwd, 'acp']
+  return [...cursorReachArgs(cwd, homedir()), 'acp']
 }
 
 function isWriteish(msg: RpcMsg): boolean {
@@ -741,7 +742,7 @@ async function bootPoolNow(kind: 'grok' | 'cursor', cwd: string, key: string, la
   if (again && !again.rpc.dead) return again
   const bin = resolveBin(kind)
   if (!bin) throw new Error(`${kind} is not installed on this computer`)
-  const env = lane === 'factory' ? factoryChildEnv(cwd) : binEnv(cwd)
+  const env = lane === 'factory' ? factoryChildEnv(cwd) : binEnv()
   const proc = spawnBin(bin, await spawnArgs(kind, cwd, lane), cwd, env)
   const pool: Pool = {
     kind,

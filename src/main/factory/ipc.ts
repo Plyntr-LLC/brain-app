@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { binEnv } from '../ai-cli'
+import { projectBinEnv } from '../ai-cli'
 import { factoryCancel, factoryClose, factoryPrompt, factoryWarm } from '../acp-session'
 import {
   abandonRun,
@@ -67,7 +67,7 @@ export function registerFactoryIpc(): void {
       close: (tabId) => factoryClose(tabId)
     },
     emit,
-    env: (repo) => factoryEnv(binEnv(repo), ensureShims(factoryShimDir()))
+    env: (repo) => factoryEnv(projectBinEnv(repo), ensureShims(factoryShimDir()))
   })
   ipcMain.handle('factory:triage', (_e, text: string) => triageTask(String(text || '')))
   ipcMain.handle(

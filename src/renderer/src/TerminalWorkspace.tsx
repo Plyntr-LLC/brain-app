@@ -20,6 +20,7 @@ import { specFromStreamEvent } from '../../shared/skin/from-events'
 import { isHiddenStreamKind, isProtocolNoise } from '../../shared/skin/hidden-kinds'
 import { isSkinComponent } from '../../shared/skin/catalog'
 import { appendThought, collapseAdjacentThinks, paintsThreadSpec } from '../../shared/think-run'
+import { CHAT_RULES } from '../../shared/chat-reach'
 
 type Mode = 'chat' | 'term'
 type Attach = { path: string; name: string; mime: string; preview?: string }
@@ -1167,15 +1168,16 @@ function ChatPane({
           if (planOn) lines.push('In plan mode Grok only edits its plan, and always asks before it starts coding.')
         }
         if (kind === 'cursor' && agentMode) lines.push(`Mode: ${agentMode}`)
+        lines.push('It may read, edit, and run commands anywhere your Mac login can, the same as Terminal.')
         lines.push('', 'Switch', '/always-approve turns asking on or off for this chat.')
       } else if (kind === 'claude') {
         lines.push(`Plan mode: ${planOn ? 'On' : 'Off'}`)
         if (planOn) lines.push('In plan mode Claude reads and plans but does not edit files.')
         lines.push('Claude chat does not stop to ask.')
-        lines.push('It may read and edit files in this folder. Anything else it has not been allowed is declined.')
+        lines.push('It may read, edit, and run commands anywhere your Mac login can, the same as Terminal.')
       } else {
         lines.push('ChatGPT chat does not stop to ask.')
-        lines.push('It may edit files in this folder. Writes outside this folder are blocked.')
+        lines.push('It may read, edit, and run commands anywhere your Mac login can, the same as Terminal.')
       }
       lines.push('', 'Always', 'Google Ads changes and outbound mail still need a clear yes from you.')
       popup('Permissions', lines.join('\n'), true)
@@ -1506,7 +1508,7 @@ function ChatPane({
         history: [],
         ...(files.length ? { attachments: files.map(({ path, name, mime }) => ({ path, name, mime })) } : {}),
         system:
-          'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
+          CHAT_RULES
       })
     } catch (e) {
       markBusy(false)
@@ -1643,7 +1645,7 @@ function ChatPane({
         history: [],
         attachments: attached.map(({ path, name, mime }) => ({ path, name, mime })),
         system:
-          'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
+          CHAT_RULES
       })
     } catch (e) {
       markBusy(false)

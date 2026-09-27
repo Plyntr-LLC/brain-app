@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { delimiter } from 'node:path'
 import pty from 'node-pty'
 import type { IPty } from 'node-pty'
+import { cursorReachArgs, PROJECT_DIR_ENV } from '../shared/chat-reach'
 import { CLAUDE_DEFAULT_EFFORT, CLAUDE_DEFAULT_MODEL } from '../shared/claude-defaults'
 import type { AiKind } from '../shared/contracts'
 import { extraPath, resolveBin } from './ai-cli'
@@ -12,20 +13,15 @@ type Sess = { proc: IPty; sender: WebContents }
 
 const sessions = new Map<string, Sess>()
 
-function env(cwd?: string): Record<string, string> {
+/** Login Terminal and Show terminal env. Never pins a CLI to the open folder. */
+export function ptyEnv(): Record<string, string> {
   const e: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (typeof v === 'string') e[k] = v
   e.HOME = homedir()
   e.TERM = 'xterm-256color'
   e.COLORTERM = 'truecolor'
   e.PATH = `${extraPath()}${delimiter}${e.PATH || ''}`
-  const root = String(cwd || '').trim()
-  if (root) {
-    e.CLAUDE_PROJECT_DIR = root
-    e.CURSOR_PROJECT_DIR = root
-    e.GROK_WORKSPACE_ROOT = root
-    e.CODEX_PROJECT_DIR = root
-  }
+  for (const k of PROJECT_DIR_ENV) delete e[k]
   return e
 }
 
@@ -38,7 +34,7 @@ function cliCommand(
   if (!bin) return null
   if (kind === 'grok') return { bin, args: grokTuiArgs(cwd, resume, grokLeaderLive()) }
   if (kind === 'cursor') {
-    const args = ['--trust', '--workspace', cwd]
+    const args = cursorReachArgs(cwd, homedir())
     if (resume) args.push('--resume', resume)
     return { bin, args }
   }
@@ -108,7 +104,7 @@ export function registerPtyIpc(): void {
           cols: Math.max(20, opts.cols || 80),
           rows: Math.max(8, opts.rows || 24),
           cwd: opts.cwd || homedir(),
-          env: env(opts.cwd)
+          env: ptyEnv()
         })
       } catch (err) {
         throw new Error(`Could not start the terminal: ${String((err as Error).message || err)}`)

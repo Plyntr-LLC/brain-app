@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import type { AiKind } from '../shared/contracts'
-import { binEnv } from './ai-cli'
+import { projectBinEnv } from './ai-cli'
 import { asRecord, asText } from './line-rpc'
 
 function hookPlatform(kind: AiKind): string {
@@ -32,7 +32,7 @@ function runHook(cwd: string, script: string, args: string[], stdin: string, tim
   if (!existsSync(file)) return ''
   const r = spawnSync('node', [file, ...args], {
     cwd,
-    env: binEnv(cwd),
+    env: projectBinEnv(cwd),
     input: stdin,
     encoding: 'utf8',
     timeout,

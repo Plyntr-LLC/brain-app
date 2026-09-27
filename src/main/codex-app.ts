@@ -1,4 +1,5 @@
 import type { StreamEvent } from './ai-cli'
+import { CHAT_RULES, CODEX_CHAT_SANDBOX } from '../shared/chat-reach'
 import { binEnv, resolveBin } from './ai-cli'
 import type { Cap, LiveRun } from './acp-session'
 import { codexInput, type Attach } from './attach'
@@ -6,8 +7,7 @@ import { asRecord, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 import { wrapPromptWithHooks } from './project-hooks'
 import { setupTrace } from './setup-trace'
 
-const RULES =
-  'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
+const RULES = CHAT_RULES
 
 type Tab = {
   tabId: string
@@ -181,7 +181,7 @@ async function bootPoolNow(cwd: string): Promise<Pool> {
   if (again && !again.rpc.dead) return again
   const bin = resolveBin('gpt')
   if (!bin) throw new Error('Codex is not installed on this computer')
-  const proc = spawnBin(bin, ['app-server', '--listen', 'stdio://'], cwd, binEnv(cwd))
+  const proc = spawnBin(bin, ['app-server', '--listen', 'stdio://'], cwd, binEnv())
   const pool: Pool = {
     cwd,
     rpc: null as unknown as LineRpc,
@@ -234,10 +234,17 @@ export async function codexWarm(opts: {
     }
     let threadId = ''
     let thread: Record<string, unknown> = {}
+    // Start and resume share Chat reach so a resumed tab is not folder-fenced.
+    const reachParams = {
+      cwd: opts.cwd,
+      approvalPolicy: 'never',
+      sandbox: CODEX_CHAT_SANDBOX,
+      developerInstructions: RULES
+    }
     if (opts.resumeId) {
       try {
         const resumed = asRecord(
-          await pool.rpc.request('thread/resume', { threadId: opts.resumeId }, 0)
+          await pool.rpc.request('thread/resume', { threadId: opts.resumeId, ...reachParams }, 0)
         )
         thread = asRecord(resumed.thread)
         threadId = String(thread.id || resumed.threadId || opts.resumeId)
@@ -250,11 +257,8 @@ export async function codexWarm(opts: {
         await pool.rpc.request(
           'thread/start',
           {
-            cwd: opts.cwd,
+            ...reachParams,
             model: opts.model || undefined,
-            approvalPolicy: 'never',
-            sandbox: 'workspace-write',
-            developerInstructions: RULES,
             serviceName: 'brain-app'
           },
           0
@@ -318,7 +322,9 @@ export async function codexPrompt(opts: {
   }
   const params: Record<string, unknown> = {
     threadId: tab.threadId,
-    input
+    input,
+    approvalPolicy: 'never',
+    sandbox: CODEX_CHAT_SANDBOX
   }
   if (opts.model) params.model = opts.model
   if (opts.effort) params.effort = opts.effort

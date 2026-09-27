@@ -1,5 +1,6 @@
 import { resolveClaudeRun } from '../shared/claude-defaults'
 import type { StreamEvent } from './ai-cli'
+import { CHAT_RULES, claudeChatMode, claudeChatPermissionArgs } from '../shared/chat-reach'
 import { binEnv, resolveBin } from './ai-cli'
 import { claudeContent, type Attach } from './attach'
 import { emitChat } from './chat-fan'
@@ -8,8 +9,7 @@ import { asRecord, asText, fileHits, spawnBin } from './line-rpc'
 import { captureToolHook, wrapPromptWithHooks } from './project-hooks'
 import { setupTrace } from './setup-trace'
 
-const RULES =
-  'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
+const RULES = CHAT_RULES
 
 type Sess = {
   tabId: string
@@ -191,8 +191,7 @@ async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string;
     'stream-json',
     '--verbose',
     '--include-partial-messages',
-    '--permission-mode',
-    planTabs.has(opts.tabId) ? 'plan' : 'dontAsk',
+    ...claudeChatPermissionArgs(planTabs.has(opts.tabId)),
     '--permission-prompts',
     'none',
     '--append-system-prompt',
@@ -202,7 +201,7 @@ async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string;
     '--effort',
     run.effort
   ]
-  const proc = spawnBin(bin, args, opts.cwd, binEnv(opts.cwd))
+  const proc = spawnBin(bin, args, opts.cwd, binEnv())
   const s: Sess = {
     tabId: opts.tabId,
     cwd: opts.cwd,
@@ -295,7 +294,7 @@ export function claudeCancel(tabId: string): boolean {
 
 /**
  * Plan mode on the running `claude -p` process: the stream-json `set_permission_mode` control request
- * (`plan` in, `dontAsk` out, the mode Brain launches with). `confirmed` is false when Claude did not
+ * (`plan` in, `bypassPermissions` out, the mode Brain launches with). `confirmed` is false when Claude did not
  * answer within 4s, so the state is unknown.
  */
 export async function claudePlanMode(tabId: string, on: boolean): Promise<{ on: boolean; confirmed: boolean }> {
@@ -315,7 +314,7 @@ export async function claudePlanMode(tabId: string, on: boolean): Promise<{ on: 
     JSON.stringify({
       type: 'control_request',
       request_id: requestId,
-      request: { subtype: 'set_permission_mode', mode: on ? 'plan' : 'dontAsk' }
+      request: { subtype: 'set_permission_mode', mode: claudeChatMode(on) }
     }) + '\n'
   )
   const ok = await answer
