@@ -668,7 +668,6 @@ async function strictStep(state: Live): Promise<boolean> {
     prompt: strictPrompt({ task: run.task, tier: run.tier, risk: run.risk, base: run.base, diff: safeDiff(run.workRepo, run.base), workRepo: run.workRepo }),
     env: d.env(run.workRepo),
     bin: (d.claudeBin || (() => resolveBin('claude')))(),
-    effort: run.tier === 'T3' ? 'high' : 'medium',
     timeoutMs: OPUS_REVIEW_TIMEOUT_MS,
     spawnFn: d.spawnOpus,
     signal: abort.signal

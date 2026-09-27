@@ -46,7 +46,7 @@ Token discipline: no SKILL paste in RULES. Skills read by path in reviewer/build
 | | T0 | T1 | T2 | T3 |
 | --- | --- | --- | --- | --- |
 | Plan | — | inline in build | plan + human gate | slices + xhigh + human |
-| Review | diff only | self-check | Opus strict (fresh `claude -p`) | xhigh + strict |
+| Review | diff only | self-check | Opus strict (fresh `claude -p`, medium) | Opus strict (fresh `claude -p`, medium) |
 | Tests | typecheck | + unit | + targeted e2e | full e2e + artifact |
 | Workers | 1 | 1 | 1 | up to 3 parallel, non-overlapping files |
 

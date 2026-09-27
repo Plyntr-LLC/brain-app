@@ -823,7 +823,7 @@ const t3Plan = (slices: { title: string; files: string[] }[]) => async (o: { tex
   const art = store.runTextPath(id, 'verify')
   check('S3 8 verify artifact <id>.verify.txt under userData', r?.verifyArtifact === art && art.endsWith(`${id}.verify.txt`) && underPath(realish(userData), realish(art)) && readFileSync(art, 'utf8').includes('npm run typecheck: pass'), String(r?.verifyArtifact))
   const review = claudeRows().slice(c0)[0]
-  check('S3 11 T3 Opus review argv has --effort high, plan mode', !!review && review.argv[review.argv.indexOf('--effort') + 1] === 'high' && review.argv[review.argv.indexOf('--permission-mode') + 1] === 'plan', JSON.stringify(review?.argv.filter((a) => a.length < 40)))
+  check('S3 11 T3 Opus review argv has --effort medium, plan mode', !!review && review.argv[review.argv.indexOf('--effort') + 1] === 'medium' && review.argv[review.argv.indexOf('--permission-mode') + 1] === 'plan', JSON.stringify(review?.argv.filter((a) => a.length < 40)))
   check('S3 5 T3 runThrough reaches done with a commit, not pushed', r?.phase === 'done' && !!r.commitSha && !r.pushed && pushCalls === 0, JSON.stringify({ phase: r?.phase, error: r?.error, strict: r?.strict }))
   check('S3 8 work repo git status is clean of the artifact', git(work2, ['status', '--porcelain', '--ignored']).trim() === '' && !existsSync(join(work2, `${id}.verify.txt`)))
 }

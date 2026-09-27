@@ -14,11 +14,9 @@ export const OPUS_REVIEW_TIMEOUT_MS = 10 * 60_000
 export type SpawnFn = (bin: string, args: string[], opts: SpawnOptions) => ChildProcess
 export type OpusResult = { found: boolean; code: number; text: string; last: string }
 
-/** Claude has no xhigh: T3 review runs at high, everything else at medium. */
-export type OpusEffort = 'medium' | 'high'
-
-export function opusArgs(prompt: string, effort: OpusEffort = 'medium'): string[] {
-  return ['-p', prompt, '--model', 'opus', '--effort', effort, '--permission-mode', 'plan', '--output-format', 'text']
+/** Factory Opus is always medium (same as the Kennel merge gate). Claude has no xhigh. */
+export function opusArgs(prompt: string): string[] {
+  return ['-p', prompt, '--model', 'opus', '--effort', 'medium', '--permission-mode', 'plan', '--output-format', 'text']
 }
 
 export function opusEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -39,7 +37,6 @@ function lastLine(text: string): string {
 export function runOpus(o: {
   cwd: string
   prompt: string
-  effort?: OpusEffort
   env: NodeJS.ProcessEnv
   bin?: string | null
   timeoutMs: number
@@ -60,7 +57,7 @@ export function runOpus(o: {
     }
     let child: ChildProcess
     try {
-      child = (o.spawnFn || spawn)(o.bin as string, opusArgs(o.prompt, o.effort), {
+      child = (o.spawnFn || spawn)(o.bin as string, opusArgs(o.prompt), {
         cwd: o.cwd,
         env: opusEnv(o.env),
         stdio: ['ignore', 'pipe', 'pipe'],

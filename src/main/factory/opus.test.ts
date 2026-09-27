@@ -73,11 +73,10 @@ console.log('ok\\nPASS')
   assert.equal(enoent.found, false)
 })
 
-test('opus effort: medium by default (T2), high on request (T3); never xhigh', () => {
-  const med = opusArgs('x')
-  assert.equal(med[med.indexOf('--effort') + 1], 'medium')
-  const high = opusArgs('x', 'high')
-  assert.equal(high[high.indexOf('--effort') + 1], 'high')
-  assert.equal(high[high.indexOf('--permission-mode') + 1], 'plan')
-  assert.ok(!high.includes('xhigh'))
+test('opus effort is always medium; never high or xhigh', () => {
+  const a = opusArgs('x')
+  assert.equal(a[a.indexOf('--effort') + 1], 'medium')
+  assert.equal(a[a.indexOf('--permission-mode') + 1], 'plan')
+  assert.ok(!a.includes('high'))
+  assert.ok(!a.includes('xhigh'))
 })

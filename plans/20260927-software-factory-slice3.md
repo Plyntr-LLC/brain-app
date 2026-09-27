@@ -31,7 +31,7 @@ No pack. Version stays 0.1.80. Existing FactoryPane layout stays (WP13). Chat/Sk
 
 6. **Verify T3.** `typecheck` + `test` + profile e2e + a **full e2e** row: `e2e:full` script if present, else a second run of `e2e` / `test:e2e` labeled `e2e:full` when T3 (if only one e2e script exists, one row is enough and a skipped `e2e:full` is fine). Save combined verify stdout to `userData/factory/runs/<id>.verify.txt` (artifact). Missing scripts still skipped.
 
-7. **Review T3.** `strictNeeded` is true for T3. Opus spawn uses `--effort high` (Claude has no xhigh). T2 stays medium. Still plan permission mode, skill by path, max 2 FAIL.
+7. **Review T3.** `strictNeeded` is true for T3. Opus spawn is always `--effort medium` (Joe 2026-09-27; same as the Kennel merge gate). Claude has no xhigh. Still plan permission mode, skill by path, max 2 FAIL.
 
 8. **Deploy.** Not the model. After Push, a Deploy button. `gates.deploy(workRepo, cmd)` runs `profile.deploy.cmd` with **no shims**, `GIT_TERMINAL_PROMPT=0`. No cmd → disabled "No deploy command on this repo." Kennel path (`/mykennel/i`) always refused. Cmd is stored in the userData profile only, never logged. Tests stub spawn. Do not invent a token or call Vercel.
 
@@ -82,7 +82,7 @@ Not touched: `chat-reach.ts`, Chat RULES, files.ts explorer, Phone, first-run, S
 8. T3 verify writes `<id>.verify.txt` under userData; work repo git status clean of that file.
 9. Auto-commit on runThrough clean review; voice REJECT does not auto-commit; Push not called.
 10. Deploy with no cmd refused; kennel path refused; stubbed cmd spawn has no shims on PATH.
-11. Opus T3 review argv includes `--effort high`; T2 still medium.
+11. Opus T2 and T3 review argv includes `--effort medium` (never high).
 12. Slice 1/2 FACTORY_PASS items still pass. typecheck, SLASH_SKILLS_PASS, CHAT_REACH_PASS.
 13. Resolve: task with `/tmp/work/src/a.ts` (git top `/tmp/work`, brain elsewhere) → that repo. Task `fix footer in brain-app` with `projectsDir/brain-app` git → that repo. No path, lastRepo set → lastRepo. Same as brain → refuse. Empty task tokens and no lastRepo → the name-the-repo error. Start with only `{ task, brainPath, runThrough }` succeeds when lastRepo or a path resolves.
 
