@@ -33,11 +33,12 @@ export async function resolveInvite(token: string): Promise<InviteResolve> {
   return r.json() as Promise<InviteResolve>
 }
 
-export async function requestCode(email: string): Promise<{ ok: boolean }> {
+export async function requestCode(email: string, timeoutMs = 8000): Promise<{ ok: boolean }> {
   const r = await fetch(`${API_BASE}/api/auth/request-code`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, app: true })
+    body: JSON.stringify({ email, app: true }),
+    signal: AbortSignal.timeout(timeoutMs)
   })
   if (!r.ok) {
     const body = await r.json().catch(() => ({})) as { error?: string }
@@ -53,7 +54,8 @@ export async function verifyCode(email: string, code: string): Promise<{
   const r = await fetch(`${API_BASE}/api/auth/verify-code`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, code })
+    body: JSON.stringify({ email, code }),
+    signal: AbortSignal.timeout(15000)
   })
   if (!r.ok) {
     const body = await r.json().catch(() => ({})) as { error?: string }

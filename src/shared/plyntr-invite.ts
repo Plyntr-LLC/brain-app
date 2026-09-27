@@ -10,11 +10,14 @@ export function authCodeRoute(raw: string): 'plyntr' | 'other' {
   return normalizePlyntrInviteCode(raw).length === PLYNTR_INVITE_LEN ? 'plyntr' : 'other'
 }
 
-/** Which systems to try, in order, so first-run never asks Agency Brain vs Plyntr. */
-export function inviteTryOrder(raw: string): Array<'plyntr' | 'agency'> {
+/**
+ * Which systems to try, in order, so first-run never asks Agency Brain vs Plyntr.
+ * `signin` is the email sign-in check (Agency Brain, project, then Plyntr company code); it needs the address.
+ */
+export function inviteTryOrder(raw: string, hasEmail = false): Array<'plyntr' | 'agency' | 'signin'> {
   const n = normalizePlyntrInviteCode(raw)
   if (n.length === PLYNTR_INVITE_LEN) return ['plyntr']
-  if (/^\d{6}$/.test(n)) return ['plyntr', 'agency']
+  if (/^\d{6}$/.test(n)) return hasEmail ? ['signin', 'agency'] : ['plyntr', 'agency']
   if (n.length === 6) return ['agency', 'plyntr']
   return ['plyntr', 'agency']
 }

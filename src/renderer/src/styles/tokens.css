@@ -21,6 +21,14 @@
   --radius: 3px;
   --shadow: 0 10px 28px rgba(26, 22, 18, 0.14);
   --focus: 0 0 0 2px color-mix(in srgb, var(--orange) 45%, transparent);
+  --glass-chrome: color-mix(in srgb, var(--chrome) 95%, transparent);
+  --glass-paper: color-mix(in srgb, var(--paper) 95%, transparent);
+  --glass-card: color-mix(in srgb, var(--card) 92%, transparent);
+  --glass-line: color-mix(in srgb, var(--ink) 14%, transparent);
+  --glass-edge: rgba(255, 255, 255, 0.6);
+  --glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0) 60%);
+  --glass-blur: 18px;
+  --glass-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 18px 44px rgba(26, 22, 18, 0.16), 0 2px 6px rgba(26, 22, 18, 0.06);
 }
 :root[data-theme='dark'] {
   --ink: #f4efe8;
@@ -41,6 +49,20 @@
   --ok-line: #2d4a35;
   --warn-line: #54431f;
   --shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+  --glass-chrome: color-mix(in srgb, var(--chrome) 92%, transparent);
+  --glass-paper: color-mix(in srgb, var(--paper) 92%, transparent);
+  --glass-card: color-mix(in srgb, var(--card) 94%, transparent);
+  --glass-line: rgba(255, 255, 255, 0.09);
+  --glass-edge: rgba(255, 255, 255, 0.09);
+  --glass-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0) 60%);
+  --glass-shadow: 0 1px 0 rgba(255, 255, 255, 0.07) inset, 0 20px 48px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root, :root[data-theme='dark'] {
+    --glass-chrome: var(--chrome);
+    --glass-paper: var(--paper);
+    --glass-card: var(--card);
+  }
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }

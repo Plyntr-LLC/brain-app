@@ -3,8 +3,9 @@ import { CLIENT_PACKS, packLabel, packLine } from '@shared/client-pack'
 import { inviteTryOrder, slugFromBusinessName } from '@shared/plyntr-invite'
 import { onePerPerson } from '@shared/plyntr-transfer'
 import { previousCreateStep } from '@shared/plyntr-wizard'
-import { companiesLoadError, ipcErrorText, orgStepCopy, orgUseError } from '@shared/plyntr-org-copy'
+import { CODE_DID_NOT_WORK, CODE_PROJECT_HEDGE, CODE_SENT_MANY, companiesLoadError, ipcErrorText, orgStepCopy, orgUseError, pickCodeError } from '@shared/plyntr-org-copy'
 import { resolvePlyntrRepoName } from '@shared/github-org'
+import { WorkPulse } from './WorkPulse'
 
 export function PackSelect({ value, onChange }: { value: string; onChange: (pack: string) => void }) {
   return (
@@ -132,6 +133,7 @@ export function PlyntrProjectScreen({
         </label>
       )}
       {err ? <p className="note">{err}</p> : null}
+      {busy ? <WorkPulse label={mode === 'email' ? 'Sending your code' : 'Checking your code'} /> : null}
       <div className="actions">
         {mode === 'email' ? (
           <button
@@ -188,10 +190,15 @@ export function PlyntrProjectScreen({
   )
 }
 
+/** What `auth.verify` hands back once a sign-in code works on one of the systems. */
+export type SignedIn = Awaited<ReturnType<typeof window.brain.auth.verify>>
+
 export function PlyntrCodeScreen({
   onJoin,
   onProject,
   onAgency,
+  onEmailCode,
+  onSignedIn,
   startInEmail,
   local
 }: {
@@ -204,15 +211,20 @@ export function PlyntrCodeScreen({
     repoUrl?: string
     member: { email?: string; name?: string; role?: string }
   }) => Promise<void>
+  /** Emails a code from every live system this address is on. Without it, only Plyntr is asked. */
+  onEmailCode?: (email: string) => Promise<{ places: number; hedge?: boolean }>
+  /** Finishes a six-digit sign-in code that Agency Brain, a project, or a Plyntr company accepted. */
+  onSignedIn?: (res: SignedIn, email: string) => Promise<void>
   startInEmail?: boolean
   local?: boolean
 }) {
   const [mode, setMode] = useState<'code' | 'email' | 'sent'>(startInEmail ? 'email' : 'code')
   const [code, setCode] = useState('')
   const [email, setEmail] = useState('')
-  const [sentRole, setSentRole] = useState('')
   const [err, setErr] = useState('')
+  const [sentNote, setSentNote] = useState('')
   const [busy, setBusy] = useState(false)
+  const [sending, setSending] = useState(false)
   return (
     <>
       <p className="kicker">{local ? 'This computer only' : 'Your code'}</p>
@@ -241,29 +253,38 @@ export function PlyntrCodeScreen({
           <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" />
         </label>
       )}
+      {mode === 'sent' && sentNote ? <p className="muted">{sentNote}</p> : null}
       {err ? <p className="note">{err}</p> : null}
+      {sending ? <WorkPulse label="Sending your code" /> : busy ? <WorkPulse label="Checking your code" /> : null}
       <div className="actions">
         {mode === 'email' ? (
           <button
             className="primary"
             type="button"
-            disabled={busy}
+            disabled={sending}
             onClick={async () => {
               if (!email.includes('@')) {
                 setErr('Type the email you were added with.')
                 return
               }
-              setBusy(true)
+              setSending(true)
               setErr('')
               try {
-                const sent = await window.brain.plyntr.emailCode(email)
-                setSentRole(sent.role || '')
-                setMode('sent')
-                if (!sent.emailed) setErr('We found you, but the email did not send. Ask the person who invited you for the code.')
+                if (onEmailCode && !local) {
+                  const sent = await onEmailCode(email)
+                  setSentNote(sent.hedge ? CODE_PROJECT_HEDGE : sent.places > 1 ? CODE_SENT_MANY : '')
+                  setMode('sent')
+                } else {
+                  // This computer only redeems Plyntr codes, so only Plyntr is asked to send one.
+                  const sent = await window.brain.plyntr.emailCode(email)
+                  setSentNote(sent.sent > 1 ? CODE_SENT_MANY : '')
+                  setMode('sent')
+                  if (!sent.emailed) setErr('We found you, but the email did not send. Ask the person who invited you for the code.')
+                }
               } catch (e) {
                 setErr(ipcErrorText(e))
               } finally {
-                setBusy(false)
+                setSending(false)
               }
             }}
           >
@@ -278,34 +299,57 @@ export function PlyntrCodeScreen({
               setBusy(true)
               setErr('')
               try {
-                const order = local ? (['plyntr'] as const) : inviteTryOrder(code)
-                let last = 'That code did not work.'
+                const typed = email.includes('@') && Boolean(onSignedIn)
+                const order = local ? (['plyntr'] as const) : inviteTryOrder(code, typed)
+                // Each leg only records a miss. Once a system accepts the code, its next step runs and any
+                // failure there is shown as is, so a redeemed code never falls through to "not found".
+                const misses: string[] = []
                 for (const kind of order) {
-                  try {
-                    if (kind === 'plyntr') {
-                      try {
-                        const row = await window.brain.plyntr.resolve(code, email)
-                        await onJoin(row)
-                        return
-                      } catch (e) {
-                        const msg = ipcErrorText(e)
-                        if (onProject && /one project/i.test(msg)) {
-                          const row = await window.brain.plyntr.joinProject(code)
-                          await onProject(row)
-                          return
-                        }
-                        last = msg
-                      }
-                    } else if (onAgency) {
-                      const res = await window.brain.auth.resolveCode(code)
-                      await onAgency(res)
-                      return
+                  if (kind === 'signin' && onSignedIn) {
+                    let res: SignedIn
+                    try {
+                      res = await window.brain.auth.verify(email, code)
+                    } catch (e) {
+                      misses.push(ipcErrorText(e))
+                      continue
                     }
-                  } catch (e) {
-                    last = ipcErrorText(e)
+                    await onSignedIn(res, email)
+                    return
+                  }
+                  if (kind === 'plyntr') {
+                    let row: Awaited<ReturnType<typeof window.brain.plyntr.resolve>>
+                    try {
+                      row = await window.brain.plyntr.resolve(code, email)
+                    } catch (e) {
+                      const msg = ipcErrorText(e)
+                      if (onProject && /one project/i.test(msg)) {
+                        await onProject(await window.brain.plyntr.joinProject(code))
+                        return
+                      }
+                      misses.push(msg)
+                      continue
+                    }
+                    await onJoin(row)
+                    return
+                  }
+                  if (kind === 'agency' && onAgency) {
+                    let res: Awaited<ReturnType<typeof window.brain.auth.resolveCode>>
+                    try {
+                      res = await window.brain.auth.resolveCode(code)
+                    } catch (e) {
+                      misses.push(ipcErrorText(e))
+                      continue
+                    }
+                    await onAgency(res)
+                    return
                   }
                 }
-                setErr(last)
+                const line = pickCodeError(misses)
+                setErr(
+                  line === CODE_DID_NOT_WORK && /^\d{6}$/.test(code.replace(/[-\s]/g, '')) && !typed && !local
+                    ? `${line} If it is a sign-in code, go back and use Sign in with the email it was sent to.`
+                    : line
+                )
               } catch (e) {
                 setErr(ipcErrorText(e))
               } finally {

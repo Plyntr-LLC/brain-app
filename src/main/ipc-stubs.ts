@@ -60,7 +60,8 @@ import {
 } from './hq-sync'
 import { readSyncHealth } from './sync-health'
 import { isJoeSuperAdmin } from './super-admin'
-import { classifyLogin, type LoginVia } from './login-route'
+import { classifyLogin } from './login-route'
+import { SEND_TIMEOUT_MS, sendCodesEverywhere, sendCodesOrProjectFallback, tryCodeEverywhere, type CodeSystem } from './code-fanout'
 import { cloudflaredPresent, gitPresent, installNeed, isNeedId, listNeeds, loginCli, loginCliUntilDone } from './install'
 import { cliSignedIn } from './cli-auth'
 import { explainSetup } from './setup-explain'
@@ -589,31 +590,39 @@ export function registerStubIpc(): void {
     }
   })
 
-  ipcMain.handle('auth:requestCode', async (_e, email: string, viaRaw?: LoginVia) => {
+  ipcMain.handle('auth:requestCode', async (_e, email: string, viaRaw?: CodeSystem) => {
     const key = String(email || '').trim().toLowerCase()
-    if (viaRaw === 'hq-sync') {
-      await requestHqCode(key)
-      return { ok: true, via: 'hq-sync' as LoginVia }
+    if (!key.includes('@')) throw new Error('Type the email you were invited with.')
+    let plyntrPlaces = 0
+    const every: Record<CodeSystem, () => Promise<boolean | null>> = {
+      ads2ai: async () => {
+        await ads2ai.requestCode(key, SEND_TIMEOUT_MS)
+        return true
+      },
+      'hq-sync': async () => {
+        await requestHqCode(key)
+        return true
+      },
+      plyntr: async () => {
+        plyntrPlaces = (await emailPlyntrCode(key, SEND_TIMEOUT_MS)).sent
+        return plyntrPlaces > 0
+      }
     }
-    if (viaRaw === 'ads2ai') {
-      await ads2ai.requestCode(key)
-      return { ok: true, via: 'ads2ai' as LoginVia }
+    if (viaRaw && every[viaRaw]) {
+      const { sent } = await sendCodesEverywhere({ [viaRaw]: every[viaRaw] })
+      const places = sent.length + (sent.includes('plyntr') ? Math.max(0, plyntrPlaces - 1) : 0)
+      return { ok: true, via: sent.length === 1 ? sent[0] : undefined, sent, places, hedge: false }
     }
-    const kind = await classifyLogin(key)
-    if (kind === 'hq-sync') {
-      await requestHqCode(key)
-      return { ok: true, via: 'hq-sync' as LoginVia }
-    }
-    try {
-      await ads2ai.requestCode(key)
-      return { ok: true, via: 'ads2ai' as LoginVia }
-    } catch (err) {
-      if (kind === 'ads2ai') throw err
-      await requestHqCode(key)
-      return { ok: true, via: 'hq-sync' as LoginVia }
-    }
+    // Project sync answers ok for every address. Only use it when Agency Brain and Plyntr both miss,
+    // so a project person on a new Mac still gets a code.
+    const { sent, hedge } = await sendCodesOrProjectFallback(
+      { ads2ai: every.ads2ai, plyntr: every.plyntr },
+      () => requestHqCode(key)
+    )
+    const places = sent.length + (sent.includes('plyntr') ? Math.max(0, plyntrPlaces - 1) : 0)
+    return { ok: true, via: sent.length === 1 ? sent[0] : undefined, sent, places, hedge }
   })
-  ipcMain.handle('auth:verify', async (_e, email: string, code: string, viaRaw?: LoginVia) => {
+  ipcMain.handle('auth:verify', async (_e, email: string, code: string, viaRaw?: CodeSystem) => {
     const key = String(email || '').trim().toLowerCase()
     const classified = await classifyLogin(key)
     const via = viaRaw || (classified === 'unknown' ? null : classified)
@@ -660,7 +669,7 @@ export function registerStubIpc(): void {
       return { ok: true, via: 'ads2ai' as const, member: res.member, teams, role: '' }
     }
 
-    if (authCodeRoute(code) === 'plyntr') {
+    async function asPlyntr() {
       const resolved = await resolvePlyntrCode(normalizePlyntrInviteCode(code))
       const slug = resolved.repo.split('/')[1]?.replace(/-brain$/, '') || ''
       if (resolved.role === 'project') {
@@ -722,12 +731,13 @@ export function registerStubIpc(): void {
         slug
       }
     }
-    if (via === 'hq-sync') return asProject()
-    try {
-      return await asAgency()
-    } catch {
-      return asProject()
-    }
+    if (authCodeRoute(code) === 'plyntr') return tryCodeEverywhere([asPlyntr])
+    // A six-digit code may come from Agency Brain, a project seat, or a Plyntr company. Try each live system.
+    type Verified = Awaited<ReturnType<typeof asAgency | typeof asProject | typeof asPlyntr>>
+    const legs: Record<CodeSystem, () => Promise<Verified>> = { ads2ai: asAgency, 'hq-sync': asProject, plyntr: asPlyntr }
+    const order: CodeSystem[] = ['ads2ai', 'hq-sync', 'plyntr']
+    if (via) order.sort((x, y) => Number(y === via) - Number(x === via))
+    return tryCodeEverywhere(order.map((k) => legs[k]))
   })
   ipcMain.handle('auth:session', () => {
     const acct = getAccount() || loadAccount()

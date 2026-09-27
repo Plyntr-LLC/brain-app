@@ -84,3 +84,33 @@ export function companiesLoadError(message: string): { login: boolean; note: str
   const short = ipcErrorText(text)
   return { login: false, note: `Could not load the company list. ${short || 'Try again.'}` }
 }
+
+/** A code whose brain was removed. The worker answers `gone`; the app never shows raw `not found` for it. */
+export const GONE_BRAIN_CODE = 'That code was for a brain that is no longer set up. Ask for a fresh invite to the one you still use.'
+
+export const CODE_NOT_LIVE = 'That email is not on a live brain. Ask for a fresh invite.'
+
+export const CODE_UNREACHABLE = 'Could not reach sign-in to send a code. Check your connection and try again.'
+
+export const CODE_SENT_MANY =
+  'We emailed a code for each place this address is still set up. If you get more than one, use the one for the brain you want to open.'
+
+export const CODE_PROJECT_HEDGE =
+  'If this address is on a project, a code is on its way. Check that inbox.'
+
+export const CODE_DID_NOT_WORK = 'That code did not work. Check the newest email and type it exactly.'
+
+const NO_MATCH = /not found|did not work|didn't work|invalid|incorrect|wrong|no such|unknown|bad code|HTTP 4\d\d|^\s*$/i
+
+/** Several systems may have tried one code. Show the line that tells the person the most, never raw `not found`. */
+export function pickCodeError(messages: string[]): string {
+  const all = messages.map((m) => ipcErrorText(m))
+  if (all.some((m) => m === GONE_BRAIN_CODE || /no longer set up/i.test(m))) return GONE_BRAIN_CODE
+  const used = all.find((m) => /already used/i.test(m))
+  if (used) return used
+  if (all.some((m) => /expired/i.test(m))) return 'That code has expired. Ask for a fresh one.'
+  const revoked = all.find((m) => /revoked/i.test(m))
+  if (revoked) return revoked
+  const real = all.find((m) => !NO_MATCH.test(m))
+  return real || CODE_DID_NOT_WORK
+}

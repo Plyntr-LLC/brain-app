@@ -44,11 +44,15 @@ export function createWindow(): BrowserWindow {
     height: 740,
     minWidth: 860,
     minHeight: 600,
-    backgroundColor: '#fffdf9',
     title: 'Brain',
     ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 14 } }
-      : {}),
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 14, y: 14 },
+          vibrancy: 'under-window' as const,
+          visualEffectState: 'followWindow' as const
+        }
+      : { backgroundColor: '#fffdf9' }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
@@ -57,6 +61,11 @@ export function createWindow(): BrowserWindow {
     }
   })
   mainWin = win
+  if (process.platform === 'darwin') {
+    win.webContents.on('dom-ready', () => {
+      void win.webContents.executeJavaScript("document.documentElement.classList.add('glass')")
+    })
+  }
   win.on('close', (e) => {
     if (allowQuit) return
     e.preventDefault()

@@ -1245,8 +1245,6 @@ button.think-label:disabled { cursor: default; }
   font-family: "Schibsted Grotesk", sans-serif;
   font-size: 0.68rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--muted);
   margin: 0.35rem 0 0.08rem;
 }
@@ -1674,3 +1672,108 @@ button.runmeta-v:hover { color: var(--orange-deep); }
 .setup-list li.got > span:first-child { color: var(--ok); }
 .setup-list li.now > span:first-child { color: var(--orange); }
 .setup-list li { padding: 0.15rem 0; }
+
+/* Liquid Glass (macOS only). Main adds .glass on darwin, where the window has native vibrancy.
+   Chrome goes frosted; reading surfaces stay opaque paper. */
+:root.glass,
+:root.glass body,
+:root.glass .app { background: transparent; }
+:root.glass .main { background: var(--card); }
+:root.glass .app.chat-on .main { background: transparent; }
+:root.glass .titlebar {
+  background: var(--glass-sheen), var(--glass-chrome);
+  border-bottom-color: var(--glass-line);
+  box-shadow: inset 0 -1px 0 var(--glass-edge);
+}
+:root.glass .update-note {
+  background: var(--glass-paper);
+  border-bottom-color: var(--glass-line);
+}
+:root.glass .rail {
+  background: var(--glass-paper);
+  border-right-color: var(--glass-line);
+  box-shadow: inset -1px 0 0 var(--glass-edge);
+}
+:root.glass .rail .step .mark { box-shadow: inset 0 1px 0 var(--glass-edge); }
+:root.glass .tabbar {
+  background: var(--glass-sheen), var(--glass-chrome);
+  border-bottom-color: var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+}
+:root.glass .modes { border-right-color: var(--glass-line); }
+:root.glass .tab { border-right-color: var(--glass-line); }
+:root.glass .tab.on,
+:root.glass .modes button.on { box-shadow: inset 0 1px 0 var(--glass-edge); }
+:root.glass .explorer,
+:root.glass .refs { background: var(--glass-paper); }
+:root.glass .explorer { border-right-color: var(--glass-line); box-shadow: inset -1px 0 0 var(--glass-edge); }
+:root.glass .refs { border-left-color: var(--glass-line); box-shadow: inset 1px 0 0 var(--glass-edge); }
+:root.glass .explorer h2,
+:root.glass .refs h2 { background: transparent; }
+/* Model/Effort/Mode labels are small muted text: keep them on solid paper so any vibrancy stays >= 4.5:1. */
+:root.glass .runmeta { background: var(--paper); }
+:root.glass .runmeta,
+:root.glass .explorer .away,
+:root.glass .invite-dock { border-top-color: var(--glass-line); }
+:root.glass .runmeta { box-shadow: inset 0 1px 0 var(--glass-edge); }
+:root.glass .app.chat-on .main > [data-setup-screen='chat'] > .actions {
+  background: var(--glass-sheen), var(--glass-chrome);
+}
+
+/* Composer: a frosted shelf over the opaque thread. The textarea stays solid. */
+:root.glass .chatpane .composer,
+:root.glass .skin-cli {
+  background: var(--glass-sheen), color-mix(in srgb, var(--paper) 55%, var(--card));
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+}
+:root.glass .chatpane .composer { border-top-color: var(--glass-line); }
+
+/* Popovers and sheets float over app content, so they refract it. */
+:root.glass .settings,
+:root.glass .runpick,
+:root.glass .slashmenu,
+:root.glass .cmdpanel,
+:root.glass .invitebox,
+:root.glass .tab-close-card {
+  background: var(--glass-sheen), var(--glass-card);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.3);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.3);
+  border-color: color-mix(in srgb, var(--ink) 22%, transparent);
+  box-shadow: var(--glass-shadow);
+}
+:root.glass .settings { border-top: 0; }
+:root.glass .settings .invitehead,
+:root.glass .settings .set-note {
+  background: var(--glass-card);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.3);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.3);
+  border-color: var(--glass-line);
+}
+:root.glass .settings .set-note { box-shadow: inset 0 1px 0 var(--glass-edge); }
+:root.glass .tab-close {
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+/* Cards: opaque paper with a thin caught-light edge. */
+:root.glass .set-now,
+:root.glass .biz,
+:root.glass .set-group.admin,
+:root.glass .choice,
+:root.glass .ai,
+:root.glass .map { background-image: var(--glass-sheen); }
+:root.glass .choice-stack .choice,
+:root.glass .ai,
+:root.glass .biz:not(.current),
+:root.glass .choice:not(.on) { box-shadow: inset 0 1px 0 var(--glass-edge), 0 1px 2px rgba(26, 22, 18, 0.05); }
+:root.glass .choice-stack .choice:hover,
+:root.glass .choice-stack .choice:focus-visible {
+  box-shadow: inset 3px 0 0 var(--orange), inset 0 1px 0 var(--glass-edge), 0 4px 14px rgba(26, 22, 18, 0.08);
+}
+:root.glass .choice-stack .choice:focus-visible {
+  box-shadow: inset 3px 0 0 var(--orange), inset 0 1px 0 var(--glass-edge), var(--focus);
+}
+:root.glass .choice.on { box-shadow: inset 3px 0 0 var(--orange), inset 0 1px 0 var(--glass-edge); }
+:root.glass .sync-pill,
+:root.glass .seat-pill,
+:root.glass .role-lock { box-shadow: inset 0 1px 0 var(--glass-edge); }

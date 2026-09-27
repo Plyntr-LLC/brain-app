@@ -176,9 +176,16 @@ const brain = {
   },
   auth: {
     resolveCode: (code: string) => ipcRenderer.invoke('auth:resolveCode', code),
-    requestCode: (email: string, via?: 'ads2ai' | 'hq-sync') =>
-      ipcRenderer.invoke('auth:requestCode', email, via) as Promise<{ ok: boolean; via: 'ads2ai' | 'hq-sync' }>,
-    verify: (email: string, code: string, via?: 'ads2ai' | 'hq-sync') =>
+    /** Emails a code from every live system this address is on. `places` counts brains that got one. */
+    requestCode: (email: string, via?: 'ads2ai' | 'hq-sync' | 'plyntr') =>
+      ipcRenderer.invoke('auth:requestCode', email, via) as Promise<{
+        ok: boolean
+        via?: 'ads2ai' | 'hq-sync' | 'plyntr'
+        sent: ('ads2ai' | 'hq-sync' | 'plyntr')[]
+        places: number
+        hedge?: boolean
+      }>,
+    verify: (email: string, code: string, via?: 'ads2ai' | 'hq-sync' | 'plyntr') =>
       ipcRenderer.invoke('auth:verify', email, code, via) as Promise<{
         ok: boolean
         via: 'ads2ai' | 'hq-sync' | 'plyntr'
@@ -548,7 +555,7 @@ const brain = {
         hasToken: boolean
       }>,
     emailCode: (email: string) =>
-      ipcRenderer.invoke('plyntr:emailCode', email) as Promise<{ ok: boolean; emailed: boolean; role: string }>,
+      ipcRenderer.invoke('plyntr:emailCode', email) as Promise<{ ok: boolean; emailed: boolean; role: string; sent: number }>,
     place: (body: { brainId: string; org: string }) =>
       ipcRenderer.invoke('plyntr:place', body) as Promise<{ repo: string; slug: string; org: string }>,
     resolve: (code: string, typedEmail?: string) =>

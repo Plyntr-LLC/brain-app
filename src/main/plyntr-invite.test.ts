@@ -22,6 +22,11 @@ test('inviteTryOrder tries Plyntr first for ten-character and six-digit codes', 
   assert.deepEqual(inviteTryOrder('BR47XK'), ['agency', 'plyntr'])
 })
 
+test('a six-digit code with a known email also tries the email sign-in systems', () => {
+  assert.deepEqual(inviteTryOrder('184392', true), ['signin', 'agency'])
+  assert.deepEqual(inviteTryOrder('TESTTEST12', true), ['plyntr'])
+})
+
 test('slugFromBusinessName follows the Path B slug rules', () => {
   assert.equal(slugFromBusinessName("Harold's Books & Co."), 'harolds-books-and-co')
   assert.equal(slugFromBusinessName('  ---  '), '')

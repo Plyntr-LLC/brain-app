@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { STEPS, type AiKind, type PathKind, type Session } from '@shared/contracts'
 import { prettyEffort } from '@shared/effort'
-import { ipcErrorText } from '@shared/plyntr-org-copy'
+import { CODE_PROJECT_HEDGE, CODE_SENT_MANY, ipcErrorText } from '@shared/plyntr-org-copy'
 import { agencyVerifyButtons, plyntrJoinButtons } from '@shared/setup-guide'
 import { openBrainAccountLabel } from '@shared/shell-switch'
 import { blankSession, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
 import { SettingsPanel } from './SettingsPanel'
 import { SetupNeeds } from './SetupNeeds'
-import { ForkScreen, PlyntrCodeScreen, PlyntrCreateScreen, PlyntrProjectScreen } from './PlyntrPath'
+import { ForkScreen, PlyntrCodeScreen, PlyntrCreateScreen, PlyntrProjectScreen, type SignedIn } from './PlyntrPath'
 import { WorkPulse } from './WorkPulse'
 
 function TwoApps({ channel }: { channel?: string }) {
@@ -74,7 +74,10 @@ export function FirstRun() {
   const [waitSec, setWaitSec] = useState(0)
   const [updatedLine, setUpdatedLine] = useState('')
   const [projectSeat, setProjectSeat] = useState<{ folder: string; label: string } | null>(null)
-  const [loginVia, setLoginVia] = useState<'ads2ai' | 'hq-sync' | ''>('')
+  const [loginVia, setLoginVia] = useState<'ads2ai' | 'hq-sync' | 'plyntr' | ''>('')
+  const [sending, setSending] = useState(false)
+  const [verifying, setVerifying] = useState(false)
+  const [sentNote, setSentNote] = useState('')
   const [plyntrCreate, setPlyntrCreate] = useState<{
     createId: string
     wizardStep: number
@@ -628,6 +631,100 @@ export function FirstRun() {
     }
   }
 
+  /** Emails a code from every live system this address is on, all at once. */
+  async function sendSignInCode(email: string): Promise<{ places: number; hedge?: boolean }> {
+    const sent = await window.brain.auth.requestCode(email)
+    setLoginVia(sent.via || '')
+    setSentNote(sent.hedge ? CODE_PROJECT_HEDGE : sent.places > 1 ? CODE_SENT_MANY : '')
+    return sent
+  }
+
+  /** Sign-in code for one address. Main tries every live system that could have sent it and throws the clearest line. */
+  async function signInWithCode(typedEmail: string, code: string): Promise<void> {
+    await afterSignIn(await window.brain.auth.verify(typedEmail, code, loginVia || undefined), typedEmail)
+  }
+
+  async function afterSignIn(res: SignedIn, typedEmail: string): Promise<void> {
+    if (res.via === 'plyntr' && res.brainId && res.repo && res.slug) {
+      await finishPlyntrJoin({
+        brainId: res.brainId,
+        repo: res.repo,
+        slug: res.slug,
+        role: res.role || res.member.role || 'team',
+        email: res.member.email,
+        name: res.member.name || res.member.email
+      })
+      return
+    }
+    if (res.via === 'hq-sync') {
+      await afterProject({
+        email: res.member.email,
+        name: res.member.name || res.member.email,
+        brainPath: res.brainPath || '',
+        teamName: res.teamName || 'Brain'
+      })
+      return
+    }
+    const st = await window.brain.setup.status()
+    const email = String(res.member?.email || typedEmail).toLowerCase()
+    // An Agency Brain sign-in from the Plyntr code box must not keep the Plyntr lane (that hides Agency Brain setup).
+    const lane = channelRef.current === 'plyntr' ? { channel: 'agency' as const } : {}
+    const d = await window.brain.ai.detect()
+    const pick: AiKind | undefined = d.grok
+      ? 'grok'
+      : d.claude
+        ? 'claude'
+        : d.cursor
+          ? 'cursor'
+          : d.gpt
+            ? 'gpt'
+            : undefined
+    const signed = pick ? Boolean((await window.brain.ai.signedIn(pick)).signedIn) : false
+    const path = st.brainPath || s.brainPath || ''
+    if (st.ready && signed && path) {
+      const patch = { ...lane, email, member: res.member, abWatching: true, ai: pick, brainPath: path }
+      if (await holdForBridge(patch)) return
+      go('chat', patch)
+      return
+    }
+    if (st.watching || path) {
+      const patch = {
+        ...lane,
+        email,
+        member: res.member,
+        abWatching: Boolean(st.watching),
+        ai: pick,
+        brainPath: path || undefined
+      }
+      if (path && (await holdForBridge(patch))) return
+      go('aipick', patch)
+      return
+    }
+    const teams = res.teams || []
+    const role = String(res.member?.role || '').toLowerCase()
+    const teamLike = role === 'team' || role === 'member'
+    const patch = { ...lane, email, teams, member: res.member, role: role || 'team' }
+    if (s.path === 'join' || teamLike) {
+      go('hello', patch)
+      return
+    }
+    const slug = String(teams[0]?.slug || '').trim()
+    if (slug) {
+      const inst = (await window.brain.setup.pollInstall(slug).catch(() => null)) as {
+        installed?: boolean
+        repoUrl?: string
+      } | null
+      const team = { slug, name: teams[0]?.name || slug, role: role || 'owner', repoUrl: inst?.repoUrl }
+      if (inst?.installed === true) {
+        go('abapply', { ...patch, path: 'second', team })
+        return
+      }
+      go('github', { ...patch, path: 'create', business: team.name, team })
+      return
+    }
+    go('choice', patch)
+  }
+
   async function finishAgencyInvite(res: {
     teamSlug: string
     teamName: string
@@ -1056,6 +1153,8 @@ export function FirstRun() {
               startInEmail={codeStartsInEmail}
               onJoin={finishPlyntrJoin}
               onAgency={s.channel === 'local' ? undefined : finishAgencyInvite}
+              onEmailCode={sendSignInCode}
+              onSignedIn={afterSignIn}
               onProject={async (row) => {
                 await afterProject(row)
               }}
@@ -1266,24 +1365,26 @@ export function FirstRun() {
                 <input value={s.email} onChange={(e) => setS({ ...s, email: e.target.value })} placeholder="you@company.com" />
               </label>
               {err && <p className="note">{err}</p>}
+              {sending ? <WorkPulse label="Sending your code" /> : null}
               <div className="actions">
                 <button
                   className="primary"
                   type="button"
+                  disabled={sending}
                   onClick={async () => {
                     if (!s.email.includes('@')) {
                       setErr('Type the email you were invited with.')
                       return
                     }
+                    setErr('')
+                    setSending(true)
                     try {
-                      const sent = await window.brain.auth.requestCode(
-                        s.email,
-                        loginVia === 'hq-sync' || loginVia === 'ads2ai' ? loginVia : undefined
-                      )
-                      setLoginVia(sent.via)
+                      await sendSignInCode(s.email)
                       go('otp')
                     } catch (e) {
                       setErr(ipcErrorText(e))
+                    } finally {
+                      setSending(false)
                     }
                   }}
                 >
@@ -1292,11 +1393,13 @@ export function FirstRun() {
                 <button
                   className="ghost"
                   type="button"
+                  disabled={sending}
                   onClick={() => {
                     if (!s.email.includes('@')) {
                       setErr('Type the email you were invited with.')
                       return
                     }
+                    setSentNote('')
                     go('otp')
                   }}
                 >
@@ -1341,99 +1444,26 @@ export function FirstRun() {
                 Code
                 <input value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="184 392" />
               </label>
+              {sentNote ? <p className="muted">{sentNote}</p> : null}
               {err && <p className="note">{err}</p>}
+              {sending ? <WorkPulse label="Sending your code" /> : verifying ? <WorkPulse label="Checking your code" /> : null}
               <div className="actions">
                 <button
                   className="primary"
                   type="button"
+                  disabled={sending || verifying}
                   onClick={async () => {
                     if (otp.replace(/\s/g, '').length < 4) {
                       setErr('Type the six-digit code from that email.')
                       return
                     }
+                    setVerifying(true)
                     try {
-                      const res = await window.brain.auth.verify(
-                        s.email,
-                        otp,
-                        loginVia || undefined
-                      )
-                      if (res.via === 'plyntr' && res.brainId && res.repo && res.slug) {
-                        await finishPlyntrJoin({
-                          brainId: res.brainId,
-                          repo: res.repo,
-                          slug: res.slug,
-                          role: res.role || res.member.role || 'team',
-                          email: res.member.email,
-                          name: res.member.name || res.member.email
-                        })
-                        return
-                      }
-                      if (res.via === 'hq-sync') {
-                        await afterProject({
-                          email: res.member.email,
-                          name: res.member.name || res.member.email,
-                          brainPath: res.brainPath || '',
-                          teamName: res.teamName || 'Brain'
-                        })
-                        return
-                      }
-                      const st = await window.brain.setup.status()
-                      const email = String(res.member?.email || s.email).toLowerCase()
-                      const d = await window.brain.ai.detect()
-                      const pick: AiKind | undefined = d.grok
-                        ? 'grok'
-                        : d.claude
-                          ? 'claude'
-                          : d.cursor
-                            ? 'cursor'
-                            : d.gpt
-                              ? 'gpt'
-                              : undefined
-                      const signed = pick ? Boolean((await window.brain.ai.signedIn(pick)).signedIn) : false
-                      const path = st.brainPath || s.brainPath || ''
-                      if (st.ready && signed && path) {
-                        const patch = { email, member: res.member, abWatching: true, ai: pick, brainPath: path }
-                        if (await holdForBridge(patch)) return
-                        go('chat', patch)
-                        return
-                      }
-                      if (st.watching || path) {
-                        const patch = {
-                          email,
-                          member: res.member,
-                          abWatching: Boolean(st.watching),
-                          ai: pick,
-                          brainPath: path || undefined
-                        }
-                        if (path && (await holdForBridge(patch))) return
-                        go('aipick', patch)
-                        return
-                      }
-                      const teams = res.teams || []
-                      const role = String(res.member?.role || '').toLowerCase()
-                      const teamLike = role === 'team' || role === 'member'
-                      const patch = { email, teams, member: res.member, role: role || 'team' }
-                      if (s.path === 'join' || teamLike) {
-                        go('hello', patch)
-                        return
-                      }
-                      const slug = String(teams[0]?.slug || '').trim()
-                      if (slug) {
-                        const inst = (await window.brain.setup.pollInstall(slug).catch(() => null)) as {
-                          installed?: boolean
-                          repoUrl?: string
-                        } | null
-                        const team = { slug, name: teams[0]?.name || slug, role: role || 'owner', repoUrl: inst?.repoUrl }
-                        if (inst?.installed === true) {
-                          go('abapply', { ...patch, path: 'second', team })
-                          return
-                        }
-                        go('github', { ...patch, path: 'create', business: team.name, team })
-                        return
-                      }
-                      go('choice', patch)
+                      await signInWithCode(s.email, otp)
                     } catch (e) {
                       setErr(ipcErrorText(e))
+                    } finally {
+                      setVerifying(false)
                     }
                   }}
                 >
@@ -1442,16 +1472,17 @@ export function FirstRun() {
                 <button
                   className="ghost"
                   type="button"
+                  disabled={sending || verifying}
                   onClick={async () => {
+                    setErr('')
+                    setSending(true)
                     try {
-                      const sent = await window.brain.auth.requestCode(
-                        s.email,
-                        loginVia === 'hq-sync' || loginVia === 'ads2ai' ? loginVia : undefined
-                      )
-                      setLoginVia(sent.via)
-                      setErr('Check that inbox for a six-digit code. It lasts ten minutes.')
+                      const sent = await sendSignInCode(s.email)
+                      if (sent.places <= 1) setErr('Check that inbox for a new code.')
                     } catch (e) {
                       setErr(ipcErrorText(e))
+                    } finally {
+                      setSending(false)
                     }
                   }}
                 >

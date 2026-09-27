@@ -8,7 +8,7 @@ import { gitSyncTokenFromVault, shellEmail, signInEmailOnly } from './shell-vaul
 import { isPlatformOwnerSession, loadOwnerSession } from './hq-sync'
 import { listedRoleForSeat, transferUsesOwnerToken } from '../shared/plyntr-transfer'
 import { normalizePlyntrInviteCode, slugFromBusinessName } from '../shared/plyntr-invite'
-import { PLATFORM_AUTH } from '../shared/plyntr-org-copy'
+import { GONE_BRAIN_CODE, PLATFORM_AUTH } from '../shared/plyntr-org-copy'
 import { dryRunInstalledBody, dryRunPlyntrBind, dryRunProjectInvite, type PlyntrBindActor } from './plyntr-dry-run'
 import { driveOn } from './setup-pretend'
 
@@ -50,6 +50,7 @@ function fail(status: number, body: { error?: string; detail?: string }): never 
   if (status === 409 && code === 'repo_missing') {
     throw new Error('Create the empty repo on GitHub first, then try again.')
   }
+  if (code === 'gone') throw new Error(GONE_BRAIN_CODE)
   if (status === 410 && code === 'used') throw new Error('That code was already used.')
   if (status === 410) throw new Error('That code was revoked.')
   if (status === 429 || code === 'rate') throw new Error('That code did not work.')
@@ -232,7 +233,10 @@ function gitBearer(activeSeatId: string): string {
   return gitSyncTokenFromVault(activeSeatId)
 }
 
-async function call(path: string, opts: { method: string; brainId?: string; body?: Record<string, unknown>; repo?: string; token?: string }): Promise<unknown> {
+async function call(
+  path: string,
+  opts: { method: string; brainId?: string; body?: Record<string, unknown>; repo?: string; token?: string; signal?: AbortSignal }
+): Promise<unknown> {
   const repoQuery = String(opts.repo || '')
   if (dryRun()) return dryRunPlyntrWorker(path, opts.body || null, repoQuery)
   const token = path === '/v1/git/token' ? gitBearer(String(opts.brainId || '')) : opts.token || (opts.brainId ? seatTokenForBrain(opts.brainId) : '')
@@ -244,7 +248,8 @@ async function call(path: string, opts: { method: string; brainId?: string; body
   const r = await fetch(url, {
     method: opts.method,
     headers,
-    body: opts.body ? JSON.stringify(opts.body) : undefined
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+    signal: opts.signal
   })
   const body = (await r.json().catch(() => ({}))) as { error?: string; detail?: string }
   if (!r.ok) fail(r.status, body)
@@ -411,9 +416,19 @@ export async function openPlyntrCompany(
   }
 }
 
-export async function emailPlyntrCode(email: string): Promise<{ ok: boolean; emailed: boolean; role: string }> {
-  const parsed = (await call('/v1/codes/email', { method: 'POST', body: { email } })) as { emailed?: boolean; role?: string }
-  return { ok: true, emailed: Boolean(parsed.emailed), role: String(parsed.role || '') }
+/** Emails a fresh code for every live Plyntr brain this address is on. `sent` counts brains that actually got mail. */
+export async function emailPlyntrCode(
+  email: string,
+  timeoutMs = 8000
+): Promise<{ ok: boolean; emailed: boolean; role: string; sent: number }> {
+  const parsed = (await call('/v1/codes/email', {
+    method: 'POST',
+    body: { email },
+    signal: AbortSignal.timeout(timeoutMs)
+  })) as { emailed?: boolean; role?: string; sent?: { emailed?: boolean }[] }
+  const emailed = Boolean(parsed.emailed)
+  const sent = Array.isArray(parsed.sent) ? parsed.sent.filter((x) => x?.emailed).length : emailed ? 1 : 0
+  return { ok: true, emailed, role: String(parsed.role || ''), sent }
 }
 
 export async function placePlyntrBrain(brainId: string, org: string): Promise<{ repo: string; slug: string; org: string }> {

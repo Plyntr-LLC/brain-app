@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ipcErrorText, orgStepCopy, typedOrgReadyLogin } from './plyntr-org-copy.ts'
+import { CODE_DID_NOT_WORK, GONE_BRAIN_CODE, ipcErrorText, orgStepCopy, pickCodeError, typedOrgReadyLogin } from './plyntr-org-copy.ts'
 
 test('a typed organization name replaces the company-slug lecture', () => {
   assert.equal(typedOrgReadyLogin('its-a-test-rosene', 'rose-wine'), 'its-a-test-rosene')
@@ -31,4 +31,16 @@ test('ipcErrorText drops Electron’s invoking prefix', () => {
     'That email has not been added yet. The company has to be set up before a code can be emailed.'
   )
   assert.equal(ipcErrorText(new Error('That code was already used.')), 'That code was already used.')
+})
+
+test('several failed code tries show the most useful line, never raw not found', () => {
+  assert.equal(pickCodeError(['not found', 'That code did not work.']), CODE_DID_NOT_WORK)
+  assert.equal(
+    pickCodeError(["Error invoking remote method 'plyntr:resolve': Error: " + GONE_BRAIN_CODE, 'not found']),
+    GONE_BRAIN_CODE
+  )
+  assert.equal(pickCodeError(['not found', 'That code was already used.']), 'That code was already used.')
+  assert.equal(pickCodeError(['expired', 'not found']), 'That code has expired. Ask for a fresh one.')
+  assert.equal(pickCodeError(['not found', 'Could not make the project folder.']), 'Could not make the project folder.')
+  assert.equal(pickCodeError(['That code did not work (HTTP 401)']), CODE_DID_NOT_WORK)
 })
