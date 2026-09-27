@@ -19,3 +19,13 @@ test('starter counts owner scout and team and stops at three', () => {
   assert.equal(packLabel('growth'), 'Growth')
   assert.equal(packLabel(''), 'Not set')
 })
+
+test('starter counts a person once when they have a seat on two Macs', () => {
+  const people = [
+    { role: 'owner', status: 'active', email: 'ada@example.com' },
+    { role: 'scout', status: 'active', email: 'joe@plyntr.com' },
+    { role: 'scout', status: 'active', email: 'Joe@plyntr.com' }
+  ]
+  assert.equal(countedPeople(people), 2)
+  assert.equal(starterBlocksAdd('starter', people, 'team'), null)
+})

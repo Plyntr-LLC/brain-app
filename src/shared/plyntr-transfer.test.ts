@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   canOfferPlyntrTransfer,
   listedRoleForSeat,
+  onePerPerson,
   plyntrSessionRole,
   transferUsesOwnerToken
 } from './plyntr-transfer.ts'
@@ -135,4 +136,19 @@ test('settings and the transfer call use the owner-seat gate', () => {
   assert.match(ipc, /plyntrSessionRole\(/)
   assert.match(sync, /transferUsesOwnerToken\(/)
   assert.match(sync, /token: gate\.token/)
+})
+
+test('one row per person when the same person has a seat on two Macs', () => {
+  const rows = onePerPerson([
+    { id: 'a', email: 'joe@plyntr.com', role: 'scout', status: 'active' },
+    { id: 'b', email: 'Joe@plyntr.com ', role: 'scout', status: 'active' },
+    { id: 'c', email: 'joe@plyntr.com', role: 'owner', status: 'active' },
+    { id: 'd', email: 'bea@example.com', role: 'project', status: 'active', roots: ['projects/a/'] },
+    { id: 'e', email: 'bea@example.com', role: 'project', status: 'active', roots: ['projects/b/'] },
+    { id: 'f', email: 'bea@example.com', role: 'project', status: 'active', roots: ['projects/a/'] }
+  ])
+  assert.deepEqual(
+    rows.map((r) => r.id),
+    ['a', 'c', 'd', 'e']
+  )
 })

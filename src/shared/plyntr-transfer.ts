@@ -85,3 +85,15 @@ export function transferUsesOwnerToken(opts: {
   if (role !== 'owner') return { ok: false, detail: OWNER_ONLY }
   return { ok: true, token }
 }
+
+/** One row per person. Each Mac holds its own seat, and person-remove revokes every sibling seat. */
+export function onePerPerson<T extends { email: string; role?: string; roots?: string[] }>(seats: T[]): T[] {
+  const seen = new Set<string>()
+  return seats.filter((s) => {
+    const roots = (Array.isArray(s.roots) ? s.roots : []).map((r) => String(r || '').trim()).filter(Boolean).sort().join('|')
+    const key = `${normEmail(s.email)}\n${normRole(s.role)}\n${roots}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}

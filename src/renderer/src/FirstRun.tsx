@@ -891,7 +891,7 @@ export function FirstRun() {
             Log out
           </button>
         ) : null}
-        <button type="button" className="ghost title-set settings-toggle" onClick={() => setShowInvite(!showInvite)}>
+        <button type="button" className="ghost title-set settings-toggle" aria-expanded={showInvite} onClick={() => setShowInvite(!showInvite)}>
           Settings
         </button>
       </div>
@@ -1529,7 +1529,7 @@ export function FirstRun() {
                   </ol>
                 </div>
               ) : null}
-              <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+              <div className="actions tight">
                 <button
                   className="primary"
                   type="button"
@@ -1555,17 +1555,16 @@ export function FirstRun() {
                   Open GitHub
                 </button>
               </div>
-              <label className="field" style={{ marginTop: '1rem' }}>
+              <label className="field spaced">
                 GitHub short name
                 <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="harolds-books" />
               </label>
               <p className="tiny">One word, like harolds-books, not your business name. A github.com address works too.</p>
-              <label className="field" style={{ flexDirection: 'row', alignItems: 'flex-start', gap: '0.5rem' }}>
+              <label className="field check">
                 <input
                   type="checkbox"
                   checked={githubOnlySelected}
                   onChange={(e) => setGithubOnlySelected(e.target.checked)}
-                  style={{ width: 'auto', marginTop: '0.2rem' }}
                 />
                 <span>I will click Install, then Only select repositories (not All repositories).</span>
               </label>
@@ -1603,12 +1602,11 @@ export function FirstRun() {
                 until GitHub says it is installed.
               </p>
               <AwayBanner kind={away} />
-              <label className="field" style={{ flexDirection: 'row', alignItems: 'flex-start', gap: '0.5rem' }}>
+              <label className="field check">
                 <input
                   type="checkbox"
                   checked={bridgeOnlySelected}
                   onChange={(e) => setBridgeOnlySelected(e.target.checked)}
-                  style={{ width: 'auto', marginTop: '0.2rem' }}
                 />
                 <span>I will click Install, then Only select repositories, and pick this brain repo (not All repositories).</span>
               </label>

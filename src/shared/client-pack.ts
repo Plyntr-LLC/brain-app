@@ -25,18 +25,21 @@ export const STARTER_FULL =
 
 const COUNTED = new Set(['owner', 'scout', 'team'])
 
-export function countedPeople(rows: { role?: string; status?: string }[]): number {
-  return rows.filter((row) => {
+export function countedPeople(rows: { role?: string; status?: string; email?: string }[]): number {
+  const people = new Set<unknown>()
+  for (const row of rows) {
     const role = String(row.role || '')
     const status = String(row.status || '')
-    return COUNTED.has(role) && (status === 'active' || status === 'pending')
-  }).length
+    if (!COUNTED.has(role) || (status !== 'active' && status !== 'pending')) continue
+    people.add(String(row.email || '').trim().toLowerCase() || row)
+  }
+  return people.size
 }
 
 /** Starter counts owner, scout, and team. Unset, Standard, and Growth do not. */
 export function starterBlocksAdd(
   pack: string | null | undefined,
-  people: { role?: string; status?: string }[],
+  people: { role?: string; status?: string; email?: string }[],
   role: string
 ): string | null {
   if (pack !== 'starter') return null

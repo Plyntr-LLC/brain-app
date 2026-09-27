@@ -122,7 +122,7 @@ export function LocalSyncPanel({
         <p className="tiny">Repository {named}. Install both apps on that one repo.</p>
       )}
       {err ? <p className="note">{err}</p> : null}
-      <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+      <div className="actions tight">
         {step === 'org' ? (
           <>
             <button

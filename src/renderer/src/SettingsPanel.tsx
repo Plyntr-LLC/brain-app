@@ -4,7 +4,7 @@ import { packLine, starterBlocksAdd } from '@shared/client-pack'
 import { PackSelect } from './PlyntrPath'
 import { asSeat, canTurnOnGithubSync, isTeamSeat, seatLabel, type SeatRole } from '@shared/contracts'
 import { displayPlyntrCode } from '@shared/plyntr-invite'
-import { canOfferPlyntrTransfer } from '@shared/plyntr-transfer'
+import { canOfferPlyntrTransfer, onePerPerson } from '@shared/plyntr-transfer'
 import { allowedFolders, isJoeSuperAdmin, showBrainSwitch, switchOption } from '@shared/shell-switch'
 import { LocalSyncPanel } from './LocalSyncPanel'
 import { PlyntrCompanyScreen } from './PlyntrPath'
@@ -628,7 +628,7 @@ export function SettingsPanel({
         {plyntrMode && plyntrSeatEmail ? (
           <p>This brain is signed in as {plyntrSeatEmail} · {seatLabel(plyntrRole || 'owner')}.</p>
         ) : null}
-        <p className="tiny">
+        <p className="tiny set-theme">
           <button type="button" className="linkish" onClick={() => {
             const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'
             document.documentElement.dataset.theme = next
@@ -638,7 +638,7 @@ export function SettingsPanel({
           </button>
         </p>
         {showBrainSwitch(shell) ? (
-          <label className="field" style={{ marginTop: '0.7rem', marginBottom: 0 }}>
+          <label className="field set-switch">
             Switch brain
             <select
               value={brains.find((b) => b.current)?.path || ''}
@@ -672,7 +672,7 @@ export function SettingsPanel({
       </div>
 
       <div className="biz-wrap">
-        <h2 className="biz-kicker">Businesses</h2>
+        <h2 className="set-group-k">Businesses</h2>
         {joe && superAdmin ? (
           <PlyntrCompanyScreen
             embedded
@@ -741,7 +741,7 @@ export function SettingsPanel({
                   Project-only code
                   <input value={hqCode} onChange={(e) => setHqCode(e.target.value)} placeholder="184 392" />
                 </label>
-                <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+                <div className="actions tight">
                   <button
                     className="ghost"
                     type="button"
@@ -1030,7 +1030,7 @@ export function SettingsPanel({
                       knownPack,
                       [
                         ...plyntrRows.seats,
-                        ...plyntrRows.invites.map((invite) => ({ role: invite.role, status: invite.status }))
+                        ...plyntrRows.invites.map((invite) => ({ role: invite.role, status: invite.status, email: invite.email }))
                       ],
                       mintRole
                     )
@@ -1098,8 +1098,7 @@ export function SettingsPanel({
                     </button>
                   </div>
                 ))}
-              {plyntrRows.seats
-                .filter((s) => s.status === 'active')
+              {onePerPerson(plyntrRows.seats.filter((s) => s.status === 'active'))
                 .map((s) => (
                   <div className="set-row" key={s.id}>
                     <span>
@@ -1278,7 +1277,42 @@ export function SettingsPanel({
         {brainsAfter.map((b) => renderOtherBrain(b))}
       </div>
 
+      {canMove ? (
+        <section className="set-block">
+          <h3 className="set-h">Move this brain to Plyntr sync</h3>
+          <p>
+            Install Plyntr sync on this same GitHub organization, not Plyntr LLC. Keep Only select repositories. Do not
+            choose All repositories. If the page says Plyntr LLC, do not click Install. Close that page and try again. If
+            it still says Plyntr LLC, stop and tell Plyntr. This Mac then syncs with Plyntr and stops using the Agency
+            Brain git token. If Agency Brain is already syncing this folder, stop that first.
+          </p>
+          <button
+            className="primary"
+            type="button"
+            disabled={moveBusy}
+            onClick={async () => {
+              try {
+                setMoveBusy(true)
+                setNote('Installing Plyntr sync on this repo, then switching this folder.')
+                const res = await window.brain.plyntr.move()
+                setNote(res.detail)
+                if (!res.ok) return
+                await takePlyntrActive(await window.brain.plyntr.active().catch(() => null))
+              } catch (e) {
+                setNote(String((e as Error).message || e))
+              } finally {
+                setMoveBusy(false)
+              }
+            }}
+          >
+            {moveBusy ? 'Moving…' : 'Move this brain to Plyntr sync'}
+          </button>
+        </section>
+      ) : null}
 
+
+      <div className="set-group">
+      <h2 className="set-group-k">This Mac</h2>
       {email && brainPath ? (
       <section className="set-block">
         <h3 className="set-h">Use Brain from your phone</h3>
@@ -1322,7 +1356,7 @@ export function SettingsPanel({
             )}
             {phone.pairPin ? <p className="phone-pin">{phone.pairPin}</p> : null}
             <p className="tiny">The QR and code last two minutes, then this screen makes a new one. Each scan links one phone.</p>
-            <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+            <div className="actions tight">
               <button
                 type="button"
                 className="ghost"
@@ -1337,8 +1371,8 @@ export function SettingsPanel({
               </button>
             </div>
             {phone.devices.length ? (
-              <div style={{ marginTop: '0.6rem' }}>
-                <p className="tiny">Linked phones</p>
+              <div className="phone-devs">
+                <p className="set-label">Linked phones</p>
                 {phone.devices.map((d) => (
                   <div key={d.id} className="phone-dev">
                     <span>{d.label}</span>
@@ -1364,8 +1398,9 @@ export function SettingsPanel({
       ) : null}
 
       <section className="set-block">
+        <h3 className="set-h">Updates</h3>
         <p className="tiny">Brain {appVer || ''}</p>
-        <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+        <div className="actions tight">
           <button
             className="ghost"
             type="button"
@@ -1387,13 +1422,19 @@ export function SettingsPanel({
       </section>
 
       {onLogout && email ? (
-        <p>
+        <p className="set-out">
           <button type="button" className="ghost" onClick={onLogout}>
             Log out
           </button>
-          <span className="tiny"> Chats and this brain folder stay on this computer.</span>
+          <span className="tiny">Chats and this brain folder stay on this computer.</span>
         </p>
       ) : null}
+      </div>
+
+      {isJoeSuperAdmin(shell) || joe ? (
+      <div className="set-group admin">
+      <h2 className="set-group-k">Super admin</h2>
+      <p className="tiny set-group-sub">Only you see this group.</p>
 
       {isJoeSuperAdmin(shell) ? (
         <section className="set-block">
@@ -1425,7 +1466,7 @@ export function SettingsPanel({
                     <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="harolds-books" />
                   </label>
                   <p className="tiny">The short GitHub name, not the business name. Copy it from the GitHub page.</p>
-                  <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+                  <div className="actions tight">
                     <button
                       className="ghost"
                       type="button"
@@ -1517,7 +1558,7 @@ export function SettingsPanel({
                       autoComplete="one-time-code"
                     />
                   </label>
-                  <div className="actions" style={{ marginTop: 0, paddingTop: 0 }}>
+                  <div className="actions tight">
                     <button
                       className="primary"
                       type="button"
@@ -1564,38 +1605,6 @@ export function SettingsPanel({
         </section>
       ) : null}
 
-      {canMove ? (
-        <section className="set-block">
-          <h3 className="set-h">Move this brain to Plyntr sync</h3>
-          <p>
-            Install Plyntr sync on this same GitHub organization, not Plyntr LLC. Keep Only select repositories. Do not
-            choose All repositories. If the page says Plyntr LLC, do not click Install. Close that page and try again. If
-            it still says Plyntr LLC, stop and tell Plyntr. This Mac then syncs with Plyntr and stops using the Agency
-            Brain git token. If Agency Brain is already syncing this folder, stop that first.
-          </p>
-          <button
-            className="primary"
-            type="button"
-            disabled={moveBusy}
-            onClick={async () => {
-              try {
-                setMoveBusy(true)
-                setNote('Installing Plyntr sync on this repo, then switching this folder.')
-                const res = await window.brain.plyntr.move()
-                setNote(res.detail)
-                if (!res.ok) return
-                await takePlyntrActive(await window.brain.plyntr.active().catch(() => null))
-              } catch (e) {
-                setNote(String((e as Error).message || e))
-              } finally {
-                setMoveBusy(false)
-              }
-            }}
-          >
-            {moveBusy ? 'Moving…' : 'Move this brain to Plyntr sync'}
-          </button>
-        </section>
-      ) : null}
 
 
       {joe ? (
@@ -1738,8 +1747,10 @@ export function SettingsPanel({
           ) : null}
         </section>
       ) : null}
+      </div>
+      ) : null}
 
-      {note ? <p className="tiny">{note}</p> : null}
+      {note ? <p className="tiny set-note" role="status">{note}</p> : null}
     </div>
   )
 }

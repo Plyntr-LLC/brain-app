@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { CLIENT_PACKS, packLabel, packLine } from '@shared/client-pack'
 import { slugFromBusinessName } from '@shared/plyntr-invite'
+import { onePerPerson } from '@shared/plyntr-transfer'
 import { previousCreateStep } from '@shared/plyntr-wizard'
 import { companiesLoadError, ipcErrorText, orgStepCopy, orgUseError } from '@shared/plyntr-org-copy'
 import { resolvePlyntrRepoName } from '@shared/github-org'
@@ -448,8 +449,7 @@ export function PlyntrCompanyScreen({
                       .finally(() => setBusy(false))
                   }}
                 />
-                {(peopleRow?.seats || [])
-                  .filter((s) => s.status === 'active')
+                {onePerPerson((peopleRow?.seats || []).filter((s) => s.status === 'active'))
                   .map((s) => (
                     <div className="set-row" key={s.id}>
                       <span>
@@ -532,8 +532,7 @@ export function PlyntrCompanyScreen({
               {emailed ? ' We also emailed it.' : ' Email did not send. Hand them this code.'}
             </p>
           ) : null}
-          {people.seats
-            .filter((s) => s.status === 'active')
+          {onePerPerson(people.seats.filter((s) => s.status === 'active'))
             .map((s) => (
               <div className="set-row" key={s.id}>
                 <span>
