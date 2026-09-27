@@ -2,6 +2,8 @@ import { resolveClaudeRun } from '../shared/claude-defaults'
 import type { StreamEvent } from './ai-cli'
 import { binEnv, resolveBin } from './ai-cli'
 import { claudeContent, type Attach } from './attach'
+import { emitChat } from './chat-fan'
+import { controlAnswered, controlTimedOut, newPlanControls, type PlanControls } from './claude-plan'
 import { asRecord, asText, fileHits, spawnBin } from './line-rpc'
 import { captureToolHook, wrapPromptWithHooks } from './project-hooks'
 import { setupTrace } from './setup-trace'
@@ -22,9 +24,12 @@ type Sess = {
   dead: boolean
   n: number
   promptGen: number
+  controls?: PlanControls
 }
 
 const sessions = new Map<string, Sess>()
+/** Tabs in plan mode. Kept across a model or effort respawn; cleared by /clear (claudeReset). */
+const planTabs = new Set<string>()
 const booting = new Map<string, Promise<void>>()
 
 function handleClaude(s: Sess, line: string): void {
@@ -37,6 +42,16 @@ function handleClaude(s: Sess, line: string): void {
     return
   }
   const type = String(o.type || '')
+  if (type === 'control_response') {
+    const r = asRecord(o.response)
+    if (!s.controls) return
+    const out = controlAnswered(s.controls, String(r.request_id || ''), String(r.subtype || '') === 'success', planTabs)
+    // A plan switch confirmed after the 4s wait: tell the chat so it leaves "unknown".
+    if (out.kind === 'late' && out.ok) {
+      emitChat({ tabId: out.tabId, cli: 'claude', ev: { kind: 'mode', mode: out.on ? 'plan' : 'default' } })
+    }
+    return
+  }
   if (type === 'stream_event') {
     const ev = asRecord(o.event)
     const delta = asRecord(ev.delta)
@@ -177,7 +192,7 @@ async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string;
     '--verbose',
     '--include-partial-messages',
     '--permission-mode',
-    'dontAsk',
+    planTabs.has(opts.tabId) ? 'plan' : 'dontAsk',
     '--permission-prompts',
     'none',
     '--append-system-prompt',
@@ -278,6 +293,39 @@ export function claudeCancel(tabId: string): boolean {
   return true
 }
 
+/**
+ * Plan mode on the running `claude -p` process: the stream-json `set_permission_mode` control request
+ * (`plan` in, `dontAsk` out, the mode Brain launches with). `confirmed` is false when Claude did not
+ * answer within 4s, so the state is unknown.
+ */
+export async function claudePlanMode(tabId: string, on: boolean): Promise<{ on: boolean; confirmed: boolean }> {
+  const s = sessions.get(tabId)
+  if (!s || s.dead) throw new Error('Claude session is not ready')
+  s.n += 1
+  const requestId = 'mode-' + s.n
+  const answer = new Promise<boolean | null>((resolve) => {
+    const c = (s.controls ??= newPlanControls())
+    c.pending.set(requestId, resolve)
+    setTimeout(() => {
+      // Keep the id: a late control_response still updates planTabs (handleClaude).
+      if (controlTimedOut(c, requestId, { tabId, on })) resolve(null)
+    }, 4000)
+  })
+  s.proc.stdin?.write(
+    JSON.stringify({
+      type: 'control_request',
+      request_id: requestId,
+      request: { subtype: 'set_permission_mode', mode: on ? 'plan' : 'dontAsk' }
+    }) + '\n'
+  )
+  const ok = await answer
+  if (ok === null) return { on: planTabs.has(tabId), confirmed: false }
+  if (!ok) throw new Error(on ? 'Claude would not turn plan mode on.' : 'Claude would not turn plan mode off.')
+  if (on) planTabs.add(tabId)
+  else planTabs.delete(tabId)
+  return { on, confirmed: true }
+}
+
 export function claudeClose(tabId: string): void {
   const s = sessions.get(tabId)
   sessions.delete(tabId)
@@ -293,6 +341,7 @@ export function claudeClose(tabId: string): void {
 }
 
 export async function claudeReset(opts: { tabId: string; cwd: string; model?: string; effort?: string }): Promise<{ model?: string; effort?: string }> {
+  planTabs.delete(opts.tabId)
   claudeClose(opts.tabId)
   return claudeWarm(opts)
 }

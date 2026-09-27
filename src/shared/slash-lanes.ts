@@ -35,5 +35,13 @@ export const APP_SLASH = new Set([
   'always-approve',
   'auto',
   'timestamps',
-  'compact'
+  'compact',
+  'plan',
+  'view-plan',
+  'show-plan',
+  'plan-view',
+  'permissions',
+  'status',
+  'session-info',
+  'context'
 ])

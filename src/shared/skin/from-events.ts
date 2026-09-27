@@ -97,6 +97,7 @@ export function specFromStreamEvent(ev: SkinInEvent): SkinSpec | null {
       props: {
         title: ev.title || 'Allow this?',
         path: ev.path || '',
+        detail: ev.detail || '',
         options: ev.options || [],
         requestId: ev.requestId || ''
       },

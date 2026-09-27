@@ -5,6 +5,7 @@ import {
   acpClose,
   acpFork,
   acpKillAll,
+  acpPlanMode,
   acpPrompt,
   acpReset,
   acpResume,
@@ -12,7 +13,7 @@ import {
   prewarmProcess,
   type LiveRun
 } from './acp-session'
-import { claudeCancel, claudeClose, claudeKillAll, claudePrompt, claudeReset, claudeWarm } from './claude-stream'
+import { claudeCancel, claudeClose, claudeKillAll, claudePlanMode, claudePrompt, claudeReset, claudeWarm } from './claude-stream'
 import { codexCancel, codexClose, codexKillAll, codexPrompt, codexReset, codexWarm } from './codex-app'
 
 export type { LiveRun }
@@ -84,6 +85,13 @@ export async function resetWarm(opts: WarmOpts): Promise<LiveRun> {
   }
   if (opts.kind === 'gpt') return codexReset(opts)
   return {}
+}
+
+/** Plan mode on the warm session: Grok toggles over ACP, Claude over stream-json. */
+export async function planModeWarm(opts: { tabId: string; kind: AiKind; on: boolean }): Promise<{ on: boolean; confirmed: boolean }> {
+  if (opts.kind === 'grok') return acpPlanMode({ tabId: opts.tabId, on: opts.on })
+  if (opts.kind === 'claude') return claudePlanMode(opts.tabId, opts.on)
+  throw new Error('This chat has no plan mode switch.')
 }
 
 export function killAllWarm(): void {

@@ -70,6 +70,7 @@ export function SkinPane({
   permission: {
     title?: string
     path?: string
+    detail?: string
     options?: { id: string; label: string }[]
     requestId?: string
   } | null

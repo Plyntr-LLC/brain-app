@@ -91,6 +91,7 @@ export function SkinCard({
       <div className="skin-perm">
         <p className="skin-perm-title">{String(p.title || 'Allow this?')}</p>
         {p.path ? <p className="tiny">{String(p.path)}</p> : null}
+        {p.detail ? <pre className="skin-perm-detail">{String(p.detail)}</pre> : null}
         <div className="skin-perm-actions">
           {buttons.map((a, i) => (
             <button

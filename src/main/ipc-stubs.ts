@@ -86,9 +86,10 @@ import { resolvePlyntrRepoName } from './github-repo'
 import { loadAnyChats, loadChats, saveChats, type SavedChats } from './persist'
 import { rememberPhoneChats } from './phone'
 import { emitChat, markChatBusy } from './chat-fan'
-import { cancelWarm, closeWarm, forkSession, promptWarm, resetWarm, resumeSession, warmSession } from './warm'
+import { acpGrokAccount, acpGrokReady } from './acp-session'
+import { cancelWarm, closeWarm, forkSession, planModeWarm, promptWarm, resetWarm, resumeSession, warmSession } from './warm'
 import { justUpdated } from './update'
-import { contextBlurb, grokCli, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
+import { contextBlurb, grokCli, grokPlanText, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
 import { expandSlash } from './slash-skills'
 import { clearAccount, getAccount, getMemberToken, loadAccount, saveAccount } from './session-token'
 import { authCodeRoute, normalizePlyntrInviteCode } from '../shared/plyntr-invite'
@@ -2190,7 +2191,23 @@ export function registerStubIpc(): void {
   })
   ipcMain.handle('slash:usage', async (_e, cwd?: string, kind?: string, sessionId?: string) => {
     const watching = readWatching()
-    return usageBlurb(cwd || watching.brainPath || process.cwd(), kind || 'grok', sessionId)
+    const dir = cwd || watching.brainPath || process.cwd()
+    return usageBlurb(dir, kind || 'grok', sessionId, () => acpGrokAccount(dir))
+  })
+  ipcMain.handle('slash:grokPlan', async (_e, cwd: string, sessionId: string) => {
+    const watching = readWatching()
+    return grokPlanText(cwd || watching.brainPath || process.cwd(), sessionId)
+  })
+  ipcMain.handle('slash:grokReady', async (_e, cwd?: string) => {
+    const watching = readWatching()
+    return acpGrokReady(cwd || watching.brainPath || process.cwd())
+  })
+  ipcMain.handle('chat:planMode', async (_e, payload: { tabId: string; kind: AiKind; on: boolean }) => {
+    try {
+      return { ok: true, ...(await planModeWarm({ tabId: payload.tabId, kind: payload.kind || 'grok', on: !!payload.on })) }
+    } catch (e) {
+      return { ok: false, error: String((e as Error).message || e) }
+    }
   })
   ipcMain.handle('slash:cli', async (_e, args: string[], cwd?: string) => {
     const watching = readWatching()

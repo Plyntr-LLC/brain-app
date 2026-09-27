@@ -11,6 +11,9 @@ import { brainWriteBlock } from './write-guard'
 import { roleForBrainWrite } from './write-guard-role'
 import { brainIdForFolder, roleForKeylessWrite } from './plyntr-seats'
 import { grokAcpArgs, ensureGrokLeader, killGrokLeader } from './grok-leader'
+import type { GrokAccountRaw } from './grok-usage'
+import { grokPlanText } from './slash'
+import { clearPlanState, isExitPlanModeMethod, planApprovalAsk, planApprovalReply, planDecision, planToolError, PLAN_OPTIONS } from './grok-plan'
 import { asRecord, asText, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
 import { captureEvent, skinHint } from './skin/capture'
 import { captureToolHook, toolCaptureFromUpdate, wrapPromptWithHooks } from './project-hooks'
@@ -35,7 +38,7 @@ export type LiveRun = {
   configIds?: string[]
 }
 
-type Tab = {
+export type Tab = {
   tabId: string
   sessionId: string
   model?: string
@@ -52,11 +55,16 @@ type Tab = {
   onEvent?: (ev: StreamEvent) => void
   text: string
   alwaysApprove?: boolean
+  planMode?: boolean
+  /** The pending ask in permId is Grok's plan approval, not a tool permission. */
+  planAsk?: boolean
+  /** Tool call id of the last exit_plan_mode request, to spot its failed tool update. */
+  planToolId?: string
   permId?: number | string
   permOptions?: { id: string; label: string }[]
 }
 
-type Pool = {
+export type Pool = {
   kind: 'grok' | 'cursor'
   cwd: string
   rpc: LineRpc
@@ -295,7 +303,7 @@ function compactPhase(method: string, update: Record<string, unknown>): 'compact
   return 'compacting'
 }
 
-function eventsFromUpdate(update: Record<string, unknown>): StreamEvent[] {
+function eventsFromUpdate(update: Record<string, unknown>, planToolId?: string): StreamEvent[] {
   const kind = String(update.sessionUpdate || '')
   if (kind === 'agent_thought_chunk') {
     const t = asText(update.content)
@@ -308,6 +316,9 @@ function eventsFromUpdate(update: Record<string, unknown>): StreamEvent[] {
   if (kind === 'tool_call' || kind === 'tool_call_update') {
     const title = String(update.title || '').trim()
     const hits = fileHits(update, title || String(update.kind || ''))
+    // A wrong exit_plan_mode reply fails Grok's tool call; show it in the thread. Plan mode stays on.
+    const planErr = planToolError(update, planToolId)
+    if (planErr) return [{ kind: 'error', data: planErr }, ...hits]
     if (kind === 'tool_call' && title) {
       return [{ kind: 'status', data: 'work:' + title.slice(0, 80) }, ...hits]
     }
@@ -351,7 +362,8 @@ function broadcast(tab: Tab, ev: StreamEvent): void {
   }
 }
 
-function handleNote(pool: Pool, msg: RpcMsg): void {
+/** Agent-to-client notifications (session/update). Exported for the fixture check. */
+export function handleNote(pool: Pool, msg: RpcMsg): void {
   const method = String(msg.method || '')
   if (method !== 'session/update' && !method.includes('session_notification')) return
   const params = asRecord(msg.params)
@@ -362,6 +374,14 @@ function handleNote(pool: Pool, msg: RpcMsg): void {
   if (!tab) return
   const update = asRecord(params.update)
   const kind = String(update.sessionUpdate || '')
+  if (kind === 'current_mode_update') {
+    const mode = String(update.currentModeId || update.modeId || '')
+    if (!mode) return
+    if (pool.kind === 'grok') tab.planMode = mode === 'plan'
+    else if (tab.agentModes?.some((m) => m.id === mode)) tab.agentMode = mode
+    broadcast(tab, { kind: 'mode', mode })
+    return
+  }
   if (kind === 'available_commands_update') {
     const commands = parseCommands(update.availableCommands || update.available_commands)
     tab.commands = commands
@@ -423,7 +443,7 @@ function handleNote(pool: Pool, msg: RpcMsg): void {
     tab.onEvent({ kind: 'context', used: used || undefined, total: total || undefined, percent })
   }
   if (!tab.onEvent) return
-  const mapped = eventsFromUpdate(update)
+  const mapped = eventsFromUpdate(update, tab.planToolId)
   if (!mapped.length && kind && kind !== 'model_changed' && kind !== 'config_option_update') {
     const ev = { kind, data: String(update.title || update.status || '') } as StreamEvent
     captureEvent({
@@ -440,14 +460,16 @@ function handleNote(pool: Pool, msg: RpcMsg): void {
   }
 }
 
-function handleReq(pool: Pool, msg: RpcMsg): void {
+/** Agent-to-client requests. Exported for the fixture check. */
+export function handleReq(pool: Pool, msg: RpcMsg): void {
   if (msg.id == null) return
   if (msg.method === 'session/request_permission') {
     const p = asRecord(msg.params)
     const sid = String(p.sessionId || '')
     const tabId = pool.bySid.get(sid)
     const tab = tabId ? pool.tabs.get(tabId) : undefined
-    const auto = !tab || tab.alwaysApprove !== false
+    // Plan mode exists so a person approves the plan; never auto-answer its asks.
+    const auto = !tab || (tab.alwaysApprove !== false && !tab.planMode)
     if (auto) {
       const optionId = pickOption(msg, false)
       if (optionId) {
@@ -468,6 +490,7 @@ function handleReq(pool: Pool, msg: RpcMsg): void {
       .filter((o): o is { id: string; label: string } => Boolean(o))
     tab.permId = msg.id
     tab.permOptions = options
+    tab.planAsk = false
     const tool = asRecord(p.toolCall)
     const title = String(p.title || tool.title || 'Allow this?')
     const path = String(
@@ -520,6 +543,33 @@ function handleReq(pool: Pool, msg: RpcMsg): void {
     } catch (e) {
       pool.rpc.error(msg.id, -32603, String((e as Error).message || e))
     }
+    return
+  }
+  if (isExitPlanModeMethod(msg.method)) {
+    // Always a person's call, even with Always approve on.
+    const ask = planApprovalAsk(msg.params)
+    const tabId = pool.bySid.get(ask.sessionId)
+    const tab = tabId ? pool.tabs.get(tabId) : undefined
+    if (!tab) {
+      pool.rpc.reply(msg.id, planApprovalReply(false))
+      return
+    }
+    tab.permId = msg.id
+    tab.permOptions = PLAN_OPTIONS
+    tab.planAsk = true
+    tab.planToolId = ask.toolCallId || undefined
+    const plan = ask.plan || grokPlanText(pool.cwd, tab.sessionId)
+    const ev: StreamEvent = {
+      kind: 'permission',
+      title: 'Approve this plan?',
+      path: '',
+      detail: plan.trim() || 'Grok did not write a plan yet.',
+      options: PLAN_OPTIONS,
+      requestId: String(msg.id)
+    }
+    captureEvent({ cli: pool.kind, sessionId: tab.sessionId, ev, transport: 'acp' })
+    if (tab.onEvent) tab.onEvent(ev)
+    else broadcast(tab, ev)
     return
   }
   if (msg.method === 'elicitation/create') {
@@ -619,7 +669,7 @@ async function bootPoolNow(kind: 'grok' | 'cursor', cwd: string, key: string): P
   })()
   proc.on('exit', () => {
     if (pools.get(key) === pool) pools.delete(key)
-    for (const tabId of pool.tabs.keys()) tabPool.delete(tabId)
+    onPoolExit(pool)
   })
   pools.set(key, pool)
   try {
@@ -743,6 +793,34 @@ function assignLive(tab: Tab, live: LiveRun): void {
   if (live.configIds) tab.configIds = live.configIds
 }
 
+/**
+ * Points a tab at a session that session/load just returned (acpWarm, acpResume). A loaded session
+ * starts with plan mode off; Grok turns it back on with current_mode_update if it really is on.
+ * Exported for the fixture check.
+ */
+export function adoptLoadedSession(pool: Pool, tab: Tab, sid: string, live: LiveRun): void {
+  const wasPlan = pool.kind === 'grok' && !!tab.planMode
+  if (tab.sessionId && pool.bySid.get(tab.sessionId) === tab.tabId) pool.bySid.delete(tab.sessionId)
+  tab.sessionId = sid
+  clearPlanState(tab)
+  pool.tabs.set(tab.tabId, tab)
+  pool.bySid.set(sid, tab.tabId)
+  assignLive(tab, live)
+  if (wasPlan) broadcast(tab, { kind: 'mode', mode: 'default' })
+}
+
+/** The pool's agent process exited. Exported for the fixture check. */
+export function onPoolExit(pool: Pool): void {
+  for (const tab of pool.tabs.values()) {
+    // A restarted Grok agent starts outside plan mode; say so before tabPool forgets the tab.
+    if (pool.kind === 'grok' && tab.planMode) {
+      clearPlanState(tab)
+      broadcast(tab, { kind: 'mode', mode: 'default' })
+    }
+    tabPool.delete(tab.tabId)
+  }
+}
+
 export async function acpWarm(opts: {
   kind: 'grok' | 'cursor'
   tabId: string
@@ -768,12 +846,7 @@ export async function acpWarm(opts: {
             )
           )
           const sid = String(loadedRes.sessionId || opts.resumeId || '')
-          if (sid) {
-            pool.bySid.delete(have.sessionId)
-            have.sessionId = sid
-            pool.bySid.set(sid, opts.tabId)
-            assignLive(have, readLive(loadedRes))
-          }
+          if (sid) adoptLoadedSession(pool, have, sid, readLive(loadedRes))
         } catch {
           /* keep the current session */
         }
@@ -826,7 +899,7 @@ export async function acpWarm(opts: {
     const sessionId = String(res.sessionId || '')
     if (!sessionId) throw new Error(`${opts.kind} did not return a session`)
     const live = readLive(res)
-    pool.tabs.set(opts.tabId, {
+    const fresh: Tab = {
       tabId: opts.tabId,
       sessionId,
       model: live.model,
@@ -840,8 +913,12 @@ export async function acpWarm(opts: {
       promptId: null,
       appTools: [],
       text: ''
-    })
-    pool.bySid.set(sessionId, opts.tabId)
+    }
+    if (loaded) adoptLoadedSession(pool, fresh, sessionId, live)
+    else {
+      pool.tabs.set(opts.tabId, fresh)
+      pool.bySid.set(sessionId, opts.tabId)
+    }
     const tab = pool.tabs.get(opts.tabId)!
     if (opts.kind === 'cursor' && !opts.agentMode && tab.agentModes?.some((m) => m.id === 'agent')) {
       opts = { ...opts, agentMode: 'agent' }
@@ -874,7 +951,6 @@ export async function acpResume(opts: {
     if (!sid) throw new Error('Could not load that session.')
     tabPool.set(opts.tabId, poolKey(opts.kind, opts.cwd))
     const have = pool.tabs.get(opts.tabId)
-    if (have) pool.bySid.delete(have.sessionId)
     const live = readLive(loadedRes)
     const tab: Tab = have || {
       tabId: opts.tabId,
@@ -883,10 +959,7 @@ export async function acpResume(opts: {
       appTools: [],
       text: ''
     }
-    tab.sessionId = sid
-    assignLive(tab, live)
-    pool.tabs.set(opts.tabId, tab)
-    pool.bySid.set(sid, opts.tabId)
+    adoptLoadedSession(pool, tab, sid, live)
     return snapshot(tab)
   })
 }
@@ -901,6 +974,63 @@ export async function acpFork(opts: { kind: 'grok' | 'cursor'; tabId: string; cw
   const sid = String(res.sessionId || asRecord(res.session).sessionId || asRecord(res.session).id || '')
   if (!sid) throw new Error('Fork did not return a session.')
   return sid
+}
+
+/** Grok account allowance, asked of an already-running Grok agent (never boots one, so no login window). */
+export async function acpGrokAccount(cwd: string): Promise<GrokAccountRaw> {
+  const live = [pools.get(poolKey('grok', cwd)), ...pools.values()].filter(
+    (p): p is Pool => !!p && p.kind === 'grok' && !p.rpc.dead
+  )
+  const pool = live[0]
+  if (!pool) return { starting: true }
+  // Boot can sit on a Grok sign-in window; /usage should not wait on that.
+  const ready = await Promise.race([
+    pool.boot.then(() => true, () => false),
+    new Promise<boolean>((r) => setTimeout(() => r(false), 5000))
+  ])
+  if (!ready) return { starting: true }
+  const [billing, subscription] = await Promise.allSettled([
+    pool.rpc.request('_x.ai/billing', {}, 15_000),
+    pool.rpc.request('_x.ai/auth/check_subscription', {}, 10_000)
+  ])
+  return {
+    billing: billing.status === 'fulfilled' ? billing.value : undefined,
+    subscription: subscription.status === 'fulfilled' ? subscription.value : undefined,
+    error: billing.status === 'rejected' ? String((billing.reason as Error)?.message || billing.reason).slice(0, 200) : undefined
+  }
+}
+
+/** Waits for a Grok agent that is already booting. False right away when none is running. */
+export async function acpGrokReady(cwd: string, ms = 30_000): Promise<boolean> {
+  const pool = [pools.get(poolKey('grok', cwd)), ...pools.values()].find((p) => !!p && p.kind === 'grok' && !p.rpc.dead)
+  if (!pool) return false
+  return Promise.race([
+    pool.boot.then(() => true, () => false),
+    new Promise<boolean>((r) => setTimeout(() => r(false), ms))
+  ])
+}
+
+/** Grok plan mode is a toggle notification; the agent answers with current_mode_update. */
+export async function acpPlanMode(opts: { tabId: string; on: boolean }): Promise<{ on: boolean; confirmed: boolean }> {
+  const key = tabPool.get(opts.tabId)
+  const pool = key ? pools.get(key) : undefined
+  const tab = pool?.tabs.get(opts.tabId)
+  if (!pool || !tab) throw new Error('chat session is not ready')
+  if (pool.kind !== 'grok') throw new Error('Plan mode toggle is Grok only.')
+  if (!!tab.planMode === opts.on) return { on: opts.on, confirmed: true }
+  const seen = new Promise<void>((resolve) => {
+    const started = Date.now()
+    const tick = setInterval(() => {
+      if (!!tab.planMode === opts.on || Date.now() - started > 4000) {
+        clearInterval(tick)
+        resolve()
+      }
+    }, 100)
+  })
+  pool.rpc.notify('_x.ai/toggle_plan_mode', { sessionId: tab.sessionId })
+  await seen
+  // No current_mode_update within 4s: the toggle may still land, so the state is unknown, not refused.
+  return { on: !!tab.planMode, confirmed: !!tab.planMode === opts.on }
 }
 
 export async function acpPrompt(opts: {
@@ -1024,11 +1154,29 @@ async function acpPromptOnce(
   return tab.text.trim()
 }
 
+/** Answers a pending Grok plan approval (Approve or Keep planning). Exported for the fixture check. */
+export function answerPlanAsk(pool: Pool, tab: Tab, optionId: string): boolean {
+  const approve = planDecision(optionId)
+  if (approve == null || tab.permId == null) return false
+  try {
+    pool.rpc.reply(tab.permId, planApprovalReply(approve))
+  } catch {
+    return false
+  }
+  tab.permId = undefined
+  tab.permOptions = undefined
+  tab.planAsk = false
+  // Plan mode stays on until Grok confirms with current_mode_update (handleNote). If it never does,
+  // the strip stays on, which is the truth as far as Brain knows.
+  return true
+}
+
 export function acpDecidePermission(tabId: string, optionId: string): boolean {
   const key = tabPool.get(tabId)
   const pool = key ? pools.get(key) : undefined
   const tab = pool?.tabs.get(tabId)
   if (!pool || !tab || tab.permId == null) return false
+  if (tab.planAsk) return answerPlanAsk(pool, tab, optionId)
   let pick = optionId
   if (optionId === 'skip') {
     const hit = (tab.permOptions || []).find((o) => /reject|skip|cancel/i.test(o.id + o.label))

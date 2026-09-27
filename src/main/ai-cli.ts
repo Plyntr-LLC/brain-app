@@ -101,10 +101,13 @@ export type StreamEvent =
       kind: 'permission'
       title?: string
       path?: string
+      /** Longer text shown on the card, e.g. the plan Grok asks to approve. */
+      detail?: string
       options?: { id: string; label: string }[]
       requestId?: string
     }
   | { kind: 'plan'; steps?: { title: string; status?: string }[] }
+  | { kind: 'mode'; mode: string }
 
 function packPrompt(
   system: string,

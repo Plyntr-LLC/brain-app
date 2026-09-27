@@ -9,6 +9,7 @@ import { mdToHtml, tidy, outsideProject, type FileHit } from './ptyChat'
 import { sameCwd } from '../../shared/paths'
 import { APP_SLASH, TUI_ONLY_SLASH } from '../../shared/slash-lanes'
 import { routeLine } from '../../shared/slash-route'
+import { panelBlocks } from '../../shared/panel-blocks'
 import { WorldClocks } from './WorldClocks'
 import { WorkPulse } from './WorkPulse'
 import { SkinPane } from './skin/SkinPane'
@@ -65,11 +66,56 @@ function justStop(text: string): boolean {
   return /^\s*(please\s+)?(just\s+)?(stop|cancel|abort|never mind|nevermind|halt)\s*[.!]?\s*$/i.test(text)
 }
 
+function PanelBody({ body, rich }: { body: string; rich?: boolean }) {
+  if (!rich) return <pre className="cmdbody">{body}</pre>
+  const blocks = panelBlocks(body)
+  if (!blocks.length) return <pre className="cmdbody">{body}</pre>
+  return (
+    <div className="cmdblocks">
+      {blocks.map((b, i) => (
+        <section className="cmdblock" key={i}>
+          {b.heading ? <h4>{b.heading}</h4> : null}
+          {b.rows.map((r, j) =>
+            r.kind === 'line' ? (
+              <p className="cmdline" key={j}>
+                {r.text}
+              </p>
+            ) : (
+              <div className={r.percent != null ? 'cmdrow meter' : 'cmdrow'} key={j}>
+                <span className="cmdkey">{r.key}</span>
+                {r.href ? (
+                  <button type="button" className="linkish cmdval" onClick={() => void window.brain.bridge.openUrl(r.href!)}>
+                    {r.href.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                  </button>
+                ) : (
+                  <span className="cmdval">{r.value}</span>
+                )}
+                {r.percent != null ? (
+                  <span
+                    className={r.percent >= 90 ? 'cmdbar hot' : 'cmdbar'}
+                    role="meter"
+                    aria-label={r.key}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={r.percent}
+                  >
+                    <i style={{ width: `${r.percent}%` }} />
+                  </span>
+                ) : null}
+              </div>
+            )
+          )}
+        </section>
+      ))}
+    </div>
+  )
+}
+
 function liveUsageNote(ctx: { used?: number; total?: number; percent?: number }): string {
   if (ctx.percent == null && ctx.used == null) return ''
   const n = (v: number) => v.toLocaleString('en-US')
   const bits = ['This chat']
-  if (ctx.percent != null) bits.push(`Context: ${ctx.percent}%`)
+  if (ctx.percent != null) bits.push(`Context used: ${ctx.percent}%`)
   if (ctx.used != null && ctx.total != null) bits.push(`${n(ctx.used)} / ${n(ctx.total)} tokens`)
   else if (ctx.used != null) bits.push(`${n(ctx.used)} tokens`)
   return bits.join('\n')
@@ -94,7 +140,9 @@ const SLASH_ALIAS: Record<string, string> = {
   changelog: 'release-notes',
   'agents-dashboard': 'dashboard',
   agents: 'config-agents',
-  cost: 'usage'
+  cost: 'usage',
+  'show-plan': 'view-plan',
+  'plan-view': 'view-plan'
 }
 
 function slashLine(raw: string): string {
@@ -423,7 +471,7 @@ function ChatPane({
   const [cmds, setCmds] = useState<{ name: string; kind: 'builtin' | 'skill'; description: string }[]>([])
   const [models, setModels] = useState<{ id: string; label: string }[]>([])
   const [hi, setHi] = useState(0)
-  const [panel, setPanel] = useState<{ title: string; body: string } | null>(null)
+  const [panel, setPanel] = useState<{ title: string; body: string; rich?: boolean } | null>(null)
   const [compacting, setCompacting] = useState(false)
   const compactingRef = useRef(false)
   const [drops, setDrops] = useState<Attach[]>([])
@@ -444,6 +492,9 @@ function ChatPane({
   const [queue, setQueue] = useState<Queued[]>([])
   const queueRef = useRef<Queued[]>([])
   const [skinOn] = useState(true)
+  const [planOn, setPlanOn] = useState(false)
+  const planOnRef = useRef(false)
+  planOnRef.current = planOn
   const [wantPower] = useState(false)
   const [cliSid, setCliSid] = useState(resumeId || '')
   const [tuiGen, setTuiGen] = useState(0)
@@ -456,6 +507,7 @@ function ChatPane({
   const [permission, setPermission] = useState<{
     title?: string
     path?: string
+    detail?: string
     options?: { id: string; label: string }[]
     requestId?: string
   } | null>(null)
@@ -471,6 +523,17 @@ function ChatPane({
   onFilesRef.current = onFiles
   onContextRef.current = onContext
   skinOnRef.current = skinOn
+  const kindRef = useRef(kind)
+  kindRef.current = kind
+  const cwdRef = useRef(cwd)
+  cwdRef.current = cwd
+  const agentModeRef = useRef(agentMode)
+  agentModeRef.current = agentMode
+  const onAgentModeRef = useRef(onAgentMode)
+  onAgentModeRef.current = onAgentMode
+  const cliSidRef = useRef(cliSid)
+  const showPlanRef = useRef<(on: boolean) => void>(() => {})
+  cliSidRef.current = cliSid
   busyRef.current = busy
 
   function markBusy(next: boolean) {
@@ -584,6 +647,13 @@ function ChatPane({
       if (ev.kind === 'commands' && ev.commands) {
         setSessionCmds(ev.commands)
       }
+      if (ev.kind === 'mode' && ev.mode) {
+        if (kindRef.current === 'grok' || kindRef.current === 'claude') {
+          showPlanRef.current(ev.mode === 'plan')
+        } else if (ev.mode !== agentModeRef.current) {
+          onAgentModeRef.current(ev.mode)
+        }
+      }
       if (ev.kind === 'context') {
         const next = { used: ev.used, total: ev.total, percent: ev.percent }
         ctxRef.current = next
@@ -614,10 +684,16 @@ function ChatPane({
         const label = ev.data.slice(5).trim()
         if (label && !skinOnRef.current) setWaitLabel(label)
       }
+      if (ev.kind === 'permission' && !ev.detail && kindRef.current === 'grok' && planOnRef.current && cliSidRef.current) {
+        void window.brain.slash.grokPlan(cwdRef.current, cliSidRef.current).then((text) => {
+          if (text.trim()) setPanel({ title: 'The plan', body: text })
+        })
+      }
       if (ev.kind === 'permission') {
         setPermission({
           title: ev.title,
           path: ev.path,
+          detail: ev.detail,
           options: ev.options,
           requestId: ev.requestId
         })
@@ -892,9 +968,26 @@ function ChatPane({
     }
     const msgs = (r.messages || []).map((m) => ({ who: m.who, text: m.text })) as Msg[]
     setMessages(msgs.length ? msgs : [{ who: 'sys', text: 'Session loaded. The model has the history.' }])
+    // A loaded session starts outside plan mode; Grok re-announces plan mode if that session is in it.
+    planOnRef.current = false
+    setPlanOn(false)
     setCliSid(r.sessionId || sessionId)
     onResume(r.sessionId || sessionId)
   }
+
+  function showPlan(on: boolean) {
+    if (on === planOnRef.current) return
+    planOnRef.current = on
+    setPlanOn(on)
+    note(
+      on
+        ? kindRef.current === 'claude'
+          ? 'Plan mode is on. Claude reads and plans but does not edit files. /plan off lets it build.'
+          : 'Plan mode is on. Grok reads and writes a plan first, then asks you before it edits anything.'
+        : 'Plan mode is off.'
+    )
+  }
+  showPlanRef.current = showPlan
 
   function note(text: string) {
     setMessages((m) => [...m, { who: 'sys', text }])
@@ -908,8 +1001,8 @@ function ChatPane({
     }
   }
 
-  function popup(title: string, body: string) {
-    setPanel({ title, body })
+  function popup(title: string, body: string, rich = false) {
+    setPanel({ title, body, rich })
   }
 
   function runSlash(raw: string): boolean {
@@ -923,6 +1016,8 @@ function ChatPane({
       return true
     }
     if (name === 'clear') {
+      planOnRef.current = false
+      setPlanOn(false)
       setMessages([{ who: 'brain', text: greeting }])
       filesRef.current = []
       onFiles(id, [])
@@ -938,7 +1033,7 @@ function ChatPane({
       return true
     }
     if (name === 'help') {
-      popup('Commands', menuCmds.map((c) => `/${c.name}  ${c.description}`).join('\n'))
+      popup('Commands', menuCmds.map((c) => `/${c.name}  ${c.description}`).join('\n'), true)
       return true
     }
     if (name === 'skills') {
@@ -947,16 +1042,25 @@ function ChatPane({
         'Skills',
         rows.length
           ? rows.map((c) => `/${c.name}  ${c.description}`).join('\n')
-          : 'No skills found. Brain looks in .claude, .agents, .grok and .cursor skills and commands (this folder and your home folder), .claude/commands/<ns>/<name>.md as /ns:name, .codex/skills in this folder, ~/.claude/skills/synced, ~/.claude/plugins, and Codex home skills and prompts ($CODEX_HOME, default ~/.codex).'
+          : 'No skills found. Brain looks in .claude, .agents, .grok and .cursor skills and commands (this folder and your home folder), .claude/commands/<ns>/<name>.md as /ns:name, .codex/skills in this folder, ~/.claude/skills/synced, ~/.claude/plugins, and Codex home skills and prompts ($CODEX_HOME, default ~/.codex).',
+        rows.length > 0
       )
       return true
     }
     if (name === 'usage' || name === 'cost') {
       popup('Usage', 'Loading…')
       const live = liveUsageNote(ctxRef.current)
+      const show = (body: string) => popup('Usage', [body, live].filter(Boolean).join('\n\n') || '(no output)', true)
       void window.brain.slash
         .usage(cwd, kind, cliSid)
-        .then((body) => popup('Usage', [body, live].filter(Boolean).join('\n\n') || '(no output)'))
+        .then(async (body) => {
+          show(body)
+          if (kind !== 'grok' || !body.includes('Grok is still starting')) return
+          // One retry once the booting agent is ready, only if this popup is still the one on screen.
+          if (!(await window.brain.slash.grokReady(cwd))) return
+          const again = await window.brain.slash.usage(cwd, kind, cliSid)
+          setPanel((p) => (p && p.title === 'Usage' && p.body.includes('Grok is still starting') ? { ...p, body: [again, live].filter(Boolean).join('\n\n') } : p))
+        })
         .catch((e: unknown) => popup('Usage', String((e as Error).message || e)))
       return true
     }
@@ -997,9 +1101,99 @@ function ChatPane({
       note(`Effort is ${want}.`)
       return true
     }
-    if (name === 'plan' && kind === 'cursor' && !arg) {
-      onAgentMode('plan')
-      note('Cursor mode is plan.')
+    if (name === 'plan') {
+      const off = /^(off|exit|stop|leave|done)$/i.test(arg.trim())
+      const ask = off ? '' : arg.trim()
+      if (kind === 'grok' || kind === 'claude') {
+        const want = !off
+        if (planOnRef.current === want && !ask) {
+          note(want ? 'Plan mode is already on. /plan off leaves it.' : 'Plan mode is already off.')
+          return true
+        }
+        void (async () => {
+          const r = await window.brain.chat.planMode({ tabId: id, kind, on: want })
+          if (!r.ok) {
+            note(r.error || 'Plan mode did not switch.')
+            return
+          }
+          if (!r.confirmed) {
+            note(
+              `${label(kind)} did not confirm the switch in time, so plan mode is unknown right now. /permissions shows the last state Brain saw.`
+            )
+            return
+          }
+          showPlan(!!r.on)
+          if (ask) await sendTextRef.current(ask)
+        })()
+        return true
+      }
+      if (kind === 'cursor') {
+        if (ask) return false
+        onAgentMode(off ? 'agent' : 'plan')
+        note(off ? 'Cursor mode is agent.' : 'Cursor mode is plan. /plan off goes back to agent.')
+        return true
+      }
+      popup(
+        'Plan mode',
+        `${label(kind)} plan mode is an experimental Codex app-server setting that Brain does not turn on yet.\nAsk for a plan first, for example: make a plan for this and do not edit files until I say go.`
+      )
+      return true
+    }
+    if (name === 'view-plan') {
+      if (kind !== 'grok' || !cliSid) {
+        note('No plan yet in this chat.')
+        return true
+      }
+      void window.brain.slash.grokPlan(cwd, cliSid).then((text) =>
+        text.trim() ? setPanel({ title: 'The plan', body: text }) : note('No plan yet in this chat.')
+      )
+      return true
+    }
+    if (name === 'permissions') {
+      const approve = alwaysApprove !== false
+      const lines: string[] = ['Asks']
+      if (kind === 'grok' || kind === 'cursor') {
+        lines.push(`Always approve: ${approve ? 'On' : 'Off'}`)
+        lines.push(
+          approve
+            ? `${label(kind)} runs tools without stopping to ask.`
+            : `${label(kind)} stops and asks before a tool runs. Answer on the card in the chat.`
+        )
+        if (kind === 'grok') {
+          lines.push(`Plan mode: ${planOn ? 'On' : 'Off'}`)
+          if (planOn) lines.push('In plan mode Grok only edits its plan, and always asks before it starts coding.')
+        }
+        if (kind === 'cursor' && agentMode) lines.push(`Mode: ${agentMode}`)
+        lines.push('', 'Switch', '/always-approve turns asking on or off for this chat.')
+      } else if (kind === 'claude') {
+        lines.push(`Plan mode: ${planOn ? 'On' : 'Off'}`)
+        if (planOn) lines.push('In plan mode Claude reads and plans but does not edit files.')
+        lines.push('Claude chat does not stop to ask.')
+        lines.push('It may read and edit files in this folder. Anything else it has not been allowed is declined.')
+      } else {
+        lines.push('ChatGPT chat does not stop to ask.')
+        lines.push('It may edit files in this folder. Writes outside this folder are blocked.')
+      }
+      lines.push('', 'Always', 'Google Ads changes and outbound mail still need a clear yes from you.')
+      popup('Permissions', lines.join('\n'), true)
+      return true
+    }
+    if ((name === 'session-info' || name === 'context') && kind !== 'grok') {
+      const c = ctxRef.current
+      const pick = models.find((m) => m.id === model)
+      const lines = [
+        name === 'context' ? 'Context window' : 'This chat',
+        `CLI: ${label(kind)}`,
+        `Model: ${pick?.label || model || 'Default'}`,
+        EFFORTS.length ? `Effort: ${effort || 'Default'}` : '',
+        agentMode ? `Mode: ${agentMode}` : '',
+        c.percent != null ? `Context used: ${c.percent}%` : '',
+        c.used != null ? `Tokens in context: ${c.used.toLocaleString('en-US')}${c.total ? ` of ${c.total.toLocaleString('en-US')}` : ''}` : '',
+        c.percent == null && c.used == null ? 'Context: fills in after the first answer' : '',
+        name === 'session-info' ? `Folder: ${cwd}` : '',
+        name === 'session-info' && cliSid ? `Session: ${cliSid}` : ''
+      ].filter(Boolean)
+      popup(name === 'context' ? 'Context' : 'Status', lines.join('\n'), true)
       return true
     }
     if (name === 'compact') {
@@ -1011,6 +1205,8 @@ function ChatPane({
       return true
     }
     if (name === 'home') {
+      planOnRef.current = false
+      setPlanOn(false)
       setMessages([{ who: 'brain', text: greeting }])
       filesRef.current = []
       onFiles(id, [])
@@ -1478,7 +1674,7 @@ function ChatPane({
               ×
             </button>
           </div>
-          <pre className="cmdbody">{panel.body}</pre>
+          <PanelBody body={panel.body} rich={panel.rich} />
         </div>
       )}
       {resumeRows && (
@@ -1527,6 +1723,7 @@ function ChatPane({
         <div className="skin-perm">
           <p className="skin-perm-title">{permission.title || 'Allow this?'}</p>
           {permission.path ? <p className="tiny">{permission.path}</p> : null}
+          {permission.detail ? <pre className="skin-perm-detail">{permission.detail}</pre> : null}
           <div className="skin-perm-actions">
             {(permission.options?.length
               ? permission.options
@@ -1715,6 +1912,17 @@ function ChatPane({
             ))}
           </div>
         )}
+        {planOn && (kind === 'grok' || kind === 'claude') ? (
+          <div className="modepill" role="status">
+            <span className="modepill-tag">Plan mode</span>
+            <span className="modepill-text">
+              {kind === 'claude' ? 'Claude plans and does not edit.' : 'Grok plans first and asks before it edits.'}
+            </span>
+            <button type="button" className="linkish" onClick={() => runSlash('/plan off')}>
+              Leave
+            </button>
+          </div>
+        ) : null}
         {dropNote ? <div className="dropnote">{dropNote}</div> : null}
         {drops.length > 0 && (
           <div className="attachrow">

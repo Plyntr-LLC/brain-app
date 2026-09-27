@@ -734,6 +734,8 @@ const brain = {
     expand: (cwd: string | undefined, raw: string) =>
       ipcRenderer.invoke('slash:expand', cwd, raw) as Promise<{ display: string; prompt: string } | null>,
     context: (cwd?: string) => ipcRenderer.invoke('slash:context', cwd) as Promise<string>,
+    grokPlan: (cwd: string, sessionId: string) => ipcRenderer.invoke('slash:grokPlan', cwd, sessionId) as Promise<string>,
+    grokReady: (cwd?: string) => ipcRenderer.invoke('slash:grokReady', cwd) as Promise<boolean>,
     usage: (cwd?: string, kind?: string, sessionId?: string) =>
       ipcRenderer.invoke('slash:usage', cwd, kind, sessionId) as Promise<string>,
     sessions: (cwd?: string) =>
@@ -761,6 +763,7 @@ const brain = {
         kind: string
         data?: string
         path?: string
+        detail?: string
         tool?: string
         used?: number
         total?: number
@@ -770,6 +773,7 @@ const brain = {
         options?: { id: string; label: string }[]
         requestId?: string
         steps?: { title: string; status?: string }[]
+        mode?: string
         fingerprint?: string
         skinLabel?: string | null
       }) => void
@@ -788,6 +792,8 @@ const brain = {
         sessionId?: string
         messages?: { who: 'me' | 'brain'; text: string }[]
       }>,
+    planMode: (payload: { tabId: string; kind: AiKind; on: boolean }) =>
+      ipcRenderer.invoke('chat:planMode', payload) as Promise<{ ok: boolean; on?: boolean; confirmed?: boolean; error?: string }>,
     fork: (payload: { tabId: string; kind: AiKind; cwd?: string }) =>
       ipcRenderer.invoke('chat:fork', payload) as Promise<{ ok: boolean; error?: string; sessionId?: string }>,
     warm: (payload: {

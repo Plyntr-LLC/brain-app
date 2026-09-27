@@ -8,6 +8,7 @@ import { formatClaudeStats, formatClaudeUsage, readClaudeStats } from './claude-
 import { listCodexCaps } from './codex-app'
 import { formatCodexLimits, readCodexLimits } from './codex-usage'
 import { grokLeaderSocket } from './grok-args'
+import { cachedGrokTier, formatGrokAccount, formatGrokSession, grokUsageText, type GrokAccountRaw } from './grok-usage'
 import { parseGrokModels } from './grok-models'
 import { listDiskSkills } from './slash-skills'
 
@@ -199,16 +200,18 @@ function appBuiltins(kind: string): SlashCmd[] {
     { name: 'history', kind: 'builtin', description: 'This chat’s prompts' },
     { name: 'help', kind: 'builtin', description: 'List commands' },
     { name: 'skills', kind: 'builtin', description: 'Skills you can run here' },
-    { name: 'usage', kind: 'builtin', description: 'Plan spend and this session' },
+    { name: 'usage', kind: 'builtin', description: 'Account limits, this session, this chat' },
+    { name: 'permissions', kind: 'builtin', description: 'What this chat may do without asking' },
     { name: 'terminal', kind: 'builtin', description: 'Open a terminal tab' }
   ]
+  if (kind === 'cursor' || kind === 'claude') common.push({ name: 'plan', kind: 'builtin', description: 'Plan mode (/plan off to leave)' })
   if (kind === 'grok') {
     common.splice(2, 0, { name: 'resume', kind: 'builtin', description: 'Load a saved Grok session' })
     common.push(
       { name: 'login', kind: 'builtin', description: 'Grok login' },
       { name: 'logout', kind: 'builtin', description: 'Grok logout' },
       { name: 'doctor', kind: 'builtin', description: 'Grok doctor' },
-      { name: 'plan', kind: 'builtin', description: 'Enter plan mode' },
+      { name: 'plan', kind: 'builtin', description: 'Plan mode (/plan off to leave)' },
       { name: 'view-plan', kind: 'builtin', description: 'Show the current plan' },
       { name: 'memory', kind: 'builtin', description: 'Browse Grok memory' },
       { name: 'flush', kind: 'builtin', description: 'Flush session into memory' },
@@ -253,6 +256,17 @@ function appBuiltins(kind: string): SlashCmd[] {
 
 function encodeSessionDir(cwd: string): string {
   return encodeURIComponent(cwd)
+}
+
+/** The plan Grok writes in plan mode: ~/.grok/sessions/<encoded cwd>/<session>/plan.md */
+export function grokPlanText(cwd: string, sessionId: string, home = homedir()): string {
+  const sid = String(sessionId || '').trim()
+  if (!/^[0-9a-f-]{20,}$/i.test(sid)) return ''
+  try {
+    return readFileSync(join(home, '.grok', 'sessions', encodeSessionDir(cwd), sid, 'plan.md'), 'utf8').slice(0, 40_000)
+  } catch {
+    return ''
+  }
 }
 
 export type GrokSessionRow = { id: string; title: string; updated: string }
@@ -337,18 +351,6 @@ export function grokTranscript(cwd: string, id: string): { who: 'me' | 'brain'; 
     }
   }
   return out.slice(-40)
-}
-
-function grokAccount(): { email?: string; name?: string } {
-  try {
-    const raw = JSON.parse(readFileSync(join(homedir(), '.grok/auth.json'), 'utf8')) as Record<string, { email?: string; first_name?: string; last_name?: string }>
-    const rec = Object.values(raw).find((v) => v && typeof v === 'object' && v.email)
-    if (!rec) return {}
-    const name = [rec.first_name, rec.last_name].filter(Boolean).join(' ')
-    return { email: rec.email, name }
-  } catch {
-    return {}
-  }
 }
 
 function cursorStateDb(): string {
@@ -568,7 +570,37 @@ export function gptUsageBlurb(cwd: string, home = homedir()): string {
   ].join('\n')
 }
 
-export async function usageBlurb(cwd: string, kind = 'grok', sessionId?: string): Promise<string> {
+export type GrokAccountFetch = () => Promise<GrokAccountRaw>
+
+async function grokSessionBlock(cwd: string, sessionId?: string): Promise<string | null> {
+  const grok = resolveBin('grok')
+  const sid = String(sessionId || '').trim()
+  if (!grok || !sid || !/^[0-9a-f-]{20,}$/i.test(sid)) return null
+  try {
+    const args = ['usage', sid]
+    const sock = grokLeaderSocket()
+    if (existsSync(sock)) args.push('--leader-socket', sock)
+    return formatGrokSession(await run(grok, args, cwd))
+  } catch {
+    return null
+  }
+}
+
+export async function grokUsageBlurb(cwd: string, sessionId?: string, fetchAccount?: GrokAccountFetch): Promise<string> {
+  const [raw, session] = await Promise.all([
+    fetchAccount ? fetchAccount().catch((e: unknown) => ({ error: String((e as Error).message || e) })) : Promise.resolve({}),
+    grokSessionBlock(cwd, sessionId)
+  ])
+  const account = formatGrokAccount({ tier: cachedGrokTier(), ...raw })
+  return grokUsageText({ account, session, cwd })
+}
+
+export async function usageBlurb(
+  cwd: string,
+  kind = 'grok',
+  sessionId?: string,
+  fetchGrokAccount?: GrokAccountFetch
+): Promise<string> {
   if (kind === 'cursor') {
     const [plan, about] = await Promise.all([cursorPlanBlurb(), cursorAboutBlurb(cwd)])
     return [plan, about].filter(Boolean).join('\n\n') || 'Cursor CLI is not installed.'
@@ -576,73 +608,10 @@ export async function usageBlurb(cwd: string, kind = 'grok', sessionId?: string)
   if (kind === 'claude') return claudeUsageBlurb(cwd)
   if (kind === 'gpt') return gptUsageBlurb(cwd)
   if (kind === 'grok') {
-    const grok = resolveBin('grok')
-    const sid = String(sessionId || '').trim()
-    if (grok && sid && /^[0-9a-f-]{20,}$/i.test(sid)) {
-      try {
-        const args = ['usage', sid]
-        const sock = grokLeaderSocket()
-        if (existsSync(sock)) args.push('--leader-socket', sock)
-        const raw = await run(grok, args, cwd)
-        const pretty = formatGrokUsage(raw)
-        if (pretty) return pretty
-      } catch (e) {
-        return `Could not read Grok usage.\n${String((e as Error).message || e)}`
-      }
-    }
-    const acct = grokAccount()
-    return [
-      'Grok account (grok.com)',
-      `Name: ${acct.name || ''}`,
-      `Email: ${acct.email || ''}`,
-      '',
-      'Credits, weekly limit, and billing live on the account, not this chat.',
-      'Open: https://grok.com?_s=usage',
-      '',
-      `This folder: ${cwd}`
-    ].join('\n')
+    if (!resolveBin('grok')) return 'Grok CLI is not installed.'
+    return grokUsageBlurb(cwd, sessionId, fetchGrokAccount)
   }
   return `Usage for this CLI is not available.`
-}
-
-function formatGrokUsage(raw: string): string | null {
-  const text = String(raw || '').trim()
-  if (!text) return null
-  try {
-    const o = JSON.parse(text.slice(text.indexOf('{'))) as {
-      session?: {
-        inputTokens?: number
-        outputTokens?: number
-        cachedReadTokens?: number
-        reasoningTokens?: number
-        totalTokens?: number
-        modelCalls?: number
-        costUsdTicks?: number
-        turnCount?: number
-        primaryModelId?: string
-      }
-    }
-    const s = o.session
-    if (!s) return text.slice(0, 8000)
-    const n = (v?: number) => (v == null ? '' : v.toLocaleString('en-US'))
-    const cost = s.costUsdTicks != null ? `$${(Number(s.costUsdTicks) / 1_000_000_000).toFixed(2)}` : ''
-    return [
-      'This session',
-      s.primaryModelId ? `Model: ${s.primaryModelId}` : '',
-      s.turnCount != null ? `Turns: ${s.turnCount}` : '',
-      s.inputTokens != null ? `Input tokens: ${n(s.inputTokens)}` : '',
-      s.outputTokens != null ? `Output tokens: ${n(s.outputTokens)}` : '',
-      s.cachedReadTokens != null ? `Cached tokens: ${n(s.cachedReadTokens)}` : '',
-      s.reasoningTokens != null ? `Reasoning tokens: ${n(s.reasoningTokens)}` : '',
-      s.totalTokens != null ? `Total tokens: ${n(s.totalTokens)}` : '',
-      s.modelCalls != null ? `Model calls: ${s.modelCalls}` : '',
-      cost ? `Est. cost: ${cost}` : ''
-    ]
-      .filter(Boolean)
-      .join('\n')
-  } catch {
-    return text.slice(0, 8000)
-  }
 }
 
 export async function grokCli(cwd: string, args: string[]): Promise<string> {

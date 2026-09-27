@@ -20,6 +20,7 @@ export type SkinInEvent = {
   total?: number
   percent?: number
   title?: string
+  detail?: string
   options?: { id: string; label: string }[]
   requestId?: string
   steps?: { title: string; status?: string }[]
