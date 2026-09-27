@@ -89,9 +89,9 @@ T0/T1 only. Rules-only triage. Controller through commit. Minimal PhaseRail. Exi
 
 Plan: `plans/20260927-software-factory-slice2.md` (LLM triage, T2 plan + human gate, repo profiles, Opus strict by path, publish buttons, voice check).
 
-## Slice 3 (not now)
+## Slice 3
 
-T3 slices, parallel builders, full e2e, deploy token.
+Plan: `plans/20260927-software-factory-slice3.md` (T3 slices, parallel builders, full e2e, deploy token, approve in advance, infer work repo from the task).
 
 ## Rejected
 

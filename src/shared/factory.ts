@@ -1,6 +1,9 @@
 /** Factory run shapes shared by main (run store, controller) and the Factory tab. */
 
-export type Tier = 'T0' | 'T1' | 'T2'
+export type Tier = 'T0' | 'T1' | 'T2' | 'T3'
+
+/** T3: one builder per slice, files repo-relative. */
+export type Slice = { title: string; files: string[] }
 
 export type RunPhase =
   | 'intake'
@@ -24,6 +27,8 @@ export type RepoProfile = {
   scripts: { typecheck?: string; test?: string; e2e?: string }
   voice: { on: boolean; register?: string; audience?: string }
   publish: { remote: string }
+  /** Deploy click only (never the model). userData profile only; runs never copy the cmd. */
+  deploy?: { cmd?: string }
   updatedAt: number
 }
 
@@ -43,6 +48,8 @@ export type RunRecord = {
     /** Model triage: what Grok said, or why it was skipped. */
     llm?: { size?: string; risk?: string; reason?: string; skipped?: string }
   }
+  /** Approve in advance: plan, permission asks, suggested upgrades, and a clean Commit go ahead without a click. Never push or deploy. */
+  runThrough?: boolean
   /** Model triage raised risk to critical after Start: waits for a Proceed click. */
   needsProceed?: boolean
   phase: RunPhase
@@ -60,11 +67,15 @@ export type RunRecord = {
     reasons: string[]
     approvedAt?: number
   }
-  /** The repo profile as it was at Start. */
+  /** T3: slices from the plan's JSON line. */
+  slices?: Slice[]
+  /** The repo profile as it was at Start (no deploy cmd). */
   profile?: RepoProfile
   audit?: { brain: string[]; work: { path: string; added: number; deleted: number }[] }
-  tripwire?: { reasons: string[]; suggest: 'T1' | 'T2' | null }
+  tripwire?: { reasons: string[]; suggest: 'T1' | 'T2' | 'T3' | null; auto?: boolean }
   verify?: VerifyRow[]
+  /** T3: combined verify output beside the run record. */
+  verifyArtifact?: string
   /** T1: the self-check turn ran. */
   selfChecked?: boolean
   /** Opus strict FAIL count for this run. */
@@ -77,6 +88,8 @@ export type RunRecord = {
   branch?: string
   pushed?: { remote: string; branch: string; sha: string; at: number }
   pushError?: string
+  deployed?: { at: number }
+  deployError?: string
   note?: string
   error?: string
   createdAt: number

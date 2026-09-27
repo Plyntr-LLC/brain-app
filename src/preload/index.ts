@@ -923,7 +923,7 @@ const brain = {
   },
   factory: {
     triage: (text: string) => ipcRenderer.invoke('factory:triage', text) as Promise<FactoryTriage>,
-    start: (p: { task: string; workRepo: string; brainPath: string; proceedCritical?: boolean }) =>
+    start: (p: { task: string; brainPath: string; runThrough?: boolean; proceedCritical?: boolean }) =>
       ipcRenderer.invoke('factory:start', p) as Promise<
         { ok: true; run: FactoryRun } | { ok: false; error: string; needsProceed?: boolean; runId?: string }
       >,
@@ -937,11 +937,17 @@ const brain = {
       ipcRenderer.invoke('factory:profile', repo) as Promise<
         { ok: true; profile: RepoProfile; line: string } | { ok: false; error: string }
       >,
-    saveProfile: (repo: string, patch: { voice?: Partial<RepoProfile['voice']>; scripts?: RepoProfile['scripts']; publish?: Partial<RepoProfile['publish']> }) =>
+    saveProfile: (
+      repo: string,
+      patch: { voice?: Partial<RepoProfile['voice']>; scripts?: RepoProfile['scripts']; publish?: Partial<RepoProfile['publish']>; deploy?: { cmd?: string } }
+    ) =>
       ipcRenderer.invoke('factory:saveProfile', repo, patch) as Promise<
         { ok: true; profile: RepoProfile; line: string } | { ok: false; error: string }
       >,
     publish: (id: string) => ipcRenderer.invoke('factory:publish', id) as Promise<FactoryResult>,
+    deploy: (id: string) => ipcRenderer.invoke('factory:deploy', id) as Promise<FactoryResult>,
+    deployBlock: (id: string) =>
+      ipcRenderer.invoke('factory:deployBlock', id) as Promise<{ ok: true; block: string | null } | { ok: false; error: string }>,
     publishBlock: (id: string) =>
       ipcRenderer.invoke('factory:publishBlock', id) as Promise<{ ok: true; block: string | null } | { ok: false; error: string }>,
     commit: (id: string) => ipcRenderer.invoke('factory:commit', id) as Promise<FactoryResult>,
@@ -950,8 +956,10 @@ const brain = {
     abandon: (id: string) => ipcRenderer.invoke('factory:abandon', id) as Promise<FactoryResult>,
     list: () => ipcRenderer.invoke('factory:list') as Promise<FactoryRun[] | { ok: false; error: string }>,
     get: (id: string) => ipcRenderer.invoke('factory:get', id) as Promise<FactoryRun | null | { ok: false; error: string }>,
-    lastRepo: () => ipcRenderer.invoke('factory:lastRepo') as Promise<string>,
-    pickRepo: () => ipcRenderer.invoke('factory:pickRepo') as Promise<string | null>,
+    resolveRepo: (task: string, brainPath: string) =>
+      ipcRenderer.invoke('factory:resolveRepo', task, brainPath) as Promise<
+        { ok: true; workRepo: string; from: 'given' | 'path' | 'project' | 'last' } | { ok: false; error: string }
+      >,
     onEvent: (
       fn: (
         ev:

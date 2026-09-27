@@ -46,11 +46,17 @@ export function readProfile(repo: string): RepoProfile {
     scripts: { ...found.scripts, ...(saved.scripts || {}) },
     voice: { ...found.voice, ...(saved.voice || {}), on: saved.voice?.on === true },
     publish: { remote: String(saved.publish?.remote || found.publish.remote) },
+    ...(saved.deploy?.cmd ? { deploy: { cmd: String(saved.deploy.cmd) } } : {}),
     updatedAt: Number(saved.updatedAt || 0)
   }
 }
 
-export type ProfilePatch = { scripts?: RepoProfile['scripts']; voice?: Partial<RepoProfile['voice']>; publish?: Partial<RepoProfile['publish']> }
+export type ProfilePatch = {
+  scripts?: RepoProfile['scripts']
+  voice?: Partial<RepoProfile['voice']>
+  publish?: Partial<RepoProfile['publish']>
+  deploy?: { cmd?: string }
+}
 
 export function saveProfile(repo: string, patch: ProfilePatch): RepoProfile {
   if (!String(repo || '').trim() || !existsSync(repo)) throw new Error('Choose a work repo folder.')
@@ -63,12 +69,20 @@ export function saveProfile(repo: string, patch: ProfilePatch): RepoProfile {
     publish: { remote: String(patch.publish?.remote || cur.publish.remote || 'origin') },
     updatedAt: Date.now()
   }
+  const cmd = patch.deploy ? String(patch.deploy.cmd || '').trim() : String(cur.deploy?.cmd || '')
+  if (cmd) next.deploy = { cmd }
   mkdirSync(profilesDir(), { recursive: true })
   const dest = profilePath(repo)
   const tmp = `${dest}.${process.pid}.tmp`
   writeFileSync(tmp, JSON.stringify(next, null, 2))
   renameSync(tmp, dest)
   return next
+}
+
+/** The copy a run keeps: no deploy cmd, so it never rides run records or events. */
+export function runProfile(p: RepoProfile): RepoProfile {
+  const { deploy: _deploy, ...rest } = p
+  return rest
 }
 
 /** "This repo: typecheck · test · test:e2e" for intake. */

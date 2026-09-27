@@ -27,7 +27,7 @@ const parseLine = (l: string) => {
 
 const rulesT1 = { ...triage('Fix the date shown one day off in the order list') }
 
-test('merge is raise-only and T3 caps at T2', () => {
+test('merge is raise-only and may raise to T3', () => {
   assert.equal(rulesT1.size, 'T1')
   assert.equal(rulesT1.risk, 'none')
   const low = mergeTriage(rulesT1, { size: 'T0', risk: 'none', reason: 'tiny' })
@@ -37,9 +37,9 @@ test('merge is raise-only and T3 caps at T2', () => {
   assert.equal(up.size, 'T2')
   assert.equal(up.risk, 'critical')
   const t3 = mergeTriage(rulesT1, { size: 'T3', risk: 'none', reason: 'rewrite' })
-  assert.equal(t3.size, 'T2')
+  assert.equal(t3.size, 'T3')
   assert.equal(t3.original, 'T3')
-  assert.equal(t3.capped, true)
+  assert.equal(t3.capped, false)
   const none = mergeTriage(rulesT1, null, 'timed out after 8 s')
   assert.equal(none.size, 'T1')
   assert.ok(none.reasons.some((r) => r === 'Model triage skipped: timed out after 8 s.'))

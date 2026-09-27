@@ -27,7 +27,7 @@ test('fixtures size as expected and stay under 200 ms', () => {
   for (const t of T1) assert.equal(triage(t).size, 'T1', t)
 })
 
-test('T2 asks are not capped; T3 caps at T2 with the original in reasons', () => {
+test('T2 and T3 asks are not capped; T3 is its own size', () => {
   for (const t of ['Add a new page for team settings with a new route and shared types', 'Refactor a.ts, b.ts, c.ts, d.ts and e.ts to share one helper']) {
     const r = triage(t)
     assert.equal(r.size, 'T2', t)
@@ -35,10 +35,11 @@ test('T2 asks are not capped; T3 caps at T2 with the original in reasons', () =>
     assert.equal(r.original, 'T2', t)
   }
   const big = triage('Rewrite the whole app in Svelte')
-  assert.equal(big.size, 'T2')
+  assert.equal(big.size, 'T3')
   assert.equal(big.original, 'T3')
-  assert.equal(big.capped, true)
-  assert.ok(big.reasons.some((x) => x.includes('caps at T2')))
+  assert.equal(big.capped, false)
+  assert.ok(!big.reasons.some((x) => x.includes('caps at T2')))
+  assert.ok(big.ms < 200)
 })
 
 test('payments, auth and migrations are critical', () => {

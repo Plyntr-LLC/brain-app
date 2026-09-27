@@ -75,11 +75,14 @@ export function saveRun(run: RunRecord): RunRecord {
 }
 
 /** Plan text and the last strict FAIL text sit beside the run record, not in the brief. */
-export function runTextPath(id: string, kind: 'plan' | 'review'): string {
-  return join(runsDir(), `${safeId(id)}.${kind}.md`)
+export type RunTextKind = 'plan' | 'review' | 'verify'
+
+/** plan and review are .md; the T3 verify artifact is .txt. */
+export function runTextPath(id: string, kind: RunTextKind): string {
+  return join(runsDir(), `${safeId(id)}.${kind}.${kind === 'verify' ? 'txt' : 'md'}`)
 }
 
-export function saveRunText(id: string, kind: 'plan' | 'review', text: string): string {
+export function saveRunText(id: string, kind: RunTextKind, text: string): string {
   mkdirSync(runsDir(), { recursive: true })
   const dest = runTextPath(id, kind)
   atomicWrite(dest, String(text || ''))

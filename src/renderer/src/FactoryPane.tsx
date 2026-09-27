@@ -39,7 +39,9 @@ export function FactoryPane(props: {
   const { runId, cwd, active, onRun } = props
   const [run, setRun] = useState<RunRecord | null>(null)
   const [task, setTask] = useState('')
+  const [runThrough, setRunThrough] = useState(true)
   const [workRepo, setWorkRepo] = useState('')
+  const [repoError, setRepoError] = useState('')
   const [tri, setTri] = useState<FactoryTriage | null>(null)
   const [error, setError] = useState('')
   const [needsProceed, setNeedsProceed] = useState(false)
@@ -51,14 +53,12 @@ export function FactoryPane(props: {
   const [voiceOn, setVoiceOn] = useState(false)
   const [reason, setReason] = useState('')
   const [pushBlock, setPushBlock] = useState<string | null>(null)
+  const [deployBlock, setDeployBlock] = useState<string | null>(null)
   const runRef = useRef<string>(runId || '')
 
   useEffect(() => {
     runRef.current = runId || ''
-    if (!runId) {
-      void window.brain.factory.lastRepo().then((p) => setWorkRepo((cur) => cur || p || ''))
-      return
-    }
+    if (!runId) return
     void window.brain.factory.get(runId).then((r) => {
       if (r && 'id' in r) setRun(r)
     })
@@ -91,6 +91,18 @@ export function FactoryPane(props: {
     return () => window.clearTimeout(t)
   }, [task, run])
 
+  // The work repo comes from the task (a path or a Projects folder name), else the last Factory repo.
+  useEffect(() => {
+    if (run) return
+    const t = window.setTimeout(() => {
+      void window.brain.factory.resolveRepo(task, cwd).then((r) => {
+        setWorkRepo(r.ok ? r.workRepo : '')
+        setRepoError(r.ok ? '' : r.error)
+      })
+    }, 250)
+    return () => window.clearTimeout(t)
+  }, [task, cwd, run])
+
   useEffect(() => {
     if (run || !workRepo.trim()) {
       setRepoLine('')
@@ -113,6 +125,12 @@ export function FactoryPane(props: {
     void window.brain.factory.publishBlock(run.id).then((r) => setPushBlock(r.ok ? r.block : r.error))
   }, [run?.id, doneSha, pushedAt])
 
+  const deployedAt = run?.deployed?.at || 0
+  useEffect(() => {
+    if (!run || !pushedAt) return setDeployBlock(null)
+    void window.brain.factory.deployBlock(run.id).then((r) => setDeployBlock(r.ok ? r.block : r.error))
+  }, [run?.id, pushedAt, deployedAt])
+
   async function toggleVoice(on: boolean) {
     setVoiceOn(on)
     const r = await window.brain.factory.saveProfile(workRepo, { voice: { on } })
@@ -126,7 +144,7 @@ export function FactoryPane(props: {
     setBusy(true)
     setError('')
     try {
-      const res = await window.brain.factory.start({ task, workRepo, brainPath: cwd, proceedCritical })
+      const res = await window.brain.factory.start({ task, brainPath: cwd, runThrough, proceedCritical })
       if (res.ok) {
         runRef.current = res.run.id
         setRun(res.run)
@@ -155,7 +173,10 @@ export function FactoryPane(props: {
       <div className={`factorywrap ${active ? 'on' : ''}`}>
         <div className="factory">
           <h3 className="factory-h">Factory</h3>
-          <p className="tiny">Brain runs one small change in a code repo, checks it, and commits it when you say so. No push, no deploy.</p>
+          <p className="tiny">
+            Brain runs a change in a code repo, checks it, and commits it. Name the repo in the task (a path or the Projects folder name). Push and
+            Deploy stay your click.
+          </p>
           <label className="factory-field">
             <span>What should change?</span>
             <textarea value={task} rows={4} onChange={(e) => setTask(e.target.value)} placeholder="Fix the typo in the footer" />
@@ -165,7 +186,6 @@ export function FactoryPane(props: {
               <strong>
                 {tri.size} · risk {tri.risk}
               </strong>
-              {tri.capped ? <p className="factory-warn">Capped at T2 in this version. Brain does the smallest safe slice.</p> : null}
               <ul>
                 {tri.reasons.map((r) => (
                   <li key={r}>{r}</li>
@@ -173,23 +193,7 @@ export function FactoryPane(props: {
               </ul>
             </div>
           ) : null}
-          <label className="factory-field">
-            <span>Work repo</span>
-            <div className="factory-repo">
-              <input value={workRepo} onChange={(e) => setWorkRepo(e.target.value)} placeholder="/Users/you/Projects/site" spellCheck={false} />
-              <button
-                type="button"
-                className="ghost"
-                onClick={() =>
-                  void window.brain.factory.pickRepo().then((p) => {
-                    if (p) setWorkRepo(p)
-                  })
-                }
-              >
-                Choose folder
-              </button>
-            </div>
-          </label>
+          <p className="tiny">Work repo: {workRepo || repoError || '...'}</p>
           {repoLine ? (
             <div className="factory-repo-line">
               <span className="tiny">{repoLine}</span>
@@ -199,14 +203,18 @@ export function FactoryPane(props: {
             </div>
           ) : null}
           <p className="tiny">Brain: {cwd}</p>
+          <label className="tiny">
+            <input type="checkbox" checked={runThrough} onChange={(e) => setRunThrough(e.target.checked)} /> Approve in advance (plan, asks, and a clean
+            Commit go ahead; never pushes or deploys)
+          </label>
           {error ? <p className="factory-err">{error}</p> : null}
           <div className="factory-actions">
             {critical || needsProceed ? (
-              <button type="button" className="primary" disabled={busy || !task.trim() || !workRepo.trim()} onClick={() => void start(true)}>
-                Proceed at {tri && tri.size !== 'T3' ? tri.size : 'T2'}
+              <button type="button" className="primary" disabled={busy || !task.trim()} onClick={() => void start(true)}>
+                Proceed at {tri ? tri.size : 'T2'}
               </button>
             ) : (
-              <button type="button" className="primary" disabled={busy || !task.trim() || !workRepo.trim()} onClick={() => void start(false)}>
+              <button type="button" className="primary" disabled={busy || !task.trim()} onClick={() => void start(false)}>
                 Start
               </button>
             )}
@@ -233,7 +241,7 @@ export function FactoryPane(props: {
         ? run.plan && run.plan.rejects === 2
           ? 'Opus is writing the plan'
           : 'Grok is writing the plan'
-        : run.phase === 'review' && !run.diff && (run.tier === 'T2' || run.risk !== 'none') && !run.strict
+        : run.phase === 'review' && !run.diff && (run.tier === 'T2' || run.tier === 'T3' || run.risk !== 'none') && !run.strict
           ? 'Opus strict review running'
           : ''
   const strictHeld = run.strict?.status === 'fail' && (run.reviewCycles || 0) >= 2
@@ -247,7 +255,7 @@ export function FactoryPane(props: {
             <span
               key={r.key}
               className={
-                r.key === 'plan' && run.tier !== 'T2'
+                r.key === 'plan' && run.tier !== 'T2' && run.tier !== 'T3'
                   ? 'phase past'
                   : `phase ${i === idx ? 'on' : ''} ${i < idx || run.phase === 'done' ? 'past' : ''}`
               }
@@ -261,7 +269,20 @@ export function FactoryPane(props: {
           </span>
         </div>
         <p className="tiny">Work repo: {run.workRepo}</p>
-        {run.triage.capped ? <p className="factory-warn">Triage said {run.triage.original}. Capped at T2 in this version.</p> : null}
+        {run.runThrough ? <p className="tiny">Approved in advance. Brain commits a clean review. It never pushes or deploys.</p> : null}
+        {run.tripwire?.auto ? <p className="tiny">Moved to {run.tier} in advance: {run.tripwire.reasons.join(' ')}</p> : null}
+        {run.tier === 'T3' && run.slices?.length ? (
+          <div className="factory-audit">
+            <strong>Slices</strong>
+            <ul>
+              {run.slices.map((sl, i) => (
+                <li key={`${i}-${sl.title}`}>
+                  {sl.title} <span className="tiny">{sl.files.join(', ')}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {permission ? (
           <div className="skin-perm">
             <p className="skin-perm-title">{permission.title || 'Allow this?'}</p>
@@ -344,8 +365,12 @@ export function FactoryPane(props: {
                 <li key={r}>{r}</li>
               ))}
             </ul>
-            {!run.tripwire.suggest ? <p className="tiny">T3 comes in a later version. Trim the change or stop.</p> : null}
-            {run.tripwire.suggest === 'T2' ? <p className="tiny">Moving to T2 skips the plan (the work is done) and adds the T2 checks and Opus strict review.</p> : null}
+            {!run.tripwire.suggest ? <p className="tiny">Over T3, or a lockfile or schema change. Trim the change or stop.</p> : null}
+            {run.tripwire.suggest === 'T2' || run.tripwire.suggest === 'T3' ? (
+              <p className="tiny">
+                Moving to {run.tripwire.suggest} skips the plan (the work is done) and adds the {run.tripwire.suggest} checks and Opus strict review.
+              </p>
+            ) : null}
             <div className="factory-actions">
               {run.tripwire.suggest ? (
                 <button type="button" className="primary" onClick={() => void act(window.brain.factory.decide(run.id, 'upgrade'))}>
@@ -413,6 +438,7 @@ export function FactoryPane(props: {
                 {run.voice.status === 'skipped' && run.voice.tail ? <p className="tiny">{run.voice.tail}</p> : null}
               </div>
             ) : null}
+            {run.verifyArtifact ? <p className="tiny">Verify output: {run.verifyArtifact}</p> : null}
           </div>
         ) : null}
         {run.phase === 'review' && run.diff ? <pre className="factory-diff">{run.diff}</pre> : null}
@@ -462,8 +488,18 @@ export function FactoryPane(props: {
           {run.phase === 'done' && run.pushed ? (
             <span className="tiny">
               Committed {run.pushed.sha.slice(0, 7)}. Pushed to {run.pushed.remote}/{run.pushed.branch}.
+              {run.deployed ? ' Deployed.' : ''}
             </span>
           ) : null}
+          {run.phase === 'done' && run.pushed && !run.deployed ? (
+            <>
+              <button type="button" className="primary" disabled={!!deployBlock} onClick={() => void act(window.brain.factory.deploy(run.id))}>
+                Deploy
+              </button>
+              {deployBlock ? <span className="tiny">{deployBlock}</span> : null}
+            </>
+          ) : null}
+          {run.phase === 'done' && run.deployError && !run.deployed ? <span className="factory-err">{run.deployError}</span> : null}
           {run.phase === 'done' && run.pushError && !run.pushed ? <span className="factory-err">{run.pushError}</span> : null}
         </div>
       </div>

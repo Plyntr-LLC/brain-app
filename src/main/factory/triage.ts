@@ -1,6 +1,6 @@
 /**
  * Factory triage rules: keywords and counts only (no model). Sizes a task T0..T3 and a risk
- * none / elevated / critical. T3 is capped at T2 in this version. Model triage (triage-llm.ts)
+ * none / elevated / critical. T3 is allowed (slices, parallel builders). Model triage (triage-llm.ts)
  * may only raise what these rules find.
  */
 
@@ -9,7 +9,7 @@ export type Risk = 'none' | 'elevated' | 'critical'
 
 export type Triage = {
   size: Size
-  /** Size the rules found before the T2 cap. */
+  /** Same as size (T3 is no longer capped). Kept for older run records. */
   original: Size
   risk: Risk
   capped: boolean
@@ -113,12 +113,5 @@ export function triage(text: string, hints: TriageHints = {}): Triage {
   } else if (size === 'T1' && !bigger) {
     reasons.push('Small fix in existing patterns.')
   }
-  const original = size
-  let capped = false
-  if (original === 'T3') {
-    capped = true
-    size = 'T2'
-    reasons.push('Triage says T3. This version caps at T2: doing the smallest safe slice.')
-  }
-  return { size, original, risk, capped, reasons, ms: performance.now() - t0 }
+  return { size, original: size, risk, capped: false, reasons, ms: performance.now() - t0 }
 }

@@ -40,3 +40,18 @@ test('T2 plan and fix briefs with a 5,000-char task stay at 1,200 and keep the p
   assert.match(fix, /Phase: fix\./)
   assert.ok(fix.includes('Reviewer notes: /u/factory/runs/run-abc.review.md. Fix what it names.'))
 })
+
+test('T3 plan brief asks for the slices JSON line; a T3 worker brief names its files; both fit', () => {
+  const plan = buildBrief({ ...base, role: 'planner', tier: 'T3', phase: 'plan', task: 'x'.repeat(10_000) })
+  assert.match(plan, /Limit T3: up to 40 files, 2500 changed lines/)
+  assert.ok(plan.includes('{"slices":[{"title":"...","files":["rel/path.ts"]}]}'))
+  assert.ok(plan.length <= BRIEF_MAX)
+  assert.doesNotMatch(buildBrief({ ...base, role: 'planner', tier: 'T2', phase: 'plan' }), /"slices"/)
+  const files = Array.from({ length: 40 }, (_, i) => `src/feature/file-${i}.ts`)
+  const worker = buildBrief({ ...base, tier: 'T3', task: 'y'.repeat(10_000), planPath: '/tmp/ud/run.plan.md', slice: { title: 'api', files, n: 1, of: 2 } })
+  assert.match(worker, /Your slice 1 of 2: api\. Edit only these files/)
+  assert.ok(worker.includes('src/feature/file-0.ts'))
+  assert.ok(worker.includes('Approved plan: /tmp/ud/run.plan.md'))
+  assert.match(worker, /No git push, no gh, no deploy/)
+  assert.ok(worker.length <= BRIEF_MAX)
+})

@@ -5,7 +5,20 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { sh, tmpRepo } from './test-git.ts'
-import { BRAIN_WRITE_REFUSAL, ensureShims, factoryEnv, factoryWriteBlock, filterFactoryPermission, publish, publishBlock } from './gates.ts'
+import { EventEmitter } from 'node:events'
+import {
+  BRAIN_WRITE_REFUSAL,
+  deploy,
+  deployBlock,
+  ensureShims,
+  factoryEnv,
+  factoryWriteBlock,
+  filterFactoryPermission,
+  KENNEL_DEPLOY_REFUSAL,
+  NO_DEPLOY_CMD,
+  publish,
+  publishBlock
+} from './gates.ts'
 
 const shimDir = ensureShims(join(mkdtempSync(join(tmpdir(), 'factory-shim-')), 'bin'))
 const env = factoryEnv({ ...process.env, ANTHROPIC_API_KEY: 'fixture-not-a-key', ANTHROPIC_TRANSLATOR_API_KEY: 'fixture-not-a-key' }, shimDir)
@@ -97,4 +110,89 @@ test('publish pushes a factory branch to a bare origin; protected, moved, detach
   assert.equal(sh(bare, ['rev-parse', 'refs/heads/factory/x']).trim(), sha)
   const shim = spawnSync('git', ['push', 'origin', 'factory/x'], { cwd: work, env, encoding: 'utf8' })
   assert.equal(shim.status, 1)
+})
+
+test('deploy: no cmd and Kennel are refused; the stubbed cmd runs with no shims on PATH', async () => {
+  assert.equal(deployBlock({ repo: '/x/site', cmd: '' }), NO_DEPLOY_CMD)
+  assert.equal(deployBlock({ repo: '/Users/me/Projects/mykennel', cmd: 'npm run deploy' }), KENNEL_DEPLOY_REFUSAL)
+  assert.equal(deployBlock({ repo: '/x/site', cmd: 'npm run deploy' }), null)
+  let spawned = 0
+  const refuse = await deploy('/x/MyKennel-app', 'npm run deploy', { spawnFn: (() => void spawned++) as never })
+  assert.deepEqual(refuse, { ok: false, out: KENNEL_DEPLOY_REFUSAL })
+  const none = await deploy('/x/site', '  ', { spawnFn: (() => void spawned++) as never })
+  assert.deepEqual(none, { ok: false, out: NO_DEPLOY_CMD })
+  assert.equal(spawned, 0)
+  const seen: { bin: string; args: string[]; path: string; prompt: string | undefined; cwd: unknown; detached: unknown }[] = []
+  const stub = ((bin: string, args: string[], opts: { env: NodeJS.ProcessEnv; cwd: unknown; detached?: boolean }) => {
+    seen.push({ bin, args, path: String(opts.env.PATH), prompt: opts.env.GIT_TERMINAL_PROMPT, cwd: opts.cwd, detached: opts.detached })
+    const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: () => boolean }
+    child.stdout = new EventEmitter()
+    child.stderr = new EventEmitter()
+    child.kill = () => true
+    setTimeout(() => {
+      child.stdout.emit('data', Buffer.from('deployed\n'))
+      child.emit('close', 0)
+    }, 5)
+    return child
+  }) as never
+  // Same shape as the real shim dir: <userData>/factory/bin, first on the Factory PATH.
+  const realShape = ensureShims(join(mkdtempSync(join(tmpdir(), 'factory-ud-')), 'factory', 'bin'))
+  const fenv = factoryEnv({ ...process.env }, realShape)
+  assert.equal(fenv.PATH?.split(':')[0], realShape)
+  const ok = await deploy('/x/site', 'npm run deploy', { spawnFn: stub, env: fenv })
+  assert.deepEqual(ok, { ok: true, out: 'deployed' })
+  assert.equal(seen[0].bin, '/bin/sh')
+  assert.deepEqual(seen[0].args, ['-c', 'npm run deploy'])
+  assert.equal(seen[0].cwd, '/x/site')
+  assert.equal(seen[0].prompt, '0')
+  assert.equal(seen[0].detached, true)
+  assert.ok(!seen[0].path.split(':').includes(realShape), seen[0].path)
+  assert.ok(!/[\\/]factory[\\/]bin(:|$)/.test(seen[0].path))
+})
+
+test('deploy: a timeout kills the whole process group, not only /bin/sh', async () => {
+  // A cmd that never exits on its own; closes only when something kills it.
+  const kids = new Map<number, EventEmitter>()
+  const kills: string[] = []
+  const hang = (pid: number) =>
+    (() => {
+      const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; pid: number; kill: (s: string) => boolean }
+      child.stdout = new EventEmitter()
+      child.stderr = new EventEmitter()
+      child.pid = pid
+      child.kill = (s) => {
+        kills.push(`child:${s}`)
+        setTimeout(() => child.emit('close', null), 1)
+        return true
+      }
+      kids.set(pid, child)
+      return child
+    }) as never
+  const realKill = process.kill
+  const group: [number, string | number | undefined][] = []
+  try {
+    process.kill = ((pid: number, sig?: string | number) => {
+      group.push([pid, sig])
+      const kid = kids.get(-pid)
+      setTimeout(() => kid?.emit('close', null), 1)
+      return true
+    }) as typeof process.kill
+    const res = await deploy('/x/site', 'npm run deploy', { spawnFn: hang(4242), timeoutMs: 5 })
+    assert.deepEqual(group, [[-4242, 'SIGKILL']])
+    assert.deepEqual(kills, [])
+    assert.equal(res.ok, false)
+
+    // The group kill throws (already gone, no permission): fall back to the child.
+    group.length = 0
+    process.kill = ((pid: number, sig?: string | number) => {
+      group.push([pid, sig])
+      throw new Error('ESRCH')
+    }) as typeof process.kill
+    const res2 = await deploy('/x/site', 'npm run deploy', { spawnFn: hang(4343), timeoutMs: 5 })
+    assert.deepEqual(group, [[-4343, 'SIGKILL']])
+    assert.deepEqual(kills, ['child:SIGKILL'])
+    assert.equal(res2.ok, false)
+  } finally {
+    process.kill = realKill
+  }
 })

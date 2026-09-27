@@ -3,13 +3,14 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseGrokLine, resolveBin, type StreamEvent } from '../ai-cli'
-import type { Tier } from '../../shared/factory.ts'
+import type { Slice, Tier } from '../../shared/factory.ts'
 import { buildBrief, type BriefPhase } from './brief.ts'
-import { publish as gitPublish, publishBlock, type PublishTarget } from './gates.ts'
+import { deploy as gitDeploy, deployBlock, publish as gitPublish, publishBlock, type PublishTarget } from './gates.ts'
 import { auditTurn, commitRun, currentBranch, diffText, gitTop, headSha, isClean, isGitRepo, numstat, porcelain } from './git-audit.ts'
 import { OPUS_PLAN_TIMEOUT_MS, OPUS_REVIEW_TIMEOUT_MS, planPrompt, runOpus, strictNeeded, strictPrompt, verdict, type SpawnFn } from './opus.ts'
 import { realish } from './paths.ts'
-import { detectProfile, readProfile } from './profile.ts'
+import { detectProfile, readProfile, runProfile } from './profile.ts'
+import { lastRepo, rememberRepo, resolveWorkRepo } from './resolve-repo.ts'
 import {
   acquireLock,
   activeRunFor,
@@ -27,7 +28,8 @@ import {
 } from './run-store.ts'
 import { triage, type Size } from './triage.ts'
 import { llmTriage, mergeTriage } from './triage-llm.ts'
-import { checkTripwire } from './tripwire.ts'
+import { parseSlices, scheduleSlices } from './slices.ts'
+import { checkTripwire, type Tripwire } from './tripwire.ts'
 import { runVoice } from './voice.ts'
 
 /**
@@ -38,11 +40,11 @@ import { runVoice } from './voice.ts'
 export type FactoryEvent = { runId: string; kind: 'run'; run: RunRecord } | { runId: string; kind: 'stream'; ev: StreamEvent }
 
 export type Driver = {
-  warm: (o: { tabId: string; brainPath: string; workRepo: string; resumeId?: string }) => Promise<{ sessionId: string }>
+  warm: (o: { tabId: string; brainPath: string; workRepo: string; resumeId?: string; runThrough?: boolean }) => Promise<{ sessionId: string }>
   prompt: (o: { tabId: string; brainPath: string; text: string; onEvent: (ev: StreamEvent) => void }) => Promise<string>
   cancel: (tabId: string) => void
   close: (tabId: string) => void
-  /** Grok reasoning effort on the Factory session (plan high, xhigh after an Opus plan). */
+  /** Grok reasoning effort on the Factory session (T2 plan high, xhigh after an Opus plan; T3 xhigh). */
   setEffort?: (tabId: string, effort: string) => Promise<void>
 }
 
@@ -62,9 +64,13 @@ export type FactoryDeps = {
   spawnVoice?: SpawnFn
   voiceCheckPath?: string
   publish?: (workRepo: string, t: PublishTarget) => Promise<{ ok: boolean; out: string }>
+  deploy?: (workRepo: string, cmd: string, o?: { env?: NodeJS.ProcessEnv }) => Promise<{ ok: boolean; out: string }>
+  /** Where Projects folder names in a task resolve. Default ~/Projects. */
+  projectsDir?: string
 }
 
-type Live = { run: RunRecord; gen: number; warm: boolean; busy: Promise<void> | null; abort?: AbortController }
+/** workers: T3 builder tabs open right now (factory-<id>-w<n>). */
+type Live = { run: RunRecord; gen: number; warm: boolean; busy: Promise<void> | null; abort?: AbortController; workers?: string[] }
 
 export const STRICT_MISSING = 'Opus reviewer not found (claude CLI). Commit is your call.'
 export const VOICE_HOLD = 'Voice check said REJECT. Fix the copy before Commit.'
@@ -121,7 +127,8 @@ export function triageTask(text: string, hints?: { files?: number; lines?: numbe
   return triage(text, hints)
 }
 
-export type StartInput = { task: string; workRepo: string; brainPath: string; proceedCritical?: boolean }
+/** workRepo is optional: main resolves it from the task, then the last Factory repo. runThrough: Approve in advance. */
+export type StartInput = { task: string; workRepo?: string; brainPath: string; proceedCritical?: boolean; runThrough?: boolean }
 export type StartResult =
   | { ok: true; run: RunRecord }
   | { ok: false; error: string; needsProceed?: boolean; runId?: string }
@@ -131,12 +138,14 @@ export function startRun(input: StartInput): StartResult {
   if (!task) return { ok: false, error: 'Say what to change first.' }
   const brainPath = String(input.brainPath || '').trim()
   if (!brainPath || !existsSync(brainPath)) return { ok: false, error: 'Open a brain folder first.' }
-  const picked = String(input.workRepo || '').trim()
-  if (!picked || !existsSync(picked)) return { ok: false, error: 'Choose a work repo folder.' }
+  const found = resolveWorkRepo({ task, brainPath, workRepo: input.workRepo, lastRepo: lastRepo(), projectsDir: deps?.projectsDir })
+  if (!found.ok) return { ok: false, error: found.error }
+  const picked = found.workRepo
+  if (!existsSync(picked)) return { ok: false, error: `${picked} does not exist. Name the code repo in the task.` }
   if (!isGitRepo(picked)) return { ok: false, error: 'That folder is not a git repo. Factory commits to a git repo.' }
   const workRepo = gitTop(picked)
   if (realish(workRepo) === realish(brainPath)) {
-    return { ok: false, error: 'The work repo is the brain itself. Pick the code repo the change belongs in.' }
+    return { ok: false, error: 'The work repo is the brain itself. Factory does not edit the brain. Name the code repo in the task.' }
   }
   const held = activeRunFor(workRepo)
   if (held) return { ok: false, error: `Factory is already running on this repo: ${held.title}`, runId: held.runId }
@@ -156,9 +165,10 @@ export function startRun(input: StartInput): StartResult {
     tier: asTier(t.size),
     risk: t.risk,
     triage: { size: t.size, original: t.original, capped: t.capped, reasons: t.reasons },
+    ...(input.runThrough ? { runThrough: true } : {}),
     phase: 'triage',
     resumePhase: 'triage',
-    profile: readProfile(workRepo),
+    profile: runProfile(readProfile(workRepo)),
     base: headSha(workRepo),
     acpTab: 'factory-' + id,
     createdAt: now,
@@ -170,6 +180,7 @@ export function startRun(input: StartInput): StartResult {
     saveRun({ ...run, phase: 'abandoned', error: 'Another run holds this repo.' })
     return { ok: false, error: `Factory is already running on this repo: ${lock.title}`, runId: lock.runId }
   }
+  rememberRepo(workRepo)
   const state: Live = { run, gen: 0, warm: false, busy: null }
   live.set(id, state)
   persist(state)
@@ -178,7 +189,11 @@ export function startRun(input: StartInput): StartResult {
 }
 
 function asTier(size: Size | string): Tier {
-  return size === 'T0' ? 'T0' : size === 'T1' ? 'T1' : 'T2'
+  return size === 'T0' ? 'T0' : size === 'T1' ? 'T1' : size === 'T3' ? 'T3' : 'T2'
+}
+
+function planned(tier: Tier): boolean {
+  return tier === 'T2' || tier === 'T3'
 }
 
 /** Grok low one-shot, raise-only. Critical raised by the model waits for a Proceed click. */
@@ -221,14 +236,14 @@ async function triageStep(state: Live): Promise<void> {
 }
 
 async function afterTriage(state: Live): Promise<void> {
-  if (state.run.tier === 'T2') await planStep(state)
+  if (planned(state.run.tier)) await planStep(state)
   else await buildStep(state, 'build')
 }
 
 async function ensureWarm(state: Live, gen: number): Promise<boolean> {
   if (state.warm) return true
   const run = state.run
-  const w = await need().driver.warm({ tabId: run.acpTab, brainPath: run.brainPath, workRepo: run.workRepo, resumeId: run.grokSessionId })
+  const w = await need().driver.warm({ tabId: run.acpTab, brainPath: run.brainPath, workRepo: run.workRepo, resumeId: run.grokSessionId, runThrough: run.runThrough })
   if (stale(state, gen)) return false
   state.warm = true
   state.run = { ...state.run, grokSessionId: w.sessionId }
@@ -236,9 +251,9 @@ async function ensureWarm(state: Live, gen: number): Promise<boolean> {
   return true
 }
 
-async function setEffort(state: Live, effort: string): Promise<void> {
+async function setEffort(state: Live, effort: string, tabId = state.run.acpTab): Promise<void> {
   try {
-    await need().driver.setEffort?.(state.run.acpTab, effort)
+    await need().driver.setEffort?.(tabId, effort)
   } catch {
     /* the session keeps its effort; the brief still carries the phase */
   }
@@ -252,21 +267,22 @@ function snap(repo: string): Record<string, string> {
   }
 }
 
-/** T2 plan turn on the builder (Grok high). Not afterTurn: a plan turn changes no work files by design. */
+/** T2/T3 plan turn on the builder (T2 Grok high, T3 xhigh). Not afterTurn: a plan turn changes no work files by design. */
 async function planStep(state: Live, o: { note?: string; previous?: boolean } = {}): Promise<void> {
   const d = need()
   const gen = state.gen
   const prev = state.run.plan
-  const plan = { text: '', by: 'grok' as const, status: 'waiting' as const, rejects: prev?.rejects || 0, reasons: prev?.reasons || [] }
+  const plan: NonNullable<RunRecord['plan']> = { text: '', by: 'grok', status: 'waiting', rejects: prev?.rejects || 0, reasons: prev?.reasons || [] }
   setPhase(state, 'plan', { plan, resumePhase: 'plan', error: undefined, needsProceed: undefined, note: o.note })
   const run = state.run
   const brainBefore = snap(run.brainPath)
   if (!(await ensureWarm(state, gen))) return
-  await setEffort(state, 'high')
+  const tier = state.run.tier === 'T3' ? 'T3' : 'T2'
+  await setEffort(state, tier === 'T3' ? 'xhigh' : 'high')
   if (stale(state, gen)) return
   const brief = buildBrief({
     role: 'planner',
-    tier: 'T2',
+    tier,
     phase: 'plan',
     workRepo: run.workRepo,
     brainPath: run.brainPath,
@@ -293,6 +309,26 @@ async function planStep(state: Live, o: { note?: string; previous?: boolean } = 
   }
   saveRunText(run.id, 'plan', body)
   setPhase(state, 'plan', { plan: { ...plan, text: body.slice(0, 8000) } })
+  if (state.run.runThrough) await approvePlan(state)
+}
+
+/** The plan is approved (click or Approve in advance): T3 reads its slices, then build starts. */
+async function approvePlan(state: Live): Promise<void> {
+  const plan = state.run.plan
+  if (!plan?.text) return
+  let slices: Slice[] | undefined
+  if (state.run.tier === 'T3') {
+    let text = plan.text
+    try {
+      text = readFileSync(runTextPath(state.run.id, 'plan'), 'utf8')
+    } catch {
+      /* the run copy is enough */
+    }
+    slices = parseSlices(text)
+  }
+  state.run = { ...state.run, plan: { ...plan, status: 'approved', approvedAt: Date.now() }, slices }
+  persist(state)
+  await buildStep(state, 'build')
 }
 
 /** Second reject: Opus 5.5 medium writes the plan. Missing, timeout, or non-zero exit pauses. */
@@ -306,7 +342,7 @@ async function opusPlan(state: Live): Promise<void> {
   state.abort = abort
   const res = await runOpus({
     cwd: run.workRepo,
-    prompt: planPrompt({ task: run.task, workRepo: run.workRepo, plans: [runTextPath(run.id, 'plan')], reasons: prev.reasons }),
+    prompt: planPrompt({ task: run.task, workRepo: run.workRepo, plans: [runTextPath(run.id, 'plan')], reasons: prev.reasons, tier: run.tier === 'T3' ? 'T3' : 'T2' }),
     env: d.env(run.workRepo),
     bin: (d.claudeBin || (() => resolveBin('claude')))(),
     timeoutMs: OPUS_PLAN_TIMEOUT_MS,
@@ -329,6 +365,7 @@ async function opusPlan(state: Live): Promise<void> {
   const body = res.text.trim()
   saveRunText(run.id, 'plan', body)
   setPhase(state, 'plan', { plan: { ...prev, text: body.slice(0, 8000), by: 'opus', status: 'waiting' } })
+  if (state.run.runThrough) await approvePlan(state)
 }
 
 async function buildStep(state: Live, phase: BriefPhase, note?: string): Promise<void> {
@@ -347,8 +384,16 @@ async function buildStep(state: Live, phase: BriefPhase, note?: string): Promise
     resumePhase: inReview ? 'review' : 'build'
   })
   const brainBefore = snap(run.brainPath)
+  // T3 with more than one slice from the plan: parallel builders. Resume and fix turns use one builder.
+  if (phase === 'build' && !note && state.run.tier === 'T3' && (state.run.slices?.length || 0) > 1) {
+    await buildSlices(state, gen, brainBefore)
+    return
+  }
   if (!(await ensureWarm(state, gen))) return
-  if (state.run.tier === 'T2') {
+  if (state.run.tier === 'T3') {
+    await setEffort(state, 'xhigh')
+    if (stale(state, gen)) return
+  } else if (state.run.tier === 'T2') {
     await setEffort(state, state.run.plan?.status === 'approved' && state.run.plan.by === 'opus' ? 'xhigh' : 'high')
     if (stale(state, gen)) return
   }
@@ -375,6 +420,108 @@ async function buildStep(state: Live, phase: BriefPhase, note?: string): Promise
   await afterTurn(state, phase, brainBefore)
 }
 
+function workerTab(state: Live, n: number): string {
+  return `${state.run.acpTab}-w${n}`
+}
+
+function closeWorkers(state: Live): void {
+  const d = need()
+  for (const tabId of state.workers || []) {
+    try {
+      d.driver.cancel(tabId)
+      d.driver.close(tabId)
+    } catch {
+      /* not warm */
+    }
+  }
+  state.workers = []
+}
+
+/** T3: waves of up to 3 builders on non-overlapping files, same pool and Approve-in-advance setting. */
+async function buildSlices(state: Live, gen: number, brainBefore: Record<string, string>): Promise<void> {
+  const d = need()
+  const run = state.run
+  const slices = state.run.slices || []
+  const waves = scheduleSlices(slices)
+  let n = 0
+  // Every exit (done, stale, tripwire stop, a failed builder) closes the worker tabs.
+  try {
+    for (let w = 0; w < waves.length; w++) {
+      const wave = waves[w].map((slice) => ({ slice, n: ++n, tabId: '' }))
+      for (const job of wave) job.tabId = workerTab(state, job.n)
+      state.workers = [...new Set([...(state.workers || []), ...wave.map((j) => j.tabId)])]
+      // One builder fails: cancel the others so they stop editing, then fail the run with the first error.
+      let failed: { e: unknown } | null = null
+      await Promise.allSettled(
+        wave.map(async (job) => {
+          try {
+            await d.driver.warm({ tabId: job.tabId, brainPath: run.brainPath, workRepo: run.workRepo, runThrough: run.runThrough })
+            if (stale(state, gen)) return
+            await setEffort(state, 'xhigh', job.tabId)
+            if (stale(state, gen)) return
+            const brief = buildBrief({
+              role: 'builder',
+              tier: 'T3',
+              phase: 'build',
+              workRepo: run.workRepo,
+              brainPath: run.brainPath,
+              task: run.task,
+              planPath: runTextPath(run.id, 'plan'),
+              slice: { title: job.slice.title, files: job.slice.files, n: job.n, of: slices.length }
+            })
+            await d.driver.prompt({
+              tabId: job.tabId,
+              brainPath: run.brainPath,
+              text: brief,
+              onEvent: (ev) => {
+                if (!stale(state, gen)) d.emit({ runId: run.id, kind: 'stream', ev })
+              }
+            })
+          } catch (e) {
+            if (!failed) {
+              failed = { e }
+              for (const other of wave) {
+                if (other.tabId === job.tabId) continue
+                try {
+                  d.driver.cancel(other.tabId)
+                } catch {
+                  /* not warm */
+                }
+              }
+            }
+            throw e
+          }
+        })
+      )
+      const first = failed as { e: unknown } | null
+      if (first) throw first.e
+      if (stale(state, gen)) return
+      if (w === waves.length - 1) break
+      // Between waves: one combined audit and tripwire before the next builders start.
+      const audit = auditTurn({ brainPath: run.brainPath, workRepo: run.workRepo, brainBefore, base: run.base })
+      const brain = [...new Set([...(state.run.audit?.brain || []), ...audit.brain])].sort()
+      state.run = { ...state.run, audit: { brain, work: audit.work } }
+      persist(state)
+      const trip = checkTripwire(state.run.tier, audit.work)
+      if (trip.trip && !(await onTrip(state, trip))) return
+    }
+  } finally {
+    closeWorkers(state)
+  }
+  await afterTurn(state, 'build', brainBefore)
+}
+
+/** A tripped tripwire. Approve in advance takes a suggested tier; otherwise (or no suggestion) wait on the card. True: go on. */
+async function onTrip(state: Live, trip: Tripwire): Promise<boolean> {
+  if (state.run.runThrough && trip.suggest) {
+    state.run = { ...state.run, tier: trip.suggest, tripwire: { reasons: trip.reasons, suggest: trip.suggest, auto: true } }
+    persist(state)
+    return true
+  }
+  setPhase(state, 'upgrade', { tripwire: { reasons: trip.reasons, suggest: trip.suggest }, resumePhase: 'upgrade' })
+  return false
+}
+
 async function afterTurn(state: Live, phase: BriefPhase, brainBefore: Record<string, string>): Promise<void> {
   const run = state.run
   const audit = auditTurn({ brainPath: run.brainPath, workRepo: run.workRepo, brainBefore, base: run.base })
@@ -382,10 +529,7 @@ async function afterTurn(state: Live, phase: BriefPhase, brainBefore: Record<str
   const brain = [...new Set([...(run.audit?.brain || []), ...audit.brain])].sort()
   state.run = { ...state.run, audit: { brain, work: audit.work } }
   const trip = checkTripwire(state.run.tier, audit.work)
-  if (trip.trip) {
-    setPhase(state, 'upgrade', { tripwire: { reasons: trip.reasons, suggest: trip.suggest }, resumePhase: 'upgrade' })
-    return
-  }
+  if (trip.trip && !(await onTrip(state, trip))) return
   if (!audit.work.length) {
     setPhase(state, 'failed', { error: 'This turn changed no files in the work repo.', resumePhase: 'build' })
     return
@@ -436,22 +580,30 @@ async function verifyStep(state: Live): Promise<void> {
   setPhase(state, 'verify', { verify: [] })
   const scripts = scriptsOf(state.run.workRepo)
   const names = (state.run.profile || detectProfile(state.run.workRepo)).scripts
+  const t3 = state.run.tier === 'T3'
   const wanted = [names.typecheck || 'typecheck']
   if (state.run.tier !== 'T0') wanted.push(names.test || 'test')
-  if (state.run.tier === 'T2') wanted.push(names.e2e || 'e2e')
+  if (planned(state.run.tier)) wanted.push(names.e2e || 'e2e')
+  // T3 full e2e: its own script when the repo has one; a skipped row otherwise.
+  if (t3 && !wanted.includes('e2e:full')) wanted.push('e2e:full')
   const rows: VerifyRow[] = []
+  const outs: string[] = []
   const env = d.env(state.run.workRepo)
   for (const script of wanted) {
     if (!scripts[script]) {
       rows.push({ script, status: 'skipped' })
+      outs.push(`== npm run ${script}: skipped (no script)`)
       continue
     }
     const res = await (d.runScript || defaultRunScript)(state.run.workRepo, script, env)
     if (stale(state, gen)) return
     rows.push(res.code === 0 ? { script, status: 'pass' } : { script, status: 'fail', tail: tail(res.out) })
+    outs.push(`== npm run ${script}: ${res.code === 0 ? 'pass' : `fail (exit ${res.code})`}\n${String(res.out || '').trimEnd()}`)
     state.run = { ...state.run, verify: [...rows] }
     persist(state)
   }
+  // T3 artifact: the combined verify output beside the run record, never in the work repo.
+  if (t3) state.run = { ...state.run, verifyArtifact: saveRunText(state.run.id, 'verify', outs.join('\n\n') + '\n') }
   const failed = rows.find((r) => r.status === 'fail')
   if (failed) {
     setPhase(state, 'failed', {
@@ -516,6 +668,7 @@ async function strictStep(state: Live): Promise<boolean> {
     prompt: strictPrompt({ task: run.task, tier: run.tier, risk: run.risk, base: run.base, diff: safeDiff(run.workRepo, run.base), workRepo: run.workRepo }),
     env: d.env(run.workRepo),
     bin: (d.claudeBin || (() => resolveBin('claude')))(),
+    effort: run.tier === 'T3' ? 'high' : 'medium',
     timeoutMs: OPUS_REVIEW_TIMEOUT_MS,
     spawnFn: d.spawnOpus,
     signal: abort.signal
@@ -547,12 +700,18 @@ async function strictStep(state: Live): Promise<boolean> {
 
 function finishReview(state: Live): void {
   let diff = ''
+  let read = true
   try {
     diff = diffText(state.run.workRepo, state.run.base)
   } catch (e) {
+    read = false
     diff = `Could not read the diff: ${String((e as Error).message || e)}`
   }
   setPhase(state, 'review', { diff, resumePhase: 'review' })
+  // Approve in advance commits a clean review. Strict FAIL and voice REJECT still wait. Never push or deploy.
+  const r = state.run
+  const strictOk = !r.strict || r.strict.status === 'pass' || r.strict.status === 'missing'
+  if (r.runThrough && read && diff.trim() && r.voice?.status !== 'fail' && strictOk) commitRunNow(r.id)
 }
 
 function liveFor(id: string): Live {
@@ -604,6 +763,7 @@ export function pauseRun(id: string): RunRecord {
     /* not warm */
   }
   state.abort?.abort()
+  closeWorkers(state)
   const from = state.run.phase
   const resumePhase: RunPhase = from === 'failed' ? state.run.resumePhase || 'build' : from
   return setPhase(state, 'paused', { resumePhase })
@@ -638,7 +798,12 @@ export function resumeRun(id: string): RunRecord {
   }
   if (target === 'plan') {
     // A waiting plan comes back as it was; a resume never starts a build.
-    if (run.plan?.status === 'waiting' && run.plan.text) return setPhase(state, 'plan', { error: undefined })
+    if (run.plan?.status === 'waiting' && run.plan.text) {
+      if (!run.runThrough) return setPhase(state, 'plan', { error: undefined })
+      state.run = { ...run, error: undefined }
+      track(state, approvePlan(state))
+      return state.run
+    }
     track(state, planStep(state, { note: 'Resumed after a pause. Write the plan.' }))
     return state.run
   }
@@ -664,8 +829,7 @@ export function decideRun(id: string, choice: Decision, opts: { reason?: string 
     if (run.phase !== 'plan' || run.plan?.status !== 'waiting' || !run.plan.text) throw new Error('This run is not waiting on a plan.')
     state.gen++
     if (choice === 'approve-plan') {
-      state.run = { ...run, plan: { ...run.plan, status: 'approved', approvedAt: Date.now() } }
-      track(state, buildStep(state, 'build'))
+      track(state, approvePlan(state))
       return state.run
     }
     const reason = String(opts.reason || '').trim().slice(0, 300)
@@ -698,7 +862,7 @@ export function decideRun(id: string, choice: Decision, opts: { reason?: string 
   state.gen++
   if (choice === 'upgrade') {
     const next = run.tripwire?.suggest
-    if (!next) throw new Error('T3 comes in a later version. Trim or stop.')
+    if (!next) throw new Error('Over T3, or a lockfile or schema change. Trim or stop.')
     // Moving up from a tripwire skips the plan gate: the work is already done.
     state.run = { ...run, tier: next }
     const trip = checkTripwire(next, run.audit?.work || [])
@@ -724,6 +888,7 @@ export function commitRunNow(id: string): RunRecord {
     const sha = commitRun(run.workRepo, rows.map((r) => r.path), run.title)
     const branch = currentBranch(run.workRepo) || undefined
     releaseLock(run.workRepo, run.id)
+    closeWorkers(state)
     try {
       need().driver.close(run.acpTab)
     } catch {
@@ -761,10 +926,43 @@ export async function publishRun(id: string): Promise<RunRecord> {
   return setPhase(state, 'done', { pushed: { ...t, at: Date.now() }, pushError: undefined })
 }
 
+function deployCmd(run: RunRecord): string {
+  try {
+    return String(readProfile(run.workRepo).deploy?.cmd || '')
+  } catch {
+    return ''
+  }
+}
+
+/** Null when Deploy may run on this pushed run, else the sentence the disabled Deploy shows. */
+export function deployBlockFor(id: string): string | null {
+  const run = getRun(id)
+  if (!run || run.phase !== 'done' || !run.pushed) return 'Deploy comes after Push.'
+  if (run.deployed) return 'Deployed.'
+  return deployBlock({ repo: run.workRepo, cmd: deployCmd(run) })
+}
+
+/** The Deploy click: the profile's cmd, no shims, never the model. The cmd never lands on the run. */
+export async function deployRun(id: string): Promise<RunRecord> {
+  const state = liveFor(id)
+  const run = state.run
+  if (run.phase !== 'done' || !run.pushed) throw new Error('Deploy comes after Push.')
+  if (run.deployed) return run
+  const cmd = deployCmd(run)
+  const block = deployBlock({ repo: run.workRepo, cmd })
+  if (block) return setPhase(state, 'done', { deployError: block })
+  const d = need()
+  // Same project bins as verify; deploy() strips the Factory shims.
+  const res = await (d.deploy || gitDeploy)(run.workRepo, cmd, { env: d.env(run.workRepo) })
+  if (!res.ok) return setPhase(state, 'done', { deployError: tail(res.out || 'Deploy failed.', 6) })
+  return setPhase(state, 'done', { deployed: { at: Date.now() }, deployError: undefined })
+}
+
 export function abandonRun(id: string): RunRecord {
   const state = liveFor(id)
   state.gen++
   state.abort?.abort()
+  closeWorkers(state)
   try {
     need().driver.cancel(state.run.acpTab)
     need().driver.close(state.run.acpTab)

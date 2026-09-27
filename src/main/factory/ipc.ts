@@ -1,6 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { projectBinEnv } from '../ai-cli'
 import { factoryCancel, factoryClose, factoryPrompt, factorySetEffort, factoryWarm } from '../acp-session'
 import {
@@ -8,6 +6,8 @@ import {
   commitRunNow,
   configureFactory,
   decideRun,
+  deployBlockFor,
+  deployRun,
   detachRun,
   getRun,
   listFactoryRuns,
@@ -25,32 +25,12 @@ import { ensureShims, factoryEnv } from './gates'
 import { gitTop, isGitRepo } from './git-audit'
 import { opusEnv } from './opus'
 import { profileLine, readProfile, saveProfile, type ProfilePatch } from './profile'
-import { factoryDir, factoryShimDir, setUserDataDir } from './run-store'
+import { lastRepo, resolveWorkRepo } from './resolve-repo'
+import { factoryShimDir, setUserDataDir } from './run-store'
 
 function emit(e: FactoryEvent): void {
   for (const w of BrowserWindow.getAllWindows()) {
     if (!w.isDestroyed()) w.webContents.send('factory:event', e)
-  }
-}
-
-function prefsFile(): string {
-  return join(factoryDir(), 'prefs.json')
-}
-
-function lastRepo(): string {
-  try {
-    return String((JSON.parse(readFileSync(prefsFile(), 'utf8')) as { lastRepo?: string }).lastRepo || '')
-  } catch {
-    return ''
-  }
-}
-
-function rememberRepo(path: string): void {
-  try {
-    mkdirSync(factoryDir(), { recursive: true })
-    writeFileSync(prefsFile(), JSON.stringify({ lastRepo: path }))
-  } catch {
-    /* best effort */
   }
 }
 
@@ -82,19 +62,21 @@ export function registerFactoryIpc(): void {
     env: (repo) => opusEnv(factoryEnv(projectBinEnv(repo), ensureShims(factoryShimDir())))
   })
   ipcMain.handle('factory:triage', (_e, text: string) => triageTask(String(text || '')))
+  // No work-repo picker: main resolves the repo from the task, then the last Factory repo. Start remembers it.
   ipcMain.handle(
     'factory:start',
-    (_e, p: { task: string; workRepo: string; brainPath: string; proceedCritical?: boolean }) =>
-      safe(() => {
-        const res = startRun({
+    (_e, p: { task: string; brainPath: string; runThrough?: boolean; proceedCritical?: boolean }) =>
+      safe(() =>
+        startRun({
           task: String(p?.task || ''),
-          workRepo: String(p?.workRepo || ''),
           brainPath: String(p?.brainPath || ''),
+          runThrough: Boolean(p?.runThrough),
           proceedCritical: Boolean(p?.proceedCritical)
         })
-        if (res.ok) rememberRepo(res.run.workRepo)
-        return res
-      })
+      )
+  )
+  ipcMain.handle('factory:resolveRepo', (_e, task: string, brainPath: string) =>
+    safe(() => resolveWorkRepo({ task: String(task || ''), brainPath: String(brainPath || ''), lastRepo: lastRepo() }))
   )
   ipcMain.handle('factory:resume', (_e, id: string) => safe(() => ({ ok: true as const, run: resumeRun(String(id)) })))
   ipcMain.handle('factory:decide', (_e, id: string, choice: Decision, opts?: { reason?: string }) =>
@@ -108,7 +90,7 @@ export function registerFactoryIpc(): void {
   )
   ipcMain.handle('factory:saveProfile', (_e, repo: string, patch: ProfilePatch) =>
     safe(() => {
-      const p = saveProfile(repoTop(repo), { voice: patch?.voice, scripts: patch?.scripts, publish: patch?.publish })
+      const p = saveProfile(repoTop(repo), { voice: patch?.voice, scripts: patch?.scripts, publish: patch?.publish, deploy: patch?.deploy })
       return { ok: true as const, profile: p, line: profileLine(p) }
     })
   )
@@ -119,6 +101,14 @@ export function registerFactoryIpc(): void {
       return { ok: false as const, error: String((e as Error).message || e) }
     }
   })
+  ipcMain.handle('factory:deploy', async (_e, id: string) => {
+    try {
+      return { ok: true as const, run: await deployRun(String(id)) }
+    } catch (e) {
+      return { ok: false as const, error: String((e as Error).message || e) }
+    }
+  })
+  ipcMain.handle('factory:deployBlock', (_e, id: string) => safe(() => ({ ok: true as const, block: deployBlockFor(String(id)) })))
   ipcMain.handle('factory:publishBlock', (_e, id: string) => safe(() => ({ ok: true as const, block: publishBlockFor(String(id)) })))
   ipcMain.handle('factory:commit', (_e, id: string) => safe(() => ({ ok: true as const, run: commitRunNow(String(id)) })))
   ipcMain.handle('factory:pause', (_e, id: string) => safe(() => ({ ok: true as const, run: pauseRun(String(id)) })))
@@ -126,17 +116,4 @@ export function registerFactoryIpc(): void {
   ipcMain.handle('factory:abandon', (_e, id: string) => safe(() => ({ ok: true as const, run: abandonRun(String(id)) })))
   ipcMain.handle('factory:list', () => safe(() => listFactoryRuns()))
   ipcMain.handle('factory:get', (_e, id: string) => safe(() => restoreRun(String(id)) || getRun(String(id))))
-  ipcMain.handle('factory:lastRepo', () => lastRepo())
-  ipcMain.handle('factory:pickRepo', async (e) => {
-    const win = BrowserWindow.fromWebContents(e.sender)
-    const opts = {
-      title: 'Choose the work repo',
-      defaultPath: lastRepo() || undefined,
-      properties: ['openDirectory'] as Array<'openDirectory'>
-    }
-    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-    if (r.canceled || !r.filePaths[0]) return null
-    rememberRepo(r.filePaths[0])
-    return r.filePaths[0]
-  })
 }

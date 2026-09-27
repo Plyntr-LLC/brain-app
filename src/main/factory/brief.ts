@@ -24,13 +24,22 @@ export type BriefInput = {
   previousPlanPath?: string
   /** Last strict reviewer FAIL text beside the run record. */
   reviewPath?: string
+  /** T3 worker: the slice this builder owns. */
+  slice?: { title: string; files: string[]; n: number; of: number }
 }
 
 const LIMIT_LINE: Record<Tier, string> = {
   T0: 'Limit T0: 1 file, 20 changed lines.',
   T1: 'Limit T1: up to 3 files, 150 changed lines, no new dependencies, no migrations.',
-  T2: 'Limit T2: up to 10 files, 600 changed lines, no lockfile changes, no migrations.'
+  T2: 'Limit T2: up to 10 files, 600 changed lines, no lockfile changes, no migrations.',
+  T3: 'Limit T3: up to 40 files, 2500 changed lines, no lockfile changes, no migrations.'
 }
+
+/** T3 plan: the controller reads this JSON line to split the build across builders. */
+export const SLICES_LINE =
+  'End with one JSON line: {"slices":[{"title":"...","files":["rel/path.ts"]}]}. Paths relative to the work repo. Slices that share no files run in parallel (up to 3).'
+
+const SLICE_MAX = 320
 
 const PHASE_LINE: Record<BriefPhase, string> = {
   plan: 'Write a short plan: files, steps, tests. Do not edit files.',
@@ -57,6 +66,11 @@ export function buildBrief(input: BriefInput): string {
     LIMIT_LINE[input.tier],
     PHASE_LINE[input.phase]
   ]
+  if (input.phase === 'plan' && input.tier === 'T3') lines.push(SLICES_LINE)
+  if (input.slice) {
+    const head = `Your slice ${input.slice.n} of ${input.slice.of}: ${input.slice.title}. Edit only these files; other builders own the rest:`
+    lines.push(cut(`${head} ${input.slice.files.join(', ')}`, SLICE_MAX))
+  }
   if (input.planPath) lines.push(`Approved plan: ${input.planPath}. Read it first.`)
   if (input.previousPlanPath) lines.push(`Previous plan: ${input.previousPlanPath}`)
   if (input.reviewPath) lines.push(`Reviewer notes: ${input.reviewPath}. Fix what it names.`)

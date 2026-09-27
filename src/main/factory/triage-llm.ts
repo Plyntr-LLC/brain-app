@@ -55,7 +55,7 @@ export function parseLlmTriage(text: string): LlmTriage | null {
   return found.at(-1) || null
 }
 
-/** Rules plus model: the higher size and the higher risk, never lower. T3 caps at T2. */
+/** Rules plus model: the higher size and the higher risk, never lower. It may raise to T3. */
 export function mergeTriage(rules: Triage, llm: LlmTriage | null, why?: string): Triage {
   if (!llm) return { ...rules, reasons: [...rules.reasons, `Model triage skipped: ${why || 'no answer'}.`] }
   const reasons = [...rules.reasons]
@@ -64,14 +64,7 @@ export function mergeTriage(rules: Triage, llm: LlmTriage | null, why?: string):
   if (original !== rules.original || risk !== rules.risk) {
     reasons.push(`Grok raised this to ${original} · risk ${risk}${llm.reason ? `: ${llm.reason}` : '.'}`)
   }
-  let size: Size = original
-  let capped = false
-  if (original === 'T3') {
-    size = 'T2'
-    capped = true
-    if (!rules.capped) reasons.push('Triage says T3. This version caps at T2: doing the smallest safe slice.')
-  }
-  return { ...rules, size, original, risk, capped, reasons }
+  return { ...rules, size: original, original, risk, capped: false, reasons }
 }
 
 export async function llmTriage(o: {

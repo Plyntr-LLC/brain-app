@@ -7,6 +7,7 @@ import { opusArgs, runOpus, STRICT_SKILL_PATH, strictNeeded, strictPrompt, verdi
 
 test('strict is needed for T2, elevated, critical, and MyPuppies paths only', () => {
   assert.equal(strictNeeded({ tier: 'T2', risk: 'none', workRepo: '/x/site' }), true)
+  assert.equal(strictNeeded({ tier: 'T3', risk: 'none', workRepo: '/x/site' }), true)
   assert.equal(strictNeeded({ tier: 'T0', risk: 'elevated', workRepo: '/x/site' }), true)
   assert.equal(strictNeeded({ tier: 'T1', risk: 'critical', workRepo: '/x/site' }), true)
   assert.equal(strictNeeded({ tier: 'T0', risk: 'none', workRepo: '/x/MyPuppies-site' }), true)
@@ -70,4 +71,13 @@ console.log('ok\\nPASS')
   assert.equal(gone.found, false)
   const enoent = await runOpus({ cwd: dir, prompt: 'x', env, bin: join(dir, 'nope'), timeoutMs: 1000 })
   assert.equal(enoent.found, false)
+})
+
+test('opus effort: medium by default (T2), high on request (T3); never xhigh', () => {
+  const med = opusArgs('x')
+  assert.equal(med[med.indexOf('--effort') + 1], 'medium')
+  const high = opusArgs('x', 'high')
+  assert.equal(high[high.indexOf('--effort') + 1], 'high')
+  assert.equal(high[high.indexOf('--permission-mode') + 1], 'plan')
+  assert.ok(!high.includes('xhigh'))
 })

@@ -81,7 +81,8 @@ export type Tab = {
   permId?: number | string
   permOptions?: { id: string; label: string }[]
   /** Factory tabs only: where this run's edits may land. */
-  factory?: { brainPath: string; workRepo: string }
+  /** runThrough: Approve in advance. Asks that pass the Factory filter are allowed without the card. */
+  factory?: { brainPath: string; workRepo: string; runThrough?: boolean }
 }
 
 export type Pool = {
@@ -342,6 +343,17 @@ function pickOption(msg: RpcMsg, write: boolean): string | null {
   return typeof first.optionId === 'string' ? first.optionId : null
 }
 
+/** allow_once only; never allow_always (that would outlive the run) and never whatever comes first. Null: the card asks. */
+function allowOption(msg: RpcMsg): string | null {
+  const opts = asRecord(msg.params).options
+  if (!Array.isArray(opts)) return null
+  for (const o of opts) {
+    const r = asRecord(o)
+    if (r.kind === 'allow_once' && typeof r.optionId === 'string') return r.optionId
+  }
+  return null
+}
+
 /** A reject option only; never falls back to an allow. */
 function rejectOption(msg: RpcMsg): string | null {
   const opts = asRecord(msg.params).options
@@ -550,7 +562,7 @@ export function handleReq(pool: Pool, msg: RpcMsg): void {
     const tabId = pool.bySid.get(sid)
     const tab = tabId ? pool.tabs.get(tabId) : undefined
     if (pool.lane === 'factory') {
-      // Factory never auto-allows. No tab: nobody can answer, so cancel.
+      // Factory auto-allows only on an Approve-in-advance run, and only after the filter. No tab: nobody can answer, so cancel.
       if (!tab) {
         pool.rpc.reply(msg.id, { outcome: { outcome: 'cancelled' } })
         return
@@ -564,6 +576,16 @@ export function handleReq(pool: Pool, msg: RpcMsg): void {
         const ev: StreamEvent = { kind: 'status', data: 'work:Refused: ' + String(p.title || tool.title || 'publish or brain edit').slice(0, 70) }
         if (tab.onEvent) tab.onEvent(ev)
         return
+      }
+      if (ctx.runThrough) {
+        const optionId = allowOption(msg)
+        if (optionId) {
+          pool.rpc.reply(msg.id, { outcome: { outcome: 'selected', optionId } })
+          const tool = asRecord(p.toolCall)
+          const ev: StreamEvent = { kind: 'status', data: 'work:Allowed in advance: ' + String(p.title || tool.title || 'tool call').slice(0, 60) }
+          if (tab.onEvent) tab.onEvent(ev)
+          return
+        }
       }
     }
     // Plan mode exists so a person approves the plan; never auto-answer its asks.
@@ -1372,11 +1394,12 @@ export async function factoryWarm(opts: {
   brainPath: string
   workRepo: string
   resumeId?: string
+  runThrough?: boolean
 }): Promise<{ sessionId: string; loaded: boolean }> {
   return withTabLock(opts.tabId, async () => {
     const pool = await bootPool('grok', opts.brainPath, 'factory')
     tabPool.set(opts.tabId, poolKey('grok', opts.brainPath, 'factory'))
-    const factory = { brainPath: opts.brainPath, workRepo: opts.workRepo }
+    const factory = { brainPath: opts.brainPath, workRepo: opts.workRepo, runThrough: opts.runThrough === true }
     const have = pool.tabs.get(opts.tabId)
     if (have && (!opts.resumeId || opts.resumeId === have.sessionId)) {
       have.factory = factory

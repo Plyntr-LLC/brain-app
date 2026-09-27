@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { delimiter, isAbsolute, join, resolve } from 'node:path'
 import { currentBranch, hasRemote, headSha } from './git-audit.ts'
@@ -154,15 +154,19 @@ export function publishBlock(o: { repo: string } & Partial<PublishTarget>): stri
   return null
 }
 
+/** PATH without the Factory shim dir: person clicks (Push, Deploy) use the real tools. */
+export function noShimPath(path: string | undefined): string {
+  return String(path || '')
+    .split(delimiter)
+    .filter((d) => d && !/[\\/]factory[\\/]bin$/.test(d))
+    .join(delimiter)
+}
+
 /** The Push click: real git, never the shim dir, no prompts, 90 s. Refuses anything publishBlock names. */
 export function publish(workRepo: string, t: PublishTarget, timeoutMs = 90_000): Promise<{ ok: boolean; out: string }> {
   const block = publishBlock({ repo: workRepo, ...t })
   if (block) return Promise.resolve({ ok: false, out: block })
-  const path = String(process.env.PATH || '')
-    .split(delimiter)
-    .filter((d) => d && !/[\\/]factory[\\/]bin$/.test(d))
-    .join(delimiter)
-  const env: NodeJS.ProcessEnv = { ...process.env, PATH: path, GIT_TERMINAL_PROMPT: '0' }
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: noShimPath(process.env.PATH), GIT_TERMINAL_PROMPT: '0' }
   return new Promise((done) => {
     const child = spawn(realGit(), ['push', t.remote, t.branch], { cwd: workRepo, env, stdio: ['ignore', 'pipe', 'pipe'], shell: false })
     let out = ''
@@ -179,6 +183,67 @@ export function publish(workRepo: string, t: PublishTarget, timeoutMs = 90_000):
     child.on('close', (code) => {
       clearTimeout(timer)
       done({ ok: code === 0, out: out.trim() || (code === 0 ? '' : `git push exited ${code}`) })
+    })
+  })
+}
+
+/** Kennel ships through its own Opus 5.5 CLI gate, never a Factory click. */
+export const KENNEL_RE = /mykennel/i
+export const KENNEL_DEPLOY_REFUSAL = 'Brain never deploys Kennel. Its staging and main go through the Opus 5.5 Claude CLI gate.'
+export const NO_DEPLOY_CMD = 'No deploy command on this repo.'
+
+/** Null when Deploy may run. Otherwise the one sentence the disabled Deploy shows. */
+export function deployBlock(o: { repo: string; cmd?: string }): string | null {
+  if (KENNEL_RE.test(String(o.repo || ''))) return KENNEL_DEPLOY_REFUSAL
+  if (!String(o.cmd || '').trim()) return NO_DEPLOY_CMD
+  return null
+}
+
+export type DeploySpawn = (bin: string, args: string[], opts: SpawnOptions) => ChildProcess
+
+/**
+ * The Deploy click: the profile's cmd through /bin/sh in the work repo, no shims on PATH, no git
+ * prompts, 10 min. The cmd itself is never logged or copied onto the run.
+ */
+export function deploy(
+  workRepo: string,
+  cmd: string,
+  o: { spawnFn?: DeploySpawn; timeoutMs?: number; env?: NodeJS.ProcessEnv } = {}
+): Promise<{ ok: boolean; out: string }> {
+  const block = deployBlock({ repo: workRepo, cmd })
+  if (block) return Promise.resolve({ ok: false, out: block })
+  const base = o.env || process.env
+  const env: NodeJS.ProcessEnv = { ...base, PATH: noShimPath(base.PATH), GIT_TERMINAL_PROMPT: '0' }
+  return new Promise((done) => {
+    let child: ChildProcess
+    try {
+      // Own process group so a timeout kills what the cmd started, not only /bin/sh.
+      child = (o.spawnFn || spawn)('/bin/sh', ['-c', cmd], { cwd: workRepo, env, stdio: ['ignore', 'pipe', 'pipe'], shell: false, detached: true })
+    } catch (e) {
+      done({ ok: false, out: String((e as Error).message || e) })
+      return
+    }
+    let out = ''
+    const add = (d: Buffer) => {
+      out = (out + String(d)).slice(-4000)
+    }
+    child.stdout?.on('data', add)
+    child.stderr?.on('data', add)
+    const timer = setTimeout(() => {
+      try {
+        if (!child.pid) throw new Error('no pid')
+        process.kill(-child.pid, 'SIGKILL')
+      } catch {
+        child.kill('SIGKILL')
+      }
+    }, o.timeoutMs ?? 10 * 60_000)
+    child.on('error', (e) => {
+      clearTimeout(timer)
+      done({ ok: false, out: String(e.message || e) })
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      done({ ok: code === 0, out: out.trim() || (code === 0 ? '' : `Deploy exited ${code}`) })
     })
   })
 }

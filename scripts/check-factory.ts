@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-// Factory Slice 1 + Slice 2 gate. Drives the real main-process modules (acp-session handleReq,
+// Factory Slice 1 + Slice 2 + Slice 3 gate. Drives the real main-process modules (acp-session handleReq,
 // factory lane boot against a fake grok binary, controller, run store) with electron stubbed, HOME
 // and userData in tmp folders. Fake claude, stubbed voice, bare tmp remote. No live Grok, no live
 // Claude, no Doppler, no tunnel. Prints FACTORY_PASS only if every check passes.
@@ -111,6 +111,8 @@ const phoneLib = (await import(src('phone-lib.ts'))) as typeof import('../src/ma
 const { realish, underPath } = (await import(src('factory/paths.ts'))) as typeof import('../src/main/factory/paths.ts')
 const profiles = (await import(src('factory/profile.ts'))) as typeof import('../src/main/factory/profile.ts')
 const aicli = (await import(src('ai-cli.ts'))) as typeof import('../src/main/ai-cli.ts')
+const resolver = (await import(src('factory/resolve-repo.ts'))) as typeof import('../src/main/factory/resolve-repo.ts')
+const tripwire = (await import(src('factory/tripwire.ts'))) as typeof import('../src/main/factory/tripwire.ts')
 store.setUserDataDir(() => userData)
 
 const results: { name: string; ok: boolean; detail: string }[] = []
@@ -118,7 +120,7 @@ const check = (name: string, ok: boolean, detail = '') => results.push({ name, o
 
 type Sent = { id: number | string; result?: unknown; error?: { code: number; message: string } }
 type Ev = { kind: string; title?: string; path?: string; data?: string; options?: { id: string; label: string }[] }
-function fakePool(lane: 'chat' | 'factory', cwd: string, factory?: { brainPath: string; workRepo: string }) {
+function fakePool(lane: 'chat' | 'factory', cwd: string, factory?: { brainPath: string; workRepo: string; runThrough?: boolean }) {
   const sent: Sent[] = []
   const events: Ev[] = []
   const tab = {
@@ -255,7 +257,7 @@ const outcome = (s: Sent | undefined) => (s?.result as { outcome?: { outcome?: s
 type Call = { fn: string; o?: Record<string, unknown> }
 const calls: Call[] = []
 const events: { runId: string; kind: string; run?: { phase: string } }[] = []
-let promptPlan: (o: { text: string }) => Promise<void | string> = async () => {}
+let promptPlan: (o: { text: string; tabId?: string }) => Promise<void | string> = async () => {}
 let triageBin: string | null = null
 const scriptRuns: string[] = []
 type VoiceCall = { bin: string; args: string[]; body: string }
@@ -695,6 +697,322 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   const fenv = gates.factoryEnv({ ...process.env }, store.factoryShimDir())
   check('S2 9 factoryEnv drops both Anthropic keys', !('ANTHROPIC_API_KEY' in fenv) && !('ANTHROPIC_TRANSLATOR_API_KEY' in fenv))
   git(work2, ['checkout', '-q', 'main'])
+}
+
+// ---- Slice 3 (fake driver, fake claude, no live Grok/Claude, no deploy) ----
+{
+  // S3 1. Rules: T3 is its own size, not capped, fast.
+  const big = ctl.triageTask('Rewrite the whole app in Svelte')
+  check('S3 1 rules: T3 ask is size T3, capped false, under 200 ms', big.size === 'T3' && big.capped === false && big.ms < 200, JSON.stringify(big))
+
+  // S3 4. Approve in advance: ordinary asks auto-allow after the filter; push, gh, deploy, brain edits still reject.
+  const ctx = { brainPath: brainA, workRepo: work2, runThrough: true }
+  const f = fakePool('factory', brainA, ctx)
+  acp.handleReq(f.pool as never, req(40, 'session/request_permission', { sessionId: 'sess-factory', toolCall: { title: 'Edit src/app.ts', kind: 'edit', rawInput: { path: join(work2, 'src', 'app.ts') } }, options: permOpts }))
+  check('S3 4 runThrough ordinary edit ask is allow_once without the card', outcome(f.sent[0])?.optionId === 'allow_once' && !f.events.some((e) => e.kind === 'permission'), JSON.stringify(f.sent))
+  for (const [n, cmd] of [['git push origin main', 'git push origin main'], ['gh', 'gh pr create'], ['deploy', 'npx wrangler deploy']] as const) {
+    const g = fakePool('factory', brainA, ctx)
+    acp.handleReq(g.pool as never, req(41, 'session/request_permission', { sessionId: 'sess-factory', toolCall: { title: 'Run command', kind: 'execute', rawInput: { command: cmd } }, options: permOpts }))
+    check(`S3 4 runThrough "${n}" ask is still reject_once`, outcome(g.sent[0])?.optionId === 'reject_once', JSON.stringify(g.sent))
+  }
+  const b = fakePool('factory', brainA, ctx)
+  acp.handleReq(b.pool as never, req(42, 'session/request_permission', { sessionId: 'sess-factory', toolCall: { title: 'Edit AGENTS.md', kind: 'edit', rawInput: { path: join(brainA, 'AGENTS.md') } }, options: permOpts }))
+  check('S3 4 runThrough brain edit ask is still reject_once', outcome(b.sent[0])?.optionId === 'reject_once')
+  const off = fakePool('factory', brainA, { brainPath: brainA, workRepo: work2 })
+  acp.handleReq(off.pool as never, req(43, 'session/request_permission', { sessionId: 'sess-factory', toolCall: { title: 'Edit src/app.ts', kind: 'edit', rawInput: { path: join(work2, 'src', 'app.ts') } }, options: permOpts }))
+  check('S3 4 without runThrough the same ask still waits for the card', off.sent.length === 0 && off.events.some((e) => e.kind === 'permission'))
+  const always = fakePool('factory', brainA, ctx)
+  const alwaysOpts = [
+    { optionId: 'allow_always', name: 'Always allow', kind: 'allow_always' },
+    { optionId: 'reject_once', name: 'Reject', kind: 'reject_once' }
+  ]
+  acp.handleReq(always.pool as never, req(44, 'session/request_permission', { sessionId: 'sess-factory', toolCall: { title: 'Edit src/app.ts', kind: 'edit', rawInput: { path: join(work2, 'src', 'app.ts') } }, options: alwaysOpts }))
+  check('S3 4 runThrough never auto-selects allow_always; with no allow_once the card asks', always.sent.length === 0 && always.events.some((e) => e.kind === 'permission'), JSON.stringify(always.sent))
+  check('S3 model stays gated: factory argv has no --always-approve, session/new no yoloMode', !gargs.grokFactoryAcpArgs(brainA, true).includes('--always-approve') && !JSON.stringify(acp.sessionNewParams('grok', brainA, 'factory')).includes('yoloMode'))
+}
+
+let pushCalls = 0
+fakeDeps.publish = async () => {
+  pushCalls++
+  return { ok: false, out: 'push stub' }
+}
+let deployCalls = 0
+fakeDeps.deploy = async () => {
+  deployCalls++
+  return { ok: true, out: '' }
+}
+ctl.configureFactory(fakeDeps)
+
+// S3 2 + 9. runThrough T2: plan written, build starts without approve-plan, clean review auto-commits, never pushes.
+{
+  promptPlan = async (o) => {
+    if (/Phase: plan\./.test(o.text)) return 'Plan: add src/team.ts and src/routes.ts, test with npm test.'
+    if (/Phase: build\./.test(o.text)) {
+      writeFileSync(join(work2, 'src', 'team.ts'), 'export const team = 1\n')
+      writeFileSync(join(work2, 'src', 'routes.ts'), 'export const routes = ["team"]\n')
+    }
+  }
+  claudeSays(['ok\nPASS'])
+  const refs = git(bare, ['for-each-ref']).trim()
+  const head0 = git(work2, ['rev-parse', 'HEAD']).trim()
+  const res = ctl.startRun({ task: T2TASK, workRepo: work2, brainPath: brainA, runThrough: true })
+  const id = res.ok ? res.run.id : ''
+  check('S3 2 runThrough T2 start is stored on the run', res.ok && res.run.runThrough === true && res.run.tier === 'T2', JSON.stringify(res.ok ? { rt: res.run.runThrough, tier: res.run.tier } : res))
+  const r = await ctl.settle(id)
+  const seen = events.filter((e) => e.runId === id && e.kind === 'run').map((e) => e.run?.phase)
+  check('S3 2 lands in plan, then reaches build with no approve-plan click', seen.includes('plan') && seen.indexOf('build') > seen.indexOf('plan') && r?.plan?.status === 'approved' && !!r.plan.approvedAt, JSON.stringify(seen))
+  check('S3 2 plan sidecar exists under userData', existsSync(store.runTextPath(id, 'plan')) && readFileSync(store.runTextPath(id, 'plan'), 'utf8').startsWith('Plan: add src/team.ts'))
+  check('S3 9 clean review auto-commits the work files', r?.phase === 'done' && !!r.commitSha && git(work2, ['rev-parse', 'HEAD']).trim() === r.commitSha && r.commitSha !== head0 && git(work2, ['show', '--name-only', '--format=', 'HEAD']).includes('src/team.ts'), JSON.stringify({ phase: r?.phase, error: r?.error, strict: r?.strict }))
+  check('S3 9 auto-commit never pushes', pushCalls === 0 && git(bare, ['for-each-ref']).trim() === refs && !r?.pushed)
+  check('S3 10 deploy is refused before Push and never called', ctl.deployBlockFor(id) === 'Deploy comes after Push.' && deployCalls === 0)
+  check('S3 git status clean after auto-commit', git(work2, ['status', '--porcelain']).trim() === '')
+}
+
+// S3 3. runThrough false T2: still waits in plan until Approve.
+{
+  promptPlan = async (o) => (/Phase: plan\./.test(o.text) ? 'Plan: small.' : undefined)
+  const p0 = promptCount()
+  const res = ctl.startRun({ task: T2TASK, workRepo: work2, brainPath: brainA, runThrough: false })
+  const id = res.ok ? res.run.id : ''
+  const r = await ctl.settle(id)
+  check('S3 3 runThrough false T2 waits in plan, no build turn', r?.phase === 'plan' && r.plan?.status === 'waiting' && promptsFrom(p0).every((t) => /Phase: plan\./.test(t)) && !r.runThrough, JSON.stringify({ phase: r?.phase, plan: r?.plan?.status }))
+  ctl.abandonRun(id)
+  reset2()
+}
+
+// S3 5 + 8 + 11. T3, two disjoint slices: two worker tabs in parallel, verify with e2e:full and an artifact, Opus high.
+const T3TASK = 'Rewrite the whole app in Svelte'
+const order: string[] = []
+const t3Plan = (slices: { title: string; files: string[] }[]) => async (o: { text: string; tabId?: string }) => {
+  if (/Phase: plan\./.test(o.text)) return `Plan: split it.\n${JSON.stringify({ slices })}`
+  if (/Phase: build\./.test(o.text)) {
+    const m = /Your slice (\d+) of \d+: [^.]+\. Edit only these files; other builders own the rest: (.+)/.exec(o.text)
+    order.push(`start:${o.tabId}`)
+    await new Promise((r) => setTimeout(r, 30))
+    for (const rel of (m?.[2] || '').split(', ').map((x) => x.trim()).filter(Boolean)) {
+      writeFileSync(join(work2, rel), `export const v = ${JSON.stringify(o.tabId)} // ${rel}\n`)
+    }
+    order.push(`end:${o.tabId}`)
+  }
+}
+{
+  promptPlan = t3Plan([
+    { title: 'api', files: ['src/api.ts'] },
+    { title: 'ui', files: ['src/ui.ts'] }
+  ])
+  order.length = 0
+  claudeSays(['ok\nPASS'])
+  scriptRuns.length = 0
+  const e0 = effortCount()
+  const c0 = claudeRows().length
+  const p0 = promptCount()
+  const res = ctl.startRun({ task: T3TASK, workRepo: work2, brainPath: brainA, runThrough: true })
+  check('S3 5 T3 start keeps T3 (asTier)', res.ok && res.run.tier === 'T3', JSON.stringify(res.ok ? res.run.tier : res))
+  const id = res.ok ? res.run.id : ''
+  const r = await ctl.settle(id)
+  const builds = calls.filter((c) => c.fn === 'prompt').slice(p0).filter((c) => /Phase: build\./.test(String(c.o?.text)))
+  const tabs = builds.map((c) => String(c.o?.tabId))
+  const plans = promptsFrom(p0).filter((t) => /Phase: plan\./.test(t))
+  check('S3 5 T3 plan brief asks for slices JSON at Grok xhigh', plans.length === 1 && plans[0].includes('{"slices":') && /Tier: T3/.test(plans[0]) && effortsFrom(e0)[0] === 'xhigh', JSON.stringify(effortsFrom(e0)))
+  check('S3 5 slices parsed onto the run', r?.slices?.length === 2 && r.slices[0].files[0] === 'src/api.ts', JSON.stringify(r?.slices))
+  check('S3 5 two worker tabIds factory-<id>-w1 and -w2', tabs.length === 2 && tabs.includes(`factory-${id}-w1`) && tabs.includes(`factory-${id}-w2`), JSON.stringify(tabs))
+  check('S3 5 disjoint slices run in parallel (both start before either ends)', order.indexOf(`end:factory-${id}-w1`) > order.indexOf(`start:factory-${id}-w2`) && order.indexOf(`end:factory-${id}-w2`) > order.indexOf(`start:factory-${id}-w1`), JSON.stringify(order))
+  check('S3 5 both slices wrote their file', r?.audit?.work.some((w) => w.path === 'src/api.ts') === true && r?.audit?.work.some((w) => w.path === 'src/ui.ts') === true, JSON.stringify(r?.audit))
+  check('S3 5 worker tabs are closed after the build', [`factory-${id}-w1`, `factory-${id}-w2`].every((t) => calls.some((c) => c.fn === 'close' && c.o?.tabId === t)))
+  check('S3 6 verify T3 runs typecheck, test, the profile e2e, and an e2e:full row', scriptRuns.join(',') === 'typecheck,test,test:e2e' && r?.verify?.map((v) => v.script).join(',') === 'typecheck,test,test:e2e,e2e:full' && r.verify.at(-1)?.status === 'skipped', JSON.stringify({ scripts: scriptRuns, verify: r?.verify }))
+  const art = store.runTextPath(id, 'verify')
+  check('S3 8 verify artifact <id>.verify.txt under userData', r?.verifyArtifact === art && art.endsWith(`${id}.verify.txt`) && underPath(realish(userData), realish(art)) && readFileSync(art, 'utf8').includes('npm run typecheck: pass'), String(r?.verifyArtifact))
+  const review = claudeRows().slice(c0)[0]
+  check('S3 11 T3 Opus review argv has --effort high, plan mode', !!review && review.argv[review.argv.indexOf('--effort') + 1] === 'high' && review.argv[review.argv.indexOf('--permission-mode') + 1] === 'plan', JSON.stringify(review?.argv.filter((a) => a.length < 40)))
+  check('S3 5 T3 runThrough reaches done with a commit, not pushed', r?.phase === 'done' && !!r.commitSha && !r.pushed && pushCalls === 0, JSON.stringify({ phase: r?.phase, error: r?.error, strict: r?.strict }))
+  check('S3 8 work repo git status is clean of the artifact', git(work2, ['status', '--porcelain', '--ignored']).trim() === '' && !existsSync(join(work2, `${id}.verify.txt`)))
+}
+
+// S3 6. Overlapping slices go sequential.
+{
+  promptPlan = t3Plan([
+    { title: 'one', files: ['src/shared.ts'] },
+    { title: 'two', files: ['src/shared.ts', 'src/extra.ts'] }
+  ])
+  order.length = 0
+  claudeSays(['ok\nPASS'])
+  const res = ctl.startRun({ task: T3TASK, workRepo: work2, brainPath: brainA, runThrough: true })
+  const id = res.ok ? res.run.id : ''
+  const r = await ctl.settle(id)
+  const w1 = `factory-${id}-w1`
+  const w2 = `factory-${id}-w2`
+  check('S3 6 overlapping slices: the second prompt starts after the first settles', order.join(',') === [`start:${w1}`, `end:${w1}`, `start:${w2}`, `end:${w2}`].join(','), JSON.stringify(order))
+  check('S3 6 overlapping run still finishes', r?.phase === 'done', JSON.stringify({ phase: r?.phase, error: r?.error }))
+}
+
+// S3 5b. T3 disjoint slices, builder 2's prompt fails: builder 1 is cancelled and closed, the run fails.
+{
+  const ok = t3Plan([
+    { title: 'api', files: ['src/api.ts'] },
+    { title: 'ui', files: ['src/ui.ts'] }
+  ])
+  // w2 fails at once; w1 is still mid-prompt and must see its cancel before it finishes.
+  let cancelledMidPrompt = false
+  promptPlan = async (o) => {
+    if (!/Phase: build\./.test(o.text)) return ok(o)
+    if (String(o.tabId).endsWith('-w2')) throw new Error('builder 2 broke')
+    await new Promise((r) => setTimeout(r, 30))
+    cancelledMidPrompt = calls.some((c) => c.fn === 'cancel' && c.o?.tabId === o.tabId)
+    return ok(o)
+  }
+  order.length = 0
+  const c0 = calls.length
+  const res = ctl.startRun({ task: T3TASK, workRepo: work2, brainPath: brainA, runThrough: true })
+  const id = res.ok ? res.run.id : ''
+  const r = await ctl.settle(id)
+  const w1 = `factory-${id}-w1`
+  const after = calls.slice(c0)
+  const cancelAt = after.findIndex((c) => c.fn === 'cancel' && c.o?.tabId === w1)
+  check('S3 5b one builder fails: the run is failed with its error', r?.phase === 'failed' && /builder 2 broke/.test(r.error || ''), JSON.stringify({ phase: r?.phase, error: r?.error }))
+  check('S3 5b the other builder is cancelled and its tab closed', cancelAt >= 0 && after.some((c, i) => i > cancelAt && c.fn === 'close' && c.o?.tabId === w1), JSON.stringify(after.filter((c) => c.fn === 'cancel' || c.fn === 'close')))
+  check('S3 5b the cancel reaches builder 1 while its prompt is still running', cancelledMidPrompt)
+  check('S3 5b no review or commit after the failed wave', !r?.commitSha && !r?.verify?.length, JSON.stringify({ sha: r?.commitSha, verify: r?.verify }))
+  ctl.abandonRun(id)
+  reset2()
+}
+
+// S3 7. Tripwire: T2 over T2 suggests T3; over T3 null; lockfile null; runThrough auto-upgrades T1 -> T2; a lockfile still stops.
+{
+  const rows = (n: number, lines = 1) => Array.from({ length: n }, (_, i) => ({ path: `src/f${i}.ts`, added: lines, deleted: 0 }))
+  check('S3 7 T2 with 11 files suggests T3', tripwire.checkTripwire('T2', rows(11)).suggest === 'T3')
+  check('S3 7 T2 over T3 limits suggests null', tripwire.checkTripwire('T2', rows(41)).suggest === null && tripwire.checkTripwire('T2', rows(11, 300)).suggest === null)
+  check('S3 7 lockfile suggests null', tripwire.checkTripwire('T2', [...rows(11), { path: 'package-lock.json', added: 1, deleted: 0 }]).suggest === null)
+  promptPlan = async () => {
+    for (const n of ['a', 'b', 'c', 'd', 'e']) writeFileSync(join(work2, 'src', `${n}.ts`), Array.from({ length: 40 }, (_, i) => `export const ${n}${i} = ${i}`).join('\n') + '\n')
+  }
+  claudeSays(['ok\nPASS'])
+  const res = ctl.startRun({ task: 'Fix the date shown one day off in the order list', workRepo: work2, brainPath: brainA, runThrough: true })
+  const id = res.ok ? res.run.id : ''
+  const r = await ctl.settle(id)
+  check('S3 7 runThrough auto-upgrades a T1 -> T2 suggest and goes on to done', res.ok && res.run.tier === 'T1' && r?.tier === 'T2' && r.tripwire?.auto === true && r.tripwire.suggest === 'T2' && r.phase === 'done', JSON.stringify({ tier: r?.tier, trip: r?.tripwire, phase: r?.phase, error: r?.error }))
+  promptPlan = async () => {
+    writeFileSync(join(work2, 'src', 'app.ts'), 'export const app = 42\n')
+    writeFileSync(join(work2, 'package-lock.json'), '{}\n')
+  }
+  const res2 = ctl.startRun({ task: 'Fix the date shown one day off in the order list', workRepo: work2, brainPath: brainA, runThrough: true })
+  const id2 = res2.ok ? res2.run.id : ''
+  const r2 = await ctl.settle(id2)
+  check('S3 7 runThrough with a lockfile change still stops on the card', r2?.phase === 'upgrade' && r2.tripwire?.suggest === null && !r2.tripwire.auto && !r2.commitSha, JSON.stringify({ phase: r2?.phase, trip: r2?.tripwire }))
+  ctl.abandonRun(id2)
+  reset2()
+}
+
+// S3 9. runThrough with voice REJECT does not auto-commit.
+{
+  profiles.saveProfile(work2, { voice: { on: true } })
+  voiceCode = 2
+  promptPlan = async () => {
+    writeFileSync(join(work2, 'README.md'), 'Hello there\nBest sites ever, buy now!\n')
+  }
+  const head0 = git(work2, ['rev-parse', 'HEAD']).trim()
+  const res = ctl.startRun({ task: 'fix typo in README.md', workRepo: work2, brainPath: brainA, runThrough: true })
+  const id = res.ok ? res.run.id : ''
+  const r = await ctl.settle(id)
+  check('S3 9 runThrough voice REJECT waits in review, no commit', r?.phase === 'review' && r.voice?.status === 'fail' && !r.commitSha && git(work2, ['rev-parse', 'HEAD']).trim() === head0, JSON.stringify({ phase: r?.phase, voice: r?.voice }))
+  ctl.abandonRun(id)
+  reset2()
+  voiceCode = 0
+  profiles.saveProfile(work2, { voice: { on: false } })
+}
+
+// S3 10. Deploy cmd lives in the userData profile only; runs never copy it; no cmd refuses.
+{
+  const secretish = 'echo fixture-deploy-cmd-not-a-secret'
+  profiles.saveProfile(work2, { deploy: { cmd: secretish } })
+  check('S3 10 profile keeps the deploy cmd in userData', profiles.readProfile(work2).deploy?.cmd === secretish && git(work2, ['status', '--porcelain']).trim() === '')
+  promptPlan = async () => {
+    writeFileSync(join(work2, 'src', 'app.ts'), 'export const app = 77\n')
+  }
+  const res = ctl.startRun({ task: 'fix typo in the app label', workRepo: work2, brainPath: brainA, runThrough: true })
+  const id = res.ok ? res.run.id : ''
+  const r = await ctl.settle(id)
+  check('S3 10 the run record never carries the deploy cmd', !!r && !JSON.stringify(r).includes(secretish) && !readFileSync(join(store.factoryDir(), 'runs', `${id}.json`), 'utf8').includes(secretish))
+  check('S3 10 deployRun before Push refuses', await ctl.deployRun(id).then(() => false, (e) => /after Push/.test(String(e))))
+  profiles.saveProfile(work2, { deploy: { cmd: '' } })
+  check('S3 10 cleared deploy cmd is gone', !profiles.readProfile(work2).deploy)
+  check('S3 10 deploy stub never ran', deployCalls === 0)
+}
+
+// S3 10b. The Deploy click gets the verify env: project bins on PATH, the Factory shim dir stripped.
+{
+  git(work2, ['checkout', '-q', '-b', 'factory/deploy'])
+  const projBin = join(work2, 'node_modules', '.bin')
+  const shimDir = gates.ensureShims(store.factoryShimDir())
+  const env0 = fakeDeps.env
+  const publish0 = fakeDeps.publish
+  const deploy0 = fakeDeps.deploy
+  const spawned: { bin: string; path: string }[] = []
+  fakeDeps.env = () => gates.factoryEnv({ ...process.env, PATH: `${projBin}:${process.env.PATH}` }, shimDir)
+  fakeDeps.publish = async () => ({ ok: true, out: '' })
+  fakeDeps.deploy = (r, c, o) =>
+    gates.deploy(r, c, {
+      ...o,
+      spawnFn: ((bin: string, _args: string[], opts: { env: NodeJS.ProcessEnv }) => {
+        spawned.push({ bin, path: String(opts.env.PATH) })
+        const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: () => boolean }
+        child.stdout = new EventEmitter()
+        child.stderr = new EventEmitter()
+        child.kill = () => true
+        setTimeout(() => child.emit('close', 0), 5)
+        return child
+      }) as never
+    })
+  ctl.configureFactory(fakeDeps)
+  profiles.saveProfile(work2, { deploy: { cmd: 'echo fixture-deploy' } })
+  promptPlan = async () => {
+    writeFileSync(join(work2, 'src', 'app.ts'), 'export const app = 88\n')
+  }
+  claudeSays(['ok\nPASS'])
+  const res = ctl.startRun({ task: 'fix typo in the app label', workRepo: work2, brainPath: brainA, runThrough: true })
+  const id = res.ok ? res.run.id : ''
+  const r = await ctl.settle(id)
+  const pushed = r?.phase === 'done' ? await ctl.publishRun(id) : r
+  const dep = pushed?.pushed ? await ctl.deployRun(id) : pushed
+  const path = (spawned[0]?.path || '').split(':')
+  check('S3 10b deploy ran once after Push', !!dep?.deployed && spawned.length === 1 && spawned[0].bin === '/bin/sh', JSON.stringify({ phase: r?.phase, pushed: pushed?.pushed, err: dep?.deployError, spawned: spawned.length }))
+  check('S3 10b deploy PATH has the project bins and no Factory shim dir', path.includes(projBin) && !path.includes(shimDir) && !path.some((d) => /[\\/]factory[\\/]bin$/.test(d)), spawned[0]?.path)
+  profiles.saveProfile(work2, { deploy: { cmd: '' } })
+  fakeDeps.env = env0
+  fakeDeps.publish = publish0
+  fakeDeps.deploy = deploy0
+  ctl.configureFactory(fakeDeps)
+  git(work2, ['checkout', '-q', 'main'])
+  reset2()
+}
+
+// S3 13. Work repo resolves from the task or the last Factory repo; never the brain; else the name-the-repo error.
+{
+  fakeDeps.projectsDir = temp
+  ctl.configureFactory(fakeDeps)
+  promptPlan = async () => {}
+  const lastOk = ctl.startRun({ task: 'fix the label', brainPath: brainA, runThrough: false })
+  check('S3 13 start with only { task, brainPath, runThrough } uses lastRepo', lastOk.ok && realish(lastOk.run.workRepo) === realish(work2), JSON.stringify(lastOk.ok ? lastOk.run.workRepo : lastOk))
+  if (lastOk.ok) ctl.abandonRun(lastOk.run.id)
+  const byPath = ctl.startRun({ task: `fix the typo in ${join(work, 'src', 'footer.ts')}`, brainPath: brainA, runThrough: false })
+  check('S3 13 a path in the task resolves to its git top', byPath.ok && realish(byPath.run.workRepo) === realish(work), JSON.stringify(byPath.ok ? byPath.run.workRepo : byPath))
+  if (byPath.ok) ctl.abandonRun(byPath.run.id)
+  check('S3 13 Start remembers the resolved repo', realish(resolver.lastRepo()) === realish(work))
+  const byName = ctl.startRun({ task: 'fix typo in work2 readme', brainPath: brainA, runThrough: false })
+  check('S3 13 a Projects folder name in the task resolves', byName.ok && realish(byName.run.workRepo) === realish(work2), JSON.stringify(byName.ok ? byName.run.workRepo : byName))
+  if (byName.ok) ctl.abandonRun(byName.run.id)
+  const brainOnly = ctl.startRun({ task: `edit ${join(brainA, 'AGENTS.md')}`, brainPath: brainA, runThrough: false })
+  check('S3 13 a task that names only the brain is refused (no lastRepo fallback)', !brainOnly.ok && brainOnly.error === resolver.BRAIN_IS_WORK && store.activeRunFor(brainA) === null, JSON.stringify(brainOnly))
+  if (brainOnly.ok) ctl.abandonRun(brainOnly.run.id)
+  const explicitBrain = ctl.startRun({ task: 'fix typo', workRepo: brainA, brainPath: brainA })
+  check('S3 13 the brain as the work repo is refused', !explicitBrain.ok && /brain itself/.test(explicitBrain.error))
+  execFileSync('/bin/rm', ['-f', join(store.factoryDir(), 'prefs.json')])
+  const none = ctl.startRun({ task: 'fix typo in footer', brainPath: brainA, runThrough: true })
+  check('S3 13 nothing named and no lastRepo gives the name-the-repo error', !none.ok && none.error === resolver.NAME_THE_REPO, JSON.stringify(none))
+  fakeDeps.projectsDir = undefined
+  fakeDeps.publish = undefined
+  fakeDeps.deploy = undefined
+  ctl.configureFactory(fakeDeps)
+  reset2()
 }
 
 // 3, 4, 8 end to end through the real factory lane, against a fake grok binary (no live Grok).
