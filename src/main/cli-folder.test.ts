@@ -3,7 +3,7 @@ import test from 'node:test'
 import { pickSeatForFolder, pickSeatForHqRepo, seatMatchesFolder } from './hq-folder.ts'
 import { claudeModelsFromCache } from './claude-models.ts'
 import { parseGrokModels } from './grok-models.ts'
-import { formatClaudeUsage } from './claude-usage.ts'
+import { formatClaudeStats, formatClaudeUsage } from './claude-usage.ts'
 import {
   CLAUDE_DEFAULT_EFFORT,
   CLAUDE_DEFAULT_MODEL,
@@ -108,6 +108,27 @@ test('Claude /usage is the Claude account, never Grok', () => {
   assert.match(body, /claude\.ai\/settings\/usage/)
   assert.match(body, /\/tmp\/brain/)
   assert.equal(formatClaudeUsage({ loggedIn: false }, '/tmp/brain'), 'Claude is not signed in on this Mac.')
+})
+
+test('Claude /usage stats-cache block is this Mac, never Grok', () => {
+  const body = formatClaudeStats({
+    lastComputedDate: '2026-07-16',
+    totalSessions: 585,
+    totalMessages: 120666,
+    modelUsage: {
+      'claude-opus-4-8': { inputTokens: 1200, outputTokens: 3400, cacheReadInputTokens: 5000, costUSD: 0 },
+      'claude-fable-5': { inputTokens: 10, outputTokens: 20, costUSD: 1.5 }
+    }
+  })
+  assert.match(body, /This Mac’s Claude Code cache/)
+  assert.match(body, /Updated: 2026-07-16/)
+  assert.match(body, /Sessions: 585/)
+  assert.match(body, /Messages: 120,666/)
+  assert.match(body, /claude-opus-4-8: in 1,200, out 3,400, cache read 5,000$/m)
+  assert.match(body, /claude-fable-5: in 10, out 20, \$1\.50/)
+  assert.equal(/grok/i.test(body), false)
+  assert.equal(formatClaudeStats(null), '')
+  assert.equal(formatClaudeStats({}), '')
 })
 
 test('HQ title follows the open folder, not the first other company seat', () => {

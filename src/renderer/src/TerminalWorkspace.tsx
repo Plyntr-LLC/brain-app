@@ -7,6 +7,8 @@ import { CLAUDE_DEFAULT_MODEL, keepClaudeModel } from '../../shared/claude-defau
 import { defaultEffort, hydrateEffort, normalizeEffort, prettyEffort } from '../../shared/effort'
 import { mdToHtml, tidy, outsideProject, type FileHit } from './ptyChat'
 import { sameCwd } from '../../shared/paths'
+import { APP_SLASH, TUI_ONLY_SLASH } from '../../shared/slash-lanes'
+import { routeLine } from '../../shared/slash-route'
 import { WorldClocks } from './WorldClocks'
 import { WorkPulse } from './WorkPulse'
 import { SkinPane } from './skin/SkinPane'
@@ -53,7 +55,7 @@ type Msg = {
   skinLabel?: string | null
   fingerprint?: string
 }
-type Queued = { id: string; text: string; files?: Attach[] }
+type Queued = { id: string; text: string; files?: Attach[]; wire?: string }
 
 function wantsStop(text: string): boolean {
   return /^\s*(please\s+)?(just\s+)?(stop|cancel|abort|never mind|nevermind|halt)\b/i.test(text)
@@ -103,31 +105,6 @@ function slashLine(raw: string): string {
   const arg = rest.join(' ')
   return arg ? `/${name} ${arg}` : `/${name}`
 }
-
-const APP_ONLY = new Set([
-  'new',
-  'clear',
-  'delete',
-  'help',
-  'usage',
-  'cost',
-  'model',
-  'm',
-  'effort',
-  'copy',
-  'export',
-  'quit',
-  'exit',
-  'rename',
-  'title',
-  'history',
-  'resume',
-  'fork',
-  'login',
-  'logout',
-  'doctor',
-  'terminal'
-])
 
 const NEED_ARG = new Set([
   'imagine',
@@ -483,6 +460,7 @@ function ChatPane({
     requestId?: string
   } | null>(null)
   const sendTextRef = useRef<(t: string, opts?: { cancel?: boolean; fromQueue?: boolean; files?: Attach[] }) => Promise<void>>(async () => {})
+  const sendSkillRef = useRef<(display: string, prompt: string, fromQueue?: boolean, files?: Attach[]) => Promise<void>>(async () => {})
   const pinBottom = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
   const skipDrain = useRef(0)
@@ -681,7 +659,8 @@ function ChatPane({
         const nxt = queueRef.current[0]
         if (ev.kind === 'done' && nxt) {
           writeQueue(queueRef.current.slice(1))
-          void sendTextRef.current(nxt.text, { fromQueue: true, files: nxt.files })
+          if (nxt.wire) void sendSkillRef.current(nxt.text, nxt.wire, true, nxt.files || [])
+          else void sendTextRef.current(nxt.text, { fromQueue: true, files: nxt.files })
           return
         }
         markBusy(false)
@@ -933,36 +912,6 @@ function ChatPane({
     setPanel({ title, body })
   }
 
-  async function sendSkinTerm(line: string) {
-    const showing = peel
-    setPeel(true)
-    const ptyId = skinPtyId(id)
-    const r = (await window.brain.pty.create({
-      id: ptyId,
-      cwd,
-      kind,
-      cols: 80,
-      rows: 24
-    })) as { reused?: boolean }
-    const go = () => window.brain.pty.write(ptyId, line + '\r')
-    if (showing && r?.reused) {
-      await go()
-      return
-    }
-    let done = false
-    const finish = () => {
-      if (done) return
-      done = true
-      off()
-      window.clearTimeout(timer)
-      void go()
-    }
-    const off = window.brain.pty.onData((ev) => {
-      if (ev.id === ptyId) finish()
-    })
-    const timer = window.setTimeout(finish, 2000)
-  }
-
   function runSlash(raw: string): boolean {
     const t = raw.trim()
     if (!t.startsWith('/')) return false
@@ -990,6 +939,16 @@ function ChatPane({
     }
     if (name === 'help') {
       popup('Commands', menuCmds.map((c) => `/${c.name}  ${c.description}`).join('\n'))
+      return true
+    }
+    if (name === 'skills') {
+      const rows = menuCmds.filter((c) => c.kind === 'skill')
+      popup(
+        'Skills',
+        rows.length
+          ? rows.map((c) => `/${c.name}  ${c.description}`).join('\n')
+          : 'No skills found. Brain looks in .claude, .agents, .grok and .cursor skills and commands (this folder and your home folder), .claude/commands/<ns>/<name>.md as /ns:name, .codex/skills in this folder, ~/.claude/skills/synced, ~/.claude/plugins, and Codex home skills and prompts ($CODEX_HOME, default ~/.codex).'
+      )
       return true
     }
     if (name === 'usage' || name === 'cost') {
@@ -1177,8 +1136,12 @@ function ChatPane({
       void window.brain.slash.sessions(cwd).then((rows) => setResumeRows(rows))
       return true
     }
+    if (TUI_ONLY_SLASH.has(name)) {
+      note(`/${name} is terminal chrome in the CLI's own screen, not a chat skill. Use Show terminal for it.`)
+      return true
+    }
     const sessionHit = sessionCmds.find((c) => c.name === name)
-    if (sessionHit && !APP_ONLY.has(name)) {
+    if (sessionHit && !APP_SLASH.has(name)) {
       if (SESSION_QUIET.has(name)) {
         void sendQuiet(arg ? `/${name} ${arg}` : `/${name}`)
         return true
@@ -1192,45 +1155,70 @@ function ChatPane({
     return false
   }
 
-  function takeSlash(raw: string): boolean {
-    if (runSlash(raw)) return true
-    return false
+  async function takeSlash(raw: string): Promise<boolean> {
+    const t = raw.trim()
+    if (!t.startsWith('/')) return false
+    setPeel(false)
+    if (runSlash(t)) return true
+    let hit: { display: string; prompt: string } | null = null
+    try {
+      hit = await window.brain.slash.expand(cwd, t)
+    } catch {
+      hit = null
+    }
+    if (!hit) return false
+    await pendingDrops.current
+    const files = dropsRef.current
+    dropsRef.current = []
+    setDrops([])
+    setDropNote('')
+    await sendSkill(hit.display, hit.prompt, false, files)
+    return true
   }
 
-  function applyPick(pick: Pick) {
+  async function sendSkill(display: string, prompt: string, fromQueue = false, files: Attach[] = []) {
+    if (busyRef.current && !fromQueue) {
+      writeQueue([
+        ...queueRef.current,
+        { id: crypto.randomUUID(), text: display, wire: prompt, files: files.length ? files : undefined }
+      ])
+      return
+    }
+    setPeel(false)
+    pinBottom.current = true
+    setAtBottom(true)
+    const shown = files.length ? `${display}\n${files.map((a) => a.name).join(', ')}` : display
+    setMessages((m) => [...m, { who: 'me', text: shown, files, at: Date.now() }])
+    await sendQuiet(prompt, true, files)
+  }
+  sendSkillRef.current = sendSkill
+
+  async function applyPick(pick: Pick) {
     if (pick.kind === 'arg') {
       setSay('')
       const raw = pick.insert.trim()
-      if (!takeSlash(raw)) void sendText(slashLine(raw))
+      if (!(await takeSlash(raw))) await sendText(slashLine(raw))
       return
     }
-    if (pick.kind === 'skill') {
-      setSay('')
-      const line = '/' + pick.name
-      if (!takeSlash(line)) void sendText(line)
-      return
-    }
-    if (pick.insert.endsWith(' ')) {
+    if (pick.insert.endsWith(' ') && pick.kind !== 'skill') {
       setSay(pick.insert)
       setHi(0)
       return
     }
-    if (pick.kind === 'builtin') {
-      setSay('')
-      const line = '/' + pick.name
-      if (!takeSlash(line)) void sendText(line)
-      return
-    }
     setSay('')
     const line = '/' + pick.name
-    if (!takeSlash(line)) void sendText(line)
+    if (!(await takeSlash(line))) await sendText(line)
   }
 
   async function stop() {
-    if (skinOn && peel) {
-      await window.brain.pty.write(skinPtyId(id), '\x03')
+    if (busyRef.current) {
+      await stopWarm()
       return
     }
+    if (skinOn && peel) await window.brain.pty.write(skinPtyId(id), '\x03')
+  }
+
+  async function stopWarm() {
     skipDrain.current += 1
     await window.brain.chat.stop(id)
     markBusy(false)
@@ -1245,12 +1233,12 @@ function ChatPane({
     }
     const onlyCmd = slashOn && !/\s/.test(t.trim())
     if (onlyCmd && matches.length && matches[hi]) {
-      applyPick(matches[hi])
+      await applyPick(matches[hi])
       return
     }
     setSay('')
     const line = t.startsWith('/') ? slashLine(t) : t
-    if (takeSlash(t)) return
+    if (await takeSlash(t)) return
     if (busy && wantsStop(line)) {
       await stop()
       if (justStop(line)) return
@@ -1278,6 +1266,11 @@ function ChatPane({
       if (busyRef.current) await stop()
       return
     }
+    if (item.wire) {
+      if (busyRef.current) await stopWarm()
+      await sendSkill(item.text, item.wire, true, item.files || [])
+      return
+    }
     await sendTextRef.current(item.text, { fromQueue: true, files: item.files || [], cancel: busyRef.current })
   }
 
@@ -1292,8 +1285,8 @@ function ChatPane({
     }
   }
 
-  async function sendQuiet(t: string) {
-    if (busyRef.current) {
+  async function sendQuiet(t: string, force = false, files: Attach[] = []) {
+    if (busyRef.current && !force) {
       writeQueue([...queueRef.current, { id: crypto.randomUUID(), text: t }])
       return
     }
@@ -1312,6 +1305,7 @@ function ChatPane({
         agentMode,
         alwaysApprove,
         history: [],
+        ...(files.length ? { attachments: files.map(({ path, name, mime }) => ({ path, name, mime })) } : {}),
         system:
           'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
       })
@@ -1400,7 +1394,8 @@ function ChatPane({
 
   async function sendText(t: string, opts?: { cancel?: boolean; fromQueue?: boolean; files?: Attach[] }) {
     await pendingDrops.current
-    if (skinOn && peel) {
+    const route = routeLine(t, { peel: skinOn && peel })
+    if (route === 'pty') {
       const attached = opts?.fromQueue ? opts.files || [] : opts?.files || dropsRef.current
       if (!opts?.fromQueue) {
         dropsRef.current = []
@@ -1412,7 +1407,8 @@ function ChatPane({
       if (shown) await window.brain.pty.write(skinPtyId(id), shown + '\r')
       return
     }
-    if (opts?.cancel && busyRef.current) await stop()
+    if (t.trim().startsWith('/')) setPeel(false)
+    if (opts?.cancel && busyRef.current) await stopWarm()
     if (busyRef.current && !opts?.fromQueue && !opts?.cancel) {
       writeQueue([...queueRef.current, { id: crypto.randomUUID(), text: t, files: opts?.files }])
       return
@@ -1598,7 +1594,10 @@ function ChatPane({
           }
           if (actionId === 'runSlash') {
             const name = String(spec.props.name || '')
-            if (name) void sendTextRef.current('/' + name)
+            if (name) {
+              const line = '/' + name
+              void takeSlash(line).then((took) => (took ? undefined : sendTextRef.current(line)))
+            }
           }
         }}
       />
@@ -1708,7 +1707,7 @@ function ChatPane({
                 className={i === hi ? 'on' : ''}
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setHi(i)}
-                onClick={() => applyPick(c)}
+                onClick={() => void applyPick(c)}
               >
                 <strong>{c.insert.startsWith('/') ? c.insert : '/' + c.name}</strong>
                 <span>{c.description}</span>

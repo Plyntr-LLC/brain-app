@@ -89,6 +89,7 @@ import { emitChat, markChatBusy } from './chat-fan'
 import { cancelWarm, closeWarm, forkSession, promptWarm, resetWarm, resumeSession, warmSession } from './warm'
 import { justUpdated } from './update'
 import { contextBlurb, grokCli, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
+import { expandSlash } from './slash-skills'
 import { clearAccount, getAccount, getMemberToken, loadAccount, saveAccount } from './session-token'
 import { authCodeRoute, normalizePlyntrInviteCode } from '../shared/plyntr-invite'
 import { listedRoleForSeat, plyntrSessionRole } from '../shared/plyntr-transfer'
@@ -2157,6 +2158,10 @@ export function registerStubIpc(): void {
   ipcMain.handle('slash:list', async (_e, cwd?: string, kind?: string) => {
     const watching = readWatching()
     return listSlash(cwd || watching.brainPath || process.cwd(), kind || 'grok')
+  })
+  ipcMain.handle('slash:expand', (_e, cwd?: string, raw?: string) => {
+    const watching = readWatching()
+    return expandSlash(cwd || watching.brainPath || process.cwd(), String(raw || ''))
   })
   ipcMain.handle('slash:context', async (_e, cwd?: string) => {
     const watching = readWatching()

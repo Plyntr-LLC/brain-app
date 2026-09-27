@@ -731,6 +731,8 @@ const brain = {
         commands: { name: string; kind: 'builtin' | 'skill'; description: string }[]
         models: { id: string; label: string }[]
       }>,
+    expand: (cwd: string | undefined, raw: string) =>
+      ipcRenderer.invoke('slash:expand', cwd, raw) as Promise<{ display: string; prompt: string } | null>,
     context: (cwd?: string) => ipcRenderer.invoke('slash:context', cwd) as Promise<string>,
     usage: (cwd?: string, kind?: string, sessionId?: string) =>
       ipcRenderer.invoke('slash:usage', cwd, kind, sessionId) as Promise<string>,

@@ -4,10 +4,12 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { binEnv, resolveBin } from './ai-cli'
 import { claudeModelsFromCache } from './claude-models'
-import { formatClaudeUsage } from './claude-usage'
+import { formatClaudeStats, formatClaudeUsage, readClaudeStats } from './claude-usage'
 import { listCodexCaps } from './codex-app'
+import { formatCodexLimits, readCodexLimits } from './codex-usage'
 import { grokLeaderSocket } from './grok-args'
 import { parseGrokModels } from './grok-models'
+import { listDiskSkills } from './slash-skills'
 
 export type SlashCmd = { name: string; kind: 'builtin' | 'skill'; description: string }
 
@@ -95,7 +97,35 @@ export async function listSlash(
   cwd: string,
   kind = 'grok'
 ): Promise<{ commands: SlashCmd[]; models: { id: string; label: string }[] }> {
-  const builtins: SlashCmd[] = appBuiltins(kind)
+  const { extra, models } = await listCliExtras(cwd, kind)
+  return { commands: mergeSlash(appBuiltins(kind), diskSlash(cwd), extra), models }
+}
+
+function diskSlash(cwd: string): SlashCmd[] {
+  try {
+    return listDiskSkills(cwd).map((s) => ({ name: s.name, kind: 'skill' as const, description: s.description }))
+  } catch {
+    return []
+  }
+}
+
+function mergeSlash(...groups: SlashCmd[][]): SlashCmd[] {
+  const seen = new Set<string>()
+  const out: SlashCmd[] = []
+  for (const group of groups) {
+    for (const c of group) {
+      if (seen.has(c.name)) continue
+      seen.add(c.name)
+      out.push(c)
+    }
+  }
+  return out
+}
+
+async function listCliExtras(
+  cwd: string,
+  kind: string
+): Promise<{ extra: SlashCmd[]; models: { id: string; label: string }[] }> {
   if (kind === 'cursor') {
     let models: { id: string; label: string }[] = []
     const cursor = resolveBin('cursor')
@@ -108,7 +138,7 @@ export async function listSlash(
         /* */
       }
     }
-    return { commands: builtins, models }
+    return { extra: [], models }
   }
   if (kind === 'gpt') {
     let models: { id: string; label: string }[] = []
@@ -118,10 +148,10 @@ export async function listSlash(
     } catch {
       /* */
     }
-    return { commands: builtins, models }
+    return { extra: [], models }
   }
   if (kind === 'claude') {
-    return { commands: builtins, models: await listClaudeModels() }
+    return { extra: [], models: await listClaudeModels() }
   }
   const grok = resolveBin('grok')
   let skills: SlashCmd[] = []
@@ -147,9 +177,7 @@ export async function listSlash(
       /* */
     }
   }
-  const seen = new Set(builtins.map((b) => b.name))
-  const extra = skills.filter((s) => !seen.has(s.name))
-  return { commands: [...builtins, ...extra], models }
+  return { extra: skills, models }
 }
 
 function appBuiltins(kind: string): SlashCmd[] {
@@ -170,6 +198,7 @@ function appBuiltins(kind: string): SlashCmd[] {
     { name: 'effort', kind: 'builtin', description: 'Reasoning effort' },
     { name: 'history', kind: 'builtin', description: 'This chat’s prompts' },
     { name: 'help', kind: 'builtin', description: 'List commands' },
+    { name: 'skills', kind: 'builtin', description: 'Skills you can run here' },
     { name: 'usage', kind: 'builtin', description: 'Plan spend and this session' },
     { name: 'terminal', kind: 'builtin', description: 'Open a terminal tab' }
   ]
@@ -188,7 +217,6 @@ function appBuiltins(kind: string): SlashCmd[] {
       { name: 'hooks', kind: 'builtin', description: 'Loaded hooks' },
       { name: 'plugins', kind: 'builtin', description: 'Installed plugins' },
       { name: 'marketplace', kind: 'builtin', description: 'Plugin marketplace' },
-      { name: 'skills', kind: 'builtin', description: 'Installed skills' },
       { name: 'imagine', kind: 'builtin', description: 'Generate an image' },
       { name: 'imagine-video', kind: 'builtin', description: 'Generate a video' },
       { name: 'loop', kind: 'builtin', description: 'Recurring prompt' },
@@ -503,7 +531,7 @@ async function cursorPlanBlurb(): Promise<string> {
   }
 }
 
-async function claudeUsageBlurb(cwd: string): Promise<string> {
+async function claudeAccountBlurb(cwd: string): Promise<string> {
   const bin = resolveBin('claude')
   if (!bin) return 'Claude is not installed on this computer.'
   try {
@@ -517,13 +545,25 @@ async function claudeUsageBlurb(cwd: string): Promise<string> {
   }
 }
 
-function gptUsageBlurb(cwd: string): string {
+async function claudeUsageBlurb(cwd: string): Promise<string> {
+  const account = await claudeAccountBlurb(cwd)
+  return [account, formatClaudeStats(readClaudeStats())].filter(Boolean).join('\n\n')
+}
+
+export function gptUsageBlurb(cwd: string, home = homedir()): string {
+  let meter = ''
+  try {
+    meter = formatCodexLimits(readCodexLimits(home))
+  } catch {
+    meter = ''
+  }
   return [
     'ChatGPT (Codex) account',
     '',
-    'Plan spend lives on the OpenAI account, not this chat.',
+    'Plan limits and billing live on your OpenAI / ChatGPT account, not this chat.',
     'Open: https://chatgpt.com',
     '',
+    ...(meter ? [meter, ''] : []),
     `This folder: ${cwd}`
   ].join('\n')
 }
