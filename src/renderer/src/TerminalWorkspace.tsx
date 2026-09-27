@@ -12,6 +12,7 @@ import { routeLine } from '../../shared/slash-route'
 import { panelBlocks } from '../../shared/panel-blocks'
 import { WorldClocks } from './WorldClocks'
 import { WorkPulse } from './WorkPulse'
+import { FactoryPane } from './FactoryPane'
 import { SkinPane } from './skin/SkinPane'
 import { SkinCard } from './skin/Registry'
 import { skinPtyId } from './skin/SkinTerm'
@@ -172,7 +173,7 @@ const NEED_ARG = new Set([
 ])
 type Tab = {
   id: string
-  type: 'chat' | 'file' | 'term'
+  type: 'chat' | 'file' | 'term' | 'factory'
   title: string
   kind?: AiKind
   mode?: Mode
@@ -192,6 +193,8 @@ type Tab = {
   text?: string
   dirty?: boolean
   modelsLive?: boolean
+  /** Factory tabs: the run this tab shows. */
+  runId?: string
 }
 
 function widthPref(key: string, fallback: number): number {
@@ -2061,6 +2064,22 @@ export function TerminalWorkspace({
   const [filesByTab, setFilesByTab] = useState<Record<string, FileHit[]>>({})
   const [filesOpen, setFilesOpen] = useState(true)
   const [picker, setPicker] = useState(false)
+  const [pausedRuns, setPausedRuns] = useState<{ id: string; title: string; workRepo: string }[]>([])
+  useEffect(() => {
+    if (!picker) return
+    let live = true
+    void window.brain.factory
+      .list()
+      .then((rows) => {
+        if (!live || !Array.isArray(rows)) return
+        const open = new Set(tabsRef.current.map((t) => t.runId).filter(Boolean))
+        setPausedRuns(rows.filter((r) => (r.phase === 'paused' || r.phase === 'failed' || r.phase === 'upgrade') && !open.has(r.id)))
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [picker])
   const [closingId, setClosingId] = useState<string | null>(null)
 
   const [detected, setDetected] = useState<Partial<Record<AiKind, boolean>>>({})
@@ -2187,7 +2206,8 @@ export function TerminalWorkspace({
             effort: x.effort,
             agentMode: x.agentMode,
             cliSessionId: x.cliSessionId,
-            path: x.path
+            path: x.path,
+            runId: x.runId
           })),
           messages: s.transcripts
         })
@@ -2211,7 +2231,8 @@ export function TerminalWorkspace({
         effort: x.effort,
         agentMode: x.agentMode,
         cliSessionId: x.cliSessionId,
-        path: x.path
+        path: x.path,
+        runId: x.runId
       })),
       messages: transcripts
     }
@@ -2238,7 +2259,8 @@ export function TerminalWorkspace({
             effort: x.effort,
             agentMode: x.agentMode,
             cliSessionId: x.cliSessionId,
-            path: x.path
+            path: x.path,
+            runId: x.runId
           })),
           messages: s.transcripts
         })
@@ -2423,8 +2445,24 @@ export function TerminalWorkspace({
     setPicker(false)
   }
 
+  function addFactory(runId?: string) {
+    const open = runId ? tabsRef.current.find((t) => t.type === 'factory' && t.runId === runId) : undefined
+    if (open) {
+      setActive(open.id)
+      setPicker(false)
+      return
+    }
+    const id = nid()
+    setTabs((t) => [...t, { id, type: 'factory', title: 'Factory', runId }])
+    setActive(id)
+    setPicker(false)
+  }
+
   function dropTab(id: string) {
     setClosingId(null)
+    const closing = tabsRef.current.find((t) => t.id === id)
+    // Closing a Factory tab pauses its run; the lock and record stay until Abandon.
+    if (closing?.type === 'factory' && closing.runId) void window.brain.factory.detach(closing.runId)
     const next = tabsRef.current.filter((t) => t.id !== id)
     setTabs(next)
     if (next.length === 0) setActive('')
@@ -2623,7 +2661,7 @@ export function TerminalWorkspace({
       </div>
       {picker && (
         <div className="picker">
-          <span className="tiny">New chat, or a terminal in this window. Terminal is a shell, not the AI.</span>
+          <span className="tiny">New chat, Factory, or a terminal in this window. Terminal is a shell, not the AI.</span>
           {KINDS.map((k) => (
             <div key={k.id} className="picker-row">
               <button type="button" className="ghost" disabled={detected[k.id] === false} onClick={() => addTab(k.id)}>
@@ -2637,6 +2675,21 @@ export function TerminalWorkspace({
               Terminal
             </button>
           </div>
+          <div className="picker-row">
+            <button type="button" className="ghost" onClick={() => addFactory()}>
+              Factory
+            </button>
+          </div>
+          {pausedRuns.length ? (
+            <div className="picker-row picker-runs">
+              <span className="tiny">Paused runs</span>
+              {pausedRuns.map((r) => (
+                <button key={r.id} type="button" className="ghost" onClick={() => addFactory(r.id)} title={r.workRepo}>
+                  {r.title}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       )}
       <div
@@ -2768,6 +2821,22 @@ export function TerminalWorkspace({
               <div key={t.id} className={`termwrap ${t.id === active ? 'on' : ''}`}>
                 <TermPane id={t.id} cwd={cwd} active={t.id === active} />
               </div>
+            ))}
+          {tabs
+            .filter((t) => t.type === 'factory')
+            .map((t) => (
+              <FactoryPane
+                key={'f' + t.id}
+                id={t.id}
+                runId={t.runId}
+                cwd={cwd}
+                active={t.id === active}
+                onRun={(runId, title) =>
+                  setTabs((all) =>
+                    all.map((x) => (x.id === t.id ? { ...x, runId, title: title.length > 24 ? title.slice(0, 22) + '...' : title } : x))
+                  )
+                }
+              />
             ))}
           {tabs
             .filter((t) => t.type === 'file' && t.id === active)

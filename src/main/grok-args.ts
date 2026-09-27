@@ -18,3 +18,15 @@ export function grokTuiArgs(cwd: string, resume: string | undefined, useLeader: 
   if (resume) args.push('--resume', resume)
   return args
 }
+
+/** Factory's own leader socket. Never Chat's, never the default leader.sock. */
+export function grokFactorySocket(): string {
+  return join(homedir(), '.grok', 'leader-brain-factory.sock')
+}
+
+/** Factory Grok ACP: cwd is the brain, real permission asks (no --always-approve), own leader. */
+export function grokFactoryAcpArgs(cwd: string, useLeader: boolean): string[] {
+  const base = ['--cwd', cwd, '--trust', 'agent']
+  if (useLeader) return [...base, '--leader', '--leader-socket', grokFactorySocket(), 'stdio']
+  return [...base, '--no-leader', 'stdio']
+}

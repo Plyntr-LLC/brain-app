@@ -113,6 +113,7 @@ test('keepPhoneTabs keeps a phone New that a stale Mac save has not caught yet',
   assert.equal(isPhoneChatTab({}), true)
   assert.equal(isPhoneChatTab({ type: 'term' }), false)
   assert.equal(isPhoneChatTab({ type: 'file' }), false)
+  assert.equal(isPhoneChatTab({ type: 'factory' }), false)
   assert.equal(unknownEmptyChats([], {}, ['disk-1']), true)
   assert.equal(
     unknownEmptyChats([{ id: 'fresh', type: 'chat' }], { fresh: [] }, ['disk-1']),

@@ -6,7 +6,7 @@ import { sameCwd } from '../shared/paths'
 export type SavedMsg = { who: 'me' | 'brain' | 'think' | 'sys'; text: string }
 export type SavedTab = {
   id: string
-  type: 'chat' | 'file' | 'term'
+  type: 'chat' | 'file' | 'term' | 'factory'
   title: string
   kind?: string
   mode?: 'chat' | 'term'
@@ -15,6 +15,8 @@ export type SavedTab = {
   agentMode?: string
   cliSessionId?: string
   path?: string
+  /** Factory tabs: the run this tab shows. */
+  runId?: string
 }
 export type SavedChats = {
   cwd: string
@@ -107,7 +109,8 @@ export function saveChats(state: SavedChats): void {
     effort: t.effort,
     agentMode: t.agentMode,
     cliSessionId: t.cliSessionId,
-    path: t.path
+    path: t.path,
+    runId: t.runId
   }))
   const key = normCwd(state.cwd)
   const entry: SavedChats = { cwd: key, active: state.active, tabs, messages }

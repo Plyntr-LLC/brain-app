@@ -15,6 +15,7 @@ import { killAllPtys, registerPtyIpc } from './pty'
 import { killAllWarm, prewarm } from './warm'
 import { registerUpdateIpc, startAutoUpdate, recordLaunchVersion, isInstallingUpdate, installDownloadedUpdate } from './update'
 import { registerSkinIpc } from './skin/ipc'
+import { registerFactoryIpc } from './factory/ipc'
 import { registerPhoneIpc, restorePhoneIfWanted, stopPhone } from './phone'
 import { refreshTray, startTray } from './tray'
 
@@ -22,6 +23,7 @@ registerStubIpc()
 registerPtyIpc()
 registerUpdateIpc()
 registerSkinIpc()
+registerFactoryIpc()
 registerPhoneIpc()
 
 process.on('uncaughtException', (err) => {

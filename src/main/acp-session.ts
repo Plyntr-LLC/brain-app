@@ -1,16 +1,27 @@
 import { app, BrowserWindow } from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, isAbsolute } from 'node:path'
 import type { AiKind } from '../shared/contracts'
 import type { SessionCmd, StreamEvent } from './ai-cli'
 import { binEnv, resolveBin } from './ai-cli'
 import { loginCli } from './install'
 import { acpPromptParts, type Attach } from './attach'
-import { underRoot } from './files'
+import { brainRootFor } from './brain-root'
 import { brainWriteBlock } from './write-guard'
 import { roleForBrainWrite } from './write-guard-role'
 import { brainIdForFolder, roleForKeylessWrite } from './plyntr-seats'
-import { grokAcpArgs, ensureGrokLeader, killGrokLeader } from './grok-leader'
+import {
+  grokAcpArgs,
+  grokFactoryAcpArgs,
+  ensureGrokLeader,
+  ensureGrokFactoryLeader,
+  killGrokLeader,
+  killGrokFactoryLeader,
+  setGrokFactoryLeaderEnv
+} from './grok-leader'
+import { ensureShims, factoryEnv, factoryWriteBlock, filterFactoryPermission } from './factory/gates'
+import { realish } from './factory/paths'
+import { factoryShimDir } from './factory/run-store'
 import type { GrokAccountRaw } from './grok-usage'
 import { grokPlanText } from './slash'
 import { clearPlanState, isExitPlanModeMethod, planApprovalAsk, planApprovalReply, planDecision, planToolError, PLAN_OPTIONS } from './grok-plan'
@@ -22,6 +33,12 @@ import { GROK_DEFAULT_EFFORT } from '../shared/effort'
 
 const RULES =
   'You are the brain on this computer. Answer in plain English. You may read and edit files in this folder. Do not dump tool names or keyboard shortcuts. Never change Google Ads unless the human clearly said yes. Never send external mail unless they said send.'
+
+/** Factory session rules. Role, tier, and phase ride in each turn's brief, not here. */
+const FACTORY_RULES =
+  'You are a Factory builder. Follow the brief at the top of each message. Edit only the work repo it names, by absolute path. Never push, never use gh, never deploy or publish, never commit. Ask before anything else.'
+
+export type Lane = 'chat' | 'factory'
 
 export type Cap = { id: string; label: string }
 
@@ -62,10 +79,14 @@ export type Tab = {
   planToolId?: string
   permId?: number | string
   permOptions?: { id: string; label: string }[]
+  /** Factory tabs only: where this run's edits may land. */
+  factory?: { brainPath: string; workRepo: string }
 }
 
 export type Pool = {
   kind: 'grok' | 'cursor'
+  /** Missing means chat. */
+  lane?: Lane
   cwd: string
   rpc: LineRpc
   boot: Promise<void>
@@ -260,11 +281,36 @@ async function setOption(rpc: LineRpc, sessionId: string, configId: string, valu
   throw last
 }
 
-function poolKey(kind: 'grok' | 'cursor', cwd: string): string {
-  return kind + ':' + cwd
+/** Chat keys stay kind:cwd. Factory never shares a Chat pool at the same folder. Exported for the fixture check. */
+export function poolKey(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat'): string {
+  return lane === 'factory' ? 'factory:' + kind + ':' + cwd : kind + ':' + cwd
 }
 
-async function spawnArgs(kind: 'grok' | 'cursor', cwd: string): Promise<string[]> {
+/** session/new params. Chat Grok keeps yoloMode; Factory never sends it. Exported for the fixture check. */
+export function sessionNewParams(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat'): Record<string, unknown> {
+  if (lane === 'factory') return { cwd, mcpServers: [], _meta: { rules: FACTORY_RULES } }
+  return kind === 'grok'
+    ? { cwd, mcpServers: [], _meta: { yoloMode: true, rules: RULES } }
+    : { cwd, mcpServers: [] }
+}
+
+/** Env for every Factory child: shims first on PATH, no ANTHROPIC_API_KEY. */
+function factoryChildEnv(brainPath: string): NodeJS.ProcessEnv {
+  const shims = ensureShims(factoryShimDir())
+  return factoryEnv(binEnv(brainPath), shims)
+}
+
+setGrokFactoryLeaderEnv(() => {
+  const env = factoryEnv(binEnv(), ensureShims(factoryShimDir()))
+  return env
+})
+
+async function spawnArgs(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat'): Promise<string[]> {
+  if (lane === 'factory') {
+    if (kind !== 'grok') throw new Error('Factory runs on Grok only in this version.')
+    const useLeader = await ensureGrokFactoryLeader()
+    return grokFactoryAcpArgs(cwd, useLeader)
+  }
   if (kind === 'grok') {
     const useLeader = await ensureGrokLeader()
     return grokAcpArgs(cwd, useLeader)
@@ -293,6 +339,19 @@ function pickOption(msg: RpcMsg, write: boolean): string | null {
   }
   const first = asRecord(opts[0])
   return typeof first.optionId === 'string' ? first.optionId : null
+}
+
+/** A reject option only; never falls back to an allow. */
+function rejectOption(msg: RpcMsg): string | null {
+  const opts = asRecord(msg.params).options
+  if (!Array.isArray(opts)) return null
+  for (const k of ['reject_once', 'reject_always']) {
+    for (const o of opts) {
+      const r = asRecord(o)
+      if (r.kind === k && typeof r.optionId === 'string') return r.optionId
+    }
+  }
+  return null
 }
 
 function compactPhase(method: string, update: Record<string, unknown>): 'compacting' | 'compacted' | null {
@@ -460,6 +519,27 @@ export function handleNote(pool: Pool, msg: RpcMsg): void {
   }
 }
 
+/**
+ * Same write reach as Terminal, minus team-protected brain paths. The guard is judged against the
+ * brain that really contains the target (realpath), not only this chat's folder. Factory also
+ * refuses the brain when the run's work repo is elsewhere.
+ */
+function acpWriteBlock(pool: Pool, sessionId: string, abs: string): string | null {
+  const hit = brainRootFor(abs, [pool.cwd])
+  if (hit) {
+    const role = brainIdForFolder(hit.root) ? roleForBrainWrite(hit.root) : roleForKeylessWrite(hit.root)
+    const blocked = brainWriteBlock(role, hit.real, realish(abs))
+    if (blocked) return blocked
+  }
+  if (pool.lane === 'factory') {
+    const tabId = pool.bySid.get(sessionId)
+    const tab = tabId ? pool.tabs.get(tabId) : undefined
+    const ctx = tab?.factory || { brainPath: pool.cwd, workRepo: '' }
+    return factoryWriteBlock(abs, ctx.brainPath, ctx.workRepo)
+  }
+  return null
+}
+
 /** Agent-to-client requests. Exported for the fixture check. */
 export function handleReq(pool: Pool, msg: RpcMsg): void {
   if (msg.id == null) return
@@ -468,9 +548,26 @@ export function handleReq(pool: Pool, msg: RpcMsg): void {
     const sid = String(p.sessionId || '')
     const tabId = pool.bySid.get(sid)
     const tab = tabId ? pool.tabs.get(tabId) : undefined
+    if (pool.lane === 'factory') {
+      // Factory never auto-allows. No tab: nobody can answer, so cancel.
+      if (!tab) {
+        pool.rpc.reply(msg.id, { outcome: { outcome: 'cancelled' } })
+        return
+      }
+      const ctx = tab.factory || { brainPath: pool.cwd, workRepo: '' }
+      if (filterFactoryPermission(msg, ctx) === 'reject') {
+        const optionId = rejectOption(msg)
+        if (optionId) pool.rpc.reply(msg.id, { outcome: { outcome: 'selected', optionId } })
+        else pool.rpc.reply(msg.id, { outcome: { outcome: 'cancelled' } })
+        const tool = asRecord(p.toolCall)
+        const ev: StreamEvent = { kind: 'status', data: 'work:Refused: ' + String(p.title || tool.title || 'publish or brain edit').slice(0, 70) }
+        if (tab.onEvent) tab.onEvent(ev)
+        return
+      }
+    }
     // Plan mode exists so a person approves the plan; never auto-answer its asks.
-    const auto = !tab || (tab.alwaysApprove !== false && !tab.planMode)
-    if (auto) {
+    const auto = pool.lane !== 'factory' && (!tab || (tab.alwaysApprove !== false && !tab.planMode))
+    if (auto || !tab) {
       const optionId = pickOption(msg, false)
       if (optionId) {
         pool.rpc.reply(msg.id, { outcome: { outcome: 'selected', optionId } })
@@ -503,10 +600,15 @@ export function handleReq(pool: Pool, msg: RpcMsg): void {
     return
   }
   if (msg.method === 'fs/read_text_file') {
+    // Same reach as Terminal: any absolute path this user can read.
     const p = asRecord(msg.params)
     const abs = String(p.path || '')
-    if (!abs || !underRoot(pool.cwd, abs) || !existsSync(abs)) {
-      pool.rpc.error(msg.id, -32603, 'That file is not in this folder.')
+    if (!abs || !isAbsolute(abs)) {
+      pool.rpc.error(msg.id, -32603, 'Brain needs an absolute file path.')
+      return
+    }
+    if (!existsSync(abs)) {
+      pool.rpc.error(msg.id, -32603, 'That file does not exist.')
       return
     }
     try {
@@ -527,11 +629,11 @@ export function handleReq(pool: Pool, msg: RpcMsg): void {
   if (msg.method === 'fs/write_text_file') {
     const p = asRecord(msg.params)
     const abs = String(p.path || '')
-    if (!abs || !underRoot(pool.cwd, abs)) {
-      pool.rpc.error(msg.id, -32603, 'That file is not in this folder.')
+    if (!abs || !isAbsolute(abs)) {
+      pool.rpc.error(msg.id, -32603, 'Brain needs an absolute file path.')
       return
     }
-    const blocked = brainWriteBlock(brainIdForFolder(pool.cwd) ? roleForBrainWrite(pool.cwd) : roleForKeylessWrite(pool.cwd), pool.cwd, abs)
+    const blocked = acpWriteBlock(pool, String(p.sessionId || ''), abs)
     if (blocked) {
       pool.rpc.error(msg.id, -32603, blocked)
       return
@@ -619,13 +721,13 @@ async function acpAuthenticate(rpc: LineRpc, methods: unknown[], kind: 'grok' | 
   if (last && /auth/i.test(last)) throw new Error(last)
 }
 
-async function bootPool(kind: 'grok' | 'cursor', cwd: string): Promise<Pool> {
-  const key = poolKey(kind, cwd)
+async function bootPool(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat'): Promise<Pool> {
+  const key = poolKey(kind, cwd, lane)
   const existing = pools.get(key)
   if (existing && !existing.rpc.dead) return existing
   const pending = booting.get(key)
   if (pending) return pending
-  const work = bootPoolNow(kind, cwd, key)
+  const work = bootPoolNow(kind, cwd, key, lane)
   booting.set(key, work)
   try {
     return await work
@@ -634,14 +736,16 @@ async function bootPool(kind: 'grok' | 'cursor', cwd: string): Promise<Pool> {
   }
 }
 
-async function bootPoolNow(kind: 'grok' | 'cursor', cwd: string, key: string): Promise<Pool> {
+async function bootPoolNow(kind: 'grok' | 'cursor', cwd: string, key: string, lane: Lane = 'chat'): Promise<Pool> {
   const again = pools.get(key)
   if (again && !again.rpc.dead) return again
   const bin = resolveBin(kind)
   if (!bin) throw new Error(`${kind} is not installed on this computer`)
-  const proc = spawnBin(bin, await spawnArgs(kind, cwd), cwd, binEnv(cwd))
+  const env = lane === 'factory' ? factoryChildEnv(cwd) : binEnv(cwd)
+  const proc = spawnBin(bin, await spawnArgs(kind, cwd, lane), cwd, env)
   const pool: Pool = {
     kind,
+    lane,
     cwd,
     rpc: null as unknown as LineRpc,
     boot: Promise.resolve(),
@@ -877,10 +981,7 @@ export async function acpWarm(opts: {
       }
     }
     if (!loaded) {
-      const params =
-        opts.kind === 'grok'
-          ? { cwd: opts.cwd, mcpServers: [], _meta: { yoloMode: true, rules: RULES } }
-          : { cwd: opts.cwd, mcpServers: [] }
+      const params = sessionNewParams(opts.kind, opts.cwd)
       try {
         res = asRecord(await pool.rpc.request('session/new', params, 0))
       } catch (e) {
@@ -979,7 +1080,7 @@ export async function acpFork(opts: { kind: 'grok' | 'cursor'; tabId: string; cw
 /** Grok account allowance, asked of an already-running Grok agent (never boots one, so no login window). */
 export async function acpGrokAccount(cwd: string): Promise<GrokAccountRaw> {
   const live = [pools.get(poolKey('grok', cwd)), ...pools.values()].filter(
-    (p): p is Pool => !!p && p.kind === 'grok' && !p.rpc.dead
+    (p): p is Pool => !!p && p.kind === 'grok' && p.lane !== 'factory' && !p.rpc.dead
   )
   const pool = live[0]
   if (!pool) return { starting: true }
@@ -1002,7 +1103,9 @@ export async function acpGrokAccount(cwd: string): Promise<GrokAccountRaw> {
 
 /** Waits for a Grok agent that is already booting. False right away when none is running. */
 export async function acpGrokReady(cwd: string, ms = 30_000): Promise<boolean> {
-  const pool = [pools.get(poolKey('grok', cwd)), ...pools.values()].find((p) => !!p && p.kind === 'grok' && !p.rpc.dead)
+  const pool = [pools.get(poolKey('grok', cwd)), ...pools.values()].find(
+    (p) => !!p && p.kind === 'grok' && p.lane !== 'factory' && !p.rpc.dead
+  )
   if (!pool) return false
   return Promise.race([
     pool.boot.then(() => true, () => false),
@@ -1248,6 +1351,7 @@ export function acpKillAll(): void {
   pools.clear()
   tabPool.clear()
   killGrokLeader()
+  killGrokFactoryLeader()
 }
 
 export function isAcpKind(kind: AiKind): kind is 'grok' | 'cursor' {
@@ -1256,4 +1360,97 @@ export function isAcpKind(kind: AiKind): kind is 'grok' | 'cursor' {
 
 export function prewarmProcess(kind: 'grok' | 'cursor', cwd: string): void {
   void bootPool(kind, cwd).catch(() => {})
+}
+
+/**
+ * Factory lane: a separate Grok pool per brain (own leader socket, no --always-approve, shims first).
+ * cwd is the brain so hooks, AGENTS.md, and skills load; edits land in workRepo by absolute path.
+ */
+export async function factoryWarm(opts: {
+  tabId: string
+  brainPath: string
+  workRepo: string
+  resumeId?: string
+}): Promise<{ sessionId: string; loaded: boolean }> {
+  return withTabLock(opts.tabId, async () => {
+    const pool = await bootPool('grok', opts.brainPath, 'factory')
+    tabPool.set(opts.tabId, poolKey('grok', opts.brainPath, 'factory'))
+    const factory = { brainPath: opts.brainPath, workRepo: opts.workRepo }
+    const have = pool.tabs.get(opts.tabId)
+    if (have && (!opts.resumeId || opts.resumeId === have.sessionId)) {
+      have.factory = factory
+      have.alwaysApprove = false
+      return { sessionId: have.sessionId, loaded: false }
+    }
+    let sid = ''
+    let loaded = false
+    let live: LiveRun = {}
+    if (opts.resumeId) {
+      try {
+        const res = asRecord(
+          await pool.rpc.request('session/load', { sessionId: opts.resumeId, cwd: opts.brainPath, mcpServers: [] }, 0)
+        )
+        sid = String(res.sessionId || opts.resumeId || '')
+        live = readLive(res)
+        loaded = Boolean(sid)
+      } catch {
+        sid = ''
+      }
+    }
+    if (!sid) {
+      const res = asRecord(await pool.rpc.request('session/new', sessionNewParams('grok', opts.brainPath, 'factory'), 0))
+      sid = String(res.sessionId || '')
+      live = readLive(res)
+    }
+    if (!sid) throw new Error('Grok did not return a session.')
+    const tab: Tab = have || { tabId: opts.tabId, sessionId: sid, promptId: null, appTools: [], text: '' }
+    tab.factory = factory
+    tab.alwaysApprove = false
+    adoptLoadedSession(pool, tab, sid, live)
+    return { sessionId: sid, loaded }
+  })
+}
+
+/** One Factory turn. The brief is wrapped with the brain's hooks (cwd = brainPath) by deliverAcpPrompt. */
+export async function factoryPrompt(opts: {
+  tabId: string
+  brainPath: string
+  text: string
+  onEvent: (ev: StreamEvent) => void
+}): Promise<string> {
+  const pool = pools.get(poolKey('grok', opts.brainPath, 'factory'))
+  const tab = pool?.tabs.get(opts.tabId)
+  if (!pool || !tab) throw new Error('Factory session is not ready.')
+  tab.alwaysApprove = false
+  if (tab.promptId != null) acpCancel(opts.tabId)
+  const gen = Date.now()
+  tab.onEvent = opts.onEvent
+  tab.text = ''
+  tab.promptId = gen
+  try {
+    let raw: unknown = null
+    await deliverAcpPrompt('grok', opts.brainPath, tab.sessionId, opts.text, [], {
+      request: async (method, params, timeout) => {
+        raw = await pool.rpc.request(method, params as never, timeout)
+        return raw
+      }
+    })
+    const stop = String(asRecord(raw).stopReason || 'end_turn')
+    if (stop === 'cancelled') throw new Error('cancelled')
+    if (stop !== 'end_turn' && !tab.text) throw new Error(stop)
+  } finally {
+    if (tab.promptId === gen) {
+      tab.onEvent = undefined
+      tab.promptId = null
+    }
+  }
+  return tab.text.trim()
+}
+
+export function factoryCancel(tabId: string): boolean {
+  return acpCancel(tabId)
+}
+
+export function factoryClose(tabId: string): void {
+  acpClose(tabId)
 }

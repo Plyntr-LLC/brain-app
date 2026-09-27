@@ -1,5 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AiKind } from '../shared/contracts'
+import type { FactoryTriage, RunRecord as FactoryRun } from '../shared/factory'
+
+type FactoryResult = { ok: true; run: FactoryRun | null } | { ok: false; error: string }
 
 type PhoneRemoteStatus = {
   on: boolean
@@ -915,6 +918,49 @@ const brain = {
       ipcRenderer.on('skin:healed', h)
       return () => {
         ipcRenderer.removeListener('skin:healed', h)
+      }
+    }
+  },
+  factory: {
+    triage: (text: string) => ipcRenderer.invoke('factory:triage', text) as Promise<FactoryTriage>,
+    start: (p: { task: string; workRepo: string; brainPath: string; proceedCritical?: boolean }) =>
+      ipcRenderer.invoke('factory:start', p) as Promise<
+        { ok: true; run: FactoryRun } | { ok: false; error: string; needsProceed?: boolean; runId?: string }
+      >,
+    resume: (id: string) => ipcRenderer.invoke('factory:resume', id) as Promise<FactoryResult>,
+    decide: (id: string, choice: 'upgrade' | 'trim' | 'stop') =>
+      ipcRenderer.invoke('factory:decide', id, choice) as Promise<FactoryResult>,
+    commit: (id: string) => ipcRenderer.invoke('factory:commit', id) as Promise<FactoryResult>,
+    pause: (id: string) => ipcRenderer.invoke('factory:pause', id) as Promise<FactoryResult>,
+    detach: (id: string) => ipcRenderer.invoke('factory:detach', id) as Promise<FactoryResult>,
+    abandon: (id: string) => ipcRenderer.invoke('factory:abandon', id) as Promise<FactoryResult>,
+    list: () => ipcRenderer.invoke('factory:list') as Promise<FactoryRun[] | { ok: false; error: string }>,
+    get: (id: string) => ipcRenderer.invoke('factory:get', id) as Promise<FactoryRun | null | { ok: false; error: string }>,
+    lastRepo: () => ipcRenderer.invoke('factory:lastRepo') as Promise<string>,
+    pickRepo: () => ipcRenderer.invoke('factory:pickRepo') as Promise<string | null>,
+    onEvent: (
+      fn: (
+        ev:
+          | { runId: string; kind: 'run'; run: FactoryRun }
+          | {
+              runId: string
+              kind: 'stream'
+              ev: {
+                kind: string
+                data?: string
+                title?: string
+                path?: string
+                detail?: string
+                options?: { id: string; label: string }[]
+                requestId?: string
+              }
+            }
+      ) => void
+    ) => {
+      const h = (_e: unknown, payload: Parameters<typeof fn>[0]) => fn(payload)
+      ipcRenderer.on('factory:event', h)
+      return () => {
+        ipcRenderer.removeListener('factory:event', h)
       }
     }
   },

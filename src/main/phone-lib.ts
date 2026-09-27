@@ -228,7 +228,7 @@ export function pinChatId(chatIds: string[], current: string, macActive: string)
 }
 
 export function isPhoneChatTab(t: { type?: string }): boolean {
-  if (t.type === 'file' || t.type === 'term') return false
+  if (t.type === 'file' || t.type === 'term' || t.type === 'factory') return false
   return t.type === 'chat' || !t.type
 }
 

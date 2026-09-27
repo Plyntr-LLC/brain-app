@@ -539,7 +539,7 @@ export function phonePageHtml(): string {
       return n > p.meCount
     }
     function applyState(s) {
-      tabs = (s.tabs || []).filter(function (t) { return t.type !== 'file' && t.type !== 'term' })
+      tabs = (s.tabs || []).filter(function (t) { return t.type !== 'file' && t.type !== 'term' && t.type !== 'factory' })
       const incoming = s.messages || {}
       Object.keys(incoming).forEach(function (id) {
         const have = messages[id] || []

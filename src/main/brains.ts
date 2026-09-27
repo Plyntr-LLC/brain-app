@@ -133,6 +133,14 @@ export function listBrains(): BrainRow[] {
   return rows.map((r) => publicBrainRow({ ...r, current: r.path === current }))
 }
 
+/** Every brain folder this Mac knows, read only: no forget, no save. Safe on the ACP write path. */
+export function knownBrainPaths(): string[] {
+  const acct = getAccount()
+  return [...(loadFile().rows || []).map((r) => r.path), ...agencyBrains().map((r) => r.path), acct?.folder || '', String(loadFile().active || '')]
+    .map((p) => String(p || '').trim())
+    .filter(Boolean)
+}
+
 export function rememberBrain(row: {
   path?: string
   name?: string
