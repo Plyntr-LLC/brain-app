@@ -126,7 +126,7 @@ function packPrompt(
   return `${system}\n\n${convo ? `Conversation so far:\n${convo}\n\n` : ''}User: ${text}\nBrain:`
 }
 
-function parseGrokLine(line: string): StreamEvent | null {
+export function parseGrokLine(line: string): StreamEvent | null {
   const t = line.trim()
   if (!t.startsWith('{')) return null
   try {

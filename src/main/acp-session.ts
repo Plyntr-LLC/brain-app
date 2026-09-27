@@ -1448,6 +1448,17 @@ export async function factoryPrompt(opts: {
   return tab.text.trim()
 }
 
+/** Factory only: set the Grok reasoning effort on a Factory session (plan high, xhigh after an Opus plan). */
+export async function factorySetEffort(tabId: string, effort: string): Promise<void> {
+  const key = tabPool.get(tabId)
+  const pool = key ? pools.get(key) : undefined
+  const tab = pool?.tabs.get(tabId)
+  if (!pool || !tab || pool.lane !== 'factory' || pool.kind === 'cursor') throw new Error('Factory session is not ready.')
+  if (tab.effort === effort) return
+  await setOption(pool.rpc, tab.sessionId, 'reasoning_effort', effort)
+  tab.effort = effort
+}
+
 export function factoryCancel(tabId: string): boolean {
   return acpCancel(tabId)
 }

@@ -5,6 +5,7 @@ type Perm = { title?: string; path?: string; detail?: string; options?: { id: st
 
 const RAIL: { key: RunPhase; label: string }[] = [
   { key: 'triage', label: 'Triage' },
+  { key: 'plan', label: 'Plan' },
   { key: 'build', label: 'Build' },
   { key: 'verify', label: 'Verify' },
   { key: 'review', label: 'Review' },
@@ -12,6 +13,7 @@ const RAIL: { key: RunPhase; label: string }[] = [
 ]
 
 const STATUS_WORD: Partial<Record<RunPhase, string>> = {
+  plan: 'plan',
   paused: 'paused',
   upgrade: 'needs a decision',
   failed: 'failed',
@@ -21,8 +23,8 @@ const STATUS_WORD: Partial<Record<RunPhase, string>> = {
 
 function railIndex(run: RunRecord): number {
   const at = run.phase === 'paused' || run.phase === 'failed' || run.phase === 'upgrade' ? run.resumePhase || 'build' : run.phase
-  if (at === 'done' || at === 'commit') return 4
-  if (at === 'upgrade') return 1
+  if (at === 'done' || at === 'commit') return 5
+  if (at === 'upgrade') return 2
   const i = RAIL.findIndex((r) => r.key === at)
   return i < 0 ? 0 : i
 }
@@ -45,6 +47,10 @@ export function FactoryPane(props: {
   const [permission, setPermission] = useState<Perm | null>(null)
   const [activity, setActivity] = useState('')
   const [work, setWork] = useState('')
+  const [repoLine, setRepoLine] = useState('')
+  const [voiceOn, setVoiceOn] = useState(false)
+  const [reason, setReason] = useState('')
+  const [pushBlock, setPushBlock] = useState<string | null>(null)
   const runRef = useRef<string>(runId || '')
 
   useEffect(() => {
@@ -84,6 +90,37 @@ export function FactoryPane(props: {
     }, 250)
     return () => window.clearTimeout(t)
   }, [task, run])
+
+  useEffect(() => {
+    if (run || !workRepo.trim()) {
+      setRepoLine('')
+      return
+    }
+    const t = window.setTimeout(() => {
+      void window.brain.factory.profile(workRepo).then((r) => {
+        if (!r.ok) return setRepoLine('')
+        setRepoLine(r.line)
+        setVoiceOn(r.profile.voice.on)
+      })
+    }, 250)
+    return () => window.clearTimeout(t)
+  }, [workRepo, run])
+
+  const doneSha = run?.phase === 'done' ? run.commitSha || '' : ''
+  const pushedAt = run?.pushed?.at || 0
+  useEffect(() => {
+    if (!run || !doneSha) return setPushBlock(null)
+    void window.brain.factory.publishBlock(run.id).then((r) => setPushBlock(r.ok ? r.block : r.error))
+  }, [run?.id, doneSha, pushedAt])
+
+  async function toggleVoice(on: boolean) {
+    setVoiceOn(on)
+    const r = await window.brain.factory.saveProfile(workRepo, { voice: { on } })
+    if (!r.ok) {
+      setVoiceOn(!on)
+      setError(r.error)
+    } else setRepoLine(r.line)
+  }
 
   async function start(proceedCritical = false) {
     setBusy(true)
@@ -128,7 +165,7 @@ export function FactoryPane(props: {
               <strong>
                 {tri.size} · risk {tri.risk}
               </strong>
-              {tri.capped ? <p className="factory-warn">Capped at T1 in this version. Brain does the smallest safe slice.</p> : null}
+              {tri.capped ? <p className="factory-warn">Capped at T2 in this version. Brain does the smallest safe slice.</p> : null}
               <ul>
                 {tri.reasons.map((r) => (
                   <li key={r}>{r}</li>
@@ -153,12 +190,20 @@ export function FactoryPane(props: {
               </button>
             </div>
           </label>
+          {repoLine ? (
+            <div className="factory-repo-line">
+              <span className="tiny">{repoLine}</span>
+              <label className="tiny">
+                <input type="checkbox" checked={voiceOn} onChange={(e) => void toggleVoice(e.target.checked)} /> Voice check
+              </label>
+            </div>
+          ) : null}
           <p className="tiny">Brain: {cwd}</p>
           {error ? <p className="factory-err">{error}</p> : null}
           <div className="factory-actions">
             {critical || needsProceed ? (
               <button type="button" className="primary" disabled={busy || !task.trim() || !workRepo.trim()} onClick={() => void start(true)}>
-                Proceed at T1
+                Proceed at {tri && tri.size !== 'T3' ? tri.size : 'T2'}
               </button>
             ) : (
               <button type="button" className="primary" disabled={busy || !task.trim() || !workRepo.trim()} onClick={() => void start(false)}>
@@ -174,14 +219,39 @@ export function FactoryPane(props: {
   const idx = railIndex(run)
   const word = STATUS_WORD[run.phase]
   const live = run.phase !== 'done' && run.phase !== 'abandoned'
-  const running = run.phase === 'build' || run.phase === 'verify' || run.phase === 'triage' || (run.phase === 'review' && !run.diff)
+  const planWaiting = run.phase === 'plan' && run.plan?.status === 'waiting' && !!run.plan.text
+  const running =
+    run.phase === 'build' ||
+    run.phase === 'verify' ||
+    (run.phase === 'triage' && !run.needsProceed) ||
+    (run.phase === 'plan' && !planWaiting) ||
+    (run.phase === 'review' && !run.diff)
+  const waitLine =
+    run.phase === 'triage' && !run.needsProceed
+      ? 'Checking size with Grok (up to 8 s)'
+      : run.phase === 'plan' && !planWaiting
+        ? run.plan && run.plan.rejects === 2
+          ? 'Opus is writing the plan'
+          : 'Grok is writing the plan'
+        : run.phase === 'review' && !run.diff && (run.tier === 'T2' || run.risk !== 'none') && !run.strict
+          ? 'Opus strict review running'
+          : ''
+  const strictHeld = run.strict?.status === 'fail' && (run.reviewCycles || 0) >= 2
+  const voiceHeld = run.voice?.status === 'fail'
   return (
     <div className={`factorywrap ${active ? 'on' : ''}`}>
       <div className="factory">
         <h3 className="factory-h">{run.title}</h3>
         <div className="phaserail">
           {RAIL.map((r, i) => (
-            <span key={r.key} className={`phase ${i === idx ? 'on' : ''} ${i < idx || run.phase === 'done' ? 'past' : ''}`}>
+            <span
+              key={r.key}
+              className={
+                r.key === 'plan' && run.tier !== 'T2'
+                  ? 'phase past'
+                  : `phase ${i === idx ? 'on' : ''} ${i < idx || run.phase === 'done' ? 'past' : ''}`
+              }
+            >
               {r.label}
             </span>
           ))}
@@ -191,7 +261,7 @@ export function FactoryPane(props: {
           </span>
         </div>
         <p className="tiny">Work repo: {run.workRepo}</p>
-        {run.triage.capped ? <p className="factory-warn">Triage said {run.triage.original}. Capped at T1 in this version.</p> : null}
+        {run.triage.capped ? <p className="factory-warn">Triage said {run.triage.original}. Capped at T2 in this version.</p> : null}
         {permission ? (
           <div className="skin-perm">
             <p className="skin-perm-title">{permission.title || 'Allow this?'}</p>
@@ -220,10 +290,50 @@ export function FactoryPane(props: {
             </div>
           </div>
         ) : null}
-        {running && (work || activity) ? (
+        {running && (work || activity || waitLine) ? (
           <div className="factory-activity">
+            {waitLine ? <p className="tiny">{waitLine}</p> : null}
             {work ? <p className="tiny">{work}</p> : null}
             {activity ? <pre>{activity}</pre> : null}
+          </div>
+        ) : null}
+        {run.phase === 'triage' && run.needsProceed ? (
+          <div className="factory-trip">
+            <strong>Grok says this is critical risk</strong>
+            <ul>
+              {run.triage.reasons.map((r) => (
+                <li key={r}>{r}</li>
+              ))}
+            </ul>
+            <div className="factory-actions">
+              <button type="button" className="primary" onClick={() => void act(window.brain.factory.decide(run.id, 'proceed'))}>
+                Proceed at {run.tier}
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {planWaiting && run.plan ? (
+          <div className="factory-plan">
+            <strong>Plan by {run.plan.by === 'opus' ? 'Opus' : 'Grok'}</strong>
+            <pre>{run.plan.text}</pre>
+            <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why reject? (optional)" spellCheck={false} />
+            <div className="factory-actions">
+              <button type="button" className="primary" onClick={() => void act(window.brain.factory.decide(run.id, 'approve-plan'))}>
+                Approve plan
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  const why = reason
+                  setReason('')
+                  void act(window.brain.factory.decide(run.id, 'reject-plan', why))
+                }}
+              >
+                Reject
+              </button>
+            </div>
+            <p className="tiny">Rejects: {run.plan.rejects} of 3</p>
           </div>
         ) : null}
         {run.phase === 'upgrade' && run.tripwire ? (
@@ -234,11 +344,12 @@ export function FactoryPane(props: {
                 <li key={r}>{r}</li>
               ))}
             </ul>
-            {!run.tripwire.suggest ? <p className="tiny">Bigger tiers come in a later version. Trim the change or stop.</p> : null}
+            {!run.tripwire.suggest ? <p className="tiny">T3 comes in a later version. Trim the change or stop.</p> : null}
+            {run.tripwire.suggest === 'T2' ? <p className="tiny">Moving to T2 skips the plan (the work is done) and adds the T2 checks and Opus strict review.</p> : null}
             <div className="factory-actions">
               {run.tripwire.suggest ? (
                 <button type="button" className="primary" onClick={() => void act(window.brain.factory.decide(run.id, 'upgrade'))}>
-                  Move to T1
+                  Move to {run.tripwire.suggest}
                 </button>
               ) : null}
               <button type="button" className="ghost" onClick={() => void act(window.brain.factory.decide(run.id, 'trim'))}>
@@ -253,6 +364,7 @@ export function FactoryPane(props: {
         {run.audit ? (
           <div className="factory-audit">
             <strong>Work repo changes</strong>
+            {run.phase === 'plan' && run.audit.work.length ? <p className="factory-warn">The plan turn changed files.</p> : null}
             {run.audit.work.length ? (
               <ul>
                 {run.audit.work.map((w) => (
@@ -276,15 +388,31 @@ export function FactoryPane(props: {
             ) : null}
           </div>
         ) : null}
-        {run.verify?.length ? (
+        {run.verify?.length || run.strict || run.voice ? (
           <div className="factory-verify">
-            {run.verify.map((v) => (
+            {(run.verify || []).map((v) => (
               <div key={v.script} className={`verify-row ${v.status}`}>
                 <span>npm run {v.script}</span>
                 <span>{v.status}</span>
                 {v.status === 'fail' && v.tail ? <pre>{v.tail}</pre> : null}
               </div>
             ))}
+            {run.strict ? (
+              <div className={`verify-row ${run.strict.status === 'missing' ? 'skipped' : run.strict.status}`}>
+                <span>Opus strict review</span>
+                <span>{run.strict.status === 'missing' ? 'skipped' : run.strict.status}</span>
+                {run.strict.status === 'fail' ? <pre>{run.strict.text}</pre> : null}
+                {run.strict.status === 'missing' ? <p className="tiny">{run.strict.text}</p> : null}
+              </div>
+            ) : null}
+            {run.voice ? (
+              <div className={`verify-row ${run.voice.status}`}>
+                <span>Voice check</span>
+                <span>{run.voice.status}</span>
+                {run.voice.status === 'fail' && run.voice.tail ? <pre>{run.voice.tail}</pre> : null}
+                {run.voice.status === 'skipped' && run.voice.tail ? <p className="tiny">{run.voice.tail}</p> : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
         {run.phase === 'review' && run.diff ? <pre className="factory-diff">{run.diff}</pre> : null}
@@ -292,9 +420,17 @@ export function FactoryPane(props: {
         {error ? <p className="factory-err">{error}</p> : null}
         <div className="factory-actions">
           {run.phase === 'review' && run.diff ? (
-            <button type="button" className="primary" onClick={() => void act(window.brain.factory.commit(run.id))}>
-              Commit
+            <button type="button" className="primary" disabled={voiceHeld} onClick={() => void act(window.brain.factory.commit(run.id))}>
+              {strictHeld ? 'Commit anyway' : 'Commit'}
             </button>
+          ) : null}
+          {run.phase === 'review' && run.diff && voiceHeld ? (
+            <>
+              <button type="button" className="ghost" onClick={() => void act(window.brain.factory.decide(run.id, 'fix-copy'))}>
+                Fix copy
+              </button>
+              <span className="tiny">Voice check said REJECT. Fix the copy before Commit.</span>
+            </>
           ) : null}
           {running ? (
             <button type="button" className="ghost" onClick={() => void act(window.brain.factory.pause(run.id))}>
@@ -311,7 +447,24 @@ export function FactoryPane(props: {
               Abandon run
             </button>
           ) : null}
-          {run.phase === 'done' && run.commitSha ? <span className="tiny">Committed {run.commitSha.slice(0, 7)}. Not pushed.</span> : null}
+          {run.phase === 'done' && run.commitSha && !run.pushed ? (
+            <>
+              <span className="tiny">
+                Committed {run.commitSha.slice(0, 7)}
+                {run.branch ? ` on ${run.branch}` : ''}. Not pushed.
+              </span>
+              <button type="button" className="primary" disabled={!!pushBlock} onClick={() => void act(window.brain.factory.publish(run.id))}>
+                Push
+              </button>
+              {pushBlock ? <span className="tiny">{pushBlock}</span> : null}
+            </>
+          ) : null}
+          {run.phase === 'done' && run.pushed ? (
+            <span className="tiny">
+              Committed {run.pushed.sha.slice(0, 7)}. Pushed to {run.pushed.remote}/{run.pushed.branch}.
+            </span>
+          ) : null}
+          {run.phase === 'done' && run.pushError && !run.pushed ? <span className="factory-err">{run.pushError}</span> : null}
         </div>
       </div>
     </div>

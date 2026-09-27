@@ -1919,6 +1919,11 @@ button.runmeta-v:hover { color: var(--orange-deep); }
 .factory-trip ul,
 .factory-audit ul { margin: 0.3rem 0 0; padding-left: 1.1rem; }
 .factory-trip { border-color: var(--warn-line); background: var(--warn-bg); }
+.factory-plan { margin: 0.6rem 0; padding: 0.6rem 0.75rem; border: 1px solid var(--line); background: var(--paper); font-size: 0.85rem; }
+.factory-plan pre { max-height: 24rem; overflow: auto; margin: 0.4rem 0; white-space: pre-wrap; font-size: 0.8rem; }
+.factory-plan input { width: 100%; box-sizing: border-box; margin-top: 0.3rem; }
+.factory-repo-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.8rem; margin: -0.3rem 0 0.5rem; }
+.factory-repo-line label { display: inline-flex; align-items: center; gap: 0.3rem; }
 .factory-warn { color: var(--warn); margin: 0.3rem 0; font-size: 0.85rem; }
 .factory-err { color: #b3261e; margin: 0.5rem 0; font-size: 0.85rem; }
 .factory-brain { margin-top: 0.5rem; color: #b3261e; }

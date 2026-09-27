@@ -4,17 +4,18 @@ import { mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { tmpRepo } from './test-git.ts'
-import { BRAIN_WRITE_REFUSAL, ensureShims, factoryEnv, factoryWriteBlock, filterFactoryPermission } from './gates.ts'
+import { sh, tmpRepo } from './test-git.ts'
+import { BRAIN_WRITE_REFUSAL, ensureShims, factoryEnv, factoryWriteBlock, filterFactoryPermission, publish, publishBlock } from './gates.ts'
 
 const shimDir = ensureShims(join(mkdtempSync(join(tmpdir(), 'factory-shim-')), 'bin'))
-const env = factoryEnv({ ...process.env, ANTHROPIC_API_KEY: 'fixture-not-a-key' }, shimDir)
+const env = factoryEnv({ ...process.env, ANTHROPIC_API_KEY: 'fixture-not-a-key', ANTHROPIC_TRANSLATOR_API_KEY: 'fixture-not-a-key' }, shimDir)
 const repo = tmpRepo('factory-gates-')
 const run = (cmd: string, args: string[]) => spawnSync(cmd, args, { cwd: repo, env, encoding: 'utf8' })
 
 test('factory env puts shims first and drops ANTHROPIC_API_KEY', () => {
   assert.equal(env.PATH?.split(':')[0], shimDir)
   assert.equal('ANTHROPIC_API_KEY' in env, false)
+  assert.equal('ANTHROPIC_TRANSLATOR_API_KEY' in env, false)
 })
 
 test('git shim refuses push in every spelling and passes the rest', () => {
@@ -70,4 +71,30 @@ test('factoryWriteBlock refuses the brain and allows the work repo, even nested'
   mkdirSync(nested, { recursive: true })
   assert.equal(factoryWriteBlock(join(nested, 'a.ts'), brain, nested), null)
   assert.equal(factoryWriteBlock(join(brain, 'AGENTS.md'), brain, nested), BRAIN_WRITE_REFUSAL)
+})
+
+test('publish pushes a factory branch to a bare origin; protected, moved, detached, and no remote are refused', async () => {
+  const bare = mkdtempSync(join(tmpdir(), 'factory-bare-'))
+  sh(bare, ['init', '-q', '--bare', '-b', 'main'])
+  const work = tmpRepo('factory-pub-')
+  sh(work, ['remote', 'add', 'origin', bare])
+  sh(work, ['checkout', '-q', '-b', 'factory/x'])
+  sh(work, ['commit', '-q', '--allow-empty', '-m', 'run'])
+  const sha = sh(work, ['rev-parse', 'HEAD']).trim()
+  assert.equal(publishBlock({ repo: work, remote: 'origin', branch: 'factory/x', sha }), null)
+  assert.match(String(publishBlock({ repo: work, remote: 'origin', branch: 'main', sha })), /does not push to main/)
+  assert.match(String(publishBlock({ repo: work, remote: 'origin', branch: 'staging', sha })), /does not push to staging/)
+  assert.match(String(publishBlock({ repo: work, remote: 'nope', branch: 'factory/x', sha })), /no remote named nope/)
+  assert.match(String(publishBlock({ repo: work, remote: 'origin', branch: '', sha })), /detached/)
+  const r = await publish(work, { remote: 'origin', branch: 'factory/x', sha })
+  assert.equal(r.ok, true, r.out)
+  assert.equal(sh(bare, ['rev-parse', 'refs/heads/factory/x']).trim(), sha)
+  assert.match(String(publishBlock({ repo: work, remote: 'origin', branch: 'factory/x', sha })), /Already pushed/)
+  sh(work, ['commit', '-q', '--allow-empty', '-m', 'moved'])
+  assert.match(String(publishBlock({ repo: work, remote: 'origin', branch: 'factory/x', sha })), /moved since Factory committed/)
+  const moved = await publish(work, { remote: 'origin', branch: 'factory/x', sha })
+  assert.equal(moved.ok, false)
+  assert.equal(sh(bare, ['rev-parse', 'refs/heads/factory/x']).trim(), sha)
+  const shim = spawnSync('git', ['push', 'origin', 'factory/x'], { cwd: work, env, encoding: 'utf8' })
+  assert.equal(shim.status, 1)
 })

@@ -1,6 +1,7 @@
 /**
- * Factory triage, Slice 1: keyword and count rules only (no model). Sizes a task T0..T3 and a
- * risk none / elevated / critical. T2 and T3 are capped at T1 in this slice.
+ * Factory triage rules: keywords and counts only (no model). Sizes a task T0..T3 and a risk
+ * none / elevated / critical. T3 is capped at T2 in this version. Model triage (triage-llm.ts)
+ * may only raise what these rules find.
  */
 
 export type Size = 'T0' | 'T1' | 'T2' | 'T3'
@@ -8,7 +9,7 @@ export type Risk = 'none' | 'elevated' | 'critical'
 
 export type Triage = {
   size: Size
-  /** Size the rules found before the Slice 1 cap. */
+  /** Size the rules found before the T2 cap. */
   original: Size
   risk: Risk
   capped: boolean
@@ -43,7 +44,7 @@ const T2_WORDS = /\b(feature|new (page|route|screen|endpoint|api|component|servi
 const T0_WORDS = /\b(typos?|spelling|misspel\w*|wording|copy|text|colou?r|font|padding|margin|spacing|label|footer|header|button text|capitali[sz]\w*|punctuation|comma|alt text|link text|css|style)\b/i
 const FILE_RE = /\b[\w./-]+\.(tsx?|jsx?|mjs|cjs|css|scss|html?|md|json|ya?ml|py|rb|go|rs|sql|swift|kt|java|php|vue|svelte)\b/gi
 
-const RANK: Record<Size, number> = { T0: 0, T1: 1, T2: 2, T3: 3 }
+export const RANK: Record<Size, number> = { T0: 0, T1: 1, T2: 2, T3: 3 }
 
 function bump(cur: Size, next: Size): Size {
   return RANK[next] > RANK[cur] ? next : cur
@@ -114,10 +115,10 @@ export function triage(text: string, hints: TriageHints = {}): Triage {
   }
   const original = size
   let capped = false
-  if (RANK[size] >= 2) {
+  if (original === 'T3') {
     capped = true
-    size = 'T1'
-    reasons.push(`Triage says ${original}. Slice 1 caps at T1: doing the smallest safe slice.`)
+    size = 'T2'
+    reasons.push('Triage says T3. This version caps at T2: doing the smallest safe slice.')
   }
   return { size, original, risk, capped, reasons, ms: performance.now() - t0 }
 }

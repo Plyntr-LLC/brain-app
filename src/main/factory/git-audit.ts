@@ -41,6 +41,23 @@ export function headSha(repo: string): string {
   }
 }
 
+/** Short branch name, or null on a detached HEAD. */
+export function currentBranch(repo: string): string | null {
+  try {
+    return git(repo, ['symbolic-ref', '--short', '-q', 'HEAD']).trim() || null
+  } catch {
+    return null
+  }
+}
+
+export function hasRemote(repo: string, name: string): boolean {
+  try {
+    return git(repo, ['remote']).split('\n').map((r) => r.trim()).includes(name)
+  } catch {
+    return false
+  }
+}
+
 type Entry = { xy: string; path: string }
 
 function statusEntries(repo: string): Entry[] {

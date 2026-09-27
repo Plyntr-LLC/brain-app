@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AiKind } from '../shared/contracts'
-import type { FactoryTriage, RunRecord as FactoryRun } from '../shared/factory'
+import type { FactoryTriage, RepoProfile, RunRecord as FactoryRun } from '../shared/factory'
 
 type FactoryResult = { ok: true; run: FactoryRun | null } | { ok: false; error: string }
 
@@ -928,8 +928,22 @@ const brain = {
         { ok: true; run: FactoryRun } | { ok: false; error: string; needsProceed?: boolean; runId?: string }
       >,
     resume: (id: string) => ipcRenderer.invoke('factory:resume', id) as Promise<FactoryResult>,
-    decide: (id: string, choice: 'upgrade' | 'trim' | 'stop') =>
-      ipcRenderer.invoke('factory:decide', id, choice) as Promise<FactoryResult>,
+    decide: (
+      id: string,
+      choice: 'upgrade' | 'trim' | 'stop' | 'approve-plan' | 'reject-plan' | 'proceed' | 'fix-copy',
+      reason?: string
+    ) => ipcRenderer.invoke('factory:decide', id, choice, { reason }) as Promise<FactoryResult>,
+    profile: (repo: string) =>
+      ipcRenderer.invoke('factory:profile', repo) as Promise<
+        { ok: true; profile: RepoProfile; line: string } | { ok: false; error: string }
+      >,
+    saveProfile: (repo: string, patch: { voice?: Partial<RepoProfile['voice']>; scripts?: RepoProfile['scripts']; publish?: Partial<RepoProfile['publish']> }) =>
+      ipcRenderer.invoke('factory:saveProfile', repo, patch) as Promise<
+        { ok: true; profile: RepoProfile; line: string } | { ok: false; error: string }
+      >,
+    publish: (id: string) => ipcRenderer.invoke('factory:publish', id) as Promise<FactoryResult>,
+    publishBlock: (id: string) =>
+      ipcRenderer.invoke('factory:publishBlock', id) as Promise<{ ok: true; block: string | null } | { ok: false; error: string }>,
     commit: (id: string) => ipcRenderer.invoke('factory:commit', id) as Promise<FactoryResult>,
     pause: (id: string) => ipcRenderer.invoke('factory:pause', id) as Promise<FactoryResult>,
     detach: (id: string) => ipcRenderer.invoke('factory:detach', id) as Promise<FactoryResult>,

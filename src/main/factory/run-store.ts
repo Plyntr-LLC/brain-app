@@ -41,6 +41,11 @@ export function assertStoreOutside(...repos: (string | undefined)[]): void {
   }
 }
 
+/** Scratch files (voice copy); deleted after use. */
+export function factoryTmpDir(): string {
+  return join(factoryDir(), 'tmp')
+}
+
 function runsDir(): string {
   return join(factoryDir(), 'runs')
 }
@@ -67,6 +72,18 @@ export function saveRun(run: RunRecord): RunRecord {
   const next = { ...run, updatedAt: Date.now() }
   atomicWrite(join(runsDir(), `${safeId(run.id)}.json`), JSON.stringify(next, null, 2))
   return next
+}
+
+/** Plan text and the last strict FAIL text sit beside the run record, not in the brief. */
+export function runTextPath(id: string, kind: 'plan' | 'review'): string {
+  return join(runsDir(), `${safeId(id)}.${kind}.md`)
+}
+
+export function saveRunText(id: string, kind: 'plan' | 'review', text: string): string {
+  mkdirSync(runsDir(), { recursive: true })
+  const dest = runTextPath(id, kind)
+  atomicWrite(dest, String(text || ''))
+  return dest
 }
 
 export function loadRun(id: string): RunRecord | null {

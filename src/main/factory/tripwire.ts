@@ -1,10 +1,13 @@
 /** Post-turn tripwire: over the tier limits, a lockfile, or a schema change asks a person. Never changes tier. */
 
+import type { Tier } from '../../shared/factory.ts'
+
 export type NumstatRow = { path: string; added: number; deleted: number }
 
 export const TIER_LIMITS = {
   T0: { files: 1, lines: 20 },
-  T1: { files: 3, lines: 150 }
+  T1: { files: 3, lines: 150 },
+  T2: { files: 10, lines: 600 }
 } as const
 
 export const LOCKFILES = new Set([
@@ -26,8 +29,8 @@ export const SCHEMA_RE = /(^|\/)(migrations?|prisma|drizzle|db\/schema)\/|\.sql$
 export type Tripwire = {
   trip: boolean
   reasons: string[]
-  /** 'T1' when a T0 run is over T0 but inside T1 with no lockfile or schema change. Null otherwise (T2 is Slice 2). */
-  suggest: 'T1' | null
+  /** The smallest tier above this one that fits with no lockfile or schema change, capped at T2. Null otherwise (T3 is a later version). */
+  suggest: 'T1' | 'T2' | null
   files: number
   lines: number
 }
@@ -36,7 +39,9 @@ function base(path: string): string {
   return path.split('/').pop()?.toLowerCase() || ''
 }
 
-export function checkTripwire(tier: 'T0' | 'T1', rows: NumstatRow[]): Tripwire {
+const ORDER: Tier[] = ['T0', 'T1', 'T2']
+
+export function checkTripwire(tier: Tier, rows: NumstatRow[]): Tripwire {
   const files = rows.length
   const lines = rows.reduce((n, r) => n + (r.added || 0) + (r.deleted || 0), 0)
   const reasons: string[] = []
@@ -48,6 +53,14 @@ export function checkTripwire(tier: 'T0' | 'T1', rows: NumstatRow[]): Tripwire {
   const schema = rows.filter((r) => SCHEMA_RE.test(r.path)).map((r) => r.path)
   if (schema.length) reasons.push(`Schema or migration changed: ${schema.join(', ')}.`)
   const trip = reasons.length > 0
-  const fitsT1 = files <= TIER_LIMITS.T1.files && lines <= TIER_LIMITS.T1.lines && !locks.length && !schema.length
-  return { trip, reasons, suggest: trip && tier === 'T0' && fitsT1 ? 'T1' : null, files, lines }
+  let suggest: 'T1' | 'T2' | null = null
+  if (trip && !locks.length && !schema.length) {
+    for (const next of ORDER.slice(ORDER.indexOf(tier) + 1) as ('T1' | 'T2')[]) {
+      if (files <= TIER_LIMITS[next].files && lines <= TIER_LIMITS[next].lines) {
+        suggest = next
+        break
+      }
+    }
+  }
+  return { trip, reasons, suggest, files, lines }
 }

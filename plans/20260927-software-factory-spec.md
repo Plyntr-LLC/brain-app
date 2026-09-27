@@ -85,9 +85,9 @@ T0/T1 only. Rules-only triage. Controller through commit. Minimal PhaseRail. Exi
 11. Typecheck green.
 12. Factory run store is only under userData, not in git.
 
-## Slice 2 (not now)
+## Slice 2
 
-LLM triage, T2 plan + human gate, repo profiles, Opus strict by path, publish buttons, voice check.
+Plan: `plans/20260927-software-factory-slice2.md` (LLM triage, T2 plan + human gate, repo profiles, Opus strict by path, publish buttons, voice check).
 
 ## Slice 3 (not now)
 

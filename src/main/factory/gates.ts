@@ -1,8 +1,10 @@
+import { execFileSync, spawn } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { delimiter, isAbsolute, join, resolve } from 'node:path'
+import { currentBranch, hasRemote, headSha } from './git-audit.ts'
 import { realish, underPath } from './paths.ts'
 
-/** Publish verbs Factory never runs in Slice 1. Matched against a permission ask's title and raw input. */
+/** Publish verbs the model never runs (Push is a person's click, done by Brain). Matched against a permission ask's title and raw input. */
 export const DENY_CMD_RE =
   /\bgit\s+(?:(?:-C|-c|--git-dir|--work-tree)\s+\S+\s+|-\S+\s+)*push\b|(?:^|[\s;&|(`'"])gh\s|\bwrangler\s+(?:[\w:-]+\s+)*deploy\b|\b(?:npm|yarn|pnpm|bun)\s+publish\b|\bvercel(?=[\s\"'`;&|]|$)|\bfly(?:ctl)?\s+deploy\b|\bnetlify\s+deploy\b|\bfirebase\s+deploy\b|\bgcloud\s+\S+\s+deploy\b|\bheroku\s+(?:git:)?push\b/i
 
@@ -112,9 +114,71 @@ exit 1
   return dir
 }
 
-/** Child env for every Factory process: shims first on PATH, no ANTHROPIC_API_KEY. */
+/** Child env for every Factory process: shims first on PATH, no Anthropic API keys. */
 export function factoryEnv(base: NodeJS.ProcessEnv, shimDir: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base, PATH: `${shimDir}${delimiter}${base.PATH || ''}` }
   delete env.ANTHROPIC_API_KEY
+  delete env.ANTHROPIC_TRANSLATOR_API_KEY
   return env
+}
+
+/** Branches the Push click never pushes. */
+export const PROTECTED_BRANCHES = new Set(['main', 'master', 'staging', 'prod', 'production'])
+
+export type PublishTarget = { remote: string; branch: string; sha: string }
+
+function remoteRef(repo: string, remote: string, branch: string): string {
+  try {
+    return execFileSync(realGit(), ['rev-parse', '--verify', '-q', `refs/remotes/${remote}/${branch}`], {
+      cwd: repo,
+      encoding: 'utf8',
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+  } catch {
+    return ''
+  }
+}
+
+/** Null when Push may run. Otherwise the one sentence the disabled Push shows. */
+export function publishBlock(o: { repo: string } & Partial<PublishTarget>): string | null {
+  const branch = String(o.branch || '')
+  const remote = String(o.remote || '')
+  if (!branch) return 'This commit is on a detached HEAD. Push it from Terminal.'
+  if (PROTECTED_BRANCHES.has(branch)) return `Brain does not push to ${branch}. Push it from Terminal after review.`
+  const now = currentBranch(o.repo)
+  if (!now) return 'This repo is on a detached HEAD. Push it from Terminal.'
+  if (now !== branch || headSha(o.repo) !== o.sha) return 'This branch moved since Factory committed. Push from Terminal.'
+  if (!remote || !hasRemote(o.repo, remote)) return `This repo has no remote named ${remote || 'origin'}.`
+  if (o.sha && remoteRef(o.repo, remote, branch) === o.sha) return `Already pushed to ${remote}/${branch}.`
+  return null
+}
+
+/** The Push click: real git, never the shim dir, no prompts, 90 s. Refuses anything publishBlock names. */
+export function publish(workRepo: string, t: PublishTarget, timeoutMs = 90_000): Promise<{ ok: boolean; out: string }> {
+  const block = publishBlock({ repo: workRepo, ...t })
+  if (block) return Promise.resolve({ ok: false, out: block })
+  const path = String(process.env.PATH || '')
+    .split(delimiter)
+    .filter((d) => d && !/[\\/]factory[\\/]bin$/.test(d))
+    .join(delimiter)
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: path, GIT_TERMINAL_PROMPT: '0' }
+  return new Promise((done) => {
+    const child = spawn(realGit(), ['push', t.remote, t.branch], { cwd: workRepo, env, stdio: ['ignore', 'pipe', 'pipe'], shell: false })
+    let out = ''
+    const add = (d: Buffer) => {
+      out = (out + String(d)).slice(-4000)
+    }
+    child.stdout?.on('data', add)
+    child.stderr?.on('data', add)
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs)
+    child.on('error', (e) => {
+      clearTimeout(timer)
+      done({ ok: false, out: String(e.message || e) })
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      done({ ok: code === 0, out: out.trim() || (code === 0 ? '' : `git push exited ${code}`) })
+    })
+  })
 }
