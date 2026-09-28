@@ -1341,6 +1341,175 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
   reset2()
 }
 
+// Retarget: the work repo follows the repo the task or a Guide note uniquely names. Never lastRepo, never ambiguous.
+{
+  const projects = join(temp, 'projects')
+  const mailDesk = repo('projects/mail-desk', { 'package.json': pkg, 'src/send.ts': 'export const send = 1\n' })
+  const quote = repo('projects/gutter-iq-quote-deploy', { 'package.json': pkg, 'src/quote.ts': 'export const quote = 1\n' })
+  repo('projects/guttercompass-quote', { 'package.json': pkg, 'src/q.ts': 'export const q = 1\n' })
+  const head = (dir: string) => git(dir, ['rev-parse', 'HEAD']).trim()
+  const same = (a?: string, b?: string) => !!a && !!b && realish(a) === realish(b)
+  const holds = (dir: string, id: string) => store.activeRunFor(dir)?.runId === id
+  const cleanMail = () => {
+    git(mailDesk, ['checkout', '-q', '--', '.'])
+    git(mailDesk, ['clean', '-qfd'])
+  }
+  fakeDeps.projectsDir = projects
+  ctl.configureFactory(fakeDeps)
+  claudeSays(['Plan: small.'])
+
+  // The task names mail-desk: the first plan or build turn moves the run off the quote repo.
+  promptPlan = async () => {
+    writeFileSync(join(mailDesk, 'src', 'send.ts'), 'export const send = 2\n')
+  }
+  const w0 = calls.length
+  const byTask = ctl.startRun({ task: 'Fix the typo in the Plyntr email footer', workRepo: quote, brainPath: brainA })
+  const idT = byTask.ok ? byTask.run.id : ''
+  const rT = await ctl.settle(idT)
+  const warmT = calls.slice(w0).filter((c) => c.fn === 'warm').map((c) => String(c.o?.workRepo))
+  check(
+    'RT 1 a task naming mail-desk retargets from the quote repo on the first turn',
+    byTask.ok && same(byTask.run.workRepo, quote) && same(rT?.workRepo, mailDesk) && rT?.base === head(mailDesk) && holds(mailDesk, idT) && !holds(quote, idT) && same(resolver.lastRepo(), mailDesk),
+    JSON.stringify({ start: byTask.ok ? byTask.run.workRepo : byTask, now: rT?.workRepo, phase: rT?.phase, error: rT?.error })
+  )
+  check('RT 1 the builder warms and edits in mail-desk', warmT.length > 0 && warmT.every((w) => same(w, mailDesk)) && (rT?.audit?.work || []).some((r) => r.path === 'src/send.ts'), JSON.stringify({ warmT, work: rT?.audit?.work }))
+  if (idT) ctl.abandonRun(idT)
+  cleanMail()
+
+  // A "fix typo" task stays put; a Guide note naming mail-desk then moves it, and that Send starts the turn there (no Resume).
+  promptPlan = async () => {}
+  const typo = ctl.startRun({ task: 'fix typo in the app label', workRepo: quote, brainPath: brainA })
+  const idG = typo.ok ? typo.run.id : ''
+  const rG0 = await ctl.settle(idG)
+  check('RT 2 fix typo does not retarget', same(rG0?.workRepo, quote) && holds(quote, idG), JSON.stringify({ now: rG0?.workRepo, phase: rG0?.phase }))
+  promptPlan = async (o) => {
+    if (o.text.includes(mailDesk)) writeFileSync(join(mailDesk, 'src', 'send.ts'), 'export const send = 4\n')
+  }
+  const w1 = calls.length
+  const p3 = promptCount()
+  const guided = ctl.guideRun(idG, 'This is the email system for Plyntr')
+  check('RT 2 a Guide note naming mail-desk retargets (note wins over the task)', same(guided.workRepo, mailDesk) && guided.base === head(mailDesk) && holds(mailDesk, idG) && !holds(quote, idG), JSON.stringify({ now: guided.workRepo, error: guided.error }))
+  // Resume while the Guide's turn is already running is a no-op.
+  const again = ctl.resumeRun(idG)
+  const rG = await ctl.settle(idG)
+  const warmG = calls.slice(w1).filter((c) => c.fn === 'warm').map((c) => String(c.o?.workRepo))
+  const turnsG = promptsFrom(p3)
+  check(
+    'RT 2 the Guide Send runs the next turn in mail-desk without a separate Resume',
+    guided.phase === 'build' && again.phase === 'build' && turnsG.length === 1 && turnsG[0].includes(mailDesk) && same(rG?.workRepo, mailDesk) && warmG.length > 0 && warmG.every((w) => same(w, mailDesk)) && (rG?.audit?.work || []).some((r) => r.path === 'src/send.ts'),
+    JSON.stringify({ now: rG?.workRepo, phase: rG?.phase, error: rG?.error, warmG, turns: turnsG.length })
+  )
+  if (idG) ctl.abandonRun(idG)
+  cleanMail()
+  promptPlan = async () => {}
+
+  // Ambiguous "quote" (gutter-iq-quote-deploy and guttercompass-quote) never moves the run.
+  const amb = ctl.startRun({ task: 'fix the quote footer', workRepo: mailDesk, brainPath: brainA })
+  const idA = amb.ok ? amb.run.id : ''
+  const rA = await ctl.settle(idA)
+  check('RT 3 ambiguous quote does not retarget', same(rA?.workRepo, mailDesk) && holds(mailDesk, idA), JSON.stringify({ now: rA?.workRepo }))
+
+  // Another run holds mail-desk: the move is refused, the old repo and its lock stay, nothing starts.
+  const p0 = promptCount()
+  const blocked = ctl.startRun({ task: 'Fix the typo in the Plyntr email footer', workRepo: quote, brainPath: brainA })
+  const idB = blocked.ok ? blocked.run.id : ''
+  const rB = await ctl.settle(idB)
+  check(
+    'RT 4 a repo another run holds is refused and the run stays on its repo',
+    same(rB?.workRepo, quote) && holds(quote, idB) && holds(mailDesk, idA) && /already running/.test(rB?.error || '') && rB?.phase === 'paused' && promptCount() === p0,
+    JSON.stringify({ now: rB?.workRepo, phase: rB?.phase, error: rB?.error, prompts: promptCount() - p0 })
+  )
+  if (idB) ctl.abandonRun(idB)
+  if (idA) ctl.abandonRun(idA)
+
+  // A dirty new repo the run has not built in yet waits on Commit first or Stash first.
+  writeFileSync(join(mailDesk, 'wip.txt'), 'wip\n')
+  const p1 = promptCount()
+  const dirty = ctl.startRun({ task: 'Fix the typo in the Plyntr email footer', workRepo: quote, brainPath: brainA })
+  const idD = dirty.ok ? dirty.run.id : ''
+  const rD = await ctl.settle(idD)
+  check(
+    'RT 5 dirty mail-desk before any build waits on prep in the new repo',
+    same(rD?.workRepo, mailDesk) && rD?.phase === 'triage' && rD?.needsPrep === 'dirty' && (rD?.dirtyFiles || []).includes('wip.txt') && promptCount() === p1 && existsSync(join(mailDesk, 'wip.txt')),
+    JSON.stringify({ now: rD?.workRepo, phase: rD?.phase, prep: rD?.needsPrep, files: rD?.dirtyFiles, prompts: promptCount() - p1 })
+  )
+  if (idD) ctl.abandonRun(idD)
+  cleanMail()
+
+  // Guide while a build turn is in flight: the turn is cancelled, the run moves, the follow-up re-warms and builds in mail-desk.
+  let release: () => void = () => {}
+  let first = true
+  promptPlan = (o) => {
+    if (first) {
+      first = false
+      return new Promise<void>((r) => (release = r))
+    }
+    if (o.text.includes(mailDesk)) writeFileSync(join(mailDesk, 'src', 'send.ts'), 'export const send = 3\n')
+    return Promise.resolve()
+  }
+  const p2 = promptCount()
+  const fly = ctl.startRun({ task: 'fix typo in the app label', workRepo: quote, brainPath: brainA })
+  const idF = fly.ok ? fly.run.id : ''
+  for (let i = 0; i < 100 && promptCount() === p2; i++) await new Promise((r) => setTimeout(r, 10))
+  const c0 = calls.length
+  const moved = ctl.guideRun(idF, 'This is the email system for Plyntr')
+  const cancel = calls.slice(c0).find((c) => c.fn === 'cancel' && c.o?.tabId === `factory-${idF}`)
+  const rF = await ctl.settle(idF)
+  release()
+  await new Promise((r) => setTimeout(r, 20))
+  const warmF = calls.slice(c0).filter((c) => c.fn === 'warm').map((c) => String(c.o?.workRepo))
+  const turnsF = promptsFrom(p2)
+  check(
+    'RT 6 Guide mid-build cancels the turn, moves to mail-desk, re-warms there, and the follow-up builds there',
+    !!cancel && cancel.o?.mid === true && same(moved.workRepo, mailDesk) && holds(mailDesk, idF) && !holds(quote, idF) && warmF.length > 0 && warmF.every((w) => same(w, mailDesk)) && turnsF.length === 2 && turnsF[1].includes(mailDesk) && same(rF?.workRepo, mailDesk) && (rF?.audit?.work || []).some((r) => r.path === 'src/send.ts'),
+    JSON.stringify({ cancel, now: rF?.workRepo, phase: rF?.phase, error: rF?.error, warmF, turns: turnsF.length })
+  )
+  if (idF) ctl.abandonRun(idF)
+  cleanMail()
+  promptPlan = async () => {}
+
+  // GF 1: a run failed on an empty turn; Guide Send is Resume with the note, and the note is sent at once.
+  const empty = ctl.startRun({ task: 'fix typo in the app label', workRepo: quote, brainPath: brainA })
+  const idE = empty.ok ? empty.run.id : ''
+  const rE0 = await ctl.settle(idE)
+  promptPlan = async () => {
+    writeFileSync(join(quote, 'src', 'quote.ts'), 'export const quote = 2\n')
+  }
+  const p4 = promptCount()
+  const sent = ctl.guideRun(idE, 'The label is in src/quote.ts')
+  const noteE = sent.guide?.find((g) => g.text === 'The label is in src/quote.ts')
+  const rE = await ctl.settle(idE)
+  const turnsE = promptsFrom(p4)
+  check(
+    'GF 1 Guide on a failed run starts a builder turn with the note and marks it sent',
+    rE0?.phase === 'failed' && /changed no files/.test(rE0?.error || '') && sent.phase === 'build' && !!noteE?.sent && turnsE.length === 1 && turnsE[0].includes('The label is in src/quote.ts') && rE?.phase !== 'failed' && (rE?.audit?.work || []).some((r) => r.path === 'src/quote.ts'),
+    JSON.stringify({ before: rE0?.phase, sentPhase: sent.phase, noteSent: noteE?.sent, turns: turnsE.length, after: rE?.phase, error: rE?.error })
+  )
+  if (idE) ctl.abandonRun(idE)
+  git(quote, ['checkout', '-q', '--', '.'])
+  promptPlan = async () => {}
+
+  // GF 2: the builder writes the repo the task names; afterTurn audits mail-desk, not the quote repo it started on.
+  promptPlan = async () => {
+    writeFileSync(join(mailDesk, 'src', 'send.ts'), 'export const send = 5\n')
+  }
+  const named = ctl.startRun({ task: 'Fix the typo in the Plyntr email footer', workRepo: quote, brainPath: brainA })
+  const idN = named.ok ? named.run.id : ''
+  const rN = await ctl.settle(idN)
+  check(
+    'GF 2 afterTurn audits the repo the task names, so the turn is not an empty fail',
+    same(rN?.workRepo, mailDesk) && (rN?.audit?.work || []).some((r) => r.path === 'src/send.ts') && !(rN?.phase === 'failed' && /changed no files/.test(rN?.error || '')),
+    JSON.stringify({ now: rN?.workRepo, phase: rN?.phase, error: rN?.error, work: rN?.audit?.work })
+  )
+  if (idN) ctl.abandonRun(idN)
+  cleanMail()
+  promptPlan = async () => {}
+
+  fakeDeps.projectsDir = undefined
+  ctl.configureFactory(fakeDeps)
+  reset2()
+}
+
 // 3, 4, 8 end to end through the real factory lane, against a fake grok binary (no live Grok).
 {
   const bin = join(home, '.local', 'bin')

@@ -211,6 +211,50 @@ export function startRun(input: StartInput): StartResult {
   return { ok: true, run: state.run }
 }
 
+/**
+ * The work repo follows the repo the task (or Joe's newest Guide note that names one) uniquely
+ * names. Never lastRepo, never the brain, never an ambiguous name. On a move: the lock, profile,
+ * base, and lastRepo follow; a dirty repo the run has not built in yet waits on Commit/Stash first.
+ * 'stop': the caller starts nothing (another run holds the repo, or the new repo waits on prep).
+ */
+function reconcileWorkRepo(state: Live): 'go' | 'stop' {
+  const run = state.run
+  const brain = realish(run.brainPath)
+  const notes = (run.guide || []).map((g) => g.text).reverse()
+  let hit = ''
+  for (const text of [...notes, run.task]) {
+    const found = resolveWorkRepo({ task: text, brainPath: run.brainPath, projectsDir: deps?.projectsDir })
+    if (found.ok) {
+      hit = found.workRepo
+      break
+    }
+  }
+  if (!hit || !existsSync(hit) || !isGitRepo(hit)) return 'go'
+  const next = gitTop(hit)
+  if (!next || realish(next) === brain || realish(next) === realish(run.workRepo)) return 'go'
+  // The new lock first: a refused move keeps the old repo and the lock this run already holds.
+  const lock = acquireLock(next, { runId: run.id, title: run.title })
+  if (!lock.ok) {
+    state.run = { ...state.run, error: `Factory is already running on ${next}: ${lock.title}`.slice(0, 300) }
+    persist(state)
+    return 'stop'
+  }
+  if (holdsLock(run.workRepo, run.id)) releaseLock(run.workRepo, run.id)
+  rememberRepo(next)
+  // The Grok tab re-warms on the same session so its write gate follows the new repo.
+  state.warm = false
+  state.run = { ...state.run, workRepo: next, profile: runProfile(readProfile(next)), base: headSha(next), error: undefined }
+  const notBuilt = !!run.needsPrep || ((run.phase === 'triage' || run.phase === 'plan') && !run.diff && !run.audit?.work?.length)
+  if (notBuilt && !isClean(next)) {
+    const dirty = dirtyPaths(next)
+    setPhase(state, 'triage', { needsPrep: 'dirty', dirtyFiles: dirty.slice(0, 20), dirtyCount: dirty.length, resumePhase: 'triage' })
+    return 'stop'
+  }
+  if (run.needsPrep) state.run = { ...state.run, needsPrep: undefined, dirtyFiles: undefined, dirtyCount: undefined }
+  persist(state)
+  return 'go'
+}
+
 function asTier(size: Size | string): Tier {
   return size === 'T0' ? 'T0' : size === 'T1' ? 'T1' : size === 'T3' ? 'T3' : 'T2'
 }
@@ -338,6 +382,10 @@ async function approvePlan(state: Live): Promise<void> {
 async function opusPlan(state: Live): Promise<void> {
   const d = need()
   const gen = state.gen
+  if (reconcileWorkRepo(state) === 'stop') {
+    if (!state.run.needsPrep) setPhase(state, 'paused', { resumePhase: 'plan', error: state.run.error })
+    return
+  }
   const prev: NonNullable<RunRecord['plan']> = state.run.plan || { text: '', by: 'opus', status: 'waiting', rejects: 0, reasons: [] }
   setPhase(state, 'plan', { plan: { ...prev, text: '', status: 'waiting' }, resumePhase: 'plan', error: undefined, needsProceed: undefined })
   // Joe's guide notes go to the planner (never to a reviewer). Marked sent as this plan starts.
@@ -385,8 +433,12 @@ async function opusPlan(state: Live): Promise<void> {
 async function buildStep(state: Live, phase: BriefPhase, note?: string): Promise<void> {
   const d = need()
   const gen = state.gen
-  const run = state.run
   const inReview = phase === 'review' || phase === 'fix'
+  if (reconcileWorkRepo(state) === 'stop') {
+    if (!state.run.needsPrep) setPhase(state, 'paused', { resumePhase: inReview ? 'review' : 'build', error: state.run.error })
+    return
+  }
+  const run = state.run
   // Any turn that can change files clears the last strict and voice results: the pipeline runs again.
   // A fix turn keeps its reason (or Joe's note) on the run so the card says Grok is fixing, not Opus reviewing.
   setPhase(state, inReview ? 'review' : 'build', {
@@ -564,6 +616,12 @@ async function onTrip(state: Live, trip: Tripwire): Promise<boolean> {
 }
 
 async function afterTurn(state: Live, phase: BriefPhase, brainBefore: Record<string, string>): Promise<void> {
+  // Audit the repo Joe is in: Grok may have written the repo the task or a Guide note names.
+  // 'stop' (another run holds it, or it waits on prep): not an empty turn; the error or prep is on the run.
+  if (reconcileWorkRepo(state) === 'stop') {
+    if (!state.run.needsPrep) setPhase(state, 'paused', { resumePhase: 'build', error: state.run.error })
+    return
+  }
   const run = state.run
   const audit = auditTurn({ brainPath: run.brainPath, workRepo: run.workRepo, brainBefore, base: run.base })
   // Brain writes are shown, never reverted. They stay on the run for every later screen.
@@ -846,6 +904,17 @@ export function resumeRun(id: string): RunRecord {
   const target: RunPhase = run.phase === 'paused' || run.phase === 'failed' ? run.resumePhase || 'build' : run.phase
   state.gen++
   if (target === 'upgrade') return setPhase(state, 'upgrade')
+  // Resume that starts work first moves the run to the repo its task or Guide note names.
+  const waitingPlan = target === 'plan' && run.plan?.status === 'waiting' && !!run.plan.text && !openNotes(run).length && !run.runThrough
+  const waitingDiff = target === 'review' && !!run.diff && !openNotes(run).length
+  if (!waitingPlan && !waitingDiff && !run.needsProceed) {
+    if (reconcileWorkRepo(state) === 'stop') return state.run
+  }
+  return resumeTo(state, target)
+}
+
+function resumeTo(state: Live, target: RunPhase): RunRecord {
+  const run = state.run
   if (target === 'triage') {
     // Still waiting on Commit first or Stash first: resume never starts triage.
     if (run.needsPrep) return setPhase(state, 'triage', { error: undefined })
@@ -994,7 +1063,9 @@ function interrupt(state: Live): void {
  * Opus reviewer). A waiting plan gets a fresh Opus plan with it; a diff in review (a held reject
  * included) gets a builder turn with it. While a turn is in flight it interrupts that turn (planner,
  * builder, workers, verify, or reviewer) and starts the follow-up with the note at once.
- * Triage in flight, paused, prep, Proceed, and tier cards keep it unsent for the next brief.
+ * A failed or paused run: this Send is Resume with the note. Triage in flight, prep, Proceed, and
+ * tier cards keep it unsent for the next brief. A follow-up it starts marks the note sent before
+ * this returns (opusPlan / buildStep mark it before their first await).
  */
 export function guideRun(id: string, text: string): RunRecord {
   const state = liveFor(id)
@@ -1003,7 +1074,21 @@ export function guideRun(id: string, text: string): RunRecord {
   if (TERMINAL_PHASES.includes(state.run.phase)) throw new Error('This run is over. Start a new run.')
   state.run = { ...state.run, guide: [...(state.run.guide || []), { at: Date.now(), text: body }].slice(-GUIDE_MAX) }
   persist(state)
+  // A note that names another repo moves the run there before any follow-up turn.
+  if (reconcileWorkRepo(state) === 'stop') {
+    // The new repo waits on Commit/Stash first: the turn still running in the old repo stops.
+    if (state.run.needsPrep && state.busy) interrupt(state)
+    return state.run
+  }
   const run = state.run
+  // Failed or paused is not a dead end: Send resumes with the note at once. Tier cards, Proceed, and prep wait.
+  if (run.phase === 'failed' || run.phase === 'paused') {
+    const target: RunPhase = run.resumePhase || 'build'
+    if (target === 'upgrade' || run.needsPrep || run.needsProceed) return run
+    state.gen++
+    // Verify never carries a note: a run paused in verify (or review with no diff) gets a builder turn with it.
+    return resumeTo(state, target === 'verify' || (target === 'review' && !run.diff) ? 'build' : target)
+  }
   if (state.busy) {
     if (!INTERRUPTIBLE.includes(run.phase) || run.needsPrep || run.needsProceed) return run
     interrupt(state)

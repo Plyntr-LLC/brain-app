@@ -1891,6 +1891,16 @@ button.runmeta-v:hover { color: var(--orange-deep); }
 }
 .factorywrap.on { display: block; }
 .factory { max-width: 52rem; margin: 0 auto; padding: 1rem 1.1rem 2rem; }
+/* A run: title, Work repo, and the phase row stay at the top, Guide at the bottom; only the middle scrolls (Chat's .chatpane pattern). */
+.factorywrap.run { overflow: hidden; }
+.factorywrap.run.on { display: flex; flex-direction: column; }
+.factorywrap.run .factory { flex: 1; min-height: 0; width: 100%; max-width: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.factorywrap.run .factory-head,
+.factorywrap.run .factory-body,
+.factorywrap.run .factory-compose { padding-left: max(1.1rem, calc((100% - 52rem) / 2 + 1.1rem)); padding-right: max(1.1rem, calc((100% - 52rem) / 2 + 1.1rem)); }
+.factorywrap.run .factory-head { flex-shrink: 0; padding-top: 1rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--line); }
+.factorywrap.run .factory-body { flex: 1; min-height: 0; overflow: auto; padding-bottom: 1rem; }
+.factorywrap.run .factory-compose { flex-shrink: 0; margin-top: 0; padding-bottom: 1rem; background: var(--card); }
 .factory-h { margin: 0 0 0.4rem; font-family: "Schibsted Grotesk", sans-serif; font-size: 1rem; }
 .factory-field { display: flex; flex-direction: column; gap: 0.3rem; margin: 0.7rem 0; font-size: 0.85rem; }
 .factory-field textarea,
