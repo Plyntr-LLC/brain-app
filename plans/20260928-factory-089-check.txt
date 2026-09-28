@@ -1,0 +1,45 @@
+# 0.1.89 check artifact (2026-09-28)
+
+## Live probe: run-8b221dd4 notes vs real ~/Projects
+note 1: 0.1.88 -> brain-sync | 0.1.89 -> (no move)
+note 2: 0.1.88 -> plyntr-books | 0.1.89 -> (no move)
+note 3: 0.1.88 -> ai-responder-saas | 0.1.89 -> (no move)
+ignore: /Users/joewine/Projects/mail-desk
+PROBE_PASS
+
+## check-factory.ts (new checks + summary)
+PASS HJ 1 the three real run-8b221dd4 notes keep the run on mail-desk (no README or package.json word picks a repo)
+PASS HJ 3 a task whose only hit is a README word moves off the quote repo to it
+PASS HJ 3 a task whose only hit is a package.json word moves off the quote repo to it
+PASS EH 1 empty turn in quote heals back to mail-desk with the stored base, lock, audit, moved line, and no retry
+PASS EH 1 after a heal, a note with no repo words stays on mail-desk and the builder re-warms there
+PASS EH 1b an already-dirty file whose bytes change during the turn heals back to mail-desk
+PASS EH 2 no heal: stays on quote, exactly one retry, then paused with changed no files
+PASS EH 2b no heal: stays on quote, exactly one retry, then paused with changed no files (brain and unrelated repo writes ignored)
+PASS EH 4 a task candidate never entered: heal lands on mail-desk with base = its HEAD
+PASS EH 3 a heal onto a repo another run holds is refused: one retry, paused, locks unchanged
+PASS F6 a run with no repos field restores paused on mail-desk with no throw and no move
+PASS RV 1 OUTSIDE bullets (one says follow-up) are follow-ups; GAPS: 0 PASS still passes; strict.text has no bullet
+PASS RV 3 a new fix turn clears followUps the moment strict clears
+PASS RV 2 the fix turn after a FAIL is handed both defects and GAPS: 1, never the OUTSIDE bullet
+PASS RV 2b a GAPS/PASS line ends the block: the later nit and FAIL count (a fail and a fix turn), the bullet is gone
+PASS RV 3 a missing reviewer leaves no follow-ups
+PASS PW 1 no remote: says so and names origin
+PASS PW 2 Ship in advance on main with a remote: protected line naming main
+PASS PW 3 no Ship in advance on main: no warning
+PASS PW 4 remote upstream on master: protected line naming master; with only origin, no remote named upstream
+PASS PW 5 feature branch with a remote: no warning
+PASS PW 5 a move onto a repo that can push clears pushWarn
+PASS PANE 0.1.89 renders run.pushWarn, run.moved, and Follow-ups outside this change
+FACTORY_PASS
+
+## Mutation: fixes switched off
+aliases:false removed -> FAIL HJ 1 (all three notes land on ai-responder-saas), FACTORY_FAIL
+healEmptyTurn disabled -> FAIL EH 1, EH 1b, EH 4, FACTORY_FAIL
+
+## Unit
+ℹ tests 84
+ℹ pass 84
+ℹ fail 0
+
+check-shell-switch.ts fails on the 0.1.88 base too (plyntr verify stores), unrelated.

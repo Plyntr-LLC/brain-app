@@ -185,6 +185,20 @@ export function publishBlock(o: { repo: string } & Partial<PublishTarget>): stri
   return null
 }
 
+/**
+ * What Start can already tell about Push: no remote at all, or Ship in advance on a branch Brain never
+ * pushes. Null when neither. The Push click still runs publishBlock; this only says it early.
+ */
+export function pushWarn(o: { repo: string; remote: string; shipThrough?: boolean }): string | undefined {
+  const remote = String(o.remote || 'origin')
+  if (!hasRemote(o.repo, remote)) return `No remote named ${remote}. Factory commits here but cannot push.`
+  const branch = currentBranch(o.repo)
+  if (o.shipThrough && branch && PROTECTED_BRANCHES.has(branch)) {
+    return `On ${branch}. Ship in advance commits but Brain never pushes ${branch}.`
+  }
+  return undefined
+}
+
 /** PATH without the Factory shim dir: person clicks (Push, Deploy) use the real tools. */
 export function noShimPath(path: string | undefined): string {
   return String(path || '')

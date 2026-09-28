@@ -6,9 +6,9 @@ import { parseGrokLine, resolveBin, type StreamEvent } from '../ai-cli'
 import { ACK_FILED, ACK_NOTED, BUILDER_FIX_MAX, type Builder, type GuideNote, type Slice, type Tier } from '../../shared/factory.ts'
 import { buildBrief, type BriefPhase } from './brief.ts'
 import { isNeedOpus } from './fallback.ts'
-import { deploy as gitDeploy, deployBlock, publish as gitPublish, publishBlock, type PublishTarget } from './gates.ts'
+import { deploy as gitDeploy, deployBlock, publish as gitPublish, publishBlock, pushWarn, type PublishTarget } from './gates.ts'
 import { auditTurn, commitRun, currentBranch, diffText, dirtyPaths, gitTop, headSha, isClean, isGitRepo, numstat, porcelain, stashAll } from './git-audit.ts'
-import { OPUS_PLAN_TIMEOUT_MS, OPUS_REVIEW_TIMEOUT_MS, planPrompt, REVIEW_MAX, reviewAccept, runOpus, strictNeeded, strictPrompt, type SpawnFn } from './opus.ts'
+import { OPUS_PLAN_TIMEOUT_MS, OPUS_REVIEW_TIMEOUT_MS, planPrompt, REVIEW_MAX, reviewAccept, runOpus, splitOutside, strictNeeded, strictPrompt, type SpawnFn } from './opus.ts'
 import { realish } from './paths.ts'
 import { detectProfile, readProfile, runProfile } from './profile.ts'
 import { lastRepo, rememberRepo, resolveWorkRepo } from './resolve-repo.ts'
@@ -95,6 +95,8 @@ type Live = {
   verifyFix?: number
   /** gen that already had its one retry after a turn that changed no files. */
   emptyRetry?: number
+  /** Porcelain of the other repos this run could have written, taken before the turn (see healCandidates). */
+  otherBefore?: Map<string, Record<string, string>>
 }
 
 export const STRICT_MISSING = 'Opus reviewer not found (claude CLI). Commit is your call.'
@@ -212,6 +214,8 @@ export function startRun(input: StartInput): StartResult {
     createdAt: now,
     updatedAt: now
   }
+  run.repos = [{ repo: workRepo, base: run.base }]
+  run.pushWarn = warnFor(run, workRepo)
   saveRun(run)
   const lock = acquireLock(workRepo, { runId: id, title: run.title })
   if (!lock.ok) {
@@ -233,6 +237,79 @@ export function startRun(input: StartInput): StartResult {
   return { ok: true, run: state.run }
 }
 
+/** The run's repo history with this repo added once (its first base kept). */
+function withRepo(repos: RunRecord['repos'], repo: string, base: string): NonNullable<RunRecord['repos']> {
+  const list = [...(repos || [])]
+  if (!list.some((r) => realish(r.repo) === realish(repo))) list.push({ repo, base })
+  return list
+}
+
+function warnFor(run: RunRecord, repo: string): string | undefined {
+  try {
+    return pushWarn({ repo, remote: readProfile(repo).publish.remote || 'origin', shipThrough: run.shipThrough })
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Repos an empty turn may have written instead: the run's earlier repos and the repo the task itself
+ * names. Never the current repo, never the brain, never a scan of every project.
+ */
+function healCandidates(run: RunRecord): string[] {
+  const brain = realish(run.brainPath)
+  const out: string[] = []
+  const add = (repo: string) => {
+    if (!repo || !existsSync(repo) || !isGitRepo(repo)) return
+    const top = gitTop(repo)
+    if (!top || realish(top) === brain || realish(top) === realish(run.workRepo)) return
+    if (!out.some((r) => realish(r) === realish(top))) out.push(top)
+  }
+  for (const r of run.repos || []) add(r.repo)
+  const found = resolveWorkRepo({ task: run.task, brainPath: run.brainPath, projectsDir: deps?.projectsDir })
+  if (found.ok) add(found.workRepo)
+  return out
+}
+
+/**
+ * An empty turn: if the builder's edits landed in a candidate repo during this turn (porcelain, content
+ * hashes, so an already-dirty file edited again counts), move the run back there. True: moved.
+ * A candidate another run holds is not taken.
+ */
+function healEmptyTurn(state: Live): boolean {
+  const before = state.otherBefore
+  if (!before?.size) return false
+  const run = state.run
+  for (const [repo, snapBefore] of before) {
+    const now = snap(repo)
+    const keys = new Set([...Object.keys(snapBefore), ...Object.keys(now)])
+    if (![...keys].some((k) => snapBefore[k] !== now[k])) continue
+    const lock = acquireLock(repo, { runId: run.id, title: run.title })
+    if (!lock.ok) continue
+    if (holdsLock(run.workRepo, run.id)) releaseLock(run.workRepo, run.id)
+    rememberRepo(repo)
+    const known = (run.repos || []).find((r) => realish(r.repo) === realish(repo))
+    const base = known?.base || headSha(repo)
+    // Every note read so far now points here, so reconcile does not pull the run straight back out.
+    const guide = (run.guide || []).map((g) => ({ ...g, repo }))
+    state.warm = false
+    state.run = {
+      ...run,
+      workRepo: repo,
+      base,
+      profile: runProfile(readProfile(repo)),
+      guide,
+      repos: withRepo(withRepo(run.repos, run.workRepo, run.base), repo, base),
+      pushWarn: warnFor(run, repo),
+      moved: `Moved back to ${repo.split(/[\\/]/).pop()}: the last turn's edits landed there.`,
+      error: undefined
+    }
+    persist(state)
+    return true
+  }
+  return false
+}
+
 /**
  * The work repo follows the repo the task (or Joe's newest Guide note that names one) uniquely
  * names. Never lastRepo, never the brain, never an ambiguous name. A note that only mentions the
@@ -250,7 +327,8 @@ function reconcileWorkRepo(state: Live): 'go' | 'stop' {
   const guide = (run.guide || []).map((g): GuideNote => {
     if (g.repo !== undefined) return g
     pinned = true
-    const found = resolveWorkRepo({ task: g.text, brainPath: run.brainPath, projectsDir: deps?.projectsDir, ignore })
+    // A note moves the run by a path or a folder name, never by a README or package.json word.
+    const found = resolveWorkRepo({ task: g.text, brainPath: run.brainPath, projectsDir: deps?.projectsDir, ignore, aliases: false })
     return { ...g, repo: found.ok ? found.workRepo : '' }
   })
   if (pinned) {
@@ -276,7 +354,18 @@ function reconcileWorkRepo(state: Live): 'go' | 'stop' {
   rememberRepo(next)
   // The Grok tab re-warms on the same session so its write gate follows the new repo.
   state.warm = false
-  state.run = { ...state.run, workRepo: next, profile: runProfile(readProfile(next)), base: headSha(next), error: undefined }
+  const base = headSha(next)
+  state.run = {
+    ...state.run,
+    workRepo: next,
+    profile: runProfile(readProfile(next)),
+    base,
+    error: undefined,
+    moved: undefined,
+    // Runs saved before 0.1.89 have no history: the repo it is leaving goes in first.
+    repos: withRepo(withRepo(state.run.repos, run.workRepo, run.base), next, base),
+    pushWarn: warnFor(state.run, next)
+  }
   // A restored or paused run reads the phase it will resume, not 'paused'.
   const at = run.phase === 'paused' ? run.resumePhase : run.phase
   const notBuilt = !!run.needsPrep || ((at === 'triage' || at === 'plan') && !run.diff && !run.audit?.work?.length)
@@ -516,10 +605,12 @@ async function buildStep(state: Live, phase: BriefPhase, note?: string, viaOpus?
     note: phase === 'fix' ? note || withGuide(undefined, openNotes(state.run)) : note,
     diff: inReview ? undefined : run.diff,
     strict: undefined,
+    followUps: undefined,
     voice: undefined,
     resumePhase: inReview ? 'review' : 'build'
   })
   const brainBefore = snap(run.brainPath)
+  state.otherBefore = new Map(healCandidates(state.run).map((r) => [r, snap(r)]))
   // T3 with more than one slice from the plan: parallel builders. Resume, fix, and Joe's notes use one builder.
   if (phase === 'build' && !note && !openNotes(state.run).length && state.run.tier === 'T3' && (state.run.slices?.length || 0) > 1 && !opusBuilds(state, viaOpus)) {
     await buildSlices(state, gen, brainBefore)
@@ -762,11 +853,23 @@ async function afterTurn(state: Live, phase: BriefPhase, brainBefore: Record<str
   state.run = { ...state.run, audit: { brain, work: audit.work } }
   const trip = checkTripwire(state.run.tier, audit.work)
   if (trip.trip && !(await onTrip(state, trip))) return
-  if (!audit.work.length) {
+  if (!audit.work.length && healEmptyTurn(state)) {
+    const healed = auditTurn({ brainPath: state.run.brainPath, workRepo: state.run.workRepo, brainBefore, base: state.run.base })
+    state.run = { ...state.run, audit: { brain, work: healed.work } }
+    persist(state)
+    if (healed.work.length) {
+      const trip2 = checkTripwire(state.run.tier, healed.work)
+      if (trip2.trip && !(await onTrip(state, trip2))) return
+      if (phase === 'review') state.run = { ...state.run, selfChecked: true }
+      await verifyStep(state)
+      return
+    }
+  }
+  if (!state.run.audit?.work.length) {
     // One more builder turn, then a pause Resume or Guide picks up. Not a failure.
     if (state.emptyRetry !== state.gen) {
       state.emptyRetry = state.gen
-      await buildStep(state, phase, `The last turn changed no files in ${run.workRepo}. Make the change there.`)
+      await buildStep(state, phase, `The last turn changed no files in ${state.run.workRepo}. Make the change there.`)
       return
     }
     setPhase(state, 'paused', { error: 'This turn changed no files in the work repo.', resumePhase: 'build' })
@@ -918,18 +1021,21 @@ async function strictStep(state: Live): Promise<boolean> {
   if (state.abort === abort) state.abort = undefined
   if (stale(state, gen)) return false
   if (!res.found) {
-    state.run = { ...state.run, strict: { status: 'missing', text: STRICT_MISSING } }
+    state.run = { ...state.run, strict: { status: 'missing', text: STRICT_MISSING }, followUps: undefined }
     persist(state)
     return true
   }
+  // OUTSIDE items (no edit here can close them) go to Joe as follow-ups; the rest is the review.
+  const split = splitOutside(res.text)
+  state.run = { ...state.run, followUps: split.outside.length ? split.outside : undefined }
   // The controller reads the review (reviewAccept), not Opus's story: any gap is a fail, even under PASS.
-  const acc = res.code === 0 ? reviewAccept(res.text) : { status: 'fail' as const, why: NO_VERDICT }
+  const acc = res.code === 0 ? reviewAccept(split.review) : { status: 'fail' as const, why: NO_VERDICT }
   if (acc.status === 'pass') {
-    state.run = { ...state.run, strict: { status: 'pass', text: tail(res.text, 12) } }
+    state.run = { ...state.run, strict: { status: 'pass', text: tail(split.review, 12) } }
     persist(state)
     return true
   }
-  const body = res.text.trim()
+  const body = split.review.trim()
   const text = acc.why === 'FAIL' ? body : acc.why === NO_VERDICT ? `${NO_VERDICT}${body ? `\n${tail(body, 12)}` : ''}` : `${acc.why}.\n${body}`
   const cycles = (state.run.reviewCycles || 0) + 1
   saveRunText(run.id, 'review', text)
@@ -1170,7 +1276,7 @@ export function decideRun(id: string, choice: Decision, opts: { reason?: string 
     if (choice === 'keep-fix') track(state, buildStep(state, 'fix', String(opts.reason || '').trim().slice(0, GUIDE_CHARS) || HELD_LINE, (run.reviewCycles || 0) >= BUILDER_FIX_MAX))
     else if (choice === 'trim') track(state, buildStep(state, 'trim', `${HELD_LINE} Cut the change down to what the task needs.`))
     else {
-      state.run = { ...run, strict: undefined, diff: undefined, error: undefined }
+      state.run = { ...run, strict: undefined, followUps: undefined, diff: undefined, error: undefined }
       persist(state)
       track(state, reviewStep(state))
     }

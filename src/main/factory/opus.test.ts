@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { opusArgs, opusBuildArgs, REVIEW_MAX, reviewAccept, runOpus, STRICT_SKILL_PATH, strictNeeded, strictPrompt, verdict } from './opus.ts'
+import { opusArgs, opusBuildArgs, REVIEW_MAX, reviewAccept, runOpus, splitOutside, STRICT_SKILL_PATH, strictNeeded, strictPrompt, verdict } from './opus.ts'
 
 test('strict is needed for T2, elevated, critical, and MyPuppies paths only', () => {
   assert.equal(strictNeeded({ tier: 'T2', risk: 'none', workRepo: '/x/site' }), true)
@@ -136,4 +136,46 @@ test('opusBuildArgs is opusArgs with bypassPermissions; plan and review stay pla
   assert.equal(build[build.indexOf('--permission-mode') + 1], 'bypassPermissions')
   assert.deepEqual(build.filter((a) => a !== 'bypassPermissions'), plan.filter((a) => a !== 'plan'))
   assert.ok(!build.includes('--bare'))
+})
+
+test('splitOutside: an OUTSIDE block with a follow-up word does not stop a clean pass', () => {
+  const raw = 'a.ts is fine.\nOUTSIDE:\n- Split into separate changes\n- A follow-up to run real threads before/after\nGAPS: 0\nPASS'
+  const { review, outside } = splitOutside(raw)
+  assert.deepEqual(outside, ['Split into separate changes', 'A follow-up to run real threads before/after'])
+  assert.equal(/follow-up|Split into/.test(review), false)
+  assert.equal(reviewAccept(review).status, 'pass')
+  // Without the split the same text is not a pass: the follow-up word is a leftover.
+  assert.equal(reviewAccept(raw).status, 'fail')
+})
+
+test('splitOutside: defects around the block stay in the review', () => {
+  const { review, outside } = splitOutside('a.ts:3 off by one\nOUTSIDE:\n- Get sign-off on the flow\nb.ts:9 missing null check\nGAPS: 1\nFAIL')
+  assert.deepEqual(outside, ['Get sign-off on the flow'])
+  assert.match(review, /a\.ts:3 off by one/)
+  assert.match(review, /b\.ts:9 missing null check/)
+  assert.match(review, /GAPS: 1/)
+  assert.equal(review.includes('sign-off'), false)
+  assert.equal(reviewAccept(review).status, 'fail')
+})
+
+test('splitOutside: a GAPS or verdict line ends the block, so a later FAIL still fails', () => {
+  const { review } = splitOutside('OUTSIDE:\n- Split changes\nGAPS: 0\nPASS\nnit: rename x\nGAPS: 1\nFAIL')
+  assert.match(review, /GAPS: 0\nPASS\nnit: rename x\nGAPS: 1\nFAIL/)
+  assert.equal(reviewAccept(review).status, 'fail')
+})
+
+test('splitOutside: no block leaves the review as it was; bold heading and caps hold', () => {
+  const plain = 'x.ts:1 bug\nGAPS: 1\nFAIL'
+  assert.deepEqual(splitOutside(plain), { review: plain, outside: [] })
+  const many = ['**OUTSIDE:**', ...Array.from({ length: 20 }, (_, i) => `- item ${i} ${'y'.repeat(400)}`), 'GAPS: 0', 'PASS'].join('\n')
+  const got = splitOutside(many)
+  assert.equal(got.outside.length, 12)
+  assert.equal(got.outside.every((o) => o.length <= 300), true)
+  assert.equal(got.review, 'GAPS: 0\nPASS')
+})
+
+test('strictPrompt tells the reviewer where OUTSIDE items go', () => {
+  const p = strictPrompt({ task: 't', tier: 'T2', risk: 'none', base: 'abc', diff: 'd', workRepo: '/x' })
+  assert.match(p, /OUTSIDE:/)
+  assert.match(p, /never OUTSIDE/)
 })

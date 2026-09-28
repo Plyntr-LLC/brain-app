@@ -83,6 +83,12 @@ export type RunRecord = {
   /** The phase a paused or failed run goes back to on Resume. */
   resumePhase?: RunPhase
   base: string
+  /** Every repo this run has been in, with the base it had there. Missing on runs saved before 0.1.89. */
+  repos?: { repo: string; base: string }[]
+  /** Set when an empty turn found the builder's edits in an earlier repo and the run moved back there. */
+  moved?: string
+  /** Push cannot happen from here (no remote, or Ship in advance on a protected branch). Shown from Start. */
+  pushWarn?: string
   acpTab: string
   /** The builder's ACP session (Grok or Cursor, see builder). */
   grokSessionId?: string
@@ -111,6 +117,8 @@ export type RunRecord = {
   /** Opus strict rejects (FAIL, or a PASS with gaps) for this run. REVIEW_MAX holds for Joe. */
   reviewCycles?: number
   strict?: { status: 'pass' | 'fail' | 'missing'; text: string }
+  /** The reviewer's OUTSIDE items: things no edit in this repo can close. Not gaps. Cleared with strict. */
+  followUps?: string[]
   voice?: VerifyRow
   diff?: string
   commitSha?: string

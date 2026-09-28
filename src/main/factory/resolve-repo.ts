@@ -31,6 +31,8 @@ export type ResolveInput = {
   gitTop?: (p: string) => string
   /** Repo basenames a word only mentions, not chooses (the current and last work repo on a Guide note). */
   ignore?: string[]
+  /** README and package.json words may pick a repo. Default on. Guide notes turn it off: "needs" in a README is not a repo. */
+  aliases?: boolean
 }
 
 const PATH_RE = /(?:^|[\s"'`(<[=:,])((?:~|\/)[^\s"'`<>()[\]{},;]+)/g
@@ -291,7 +293,7 @@ export function resolveWorkRepo(o: ResolveInput): ResolvedRepo {
     }
   }
   // What the folder calls itself (README, package.json). Stopwords never pick a repo here.
-  const aliases = aliasMap(projects, names, brain)
+  const aliases = o.aliases === false ? new Map<string, string[]>() : aliasMap(projects, names, brain)
   for (const tok of words) {
     if (!topic(tok)) continue
     for (const v of variants(tok)) {

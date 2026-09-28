@@ -140,6 +140,7 @@ export function strictPrompt(o: { task: string; tier: string; risk: string; base
     o.diff,
     '',
     'Name every real defect with file and line. Any gap is FAIL: nits, non-blockers, and follow-ups count as gaps.',
+    'Some asks no edit in this repo can close: splitting into separate changes, a person signing off, a live run that costs money or sends mail, a before/after on real data, deploy or ops steps. Put those in a block that starts with a line `OUTSIDE:` followed by `- ` bullets, before the GAPS line. They are not gaps and never make it FAIL. A defect in this diff is never OUTSIDE.',
     'Do not write nit, non-blocker, or follow-up in a PASS review; if you would, it is a FAIL.',
     'End with two lines: GAPS: <n> (how many gaps you found), then exactly PASS or FAIL. PASS only with GAPS: 0.'
   ].join('\n')
@@ -218,6 +219,38 @@ function stripNones(body: string): string {
       return NONE_LEFT.some((re) => re.test(s)) ? '' : s
     })
     .join('\n')
+}
+
+const OUTSIDE_CAP = 12
+const OUTSIDE_CHARS = 300
+
+/**
+ * The OUTSIDE block cut out of a review: `OUTSIDE:` then `- ` bullets. The first line that is not a
+ * bullet (a defect, a GAPS line, a verdict) ends the block and stays in the review. Every block counts.
+ */
+export function splitOutside(text: string): { review: string; outside: string[] } {
+  const lines = String(text || '').split('\n')
+  const keep: string[] = []
+  const outside: string[] = []
+  let inBlock = false
+  for (const line of lines) {
+    const bare = line.trim().replace(/^[*_`]+|[*_`]+$/g, '')
+    if (/^OUTSIDE\s*:\s*$/i.test(bare)) {
+      inBlock = true
+      continue
+    }
+    if (inBlock) {
+      const m = /^\s*[-*•]\s+(.+)$/.exec(line)
+      if (m) {
+        outside.push(m[1].trim().slice(0, OUTSIDE_CHARS))
+        continue
+      }
+      if (!line.trim()) continue
+      inBlock = false
+    }
+    keep.push(line)
+  }
+  return { review: keep.join('\n'), outside: outside.slice(0, OUTSIDE_CAP) }
 }
 
 export type ReviewAccept = { status: 'pass' | 'fail'; gaps: number | null; why: string }

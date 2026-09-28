@@ -1499,6 +1499,19 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
   const kennel = repo('projects/mykennel', { 'package.json': pkg, 'src/lib/dates.js': 'export const d = 1\n' })
   // Joe's ~/Projects has a gutter-iq folder too: "not gutter iq" must not pick it.
   const gutterIq = repo('projects/gutter-iq', { 'package.json': pkg, 'src/g.ts': 'export const g = 1\n' })
+  // 0.1.89 fixtures, made before any resolve so the 30 s alias cache sees them. Bait words only live in
+  // README or package.json: "needs", "current" (README) and "review" (package.json) are how run-8b221dd4's
+  // notes reached other repos. "dogfood" (README) and "rosterbot" (package.json) must still work for a task.
+  const aiResp = repo('projects/ai-responder-saas', {
+    'package.json': JSON.stringify({ name: 'responder', private: true, description: 'review voice tool', scripts: {} }),
+    'README.md': '# Responder\nWhatever needs a current reply.\n',
+    'src/r.ts': 'export const r = 1\n'
+  })
+  const sliceDesk = repo('projects/slice-desk', { 'package.json': pkg, 'README.md': '# Slice\nThe dogfood harness.\n', 'src/s.ts': 'export const s = 1\n' })
+  const rosterRepo = repo('projects/team-screens', {
+    'package.json': JSON.stringify({ name: 'screens', private: true, description: 'rosterbot', scripts: {} }),
+    'src/t.ts': 'export const t = 1\n'
+  })
   const head = (dir: string) => git(dir, ['rev-parse', 'HEAD']).trim()
   const same = (a?: string, b?: string) => !!a && !!b && realish(a) === realish(b)
   const holds = (dir: string, id: string) => store.activeRunFor(dir)?.runId === id
@@ -1786,6 +1799,319 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
   fakeDeps.runScript = run0
   ctl.configureFactory(fakeDeps)
   promptPlan = async () => {}
+
+  // ---- 0.1.89: notes never pick a repo from README/package.json words; empty turns heal; OUTSIDE; pushWarn ----
+  const REAL_NOTES = [
+    "there's one thing that im also thinking about that should be added into this email system. sometimes there are multiple recent threads that have to do with each other and would inform a response to the email. can we have the system do a scan and if it finds related threads to make sure it understands at least the basics and whether that informs the current email response it is working on?",
+    'have a opus 5.5 medium fix and then another independent opus medium review until approval is possible. and obviously our voice check must approve as well',
+    "I'm not sure what is going on but have Opus 5.5 medium fix whatever needs to be fixed and then have it review it and approve it and get this. I don't know why we keep failing"
+  ]
+  const lastWarm = (from: number) => calls.slice(from).filter((c) => c.fn === 'warm').map((c) => String(c.o?.workRepo)).pop()
+  const tabOf = (id: string) => `factory-${id}`
+  promptPlan = async () => {}
+
+  // HJ 1 (run-8b221dd4): the three real notes, on a run in mail-desk, stay in mail-desk.
+  {
+    const h = ctl.startRun({ task: 'fix typo in the app label', workRepo: mailDesk, brainPath: brainA })
+    const idH = h.ok ? h.run.id : ''
+    await ctl.settle(idH)
+    resolver.rememberRepo(mailDesk)
+    const hops: string[] = []
+    let w = calls.length
+    for (const note of REAL_NOTES) {
+      w = calls.length
+      const g = ctl.guideRun(idH, note)
+      const r = await ctl.settle(idH)
+      hops.push(`${g.workRepo}|${r?.workRepo}`)
+    }
+    const rH = store.loadRun(idH)
+    check(
+      'HJ 1 the three real run-8b221dd4 notes keep the run on mail-desk (no README or package.json word picks a repo)',
+      same(rH?.workRepo, mailDesk) && holds(mailDesk, idH) && !holds(aiResp, idH) && hops.every((x) => x.split('|').every((p) => same(p, mailDesk))) && (lastWarm(w) === undefined || same(lastWarm(w), mailDesk)),
+      JSON.stringify({ hops, now: rH?.workRepo })
+    )
+    if (idH) ctl.abandonRun(idH)
+  }
+
+  // HJ 3: a task (not a note) still resolves by README and by package.json words on its first turn.
+  for (const [task, want, label] of [
+    ['wire the dogfood harness', sliceDesk, 'README'],
+    ['update the rosterbot screen', rosterRepo, 'package.json']
+  ] as const) {
+    const t = ctl.startRun({ task, workRepo: quote, brainPath: brainA })
+    const idT3 = t.ok ? t.run.id : ''
+    const r = await ctl.settle(idT3)
+    check(`HJ 3 a task whose only hit is a ${label} word moves off the quote repo to it`, same(r?.workRepo, want) && holds(want, idT3), JSON.stringify({ now: r?.workRepo, error: r?.error }))
+    if (idT3) ctl.abandonRun(idT3)
+  }
+
+  // EH 1: run starts on mail-desk; mail-desk HEAD then moves; a path note sends the run to quote; the builder
+  // writes mail-desk only. The run heals back: stored base, lock, warm, no retry prompt; a later note stays.
+  {
+    const e = ctl.startRun({ task: 'fix typo in the app label', workRepo: mailDesk, brainPath: brainA })
+    const idE1 = e.ok ? e.run.id : ''
+    const base0 = e.ok ? e.run.base : ''
+    await ctl.settle(idE1)
+    writeFileSync(join(mailDesk, 'CHANGELOG.md'), 'moved head\n')
+    git(mailDesk, ['add', 'CHANGELOG.md'])
+    git(mailDesk, ['commit', '-q', '-m', 'advance head'])
+    promptPlan = async (o) => {
+      if (o.tabId === tabOf(idE1)) writeFileSync(join(mailDesk, 'src', 'send.ts'), 'export const send = 11\n')
+    }
+    const p0 = promptCount()
+    const w0 = calls.length
+    const moved = ctl.guideRun(idE1, `Work in ${quote} now`)
+    const r = await ctl.settle(idE1)
+    const turns = promptsFrom(p0)
+    check(
+      'EH 1 empty turn in quote heals back to mail-desk with the stored base, lock, audit, moved line, and no retry',
+      same(moved.workRepo, quote) && same(r?.workRepo, mailDesk) && r?.base === base0 && base0 !== head(mailDesk) && holds(mailDesk, idE1) && !holds(quote, idE1) &&
+        (r?.audit?.work || []).some((x) => x.path === 'src/send.ts') && /Moved back to mail-desk/.test(r?.moved || '') && turns.length === 1 && !turns.some((t) => /changed no files/.test(t)),
+      JSON.stringify({ moved: moved.workRepo, now: r?.workRepo, base: r?.base, base0, phase: r?.phase, error: r?.error, turns: turns.length, m: r?.moved })
+    )
+    promptPlan = async () => {}
+    // Base is the stored one, so the fixture's CHANGELOG commit counts too: a T0 trips to the tier card.
+    if (r?.phase === 'upgrade') {
+      ctl.decideRun(idE1, 'upgrade')
+      await ctl.settle(idE1)
+    }
+    const gS = ctl.guideRun(idE1, 'make it shorter')
+    const r2 = await ctl.settle(idE1)
+    const dbg = { mid: r?.phase, gs: gS.phase, after: r2?.phase, err: r2?.error }
+    // The heal sets warm=false: the builder's next warm (self-check or this note's turn) is in mail-desk.
+    check('EH 1 after a heal, a note with no repo words stays on mail-desk and the builder re-warms there', same(r2?.workRepo, mailDesk) && holds(mailDesk, idE1) && same(lastWarm(w0), mailDesk), JSON.stringify({ now: r2?.workRepo, warm: lastWarm(w0), dbg }))
+    if (idE1) ctl.abandonRun(idE1)
+    cleanMail()
+  }
+
+  // EH 1b: mail-desk already dirty (after Start); the turn changes that same file's bytes only -> heals.
+  {
+    const e = ctl.startRun({ task: 'fix typo in the app label', workRepo: mailDesk, brainPath: brainA })
+    const idE = e.ok ? e.run.id : ''
+    await ctl.settle(idE)
+    writeFileSync(join(mailDesk, 'src', 'send.ts'), 'export const send = 12\n')
+    promptPlan = async (o) => {
+      if (o.tabId === tabOf(idE)) writeFileSync(join(mailDesk, 'src', 'send.ts'), 'export const send = 13\n')
+    }
+    ctl.guideRun(idE, `Work in ${quote} now`)
+    const r = await ctl.settle(idE)
+    check('EH 1b an already-dirty file whose bytes change during the turn heals back to mail-desk', same(r?.workRepo, mailDesk) && holds(mailDesk, idE), JSON.stringify({ now: r?.workRepo, phase: r?.phase, error: r?.error }))
+    promptPlan = async () => {}
+    if (idE) ctl.abandonRun(idE)
+    cleanMail()
+  }
+
+  // EH 2: dirt made after Start that the turn leaves byte-identical -> no heal; one retry, then paused.
+  // EH 2b: the turn writes the brain and an unrelated repo -> no heal to either.
+  for (const variant of ['EH 2', 'EH 2b'] as const) {
+    const e = ctl.startRun({ task: 'fix typo in the app label', workRepo: mailDesk, brainPath: brainA })
+    const idE = e.ok ? e.run.id : ''
+    await ctl.settle(idE)
+    writeFileSync(join(mailDesk, 'wip2.txt'), 'wip\n')
+    promptPlan = async (o) => {
+      if (variant === 'EH 2b' && o.tabId === tabOf(idE)) {
+        writeFileSync(join(brainA, 'scratch-eh2b.txt'), String(Date.now()))
+        writeFileSync(join(gutterIq, 'src', 'g.ts'), `export const g = ${Date.now()}\n`)
+      }
+    }
+    const p0 = promptCount()
+    ctl.guideRun(idE, `Work in ${quote} now`)
+    const r = await ctl.settle(idE)
+    const turns = promptsFrom(p0)
+    check(
+      `${variant} no heal: stays on quote, exactly one retry, then paused with changed no files${variant === 'EH 2b' ? ' (brain and unrelated repo writes ignored)' : ''}`,
+      same(r?.workRepo, quote) && holds(quote, idE) && !r?.moved && turns.length === 2 && /changed no files/.test(turns[1] || '') && r?.phase === 'paused' && /changed no files/.test(r?.error || '') && !same(r?.workRepo, brainA),
+      JSON.stringify({ now: r?.workRepo, phase: r?.phase, error: r?.error, turns: turns.length, moved: r?.moved })
+    )
+    promptPlan = async () => {}
+    if (idE) ctl.abandonRun(idE)
+    cleanMail()
+    git(gutterIq, ['checkout', '-q', '--', '.'])
+    try {
+      execFileSync('/bin/rm', ['-f', join(brainA, 'scratch-eh2b.txt')])
+    } catch {
+      /* gone */
+    }
+  }
+
+  // EH 4: the task names mail-desk; a path note moves quote -> mykennel before mail-desk is ever entered;
+  // the builder writes mail-desk only -> heal lands on mail-desk (a task candidate, not history).
+  {
+    promptPlan = async () => {}
+    const e = ctl.startRun({ task: 'Fix the typo in the Plyntr email footer', workRepo: quote, brainPath: brainA })
+    const idE = e.ok ? e.run.id : ''
+    const g = ctl.guideRun(idE, `Work in ${kennel} now`)
+    await ctl.settle(idE)
+    const before = store.loadRun(idE)
+    const mailHead = head(mailDesk)
+    promptPlan = async (o) => {
+      if (o.tabId === tabOf(idE)) writeFileSync(join(mailDesk, 'src', 'send.ts'), 'export const send = 14\n')
+    }
+    ctl.guideRun(idE, 'keep going')
+    const r = await ctl.settle(idE)
+    check(
+      'EH 4 a task candidate never entered: heal lands on mail-desk with base = its HEAD',
+      same(g.workRepo, kennel) && !(before?.repos || []).some((x) => same(x.repo, mailDesk)) && same(r?.workRepo, mailDesk) && r?.base === mailHead && holds(mailDesk, idE) && !holds(kennel, idE),
+      JSON.stringify({ g: g.workRepo, before: before?.repos, now: r?.workRepo, base: r?.base, phase: r?.phase, error: r?.error })
+    )
+    promptPlan = async () => {}
+    if (idE) ctl.abandonRun(idE)
+    cleanMail()
+  }
+
+  // EH 3: another run holds mail-desk: no heal, exactly one retry, then paused; locks unchanged.
+  {
+    const b = ctl.startRun({ task: 'fix typo in the app label', workRepo: mailDesk, brainPath: brainA })
+    const idB3 = b.ok ? b.run.id : ''
+    await ctl.settle(idB3)
+    ctl.guideRun(idB3, `Work in ${quote} now`)
+    await ctl.settle(idB3)
+    const a = ctl.startRun({ task: 'fix typo in the app label', workRepo: mailDesk, brainPath: brainA })
+    const idA3 = a.ok ? a.run.id : ''
+    await ctl.settle(idA3)
+    promptPlan = async (o) => {
+      if (o.tabId === tabOf(idB3)) writeFileSync(join(mailDesk, 'src', 'send.ts'), `export const send = ${Date.now()}\n`)
+    }
+    const p0 = calls.filter((c) => c.fn === 'prompt' && c.o?.tabId === tabOf(idB3)).length
+    ctl.guideRun(idB3, 'keep going')
+    const r = await ctl.settle(idB3)
+    const turns = calls.filter((c) => c.fn === 'prompt' && c.o?.tabId === tabOf(idB3)).slice(p0).map((c) => String(c.o?.text))
+    check(
+      'EH 3 a heal onto a repo another run holds is refused: one retry, paused, locks unchanged',
+      a.ok && same(r?.workRepo, quote) && holds(quote, idB3) && holds(mailDesk, idA3) && !r?.moved && turns.length === 2 && /changed no files/.test(turns[1] || '') && r?.phase === 'paused',
+      JSON.stringify({ a: a.ok, now: r?.workRepo, phase: r?.phase, error: r?.error, turns: turns.length })
+    )
+    promptPlan = async () => {}
+    if (idB3) ctl.abandonRun(idB3)
+    if (idA3) ctl.abandonRun(idA3)
+    cleanMail()
+  }
+
+  // F6: a run saved before 0.1.89 (no repos field) restores paused on its repo, no throw, no move.
+  {
+    const o = ctl.startRun({ task: 'fix typo in the app label', workRepo: mailDesk, brainPath: brainA })
+    const idO6 = o.ok ? o.run.id : ''
+    const r0 = await ctl.settle(idO6)
+    if (r0) {
+      const old = { ...r0 } as Record<string, unknown>
+      delete old.repos
+      delete old.pushWarn
+      store.saveRun(old as never)
+    }
+    ctl.dropMemory()
+    let threw = ''
+    let back: ReturnType<typeof ctl.restoreRun> = null
+    try {
+      back = ctl.restoreRun(idO6)
+    } catch (err) {
+      threw = String(err)
+    }
+    check('F6 a run with no repos field restores paused on mail-desk with no throw and no move', !threw && same(back?.workRepo, mailDesk) && back?.phase === 'paused' && holds(mailDesk, idO6) && !back?.moved, JSON.stringify({ threw, now: back?.workRepo, phase: back?.phase }))
+    if (idO6) ctl.abandonRun(idO6)
+  }
+
+  // RV 1-3: OUTSIDE items become follow-ups, never gaps; a later FAIL still fails; follow-ups clear with strict.
+  {
+    promptPlan = async (o) => {
+      if (/Role: self-check/.test(o.text)) return
+      writeFileSync(join(mailDesk, 'src', 'send.ts'), `export const send = "API error: ${Date.now()}"\n`)
+    }
+    claudeSays(['a.ts is fine.\nOUTSIDE:\n- Split into separate changes\n- A follow-up to run real threads before/after\nGAPS: 0\nPASS'])
+    const v = ctl.startRun({ task: 'fix the API error message in the email send', workRepo: mailDesk, brainPath: brainA })
+    const idR = v.ok ? v.run.id : ''
+    const r1 = await ctl.settle(idR)
+    check(
+      'RV 1 OUTSIDE bullets (one says follow-up) are follow-ups; GAPS: 0 PASS still passes; strict.text has no bullet',
+      r1?.strict?.status === 'pass' && r1.followUps?.length === 2 && !/Split into|follow-up to run/.test(r1.strict.text),
+      JSON.stringify({ strict: r1?.strict, followUps: r1?.followUps, phase: r1?.phase })
+    )
+    // RV 3a: the next fix turn clears follow-ups at once, with strict. RV 2 / 2b: what each fix turn is handed.
+    const handed: string[] = []
+    promptPlan = async (o) => {
+      if (/Role: self-check/.test(o.text)) return
+      if (/Phase: fix\./.test(o.text) && existsSync(store.runTextPath(idR, 'review'))) handed.push(readFileSync(store.runTextPath(idR, 'review'), 'utf8'))
+      writeFileSync(join(mailDesk, 'src', 'send.ts'), `export const send = "API error: ${Date.now()}"\n`)
+    }
+    const cyc0 = r1?.reviewCycles || 0
+    claudeSays([
+      'a.ts:3 off by one\nOUTSIDE:\n- Get sign-off on the flow\nb.ts:9 missing null check\nGAPS: 1\nFAIL',
+      'OUTSIDE:\n- Split changes\nGAPS: 0\nPASS\nnit: rename x\nGAPS: 1\nFAIL',
+      'GAPS: 0\nPASS'
+    ])
+    const g = ctl.guideRun(idR, 'tighten the error wording')
+    check('RV 3 a new fix turn clears followUps the moment strict clears', !g.strict && !g.followUps, JSON.stringify({ strict: g.strict, followUps: g.followUps }))
+    const r2 = await ctl.settle(idR)
+    const [h1 = '', h2 = ''] = handed
+    check(
+      'RV 2 the fix turn after a FAIL is handed both defects and GAPS: 1, never the OUTSIDE bullet',
+      h1.includes('a.ts:3 off by one') && h1.includes('b.ts:9 missing null check') && /GAPS: 1/.test(h1) && !h1.includes('sign-off on the flow'),
+      JSON.stringify({ handed: handed.length, h1: h1.slice(0, 300) })
+    )
+    check(
+      'RV 2b a GAPS/PASS line ends the block: the later nit and FAIL count (a fail and a fix turn), the bullet is gone',
+      (r2?.reviewCycles || 0) - cyc0 === 2 && h2.includes('nit: rename x') && /GAPS: 1\s*\nFAIL/.test(h2) && !h2.includes('Split changes') && r2?.strict?.status === 'pass' && !r2.followUps,
+      JSON.stringify({ cycles: (r2?.reviewCycles || 0) - cyc0, strict: r2?.strict?.status, h2: h2.slice(0, 300), followUps: r2?.followUps })
+    )
+    // RV 3b: no reviewer at all -> followUps empty.
+    execFileSync('/bin/rm', ['-f', claudeBin])
+    claudeSays([])
+    ctl.guideRun(idR, 'one more pass')
+    const r3 = await ctl.settle(idR)
+    check('RV 3 a missing reviewer leaves no follow-ups', r3?.strict?.status === 'missing' && !r3.followUps, JSON.stringify({ strict: r3?.strict?.status, followUps: r3?.followUps }))
+    installClaude()
+    promptPlan = async () => {}
+    if (idR) ctl.abandonRun(idR)
+    cleanMail()
+  }
+
+  // PW 1-5: pushWarn names the real remote and branch, from Start and after a move.
+  {
+    const noRemote = repo('projects/pw-local', { 'package.json': pkg, 'src/p.ts': 'export const p = 1\n' })
+    const pwBare = join(temp, 'pw-origin.git')
+    mkdirSync(pwBare)
+    git(pwBare, ['init', '-q', '--bare', '-b', 'main'])
+    const onMain = repo('projects/pw-main', { 'package.json': pkg, 'src/p.ts': 'export const p = 1\n' })
+    git(onMain, ['remote', 'add', 'origin', pwBare])
+    const onFeature = repo('projects/pw-feature', { 'package.json': pkg, 'src/p.ts': 'export const p = 1\n' })
+    git(onFeature, ['remote', 'add', 'origin', pwBare])
+    git(onFeature, ['checkout', '-q', '-b', 'factory/x'])
+    const onMaster = repo('projects/pw-master', { 'package.json': pkg, 'src/p.ts': 'export const p = 1\n' })
+    git(onMaster, ['checkout', '-q', '-b', 'master'])
+    git(onMaster, ['remote', 'add', 'upstream', pwBare])
+    const warnOf = (workRepo: string, shipThrough: boolean) => {
+      const s0 = ctl.startRun({ task: 'fix typo in the app label', workRepo, brainPath: brainA, shipThrough })
+      const w = s0.ok ? s0.run.pushWarn : `start failed: ${s0.error}`
+      if (s0.ok) ctl.abandonRun(s0.run.id)
+      return w
+    }
+    const w1 = warnOf(noRemote, false)
+    const w2 = warnOf(onMain, true)
+    const w3 = warnOf(onMain, false)
+    const w5 = warnOf(onFeature, true)
+    profiles.saveProfile(onMaster, { publish: { remote: 'upstream' } })
+    const w4a = warnOf(onMaster, true)
+    git(onMaster, ['remote', 'rename', 'upstream', 'origin'])
+    const w4b = warnOf(onMaster, true)
+    check('PW 1 no remote: says so and names origin', w1 === 'No remote named origin. Factory commits here but cannot push.', String(w1))
+    check('PW 2 Ship in advance on main with a remote: protected line naming main', w2 === 'On main. Ship in advance commits but Brain never pushes main.', String(w2))
+    check('PW 3 no Ship in advance on main: no warning', w3 === undefined, String(w3))
+    check('PW 4 remote upstream on master: protected line naming master; with only origin, no remote named upstream', w4a === 'On master. Ship in advance commits but Brain never pushes master.' && w4b === 'No remote named upstream. Factory commits here but cannot push.', JSON.stringify({ w4a, w4b }))
+    check('PW 5 feature branch with a remote: no warning', w5 === undefined, String(w5))
+    // A move from the no-remote repo onto the feature branch repo clears the line.
+    const m = ctl.startRun({ task: 'fix typo in the app label', workRepo: noRemote, brainPath: brainA })
+    const idM = m.ok ? m.run.id : ''
+    await ctl.settle(idM)
+    const mv = ctl.guideRun(idM, `Work in ${onFeature} now`)
+    await ctl.settle(idM)
+    check('PW 5 a move onto a repo that can push clears pushWarn', m.ok && !!m.run.pushWarn && same(mv.workRepo, onFeature) && !mv.pushWarn, JSON.stringify({ start: m.ok ? m.run.pushWarn : m, after: mv.pushWarn, now: mv.workRepo }))
+    if (idM) ctl.abandonRun(idM)
+  }
+
+  // Card: the pane renders the three new lines inside the existing card.
+  {
+    const pane = readFileSync(join(rootRepo, 'src', 'renderer', 'src', 'FactoryPane.tsx'), 'utf8')
+    check('PANE 0.1.89 renders run.pushWarn, run.moved, and Follow-ups outside this change', /\{run\.pushWarn\}/.test(pane) && /\{run\.moved\}/.test(pane) && pane.includes('Follow-ups outside this change') && /run\.followUps\.map/.test(pane))
+  }
 
   fakeDeps.projectsDir = undefined
   ctl.configureFactory(fakeDeps)

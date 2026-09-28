@@ -356,6 +356,8 @@ export function FactoryPane(props: {
               {opusReviews ? '' : ' Ship in advance waits for an Opus review with no gaps.'}
             </p>
           ) : null}
+          {run.pushWarn && !run.pushed ? <p className="tiny">{run.pushWarn}</p> : null}
+          {run.moved ? <p className="tiny">{run.moved}</p> : null}
           {run.tripwire?.auto ? <p className="tiny">Moved to {run.tier} in advance: {run.tripwire.reasons.join(' ')}</p> : null}
           {run.tier === 'T3' && run.slices?.length ? (
             <div className="factory-audit">
@@ -522,7 +524,7 @@ export function FactoryPane(props: {
               ) : null}
             </div>
           ) : null}
-          {run.verify?.length || run.strict || run.voice ? (
+          {run.verify?.length || run.strict || run.voice || run.followUps?.length ? (
             <div className="factory-verify">
               {(run.verify || []).map((v) => (
                 <div key={v.script} className={`verify-row ${v.status}`}>
@@ -537,6 +539,16 @@ export function FactoryPane(props: {
                   <span>{run.strict.status === 'missing' ? 'skipped' : run.strict.status}</span>
                   {run.strict.status === 'fail' ? <pre>{run.strict.text}</pre> : null}
                   {run.strict.status === 'missing' ? <p className="tiny">{run.strict.text}</p> : null}
+                </div>
+              ) : null}
+              {run.followUps?.length ? (
+                <div className="tiny">
+                  Follow-ups outside this change (not gaps):
+                  <ul>
+                    {run.followUps.map((f, i) => (
+                      <li key={i}>{f}</li>
+                    ))}
+                  </ul>
                 </div>
               ) : null}
               {run.voice ? (
