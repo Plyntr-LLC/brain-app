@@ -892,7 +892,6 @@ function assertR2AdminAbsent(where: string): void {
 
 assertR2AdminAbsent('after playback')
 
-const transport = await import('../src/main/media/transport.ts')
 const probeRoot = mkdtempSync(join(tmpdir(), 'media-r2-probe-'))
 const probeUd = mkdtempSync(join(tmpdir(), 'media-r2-ud-'))
 mkdirSync(join(probeRoot, 'src'), { recursive: true })
