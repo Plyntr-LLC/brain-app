@@ -1320,7 +1320,10 @@ if (aBrainWrap && aKeySaved.length) {
 if (!oldBrainKeyFails) fail('21', 'old brain key unwrapped the new project DEK')
 asDevice(userDataE)
 session.runMediaCheckIn(folder)
-const eWrap2 = wrapsFile.readWrapsFile(userDataE, brainId).find((w) => w.scope === 'brain')
+const newBrainVersion = session.mediaDumpStore().brains[0].brain_key_version
+const eWrap2 = wrapsFile.readWrapsFile(userDataE, brainId).find(
+  (w) => w.scope === 'brain' && w.key_version === newBrainVersion
+)
 if (!eWrap2) fail('21', 'E did not receive a new brain wrap')
 const brainKeyE2 = keys.unwrapKeyFromDevice({
   wrap: {
@@ -1331,7 +1334,7 @@ const brainKeyE2 = keys.unwrapKeyFromDevice({
   devicePrivateKey: eKey.privateKey,
   mediaBrainId: brainId,
   scope: 'brain',
-  version: session.mediaDumpStore().brains[0].brain_key_version
+  version: newBrainVersion
 })
 const stolenAfter = session.mediaRotateWithProof({
   folder,
