@@ -472,6 +472,11 @@ function ChatPane({
   const [warming, setWarming] = useState(false)
   const [waitLabel, setWaitLabel] = useState('Working')
   const [waitSec, setWaitSec] = useState(0)
+  /** Background work the agent started (another AI, a long command), with when it began. */
+  const [bgTasks, setBgTasks] = useState<{ label: string; at: number }[]>([])
+  const [bgNow, setBgNow] = useState(Date.now())
+  /** Last Ctrl-C this tab sent to the Skin: Claude quits on a second one inside a few seconds. */
+  const lastCtrlC = useRef(0)
   const [cmds, setCmds] = useState<{ name: string; kind: 'builtin' | 'skill'; description: string }[]>([])
   const [models, setModels] = useState<{ id: string; label: string }[]>([])
   const [hi, setHi] = useState(0)
@@ -684,6 +689,20 @@ function ChatPane({
           ]
         })
       }
+      // Claude started a turn on its own (a background task it was waiting on finished): show it live.
+      if (ev.kind === 'status' && ev.data === 'turn:auto') {
+        markBusy(true)
+        setWaitLabel('Picking up background results')
+        turn.current = { think: false, answer: false }
+      }
+      if (ev.kind === 'status' && ev.data && ev.data.startsWith('bg:')) {
+        try {
+          const list = JSON.parse(ev.data.slice(3)) as { label: string; at: number }[]
+          setBgTasks(Array.isArray(list) ? list.filter((t) => t && t.label) : [])
+        } catch {
+          setBgTasks([])
+        }
+      }
       if (ev.kind === 'status' && ev.data && ev.data.startsWith('work:')) {
         const label = ev.data.slice(5).trim()
         if (label && !skinOnRef.current) setWaitLabel(label)
@@ -833,6 +852,16 @@ function ChatPane({
   }
 
   const live = busy || compacting || warming
+
+  useEffect(() => {
+    if (!bgTasks.length) return
+    const t = setInterval(() => setBgNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [bgTasks.length])
+  const bgFirst = bgTasks.length ? Math.min(...bgTasks.map((t) => t.at)) : 0
+  const bgLabel = bgTasks.length
+    ? `In the background: ${bgTasks[0].label.replace(/^Started in the background: /, '')}${bgTasks.length > 1 ? ` (+${bgTasks.length - 1} more)` : ''}`
+    : ''
 
   useEffect(() => {
     if (!live) {
@@ -1416,7 +1445,15 @@ function ChatPane({
       await stopWarm()
       return
     }
-    if (skinOn && peel) await window.brain.pty.write(skinPtyId(id), '\x03')
+    if (skinOn && peel) await ctrlC()
+  }
+
+  /** One Ctrl-C to the Skin. Claude's own screen quits on a second Ctrl-C within a few seconds, so skip that one. */
+  async function ctrlC() {
+    const now = Date.now()
+    if (kindRef.current === 'claude' && now - lastCtrlC.current < 3000) return
+    lastCtrlC.current = now
+    await window.brain.pty.write(skinPtyId(id), '\x03')
   }
 
   async function stopWarm() {
@@ -1603,7 +1640,7 @@ function ChatPane({
         setDrops([])
         setDropNote('')
       }
-      if (opts?.cancel) await window.brain.pty.write(skinPtyId(id), '\x03')
+      if (opts?.cancel) await ctrlC()
       const shown = attached.length ? `${t}${t ? '\n' : ''}${attached.map((a) => a.path).join('\n')}` : t
       if (shown) await window.brain.pty.write(skinPtyId(id), shown + '\r')
       return
@@ -1870,6 +1907,9 @@ function ChatPane({
       {(busy || compacting || warming) && !skinOn && (
         <WorkPulse label={compacting ? 'Compacting' : waitLabel} seconds={waitSec} />
       )}
+      {!(busy || compacting || warming) && !skinOn && bgTasks.length ? (
+        <WorkPulse label={bgLabel} seconds={Math.max(0, Math.floor((bgNow - bgFirst) / 1000))} />
+      ) : null}
       {!atBottom && !(skinOn && peel) ? (
         <button type="button" className="jump-latest" onClick={() => {
           pinBottom.current = true

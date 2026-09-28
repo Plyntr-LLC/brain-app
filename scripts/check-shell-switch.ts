@@ -1314,8 +1314,16 @@ for (const [rel, src] of [['ipc-stubs', ipcSrc], ['acp-session', acpSrc]] as con
   if (!calls.length) miss(`${rel} has no write guard`)
   // Every guard runs. A folder with a brain id uses its vault seat; a folder with none uses its team file role.
   const gated = [...src.matchAll(/brainWriteBlock\(brainIdForFolder\(([^()]+)\) \? roleForBrainWrite\(([^()]+)\) : roleForKeylessWrite\(([^()]+)\), ([^(),]+),/g)]
-  if (gated.length !== calls.length) miss(`${rel} has a guard that does not pick the seat or the keyless role`)
+  // The same guard over two lines (acp-session): the role from a brain root, the block on that root's realpath.
+  const split = [
+    ...src.matchAll(/const (\w+) = brainIdForFolder\(([^()]+)\) \? roleForBrainWrite\(([^()]+)\) : roleForKeylessWrite\(([^()]+)\)\s+const \w+ = brainWriteBlock\(\1, ([^(),]+),/g)
+  ]
+  if (gated.length + split.length !== calls.length) miss(`${rel} has a guard that does not pick the seat or the keyless role`)
   for (const g of gated) if (new Set([g[1], g[2], g[3], g[4]]).size !== 1) miss(`${rel} guard reads one folder and checks another: ${g[0]}`)
+  for (const g of split) {
+    const root = /^(\w+)\.root$/.exec(g[2])
+    if (new Set([g[2], g[3], g[4]]).size !== 1 || !root || g[5] !== `${root[1]}.real`) miss(`${rel} guard reads one folder and checks another: ${g[0]}`)
+  }
   if (/\? brainWriteBlock\(|brainWriteBlock\([^)]*\) : null/.test(src)) miss(`${rel} skips the guard on some folders`)
 }
 if (!/export function roleForKeylessWrite\(folder: string\): string \{\s+const email = shellEmail\(\)\s+return email \? readTeamMember\(folder, email\)\?\.role \|\| '' : ''\s+\}/.test(seatsSrc)) miss('keyless role is not the shell row in the team file')
@@ -1336,7 +1344,8 @@ function storeCalls(label: string, body: string, want: number, typed: string): v
   if (/savePlyntrSeat|storeOwnedSeat|ensureShell|signInEmailOnly|loginFromCompanySetup/.test(body)) miss(`${label} has a second store or signs a shell in`)
 }
 const verifyBody = handlerBody(ipcSrc, 'auth:verify')
-const plyntrBranch = bodyAfter(verifyBody, "if (authCodeRoute(code) === 'plyntr')")
+// The Plyntr code route lives in asPlyntr() (the verify handler tries it alone or among the other systems).
+const plyntrBranch = bodyAfter(verifyBody, 'async function asPlyntr()')
 const projectBranch = bodyAfter(plyntrBranch, "if (resolved.role === 'project')")
 storeCalls('agency verify', bodyAfter(verifyBody, 'async function asAgency()'), 1, 'key')
 storeCalls('project verify', bodyAfter(verifyBody, 'async function asProject()'), 1, 'key')

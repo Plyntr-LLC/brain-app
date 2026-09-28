@@ -8,6 +8,7 @@ import { controlAnswered, controlTimedOut, newPlanControls, type PlanControls } 
 import { asRecord, asText, fileHits, spawnBin } from './line-rpc'
 import { captureToolHook, wrapPromptWithHooks } from './project-hooks'
 import { setupTrace } from './setup-trace'
+import { handoffLabel } from '../shared/agent-label'
 
 const RULES = CHAT_RULES
 
@@ -25,12 +26,46 @@ type Sess = {
   n: number
   promptGen: number
   controls?: PlanControls
+  /** Text of the turn Claude started on its own, so a result-only answer is not shown twice. */
+  autoText?: string
+  /**
+   * Who owns each turn Claude will finish, oldest first. Claude ends every turn with one `result`,
+   * in order: an interrupted turn still sends its own, and a background task Claude hears back
+   * about starts a turn nobody sent ('auto'). A number is the promptGen that sent it.
+   */
+  owners: (number | 'auto')[]
+  /** The prompt claudePrompt is waiting on (0: none). An interrupted prompt is no longer active. */
+  active: number
+  /** Background tasks Claude reported (system background_tasks_changed), with a label and start time. */
+  bg: Map<string, { label: string; at: number }>
+  /** Handoff labels by tool_use id, so a background task reads "asking Grok" not its raw description. */
+  toolLabels: Map<string, string>
 }
 
 const sessions = new Map<string, Sess>()
 /** Tabs in plan mode. Kept across a model or effort respawn; cleared by /clear (claudeReset). */
 const planTabs = new Set<string>()
 const booting = new Map<string, Promise<void>>()
+
+/** Where this turn's events go: the waiting prompt, the chat (a turn Claude started), or nowhere (interrupted). */
+function sink(s: Sess): ((ev: StreamEvent) => void) | undefined {
+  const owner = s.owners[0]
+  if (owner === 'auto') return (ev) => emitChat({ tabId: s.tabId, cli: 'claude', ev })
+  if (owner !== undefined && owner === s.active) return s.onEvent
+  // Output with no owner: Claude started a turn on its own (a background task finished).
+  if (owner === undefined) {
+    s.owners.push('auto')
+    s.autoText = ''
+    emitChat({ tabId: s.tabId, cli: 'claude', ev: { kind: 'status', data: 'turn:auto' } })
+    return (ev) => emitChat({ tabId: s.tabId, cli: 'claude', ev })
+  }
+  return undefined
+}
+
+function emitBg(s: Sess): void {
+  const list = [...s.bg.values()].map((t) => ({ label: t.label, at: t.at }))
+  emitChat({ tabId: s.tabId, cli: 'claude', ev: { kind: 'status', data: 'bg:' + JSON.stringify(list) } })
+}
 
 function handleClaude(s: Sess, line: string): void {
   const t = line.trim()
@@ -42,6 +77,29 @@ function handleClaude(s: Sess, line: string): void {
     return
   }
   const type = String(o.type || '')
+  if (type === 'system') {
+    const sub = String(o.subtype || '')
+    if (sub === 'task_started') {
+      const id = String(o.task_id || '')
+      const label = s.toolLabels.get(String(o.tool_use_id || '')) || String(o.description || 'A background task')
+      if (id) s.bg.set(id, { label: label.slice(0, 90), at: Date.now() })
+      emitBg(s)
+    } else if (sub === 'background_tasks_changed' && Array.isArray(o.tasks)) {
+      const live = new Set((o.tasks as unknown[]).map((t) => String(asRecord(t).task_id || '')))
+      for (const id of [...s.bg.keys()]) if (!live.has(id)) s.bg.delete(id)
+      for (const t of o.tasks as unknown[]) {
+        const r = asRecord(t)
+        const id = String(r.task_id || '')
+        if (id && !s.bg.has(id)) s.bg.set(id, { label: String(r.description || 'A background task').slice(0, 90), at: Date.now() })
+      }
+      emitBg(s)
+    } else if (sub === 'task_notification' || sub === 'task_updated') {
+      const id = String(o.task_id || '')
+      const status = String(o.status || asRecord(o.patch).status || '')
+      if (id && (sub === 'task_notification' || /completed|failed|killed|stopped/.test(status)) && s.bg.delete(id)) emitBg(s)
+    }
+    return
+  }
   if (type === 'control_response') {
     const r = asRecord(o.response)
     if (!s.controls) return
@@ -57,11 +115,14 @@ function handleClaude(s: Sess, line: string): void {
     const delta = asRecord(ev.delta)
     const dType = String(delta.type || '')
     const bit = asText(delta)
-    if (!bit || !s.onEvent) return
-    if (dType === 'thinking_delta' || dType === 'thought_delta') s.onEvent({ kind: 'thought', data: bit })
+    if (!bit) return
+    const out = sink(s)
+    if (!out) return
+    if (dType === 'thinking_delta' || dType === 'thought_delta') out({ kind: 'thought', data: bit })
     else if (dType === 'text_delta') {
-      s.text += bit
-      s.onEvent({ kind: 'text', data: bit })
+      if (s.owners[0] === 'auto') s.autoText += bit
+      else s.text += bit
+      out({ kind: 'text', data: bit })
     }
     return
   }
@@ -90,25 +151,42 @@ function handleClaude(s: Sess, line: string): void {
   if (type === 'assistant') {
     const msg = asRecord(o.message)
     const content = Array.isArray(msg.content) ? msg.content : []
+    const out = sink(s)
+    const auto = s.owners[0] === 'auto'
     for (const block of content) {
       const b = asRecord(block)
       const bt = String(b.type || '')
-      if (bt === 'tool_use' && s.onEvent) {
+      if (bt === 'tool_use') {
         const name = String(b.name || 'Working')
-        s.onEvent({ kind: 'status', data: 'work:' + name.slice(0, 80) })
-        for (const ev of fileHits(b.input, name)) s.onEvent(ev)
+        const handoff = handoffLabel(name, b.input)
+        if (handoff && b.id) s.toolLabels.set(String(b.id), handoff)
+        if (out) {
+          out({ kind: 'status', data: 'work:' + (handoff || name).slice(0, 80) })
+          for (const ev of fileHits(b.input, name)) out(ev)
+        }
       }
-      if (!s.onEvent) continue
-      if (bt === 'thinking' && asText(b)) s.onEvent({ kind: 'thought', data: asText(b) })
-      if (bt === 'text' && asText(b) && !s.text) {
-        s.text += asText(b)
-        s.onEvent({ kind: 'text', data: asText(b) })
+      if (!out) continue
+      if (bt === 'thinking' && asText(b)) out({ kind: 'thought', data: asText(b) })
+      if (bt === 'text' && asText(b) && !(auto ? s.autoText : s.text)) {
+        if (auto) s.autoText += asText(b)
+        else s.text += asText(b)
+        out({ kind: 'text', data: asText(b) })
       }
     }
     return
   }
   if (type === 'result') {
     const result = typeof o.result === 'string' ? o.result : ''
+    const owner = s.owners.shift()
+    if (owner === 'auto') {
+      const chat = (ev: StreamEvent) => emitChat({ tabId: s.tabId, cli: 'claude', ev })
+      if (result && !s.autoText) chat({ kind: 'text', data: result })
+      s.autoText = ''
+      chat({ kind: 'done' })
+      return
+    }
+    // An interrupted turn's own result (or one with no owner) never ends the prompt that replaced it.
+    if (owner === undefined || owner !== s.active) return
     if (result && !s.text && s.onEvent) {
       s.text = result
       s.onEvent({ kind: 'text', data: result })
@@ -132,6 +210,11 @@ function attach(s: Sess): void {
     s.dead = true
     s.waiting?.resolve()
     s.waiting = null
+    // A dead Claude runs nothing in the background: clear the strip.
+    if (s.bg.size) {
+      s.bg.clear()
+      emitBg(s)
+    }
     if (sessions.get(s.tabId) === s) sessions.delete(s.tabId)
   })
 }
@@ -213,7 +296,11 @@ async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string;
     text: '',
     dead: false,
     n: 0,
-    promptGen: 0
+    promptGen: 0,
+    owners: [],
+    active: 0,
+    bg: new Map(),
+    toolLabels: new Map()
   }
   attach(s)
   sessions.set(opts.tabId, s)
@@ -240,7 +327,11 @@ export async function claudePrompt(opts: {
         text: '',
         dead: false,
         n: 0,
-        promptGen: 0
+        promptGen: 0,
+        owners: [],
+        active: 0,
+        bg: new Map(),
+        toolLabels: new Map()
       },
       text,
       opts.attachments || []
@@ -261,12 +352,16 @@ export async function claudePrompt(opts: {
     wrapPromptWithHooks({ cwd: opts.cwd, kind: 'claude', sessionId: s.tabId, text: opts.text }),
     opts.attachments || []
   )
+  // Claude answers turns in order: this prompt's result comes after every turn already owed.
+  s.owners.push(gen)
+  s.active = gen
   await new Promise<void>((resolve) => {
     s.waiting = { resolve }
   })
   if (s.promptGen === gen) {
     s.waiting = null
     s.onEvent = undefined
+    if (s.active === gen) s.active = 0
   }
   opts.onEvent({ kind: 'done' })
   return s.text.trim()
@@ -287,6 +382,8 @@ export function claudeCancel(tabId: string): boolean {
   } catch {
     return false
   }
+  // The interrupted turn still sends a result; with no active prompt it ends nothing.
+  s.active = 0
   s.waiting?.resolve()
   s.waiting = null
   return true

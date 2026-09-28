@@ -1,0 +1,23 @@
+# 0.1.90 check artifact (2026-09-28)
+
+## Live: scripts/check-claude-turns.ts (real claude CLI, haiku)
+PASS 1 the prompt sent right after an interrupt gets its own answer (not a dead stop)
+PASS 1 the interrupted count never leaks into the new answer
+PASS 1 the interrupted prompt settled
+PASS 2 the background strip gets the running task
+PASS 2 the first reply ends normally
+PASS 2 Claude's own follow-up turn reaches the chat: turn:auto, its text, then done
+PASS 2 the background strip clears when the task ends
+PASS 3 the next prompt after a self-started turn still answers
+
+CLAUDE_TURNS_PASS
+
+## Same live check against the 0.1.89 claude-stream.ts (bug reproduced: every reply lands one message late)
+FAIL 1 the prompt sent right after an interrupt gets its own answer (got the interrupted count)
+FAIL 2 the first reply ends normally (got BANANA, the previous question's answer)
+FAIL 2 background strip / turn:auto / clear: no events
+
+## check-shell-switch.ts: ok (was 5 fails). Mutations caught: guard without seat -> 'guard does not pick the seat'; asPlyntr without saveAccount -> 'plyntr verify saves no account'
+
+## Unit: ℹ pass 194 of 195; project-hooks.test.ts fails on 0.1.89 too (runner cannot resolve ./ai-cli)
+## check-factory FACTORY_PASS, check-chat-reach ok, check-slash-skills ok, typecheck ok, build ok

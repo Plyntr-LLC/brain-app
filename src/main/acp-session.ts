@@ -1,4 +1,5 @@
 import { homedir } from 'node:os'
+import { handoffFromTitle } from '../shared/agent-label'
 import { app, BrowserWindow } from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute } from 'node:path'
@@ -400,7 +401,10 @@ function eventsFromUpdate(update: Record<string, unknown>, planToolId?: string):
     const planErr = planToolError(update, planToolId)
     if (planErr) return [{ kind: 'error', data: planErr }, ...hits]
     if (kind === 'tool_call' && title) {
-      return [{ kind: 'status', data: 'work:' + title.slice(0, 80) }, ...hits]
+      // A shell call to another AI reads "Asking Grok 4.6 (xhigh)", not the raw command.
+      const cmd = String(asRecord(update.rawInput).command || '')
+      const label = handoffFromTitle(`${title} ${cmd}`) || title
+      return [{ kind: 'status', data: 'work:' + label.slice(0, 80) }, ...hits]
     }
     return hits
   }
