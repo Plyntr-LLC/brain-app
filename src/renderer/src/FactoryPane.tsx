@@ -269,6 +269,8 @@ export function FactoryPane(props: {
     (run.phase === 'triage' && !run.needsProceed && !prepWaiting) ||
     (run.phase === 'plan' && !planWaiting) ||
     (run.phase === 'review' && !run.diff)
+  // A Send cuts in only on a plan/build/verify/review turn in flight. Triage, prep, Proceed, paused, and cards queue it.
+  const interrupting = running && run.phase !== 'triage'
   const waitLine =
     run.phase === 'triage' && !run.needsProceed && !prepWaiting
       ? 'Checking size with Grok (up to 8 s)'
@@ -635,7 +637,7 @@ export function FactoryPane(props: {
             {run.guide.map((g, i) => (
               <div key={`${i}-${g.at}`} className="bubble me">
                 {g.text}
-                {g.sent ? null : <p className="tiny">Waiting for the next turn.</p>}
+                {g.sent ? null : <p className="tiny">{interrupting ? 'Interrupting this turn.' : 'Waiting for the next turn.'}</p>}
               </div>
             ))}
           </div>

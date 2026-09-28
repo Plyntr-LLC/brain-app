@@ -7,8 +7,9 @@ import { factoryDir } from './run-store.ts'
 
 /**
  * Factory picks the work repo from the task, never a folder picker: a path in the task, then a
- * ~/Projects/<name> folder named in the task (exact, then one of its names), then the last Factory
- * work repo. Never the brain.
+ * ~/Projects/<name> folder named in the task (exact, then one of its names), then what a folder's
+ * README or package.json calls it, then the last Factory work repo (only when the task names no
+ * topic of its own). Never the brain.
  */
 
 export const NAME_THE_REPO = 'Name the code repo in the task (a path or the Projects folder name). Factory does not edit the brain.'
@@ -55,6 +56,24 @@ function taskTokens(task: string): string[] {
     .filter(Boolean)
 }
 
+/** Task words that also try another word: `email` finds `mail-desk`. */
+const SYNONYMS: Record<string, string[]> = { email: ['mail'], emails: ['mail'] }
+
+function variants(tok: string): string[] {
+  return [tok, ...(SYNONYMS[tok] || [])]
+}
+
+/** Words that name no repo. A task left with only these (or words under 4 letters) may use lastRepo. */
+const STOPWORDS = new Set(
+  (
+    'the that this with from for and want work working doing system just like fix typo update change please need ' +
+    'page footer label stuff also make add were into some there their them then than what when where which about ' +
+    'should would could have been being our your its get'
+  ).split(' ')
+)
+
+const topic = (tok: string): boolean => tok.length >= 4 && !STOPWORDS.has(tok)
+
 /** Letters and digits only: `brain app`, `brainapp`, and `brain-app` fold the same. */
 function fold(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -75,6 +94,78 @@ function nameHit(tok: string, names: string[], ok: (name: string) => boolean): s
   ]
   for (const step of steps) {
     const hits = names.filter((n) => step(n.toLowerCase(), fold(n))).filter(ok)
+    if (hits.length === 1) return hits[0]
+    if (hits.length > 1) return ''
+  }
+  return ''
+}
+
+const ALIAS_CAP = 80
+const ALIAS_BYTES = 8 * 1024
+const ALIAS_TTL_MS = 30_000
+let aliasCache: { dir: string; at: number; map: Map<string, string[]> } | null = null
+
+function smallText(file: string): string {
+  try {
+    if (!existsSync(file) || statSync(file).size > ALIAS_BYTES) return ''
+    return readFileSync(file, 'utf8')
+  } catch {
+    return ''
+  }
+}
+
+/** README first heading + first 80 words, package.json name + description: the names Chat would know. */
+function aliasWords(dir: string): string[] {
+  const out: string[] = []
+  let pkg = smallText(join(dir, 'package.json'))
+  if (pkg) {
+    try {
+      const j = JSON.parse(pkg) as { name?: unknown; description?: unknown }
+      pkg = `${typeof j.name === 'string' ? j.name : ''} ${typeof j.description === 'string' ? j.description : ''}`
+    } catch {
+      pkg = ''
+    }
+    out.push(...taskTokens(pkg))
+  }
+  const readme = smallText(join(dir, 'README.md')) || smallText(join(dir, 'README'))
+  if (readme) {
+    const heading = readme.split('\n').find((l) => /^\s*#/.test(l)) || ''
+    const words = readme.split(/\s+/).filter(Boolean).slice(0, 80).join(' ')
+    out.push(...taskTokens(`${heading} ${words}`))
+  }
+  return [...new Set(out)]
+}
+
+/**
+ * Folder -> alias words, cached per projectsDir and brain for 30s: intake resolves on every keystroke.
+ * Reads at most 80 git folders that are not the brain, words or not.
+ */
+function aliasMap(projects: string, names: string[], brain: string): Map<string, string[]> {
+  const now = Date.now()
+  const key = `${projects}\n${brain}`
+  if (aliasCache && aliasCache.dir === key && now - aliasCache.at < ALIAS_TTL_MS) return aliasCache.map
+  const map = new Map<string, string[]>()
+  let read = 0
+  for (const name of names) {
+    if (read >= ALIAS_CAP) break
+    const dir = join(projects, name)
+    // A git folder that is not the brain (checked again, with gitTop, at match time).
+    if (!existsSync(join(dir, '.git')) || realish(dir) === brain) continue
+    read++
+    const words = aliasWords(dir)
+    if (words.length) map.set(name, words)
+  }
+  aliasCache = { dir: key, at: now, map }
+  return map
+}
+
+/** One task word against folder aliases: fold exact, then unique prefix, then unique contains. */
+function aliasHit(tok: string, aliases: Map<string, string[]>, ok: (name: string) => boolean): string {
+  const ft = fold(tok)
+  if (!ft) return ''
+  const steps: ((fw: string) => boolean)[] = [(fw) => fw === ft, (fw) => fw.startsWith(ft), (fw) => fw.includes(ft)]
+  for (const step of steps) {
+    const hits = [...aliases].filter(([, words]) => words.some((w) => step(fold(w)))).map(([n]) => n).filter(ok)
     if (hits.length === 1) return hits[0]
     if (hits.length > 1) return ''
   }
@@ -133,24 +224,45 @@ export function resolveWorkRepo(o: ResolveInput): ResolvedRepo {
   }
   const byName = new Map(names.map((n) => [n.toLowerCase(), n]))
   for (const tok of taskTokens(o.task)) {
-    const name = byName.get(tok)
-    if (!name || name.length < 3) continue
-    const hit = repoAt(join(projects, name))
-    if (hit) return { ok: true, workRepo: hit, from: 'project' }
+    if (STOPWORDS.has(tok)) continue
+    for (const v of variants(tok)) {
+      const name = byName.get(v)
+      if (!name || name.length < 3) continue
+      const hit = repoAt(join(projects, name))
+      if (hit) return { ok: true, workRepo: hit, from: 'project' }
+    }
   }
   // One of its names: words from the task with paths taken out (paths already had their turn).
   let bare = String(o.task || '')
   for (const p of bare.match(PATH_RE) || []) bare = bare.replace(p, ' ')
   PATH_RE.lastIndex = 0
-  for (const tok of taskTokens(bare)) {
-    if (tok.length < 4) continue
-    const name = nameHit(tok, names, (n) => !!repoAt(join(projects, n), true))
-    if (!name) continue
-    const hit = repoAt(join(projects, name), true)
-    if (hit) return { ok: true, workRepo: hit, from: 'name' }
+  const words = taskTokens(bare)
+  const okName = (n: string) => !!repoAt(join(projects, n), true)
+  // Stopwords never pick here either: `work` must not find lotline-network before `email` finds mail-desk.
+  for (const tok of words) {
+    if (!topic(tok)) continue
+    for (const v of variants(tok)) {
+      const name = nameHit(v, names, okName)
+      if (!name) continue
+      const hit = repoAt(join(projects, name), true)
+      if (hit) return { ok: true, workRepo: hit, from: 'name' }
+    }
+  }
+  // What the folder calls itself (README, package.json). Stopwords never pick a repo here.
+  const aliases = aliasMap(projects, names, brain)
+  for (const tok of words) {
+    if (!topic(tok)) continue
+    for (const v of variants(tok)) {
+      const name = aliasHit(v, aliases, okName)
+      if (!name) continue
+      const hit = repoAt(join(projects, name), true)
+      if (hit) return { ok: true, workRepo: hit, from: 'name' }
+    }
   }
 
   if (namedBrain) return { ok: false, error: BRAIN_IS_WORK }
+  // lastRepo never steals a task about something else: any topic word left over means name the repo.
+  if (words.some(topic)) return { ok: false, error: sawBrain ? BRAIN_IS_WORK : NAME_THE_REPO }
   const last = String(o.lastRepo || '').trim()
   if (last && existsSync(last)) {
     const hit = repoAt(last)

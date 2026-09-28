@@ -263,6 +263,8 @@ const scriptRuns: string[] = []
 type VoiceCall = { bin: string; args: string[]; body: string }
 const voiceCalls: VoiceCall[] = []
 let voiceCode = 0
+// A hung prompt settles when its tab is cancelled, like an ACP session/cancel.
+const pendingPrompts = new Map<string, () => void>()
 const fakeDeps: Parameters<typeof ctl.configureFactory>[0] = {
   driver: {
     warm: async (o) => {
@@ -271,10 +273,21 @@ const fakeDeps: Parameters<typeof ctl.configureFactory>[0] = {
     },
     prompt: async (o) => {
       calls.push({ fn: 'prompt', o: { text: o.text, tabId: o.tabId } })
-      const out = await promptPlan(o)
-      return typeof out === 'string' ? out : ''
+      let settle: () => void = () => {}
+      const cancelled = new Promise<'cancelled'>((r) => (settle = () => r('cancelled')))
+      pendingPrompts.set(o.tabId, settle)
+      try {
+        const out = await Promise.race([promptPlan(o), cancelled])
+        return typeof out === 'string' && out !== 'cancelled' ? out : ''
+      } finally {
+        // The follow-up prompt on this tab may already be waiting: only drop our own entry.
+        if (pendingPrompts.get(o.tabId) === settle) pendingPrompts.delete(o.tabId)
+      }
     },
-    cancel: (tabId) => void calls.push({ fn: 'cancel', o: { tabId } }),
+    cancel: (tabId) => {
+      calls.push({ fn: 'cancel', o: { tabId, mid: pendingPrompts.has(tabId) } })
+      pendingPrompts.get(tabId)?.()
+    },
     close: (tabId) => void calls.push({ fn: 'close', o: { tabId } }),
     setEffort: async (tabId, effort) => void calls.push({ fn: 'effort', o: { tabId, effort } })
   },
@@ -997,21 +1010,27 @@ ctl.configureFactory(fakeDeps)
   reset2()
 }
 
-// UX 6. Guide while a turn is in flight: queued, then one follow-up turn with the note before verify.
+// UX 6. Guide while a turn is in flight: interrupts it (cancel, no pause) and starts the follow-up with the note at once.
 {
   let release: () => void = () => {}
+  let firstReleased = false
   let scriptsAtFollowUp = -1
+  let followUpBeforeRelease = false
   let turn = 0
   promptPlan = (o) => {
     turn++
     if (turn === 1)
       return new Promise<void>((r) => {
         release = () => {
-          writeFileSync(join(work2, 'src', 'app.ts'), 'export const app = "label"\n')
+          firstReleased = true
           r()
         }
       })
-    if (o.text.includes('Joe says:')) scriptsAtFollowUp = scriptRuns.length
+    if (o.text.includes('Joe says:')) {
+      scriptsAtFollowUp = scriptRuns.length
+      followUpBeforeRelease = !firstReleased
+      writeFileSync(join(work2, 'src', 'app.ts'), 'export const app = "label"\n')
+    }
     return Promise.resolve()
   }
   scriptRuns.length = 0
@@ -1019,16 +1038,22 @@ ctl.configureFactory(fakeDeps)
   const res = ctl.startRun({ task: 'fix typo in the app label', workRepo: work2, brainPath: brainA })
   const id = res.ok ? res.run.id : ''
   for (let i = 0; i < 100 && promptCount() === p0; i++) await new Promise((r) => setTimeout(r, 10))
-  const queued = ctl.guideRun(id, 'Keep the label lowercase')
-  check('UX 6 guide while busy is stored unsent, no new turn yet', queued.guide?.[0]?.sent !== true && promptCount() === p0 + 1)
-  release()
+  const c0 = calls.length
+  const sent = ctl.guideRun(id, 'Keep the label lowercase')
+  const cancel = calls.slice(c0).find((c) => c.fn === 'cancel' && c.o?.tabId === `factory-${id}`)
+  check('UX 6 guide while busy cancels the live turn and does not pause', !!cancel && cancel.o?.mid === true && sent.phase !== 'paused', JSON.stringify({ phase: sent.phase, cancel }))
+  for (let i = 0; i < 100 && promptCount() < p0 + 2; i++) await new Promise((r) => setTimeout(r, 10))
+  check('UX 6 the follow-up turn with the note starts before the hung turn is released', followUpBeforeRelease && promptCount() === p0 + 2, JSON.stringify({ followUpBeforeRelease, prompts: promptCount() - p0 }))
   const r = await ctl.settle(id)
+  release()
+  await new Promise((r) => setTimeout(r, 20))
   const turns = promptsFrom(p0)
   check(
-    'UX 6 queued note gets one follow-up build turn before verify',
-    turns.length === 2 && /Phase: build\./.test(turns[1]) && turns[1].includes('Joe says: Keep the label lowercase') && scriptsAtFollowUp === 0 && scriptRuns.length > 0 && r?.phase === 'review' && r.guide?.[0]?.sent === true,
-    JSON.stringify({ turns: turns.length, scriptsAtFollowUp, phase: r?.phase })
+    'UX 6 interrupted: one follow-up build turn with the note, the cancelled turn never verifies',
+    turns.length === 2 && /Phase: build\./.test(turns[1]) && turns[1].includes('Joe says: Keep the label lowercase') && scriptsAtFollowUp === 0 && scriptRuns.filter((x) => x === 'typecheck').length === 1 && r?.phase === 'review' && r.guide?.[0]?.sent === true,
+    JSON.stringify({ turns: turns.length, scriptsAtFollowUp, scriptRuns, phase: r?.phase, error: r?.error })
   )
+  check('UX 6 the interrupted run never paused', store.loadRun(id)?.phase === 'review' && events.filter((e) => e.runId === id && e.run?.phase === 'paused').length === 0)
   ctl.abandonRun(id)
   reset2()
 }
@@ -1153,12 +1178,12 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
   ]
   t3Says(slices)
   // w2 fails at once; w1 is still mid-prompt and must see its cancel before it finishes.
-  let cancelledMidPrompt = false
   promptPlan = async (o) => {
     if (!/Phase: build\./.test(o.text)) return
     if (String(o.tabId).endsWith('-w2')) throw new Error('builder 2 broke')
     await new Promise((r) => setTimeout(r, 30))
-    cancelledMidPrompt = calls.some((c) => c.fn === 'cancel' && c.o?.tabId === o.tabId)
+    // Cancelled: the prompt already settled; the builder writes nothing.
+    if (calls.some((c) => c.fn === 'cancel' && c.o?.tabId === o.tabId)) return
     return t3Build(o)
   }
   order.length = 0
@@ -1171,7 +1196,7 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
   const cancelAt = after.findIndex((c) => c.fn === 'cancel' && c.o?.tabId === w1)
   check('S3 5b one builder fails: the run is failed with its error', r?.phase === 'failed' && /builder 2 broke/.test(r.error || ''), JSON.stringify({ phase: r?.phase, error: r?.error }))
   check('S3 5b the other builder is cancelled and its tab closed', cancelAt >= 0 && after.some((c, i) => i > cancelAt && c.fn === 'close' && c.o?.tabId === w1), JSON.stringify(after.filter((c) => c.fn === 'cancel' || c.fn === 'close')))
-  check('S3 5b the cancel reaches builder 1 while its prompt is still running', cancelledMidPrompt)
+  check('S3 5b the cancel reaches builder 1 while its prompt is still running', after.some((c) => c.fn === 'cancel' && c.o?.tabId === w1 && c.o?.mid === true))
   check('S3 5b no review or commit after the failed wave', !r?.commitSha && !r?.verify?.length, JSON.stringify({ sha: r?.commitSha, verify: r?.verify }))
   ctl.abandonRun(id)
   reset2()

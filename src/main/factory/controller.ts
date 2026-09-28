@@ -70,7 +70,16 @@ export type FactoryDeps = {
 }
 
 /** workers: T3 builder tabs open right now (factory-<id>-w<n>). */
-type Live = { run: RunRecord; gen: number; warm: boolean; busy: Promise<void> | null; abort?: AbortController; workers?: string[] }
+type Live = {
+  run: RunRecord
+  gen: number
+  warm: boolean
+  busy: Promise<void> | null
+  abort?: AbortController
+  workers?: string[]
+  /** Notes the in-flight Opus planner carries: a Guide interrupt hands them to the next planner. */
+  planNotes?: string[]
+}
 
 export const STRICT_MISSING = 'Opus reviewer not found (claude CLI). Commit is your call.'
 export const VOICE_HOLD = 'Voice check said REJECT. Fix the copy before Commit.'
@@ -117,7 +126,10 @@ function stale(state: Live, gen: number): boolean {
 }
 
 function track(state: Live, work: Promise<void>): void {
+  // Callers bump gen before track: a cancelled turn that throws later never fails the turn that replaced it.
+  const gen = state.gen
   const p = work.catch((e) => {
+    if (stale(state, gen)) return
     if (state.run.phase === 'paused' || TERMINAL_PHASES.includes(state.run.phase)) return
     setPhase(state, 'failed', { error: String((e as Error)?.message || e).slice(0, 400), resumePhase: state.run.resumePhase || 'build' })
   })
@@ -332,6 +344,7 @@ async function opusPlan(state: Live): Promise<void> {
   const notes = openNotes(state.run)
   markSent(state)
   if (notes.length) persist(state)
+  state.planNotes = notes
   const run = state.run
   const earlier = (prev.rejects > 0 || notes.length) && existsSync(runTextPath(run.id, 'plan')) ? [runTextPath(run.id, 'plan')] : []
   const abort = new AbortController()
@@ -347,6 +360,7 @@ async function opusPlan(state: Live): Promise<void> {
   })
   if (state.abort === abort) state.abort = undefined
   if (stale(state, gen)) return
+  state.planNotes = undefined
   const why = !res.found
     ? 'Opus planner not found (claude CLI).'
     : res.code !== 0
@@ -960,11 +974,27 @@ export function decideRun(id: string, choice: Decision, opts: { reason?: string 
   return state.run
 }
 
+/** Phases whose in-flight work a Guide Send interrupts. Triage is short: its note waits for the plan or build. */
+const INTERRUPTIBLE: RunPhase[] = ['plan', 'build', 'verify', 'review']
+
+/** Guide Send while busy: the same cancel as Pause, without pausing or letting go of the lock. */
+function interrupt(state: Live): void {
+  state.gen++
+  try {
+    need().driver.cancel(state.run.acpTab)
+  } catch {
+    /* not warm */
+  }
+  state.abort?.abort()
+  closeWorkers(state)
+}
+
 /**
  * Joe's note after Start. Stored on the run; the next builder or planner brief carries it (never the
  * Opus reviewer). A waiting plan gets a fresh Opus plan with it; a diff in review (a held reject
- * included) gets a builder turn with it. While a turn is in flight it waits and drains after that turn.
- * Paused, prep, Proceed, and tier cards keep it for the next brief.
+ * included) gets a builder turn with it. While a turn is in flight it interrupts that turn (planner,
+ * builder, workers, verify, or reviewer) and starts the follow-up with the note at once.
+ * Triage in flight, paused, prep, Proceed, and tier cards keep it unsent for the next brief.
  */
 export function guideRun(id: string, text: string): RunRecord {
   const state = liveFor(id)
@@ -974,7 +1004,20 @@ export function guideRun(id: string, text: string): RunRecord {
   state.run = { ...state.run, guide: [...(state.run.guide || []), { at: Date.now(), text: body }].slice(-GUIDE_MAX) }
   persist(state)
   const run = state.run
-  if (state.busy) return run
+  if (state.busy) {
+    if (!INTERRUPTIBLE.includes(run.phase) || run.needsPrep || run.needsProceed) return run
+    interrupt(state)
+    if (run.phase === 'plan') {
+      // The killed planner never answered: its notes go to the fresh one with the new note.
+      const carried = state.planNotes || []
+      state.planNotes = undefined
+      if (carried.length) state.run = { ...state.run, guide: state.run.guide?.map((g) => (carried.includes(g.text) && g.sent ? { at: g.at, text: g.text } : g)) }
+      track(state, opusPlan(state))
+    }
+    // Built or under review: a fix turn on the work. Otherwise one builder (T3 slices are not restarted).
+    else track(state, buildStep(state, run.diff || run.phase === 'review' ? 'fix' : 'build'))
+    return state.run
+  }
   if (run.phase === 'plan' && run.plan?.status === 'waiting' && run.plan.text) {
     state.gen++
     track(state, opusPlan(state))
