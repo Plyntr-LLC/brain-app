@@ -1,6 +1,7 @@
 export type MediaBrainRow = {
   id: string
   plyntr_brain_id: string
+  hq_repo: string
   folder: string
   bucket: string
   bucket_status: 'off' | 'on'

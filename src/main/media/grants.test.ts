@@ -8,6 +8,7 @@ import {
   OVER_CAP,
   ROTATION_PENDING,
   markMediaRevoked,
+  markMediaRevokedWorker,
   tryReserve,
   workerStateForDevice
 } from './grants.ts'
@@ -17,6 +18,7 @@ function brain(): MediaBrainRow {
   return {
     id: 'brainid01brainid01brainid',
     plyntr_brain_id: 'brain-owner',
+    hq_repo: 'plyntr/alpha-brain',
     folder: '/tmp/brain',
     bucket: 'bm-brainid01brainid01brainid',
     bucket_status: 'on',
@@ -162,6 +164,39 @@ test('full-brain revoke without proof blocks and does not 410', () => {
     const state = workerStateForDevice(device)
     assert.equal(state.status, 401)
     assert.equal(state.error, undefined)
+  } finally {
+    resetMemoryMediaStore()
+    if (prev === undefined) delete process.env.BRAIN_APP_DRY_RUN
+    else process.env.BRAIN_APP_DRY_RUN = prev
+  }
+})
+
+test('worker-shaped markMediaRevoked(email, brain, roots, proof) matches 410', () => {
+  const prev = process.env.BRAIN_APP_DRY_RUN
+  process.env.BRAIN_APP_DRY_RUN = '1'
+  resetMemoryMediaStore()
+  try {
+    const mem = memoryMediaStore('/tmp/a')
+    const row = brain()
+    mem.brains.push(row)
+    const device: MediaDeviceRow = {
+      id: 'MAC-B',
+      media_brain_id: row.id,
+      email: 'alpha-person@example.test',
+      fingerprint: 'MAC-B',
+      public_key: 'aa'.repeat(32),
+      seat_kind: 'project',
+      seat_id: 'seat-b',
+      roots: ['projects/alpha/'],
+      status: 'approved'
+    }
+    mem.devices.push(device)
+    const out = markMediaRevokedWorker('alpha-person@example.test', row, ['projects/alpha/'], false)
+    assert.equal(out.kind, 'project')
+    assert.equal(device.status, 'revoked')
+    assert.equal(workerStateForDevice(device).status, 410)
+    assert.equal(workerStateForDevice(device).body?.error, DEVICE_REVOKED)
+    assert.equal(row.brain_key_version, 1)
   } finally {
     resetMemoryMediaStore()
     if (prev === undefined) delete process.env.BRAIN_APP_DRY_RUN

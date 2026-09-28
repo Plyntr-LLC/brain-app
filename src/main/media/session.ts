@@ -30,7 +30,7 @@ import {
   completeReservation,
   DEVICE_REVOKED,
   finishRemoveCopy,
-  markMediaRevoked as markRevokedOnStore,
+  markMediaRevokedWorker,
   pullDeviceWraps,
   projectLabel,
   releaseReservation,
@@ -78,6 +78,7 @@ export { DEVICE_REVOKED, PBT_ON_PROJECT, mintProjectHmacToken, revokeCopy }
 export const NO_SEAT = 'Sign in to this brain before turning on storage.'
 export const NO_BUILDER = 'Only an owner or scout can turn on Plyntr storage.'
 export const ASKED_FILE = 'media-asked.json'
+export const DRY_HQ_REPO = 'plyntr/alpha-brain'
 
 const ORIGIN = 'https://brain-sync.joe-84a.workers.dev'
 
@@ -162,6 +163,12 @@ function store() {
 
 function brainForFolder(folder: string): MediaBrainRow | undefined {
   return store().brains.find((b) => b.folder === folder && b.status === 'on')
+}
+
+function brainForHqRepo(hqRepo: string): MediaBrainRow | undefined {
+  const want = String(hqRepo || '').trim().toLowerCase()
+  if (!want) return undefined
+  return store().brains.find((b) => String(b.hq_repo || '').trim().toLowerCase() === want && b.status === 'on')
 }
 
 function brainKeyId(id: string): string {
@@ -393,6 +400,7 @@ export async function mediaEnable(opts: { folder: string; passphrase?: string })
   mem.brains.push({
     id: mediaBrainId,
     plyntr_brain_id: who.brainId || mediaBrainId,
+    hq_repo: DRY_HQ_REPO,
     folder,
     bucket,
     bucket_status: 'off',
@@ -965,10 +973,11 @@ export function mintProjectMediaSeat(opts: {
   const token = mintProjectHmacToken({
     seat_id,
     email,
-    hq_repo: opts.hq_repo || 'plyntr/alpha-brain',
+    hq_repo: opts.hq_repo || row.hq_repo || DRY_HQ_REPO,
     device_id: opts.device_id || randomUUID().replace(/-/g, ''),
     roots
   })
+  if (!row.hq_repo) row.hq_repo = opts.hq_repo || DRY_HQ_REPO
   return { seat_id, token, roots }
 }
 
@@ -982,8 +991,16 @@ export function registerMediaDevice(opts: { folder: string; token: string }): {
   const folder = String(opts.folder || '')
   const verified = verifyProjectHmacToken(opts.token)
   if (!verified.ok) throw new Error(PBT_ON_PROJECT)
-  const row = brainForFolder(folder) || store().brains[0]
+  const row =
+    brainForHqRepo(verified.payload.hq_repo) || brainForFolder(folder) || store().brains[0]
   if (!row) throw new Error('Turn on storage first.')
+  const seatRow = store().seats.find(
+    (s) =>
+      s.media_brain_id === row.id &&
+      (s.id === verified.payload.seat_id || s.email === verified.payload.email) &&
+      s.status === 'active'
+  )
+  const roots = (seatRow?.roots?.length ? seatRow.roots : verified.payload.roots).map(normalizeMediaRoot)
   const live = ensureDeviceKey(userData(), row.id, safe())
   const mem = store()
   const existing = mem.devices.find((d) => d.media_brain_id === row.id && d.fingerprint === live.fingerprint)
@@ -995,13 +1012,13 @@ export function registerMediaDevice(opts: { folder: string; token: string }): {
     public_key: live.publicKey.toString('hex'),
     seat_kind: 'project',
     seat_id: verified.payload.seat_id,
-    roots: verified.payload.roots,
+    roots,
     status: 'pending'
   }
   if (!existing) mem.devices.push(device)
   else {
     device.email = verified.payload.email
-    device.roots = verified.payload.roots
+    device.roots = roots
     device.public_key = live.publicKey.toString('hex')
     device.seat_id = verified.payload.seat_id
     if (device.status !== 'revoked') device.status = device.status === 'approved' ? 'approved' : 'pending'
@@ -1009,7 +1026,7 @@ export function registerMediaDevice(opts: { folder: string; token: string }): {
   writeHmacSeat(userData(), {
     token: opts.token,
     email: verified.payload.email,
-    roots: verified.payload.roots,
+    roots,
     hq_repo: verified.payload.hq_repo,
     seat_id: verified.payload.seat_id
   })
@@ -1099,20 +1116,13 @@ export function revokeMediaDevice(opts: {
 }): { ok: true; detail: string; kind: 'project' | 'blocked' | 'wiped' } {
   const row = brainForFolder(String(opts.folder || ''))
   if (!row) throw new Error('Turn on storage first.')
-  const mem = store()
-  const device = mem.devices.find(
+  const device = store().devices.find(
     (d) =>
       d.media_brain_id === row.id &&
       (d.id === opts.deviceId || d.seat_id === opts.seatId || (opts.email && d.email === String(opts.email).toLowerCase()))
   )
   const email = String(opts.email || device?.email || '')
-  const result = markRevokedOnStore({
-    mem,
-    mediaBrainId: row.id,
-    email,
-    roots: device?.roots,
-    proof: Boolean(opts.proof)
-  })
+  const result = markMediaRevokedWorker(email, row, device?.roots, Boolean(opts.proof))
   return { ok: true, detail: result.detail, kind: result.kind }
 }
 
@@ -1126,13 +1136,7 @@ export function afterPlyntrSeatRevoke(brainId: string, seatId: string): void {
   const device = mem.devices.find((d) => d.media_brain_id === row.id && d.seat_id === seatId)
   const email = seat?.email || device?.email
   if (!email) return
-  markRevokedOnStore({
-    mem,
-    mediaBrainId: row.id,
-    email,
-    roots: seat?.roots || device?.roots,
-    proof: false
-  })
+  markMediaRevokedWorker(email, row, seat?.roots || device?.roots, false)
 }
 
 export function afterHqProjectRevoke(seatId: string): void {
@@ -1149,11 +1153,5 @@ export function afterHqProjectRevoke(seatId: string): void {
   if (!row) return
   const email = seat?.email || device?.email
   if (!email) return
-  markRevokedOnStore({
-    mem,
-    mediaBrainId: row.id,
-    email,
-    roots: seat?.roots || device?.roots,
-    proof: false
-  })
+  markMediaRevokedWorker(email, row, seat?.roots || device?.roots, false)
 }
