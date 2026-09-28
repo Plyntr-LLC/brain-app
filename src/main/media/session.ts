@@ -252,15 +252,17 @@ export async function mediaStatus(folder: string): Promise<MediaStatus> {
   return base
 }
 
-export function mediaShouldAsk(opts: { folder: string; role?: string }): boolean {
+export async function mediaShouldAsk(opts: { folder: string; role?: string }): Promise<boolean> {
   const folder = String(opts.folder || '')
+  const st = await mediaStatus(folder)
   const who = actor(folder)
   return shouldShowStorageAsk({
     role: opts.role || who.role,
     joe: who.joe,
-    storageOn: Boolean(brainForFolder(folder)),
+    storageOn: st.on,
     mediaAsked: mediaAskedFor(folder),
-    hasSeatToken: Boolean(who.token)
+    hasSeatToken: st.hasSeatToken,
+    routes: st.routes
   })
 }
 

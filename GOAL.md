@@ -103,6 +103,8 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Inbox
 
+- [x] 2026-09-28 Joe: Slice 2 follow-up: packed setup question hidden unless media health routes are live. `shouldShowStorageAsk` and `mediaShouldAsk` now require `media.status` `routes` (health 200), the same gate Settings uses. Packed + no-routes never opens `storage-ask` and never writes `media-asked.json`. Eligible seats still get the ask when routes are live. ForkScreen still three buttons. Version **0.1.92** (package.json only). Rollback tag `pre-media-storage-20260928` left in place.
+
 - [x] 2026-09-28 Joe: Encrypted Plyntr storage Slice 2 (Settings block + setup question). Plan: `plans/20260928-media-storage.md` §7a/§7b. `MediaStoragePanel` under `{localSyncOffer()}` in both `biz current` branches. FirstRun `goChat` + `storage-ask` after the path finishes. Packed hide when `/v1/media/health` is 404. Until slice 6 the switch needs a `pbt_` seat. ForkScreen still three buttons. Playback left for slice 3. Version **0.1.91** (package.json only). Rollback tag `pre-media-storage-20260928` left in place.
 
 - [x] 2026-09-28 Joe: Encrypted Plyntr storage Slice 1 (crypto, format, pointer, dry-run worker). Plan: `plans/20260928-media-storage.md`. Main-process only under `src/main/media/`. AES-256-GCM 4 MiB chunks (tests 64 KiB), BRMEDIA1 header, pointer schema, directory bucket. No Settings, FirstRun, preload, or R2. Rollback tag `pre-media-storage-20260928` left in place.
@@ -180,7 +182,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-- [ ] 2026-09-28 Joe: Encrypted Plyntr storage remaining slices (playback, worker, grants/revoke, Ads2AI reclaim). Slice 2 Settings + setup question is in code. Plan: `plans/20260928-media-storage.md`. Do not change ForkScreen's three choices.
+- [ ] 2026-09-28 Joe: Encrypted Plyntr storage remaining slices (playback, worker, grants/revoke, Ads2AI reclaim). Slice 2 Settings + setup question is in code; packed hide now gates `storage-ask` on health routes. Plan: `plans/20260928-media-storage.md`. Do not change ForkScreen's three choices.
 
 - [ ] 2026-09-28 Joe: Factory click-check on packed 0.1.87. `+` → Factory, type “the email system that we're doing for Plyntr” and see Work repo **mail-desk**. A Guide that complains about mykennel or Gutter IQ must not move the run there. An unrelated red test (a file this turn did not change) must not stop the run. Also: Guide Send during a running plan/build/review cuts in; phase row stays at the top, Guide box at the bottom. Dirty Start shows Commit first / Stash first; T2 shows Opus plan then Plan by Opus.
 
