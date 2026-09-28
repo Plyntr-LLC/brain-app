@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
-import type { RunRecord } from '../../shared/factory.ts'
+import type { RunRecord, VerifyRow } from '../../shared/factory.ts'
 
 export { REVIEW_MAX } from '../../shared/factory.ts'
 
@@ -111,13 +111,17 @@ export function strictNeeded(run: Pick<RunRecord, 'tier' | 'risk' | 'workRepo'>)
   return run.tier === 'T2' || run.tier === 'T3' || run.risk === 'elevated' || run.risk === 'critical' || /mypuppies/i.test(run.workRepo)
 }
 
-export function strictPrompt(o: { task: string; tier: string; risk: string; base: string; diff: string; workRepo: string }): string {
+export function strictPrompt(o: { task: string; tier: string; risk: string; base: string; diff: string; workRepo: string; verify?: VerifyRow[] }): string {
+  const rows = (o.verify || []).filter((r) => r.status !== 'skipped')
   return [
     `Use the strict code review skill at ${STRICT_SKILL_PATH}. Read it from disk and follow it.`,
     'Review this change as an independent reviewer. You cannot edit files. Do not push or deploy.',
     `Work repo: ${o.workRepo}`,
     `Tier: ${o.tier}. Risk: ${o.risk}. Base: ${o.base}.`,
     `Task: ${String(o.task || '').slice(0, 4000)}`,
+    ...(rows.length
+      ? ['', 'Verify results (a fail that names a changed file is a gap):', ...rows.map((r) => `- npm run ${r.script}: ${r.status}${r.status === 'fail' && r.tail ? `\n${String(r.tail).split('\n').slice(-8).join('\n')}` : ''}`)]
+      : []),
     '',
     `Diff against the base (cut at 60k characters; run \`git diff ${o.base}\` in the work repo for the rest):`,
     o.diff,

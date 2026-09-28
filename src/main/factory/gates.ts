@@ -1,6 +1,6 @@
 import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { delimiter, isAbsolute, join, resolve } from 'node:path'
+import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { currentBranch, hasRemote, headSha } from './git-audit.ts'
 import { realish, underPath } from './paths.ts'
 
@@ -35,19 +35,50 @@ export function askPaths(msg: Msg): string[] {
   return out
 }
 
-/** Empty when this write may go ahead. A sentence when it lands in the brain while the work repo is elsewhere. */
+export const OTHER_REPO_WRITE_REFUSAL = 'Factory edits land in the work repo only. This path is in another repo, so Brain refused it.'
+
+/** Git top of the nearest folder that exists at or above p. Empty when none (tmp). */
+function repoTopOf(p: string): string {
+  let cur = p
+  while (!existsSync(cur)) {
+    const up = dirname(cur)
+    if (up === cur) return ''
+    cur = up
+  }
+  try {
+    if (!statSync(cur).isDirectory()) cur = dirname(cur)
+    const top = execFileSync(realGit(), ['rev-parse', '--show-toplevel'], {
+      cwd: cur,
+      encoding: 'utf8',
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+    return top ? realish(top) : ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Empty when this write may go ahead. A sentence when it lands in the brain while the work repo is
+ * elsewhere, or in another git repo than the work repo. Paths in no git repo (tmp) may be written.
+ */
 export function factoryWriteBlock(abs: string, brainPath: string, workRepo: string): string | null {
   if (!brainPath || !abs || !isAbsolute(abs)) return null
   const brain = realish(brainPath)
   const work = workRepo ? realish(workRepo) : ''
   const target = realish(abs)
-  if (!underPath(brain, target)) return null
-  // A work repo inside the brain may be edited; the rest of the brain may not.
-  if (work && underPath(brain, work) && underPath(work, target)) return null
-  return BRAIN_WRITE_REFUSAL
+  if (underPath(brain, target)) {
+    // A work repo inside the brain may be edited; the rest of the brain may not.
+    if (work && underPath(brain, work) && underPath(work, target)) return null
+    return BRAIN_WRITE_REFUSAL
+  }
+  if (!work || underPath(work, target)) return null
+  const top = repoTopOf(target)
+  return top && top !== work ? OTHER_REPO_WRITE_REFUSAL : null
 }
 
-/** 'reject' for publish verbs and brain edits, 'ask' for everything else (the card decides). */
+/** 'reject' for publish verbs and edits outside the work repo (brain or another repo), 'ask' for everything else (the card decides). */
 export function filterFactoryPermission(msg: Msg, ctx: { brainPath: string; workRepo: string }): 'reject' | 'ask' {
   const p = rec(msg.params)
   const tool = rec(p.toolCall)
@@ -60,7 +91,7 @@ export function filterFactoryPermission(msg: Msg, ctx: { brainPath: string; work
     const path = isAbsolute(raw) ? raw : ctx.brainPath ? resolve(ctx.brainPath, raw) : ''
     if (path && factoryWriteBlock(path, ctx.brainPath, ctx.workRepo)) {
       const kind = String(tool.kind || '').toLowerCase()
-      // Reads of the brain are fine (rules, skills); edits are not.
+      // Reads are fine (brain rules, skills, other repos); edits are not.
       if (kind !== 'read' && kind !== 'search' && kind !== 'fetch' && kind !== 'think') return 'reject'
     }
   }

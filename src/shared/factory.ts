@@ -23,7 +23,8 @@ export type RunPhase =
 export const REVIEW_MAX = 5
 
 /** One note Joe sent from the Factory composer. `sent` once a builder or planner brief carried it. */
-export type GuideNote = { at: number; text: string; sent?: boolean }
+/** repo: what this note named when it was first read ('' for nothing), so a later move never re-reads it. */
+export type GuideNote = { at: number; text: string; sent?: boolean; repo?: string }
 
 export type VerifyRow = { script: string; status: 'pass' | 'fail' | 'skipped'; tail?: string }
 

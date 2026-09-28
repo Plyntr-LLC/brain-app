@@ -1347,6 +1347,9 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
   const mailDesk = repo('projects/mail-desk', { 'package.json': pkg, 'src/send.ts': 'export const send = 1\n' })
   const quote = repo('projects/gutter-iq-quote-deploy', { 'package.json': pkg, 'src/quote.ts': 'export const quote = 1\n' })
   repo('projects/guttercompass-quote', { 'package.json': pkg, 'src/q.ts': 'export const q = 1\n' })
+  const kennel = repo('projects/mykennel', { 'package.json': pkg, 'src/lib/dates.js': 'export const d = 1\n' })
+  // Joe's ~/Projects has a gutter-iq folder too: "not gutter iq" must not pick it.
+  const gutterIq = repo('projects/gutter-iq', { 'package.json': pkg, 'src/g.ts': 'export const g = 1\n' })
   const head = (dir: string) => git(dir, ['rev-parse', 'HEAD']).trim()
   const same = (a?: string, b?: string) => !!a && !!b && realish(a) === realish(b)
   const holds = (dir: string, id: string) => store.activeRunFor(dir)?.runId === id
@@ -1468,10 +1471,12 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
   cleanMail()
   promptPlan = async () => {}
 
-  // GF 1: a run failed on an empty turn; Guide Send is Resume with the note, and the note is sent at once.
+  // GF 1: an empty turn retries once, then pauses; Guide Send is Resume with the note, and the note is sent at once.
+  const pE = promptCount()
   const empty = ctl.startRun({ task: 'fix typo in the app label', workRepo: quote, brainPath: brainA })
   const idE = empty.ok ? empty.run.id : ''
   const rE0 = await ctl.settle(idE)
+  check('GF 1 the empty turn got exactly one retry turn', promptsFrom(pE).length === 2 && /changed no files/.test(promptsFrom(pE)[1] || ''), JSON.stringify(promptsFrom(pE).length))
   promptPlan = async () => {
     writeFileSync(join(quote, 'src', 'quote.ts'), 'export const quote = 2\n')
   }
@@ -1481,8 +1486,8 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
   const rE = await ctl.settle(idE)
   const turnsE = promptsFrom(p4)
   check(
-    'GF 1 Guide on a failed run starts a builder turn with the note and marks it sent',
-    rE0?.phase === 'failed' && /changed no files/.test(rE0?.error || '') && sent.phase === 'build' && !!noteE?.sent && turnsE.length === 1 && turnsE[0].includes('The label is in src/quote.ts') && rE?.phase !== 'failed' && (rE?.audit?.work || []).some((r) => r.path === 'src/quote.ts'),
+    'GF 1 an empty turn gets one more builder turn, then pauses (not failed); Guide Send starts a builder turn with the note and marks it sent',
+    rE0?.phase === 'paused' && /changed no files/.test(rE0?.error || '') && sent.phase === 'build' && !!noteE?.sent && turnsE.length === 1 && turnsE[0].includes('The label is in src/quote.ts') && rE?.phase !== 'failed' && (rE?.audit?.work || []).some((r) => r.path === 'src/quote.ts'),
     JSON.stringify({ before: rE0?.phase, sentPhase: sent.phase, noteSent: noteE?.sent, turns: turnsE.length, after: rE?.phase, error: rE?.error })
   )
   if (idE) ctl.abandonRun(idE)
@@ -1503,6 +1508,134 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
   )
   if (idN) ctl.abandonRun(idN)
   cleanMail()
+  promptPlan = async () => {}
+
+  // WR 1 (run-e50ebcf3): Joe's note names mykennel only to complain about the label. It moves the run to mail-desk, and stays.
+  const KENNEL_NOTE = 'why are we now showing the work repo as mykennel. we are working on the email system for plyntr'
+  promptPlan = async (o) => {
+    if (o.text.includes(mailDesk)) writeFileSync(join(mailDesk, 'src', 'send.ts'), 'export const send = 6\n')
+  }
+  for (const from of [kennel, quote]) {
+    const w = ctl.startRun({ task: 'fix typo in the app label', workRepo: from, brainPath: brainA })
+    const idW = w.ok ? w.run.id : ''
+    await ctl.settle(idW)
+    // The live prefs: lastRepo was mykennel when the note came in.
+    resolver.rememberRepo(kennel)
+    const noted = ctl.guideRun(idW, KENNEL_NOTE)
+    const rW = await ctl.settle(idW)
+    ctl.dropMemory()
+    const back = ctl.restoreRun(idW)
+    check(
+      `WR 1 from ${from === kennel ? 'mykennel' : 'quote-deploy'}: the mykennel complaint moves to mail-desk, not mykennel, and stays after the turn and a restore`,
+      same(noted.workRepo, mailDesk) && same(rW?.workRepo, mailDesk) && holds(mailDesk, idW) && !holds(kennel, idW) && same(back?.workRepo, mailDesk) && (rW?.audit?.work || []).some((r) => r.path === 'src/send.ts'),
+      JSON.stringify({ noted: noted.workRepo, now: rW?.workRepo, back: back?.workRepo, phase: rW?.phase, error: rW?.error })
+    )
+    if (idW) ctl.abandonRun(idW)
+    cleanMail()
+  }
+
+  // WR 1 restore: a 0.1.84 run on mykennel with the note already stored (never read) moves to mail-desk when the app restores it.
+  promptPlan = async () => {}
+  const old = ctl.startRun({ task: 'fix typo in the app label', workRepo: kennel, brainPath: brainA })
+  const idO = old.ok ? old.run.id : ''
+  const rO = await ctl.settle(idO)
+  resolver.rememberRepo(kennel)
+  if (rO) store.saveRun({ ...rO, guide: [{ at: Date.now(), text: KENNEL_NOTE, sent: true }] })
+  ctl.dropMemory()
+  const restored = ctl.restoreRun(idO)
+  check(
+    'WR 1 restoreRun reconciles: the stored note moves the paused run to mail-desk without a Guide',
+    same(restored?.workRepo, mailDesk) && restored?.phase === 'paused' && holds(mailDesk, idO) && !holds(kennel, idO),
+    JSON.stringify({ now: restored?.workRepo, phase: restored?.phase, error: restored?.error })
+  )
+  if (idO) ctl.abandonRun(idO)
+
+  // WR 1 restore dirty: a run saved mid-plan comes back paused; the dirty mail-desk it moves to waits on Commit/Stash first.
+  writeFileSync(join(mailDesk, 'wip.txt'), 'wip\n')
+  const oldD = ctl.startRun({ task: 'fix typo in the app label', workRepo: kennel, brainPath: brainA })
+  const idOD = oldD.ok ? oldD.run.id : ''
+  const rOD = await ctl.settle(idOD)
+  resolver.rememberRepo(kennel)
+  if (rOD) store.saveRun({ ...rOD, phase: 'plan', resumePhase: 'plan', diff: undefined, audit: undefined, error: undefined, guide: [{ at: Date.now(), text: KENNEL_NOTE, sent: true }] })
+  ctl.dropMemory()
+  const pOD = promptCount()
+  const restoredD = ctl.restoreRun(idOD)
+  const rOD2 = await ctl.settle(idOD)
+  check(
+    'WR 1 restore mid-plan into a dirty mail-desk shows Commit first or Stash first',
+    same(restoredD?.workRepo, mailDesk) && restoredD?.needsPrep === 'dirty' && (restoredD?.dirtyFiles || []).includes('wip.txt') && holds(mailDesk, idOD) && !holds(kennel, idOD) && promptCount() === pOD && rOD2?.needsPrep === 'dirty' && existsSync(join(mailDesk, 'wip.txt')),
+    JSON.stringify({ now: restoredD?.workRepo, phase: restoredD?.phase, prep: restoredD?.needsPrep, files: restoredD?.dirtyFiles, prompts: promptCount() - pOD })
+  )
+  if (idOD) ctl.abandonRun(idOD)
+  cleanMail()
+
+  // WR 2: "mail desk" (two words) from quote-deploy lands on mail-desk.
+  const wr2 = ctl.startRun({ task: 'fix typo in the app label', workRepo: quote, brainPath: brainA })
+  const id2 = wr2.ok ? wr2.run.id : ''
+  await ctl.settle(id2)
+  const g2 = ctl.guideRun(id2, 'this is not gutter iq this is the mail desk for plyntr')
+  const r2 = await ctl.settle(id2)
+  check('WR 2 "the mail desk for plyntr" from quote-deploy moves to mail-desk', same(g2.workRepo, mailDesk) && same(r2?.workRepo, mailDesk) && holds(mailDesk, id2) && !holds(gutterIq, id2), JSON.stringify({ now: r2?.workRepo, error: r2?.error }))
+  if (id2) ctl.abandonRun(id2)
+  cleanMail()
+
+  // VF 1: npm test is red on a file this turn never touched (square-tax): not failed, the run goes on to review.
+  const run0 = fakeDeps.runScript
+  let testTail = ''
+  fakeDeps.runScript = async (_r, script) => {
+    scriptRuns.push(script)
+    return script === 'test' ? { code: 1, out: testTail } : { code: 0, out: 'ok' }
+  }
+  ctl.configureFactory(fakeDeps)
+  promptPlan = async (o) => {
+    if (/Role: self-check/.test(o.text)) return
+    writeFileSync(join(mailDesk, 'src', 'send.ts'), 'export const send = "API error: try again"\n')
+  }
+  claudeSays(['GAPS: 0\nPASS'])
+  testTail = 'ok 1645 tests\nnot ok 1 - tests/square-tax.test.js\n  ReferenceError: resolveSquareTaxForInvoice is not defined'
+  const pV = promptCount()
+  const vf = ctl.startRun({ task: 'fix the API error message in the email send', workRepo: mailDesk, brainPath: brainA })
+  const idV = vf.ok ? vf.run.id : ''
+  const rV = await ctl.settle(idV)
+  const fixV = promptsFrom(pV).filter((t) => /Phase: fix\./.test(t))
+  check(
+    'VF 1 a test fail naming only tests/square-tax.test.js is not failed; the fail row stays and review is reached',
+    vf.ok && vf.run.tier !== 'T0' && rV?.phase !== 'failed' && (rV?.phase === 'review' || rV?.phase === 'done') && rV?.verify?.some((v) => v.script === 'test' && v.status === 'fail') === true && fixV.length === 0,
+    JSON.stringify({ tier: vf.ok ? vf.run.tier : vf, phase: rV?.phase, error: rV?.error, verify: rV?.verify, fixes: fixV.length })
+  )
+  if (idV) ctl.abandonRun(idV)
+  cleanMail()
+
+  // VF 1b: a fail that names the changed file gets one builder fix turn, then review with the row still red. Never a loop.
+  testTail = 'not ok 1 - src/send.ts\n  AssertionError: expected send'
+  claudeSays(['GAPS: 0\nPASS'])
+  const pV2 = promptCount()
+  const cV2 = claudeRows().length
+  // Approve and Ship in advance: the red row on src/send.ts still holds the diff for Joe.
+  const vf2 = ctl.startRun({ task: 'fix the API error message in the email send', workRepo: mailDesk, brainPath: brainA, runThrough: true, shipThrough: true })
+  const idV2 = vf2.ok ? vf2.run.id : ''
+  const rV2 = await ctl.settle(idV2)
+  const fixV2 = promptsFrom(pV2).filter((t) => /Phase: fix\./.test(t) && t.includes('Verify failed: npm run test'))
+  const strictV2 = claudeRows().slice(cV2).map((c) => c.argv[c.argv.indexOf('-p') + 1] || '').filter((t) => t.includes('strict code review'))
+  check(
+    'VF 1b a fail naming src/send.ts gets one auto fix turn with the verify note, then review (not failed)',
+    rV2?.phase === 'review' && fixV2.length === 1 && rV2?.verify?.some((v) => v.script === 'test' && v.status === 'fail') === true,
+    JSON.stringify({ phase: rV2?.phase, error: rV2?.error, fixes: fixV2.length, strict: rV2?.strict?.status })
+  )
+  check(
+    'VF 1b Approve and Ship in advance do not commit or push while the fail row names a changed file',
+    !rV2?.commitSha && !rV2?.pushed && !!rV2?.diff,
+    JSON.stringify({ phase: rV2?.phase, commit: rV2?.commitSha, pushed: rV2?.pushed })
+  )
+  check(
+    'VF 1b the Opus strict prompt carries the red verify row',
+    rV2?.strict?.status !== 'pass' || strictV2.some((t) => /npm run test: fail\nnot ok 1 - src\/send\.ts/.test(t)),
+    JSON.stringify({ tier: rV2?.tier, strict: rV2?.strict?.status, prompts: strictV2.length })
+  )
+  if (idV2) ctl.abandonRun(idV2)
+  cleanMail()
+  fakeDeps.runScript = run0
+  ctl.configureFactory(fakeDeps)
   promptPlan = async () => {}
 
   fakeDeps.projectsDir = undefined

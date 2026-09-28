@@ -85,10 +85,13 @@ test('one of its names finds the repo: folded, unique prefix, unique contains', 
     resolveWorkRepo({ task, brainPath: brain, projectsDir: projects, lastRepo: work, ...extra })
   const kennel = at('fix the footer on kennel')
   assert.ok(kennel.ok && same(kennel.workRepo, join(projects, 'mykennel')) && kennel.from === 'name', JSON.stringify(kennel))
-  for (const task of ['fix footer in brain app', 'fix footer in brainapp', 'fix footer in brain']) {
+  for (const task of ['fix footer in brainapp', 'fix footer in brain']) {
     const r = at(task)
     assert.ok(r.ok && same(r.workRepo, app) && r.from === 'name', `${task}: ${JSON.stringify(r)}`)
   }
+  // Two words whose hyphen join is a folder: an exact project hit.
+  const spaced = at('fix footer in brain app')
+  assert.ok(spaced.ok && same(spaced.workRepo, app) && spaced.from === 'project', JSON.stringify(spaced))
   const exact = at('fix footer in brain-app')
   assert.ok(exact.ok && same(exact.workRepo, app) && exact.from === 'project', JSON.stringify(exact))
   const lot = at('LotLine header')
@@ -156,6 +159,33 @@ test('a task that only names the brain is still refused; an exact folder is stil
   assert.ok(exact.ok && same(exact.workRepo, app) && exact.from === 'project', JSON.stringify(exact))
   const kennel = resolveWorkRepo({ task: 'fix the footer on kennel', brainPath: brain, projectsDir: projects, lastRepo: gutter })
   assert.ok(kennel.ok && same(kennel.workRepo, join(projects, 'mykennel')), JSON.stringify(kennel))
+})
+
+test('Joe 2026-09-28 run-e50ebcf3: a note that only mentions the current or last repo does not pick it', () => {
+  const kennel = join(projects, 'mykennel')
+  const mail = join(projects, 'mail-desk')
+  const note = 'why are we now showing the work repo as mykennel. we are working on the email system for plyntr'
+  const plain = resolveWorkRepo({ task: note, brainPath: brain, projectsDir: projects })
+  assert.ok(plain.ok && same(plain.workRepo, kennel), JSON.stringify(plain))
+  for (const ignore of [[kennel], [gutter, kennel]]) {
+    const r = resolveWorkRepo({ task: note, brainPath: brain, projectsDir: projects, ignore })
+    assert.ok(r.ok && same(r.workRepo, mail), JSON.stringify({ ignore, r }))
+  }
+  // A partial name, a hyphen pair, or a path to the ignored repo never returns it: the note picks nothing.
+  for (const task of ['the kennel label is wrong', 'fix the my kennel label', `look at ${join(kennel, 'src')}`]) {
+    const hit = resolveWorkRepo({ task, brainPath: brain, projectsDir: projects })
+    assert.ok(hit.ok && same(hit.workRepo, kennel), JSON.stringify({ task, hit }))
+    const r = resolveWorkRepo({ task, brainPath: brain, projectsDir: projects, ignore: [kennel] })
+    assert.ok(!r.ok, JSON.stringify({ task, r }))
+  }
+  // "mail desk" joins to the mail-desk folder before "gutter" (gutter-iq) is read.
+  // "not gutter iq": the gutter-iq folder (a real ~/Projects name) is what it is not.
+  const desk = resolveWorkRepo({ task: 'this is not gutter iq this is the mail desk for plyntr', brainPath: brain, projectsDir: projects })
+  assert.ok(desk.ok && same(desk.workRepo, mail) && desk.from === 'project', JSON.stringify(desk))
+  const isnt = resolveWorkRepo({ task: "it isn't the gutter iq repo", brainPath: brain, projectsDir: projects })
+  assert.deepEqual(isnt, { ok: false, error: NAME_THE_REPO })
+  const yes = resolveWorkRepo({ task: 'fix the gutter iq footer', brainPath: brain, projectsDir: projects })
+  assert.ok(yes.ok && same(yes.workRepo, gutter), JSON.stringify(yes))
 })
 
 test('taskPaths reads absolute and ~ paths and drops trailing punctuation', () => {

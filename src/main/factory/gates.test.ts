@@ -16,6 +16,7 @@ import {
   filterFactoryPermission,
   KENNEL_DEPLOY_REFUSAL,
   NO_DEPLOY_CMD,
+  OTHER_REPO_WRITE_REFUSAL,
   publish,
   publishBlock
 } from './gates.ts'
@@ -84,6 +85,22 @@ test('factoryWriteBlock refuses the brain and allows the work repo, even nested'
   mkdirSync(nested, { recursive: true })
   assert.equal(factoryWriteBlock(join(nested, 'a.ts'), brain, nested), null)
   assert.equal(factoryWriteBlock(join(brain, 'AGENTS.md'), brain, nested), BRAIN_WRITE_REFUSAL)
+})
+
+test('factoryWriteBlock refuses another git repo, allows the work repo and paths in no repo', () => {
+  const brain = tmpRepo('factory-wb-brain-')
+  const work = tmpRepo('factory-wb-mail-desk-')
+  const kennel = tmpRepo('factory-wb-mykennel-')
+  const loose = mkdtempSync(join(tmpdir(), 'factory-wb-loose-'))
+  assert.equal(factoryWriteBlock(join(kennel, 'src', 'lib', 'dates.js'), brain, work), OTHER_REPO_WRITE_REFUSAL)
+  assert.equal(factoryWriteBlock(join(kennel, 'scripts', 'undo.mjs'), brain, work), OTHER_REPO_WRITE_REFUSAL)
+  assert.equal(factoryWriteBlock(join(work, 'src', 'send.ts'), brain, work), null)
+  assert.equal(factoryWriteBlock(join(loose, 'scratch.txt'), brain, work), null)
+  assert.equal(factoryWriteBlock(join(brain, 'AGENTS.md'), brain, work), BRAIN_WRITE_REFUSAL)
+  const c = { brainPath: brain, workRepo: work }
+  assert.equal(filterFactoryPermission(ask('Edit', { path: join(kennel, 'src', 'lib', 'dates.js') }, 'edit'), c), 'reject')
+  assert.equal(filterFactoryPermission(ask('Read', { path: join(kennel, 'src', 'lib', 'dates.js') }, 'read'), c), 'ask')
+  assert.equal(filterFactoryPermission(ask('Edit', { path: join(work, 'src', 'send.ts') }, 'edit'), c), 'ask')
 })
 
 test('publish pushes a factory branch to a bare origin; protected, moved, detached, and no remote are refused', async () => {

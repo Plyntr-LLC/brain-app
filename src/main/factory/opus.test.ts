@@ -27,6 +27,16 @@ test('strict prompt names the skill by path and never pastes its body', () => {
   }
 })
 
+test('strict prompt carries the verify results', () => {
+  const p = strictPrompt({
+    task: 'fix it', tier: 'T2', risk: 'none', base: 'abc123', diff: '+x', workRepo: '/x/site',
+    verify: [{ script: 'typecheck', status: 'pass' }, { script: 'test', status: 'fail', tail: 'not ok 1 - src/send.ts' }, { script: 'e2e', status: 'skipped' }]
+  })
+  assert.match(p, /npm run typecheck: pass/)
+  assert.match(p, /npm run test: fail\nnot ok 1 - src\/send\.ts/)
+  assert.ok(!p.includes('npm run e2e'))
+})
+
 test('verdict reads the last non-empty line', () => {
   assert.equal(verdict('looks fine\n\nPASS\n\n'), 'PASS')
   assert.equal(verdict('bug at a.ts:3\nFAIL'), 'FAIL')

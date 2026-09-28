@@ -79,6 +79,10 @@ type Live = {
   workers?: string[]
   /** Notes the in-flight Opus planner carries: a Guide interrupt hands them to the next planner. */
   planNotes?: string[]
+  /** gen that already had its one auto fix turn for a verify fail naming a changed file. */
+  verifyFix?: number
+  /** gen that already had its one retry after a turn that changed no files. */
+  emptyRetry?: number
 }
 
 export const STRICT_MISSING = 'Opus reviewer not found (claude CLI). Commit is your call.'
@@ -213,21 +217,32 @@ export function startRun(input: StartInput): StartResult {
 
 /**
  * The work repo follows the repo the task (or Joe's newest Guide note that names one) uniquely
- * names. Never lastRepo, never the brain, never an ambiguous name. On a move: the lock, profile,
- * base, and lastRepo follow; a dirty repo the run has not built in yet waits on Commit/Stash first.
+ * names. Never lastRepo, never the brain, never an ambiguous name. A note that only mentions the
+ * current or last work repo ("why is it showing mykennel") does not choose it; each note is read
+ * once and its answer kept, so a move never flips back. Nothing unique: the run stays put.
+ * On a move: the lock, profile, base, and lastRepo follow; a dirty repo the run has not built in
+ * yet waits on Commit/Stash first.
  * 'stop': the caller starts nothing (another run holds the repo, or the new repo waits on prep).
  */
 function reconcileWorkRepo(state: Live): 'go' | 'stop' {
   const run = state.run
   const brain = realish(run.brainPath)
-  const notes = (run.guide || []).map((g) => g.text).reverse()
-  let hit = ''
-  for (const text of [...notes, run.task]) {
-    const found = resolveWorkRepo({ task: text, brainPath: run.brainPath, projectsDir: deps?.projectsDir })
-    if (found.ok) {
-      hit = found.workRepo
-      break
-    }
+  const ignore = [run.workRepo, lastRepo()].filter(Boolean)
+  let pinned = false
+  const guide = (run.guide || []).map((g): GuideNote => {
+    if (g.repo !== undefined) return g
+    pinned = true
+    const found = resolveWorkRepo({ task: g.text, brainPath: run.brainPath, projectsDir: deps?.projectsDir, ignore })
+    return { ...g, repo: found.ok ? found.workRepo : '' }
+  })
+  if (pinned) {
+    state.run = { ...state.run, guide }
+    persist(state)
+  }
+  let hit = [...guide].reverse().find((g) => g.repo)?.repo || ''
+  if (!hit) {
+    const found = resolveWorkRepo({ task: run.task, brainPath: run.brainPath, projectsDir: deps?.projectsDir })
+    if (found.ok) hit = found.workRepo
   }
   if (!hit || !existsSync(hit) || !isGitRepo(hit)) return 'go'
   const next = gitTop(hit)
@@ -244,7 +259,9 @@ function reconcileWorkRepo(state: Live): 'go' | 'stop' {
   // The Grok tab re-warms on the same session so its write gate follows the new repo.
   state.warm = false
   state.run = { ...state.run, workRepo: next, profile: runProfile(readProfile(next)), base: headSha(next), error: undefined }
-  const notBuilt = !!run.needsPrep || ((run.phase === 'triage' || run.phase === 'plan') && !run.diff && !run.audit?.work?.length)
+  // A restored or paused run reads the phase it will resume, not 'paused'.
+  const at = run.phase === 'paused' ? run.resumePhase : run.phase
+  const notBuilt = !!run.needsPrep || ((at === 'triage' || at === 'plan') && !run.diff && !run.audit?.work?.length)
   if (notBuilt && !isClean(next)) {
     const dirty = dirtyPaths(next)
     setPhase(state, 'triage', { needsPrep: 'dirty', dirtyFiles: dirty.slice(0, 20), dirtyCount: dirty.length, resumePhase: 'triage' })
@@ -630,7 +647,13 @@ async function afterTurn(state: Live, phase: BriefPhase, brainBefore: Record<str
   const trip = checkTripwire(state.run.tier, audit.work)
   if (trip.trip && !(await onTrip(state, trip))) return
   if (!audit.work.length) {
-    setPhase(state, 'failed', { error: 'This turn changed no files in the work repo.', resumePhase: 'build' })
+    // One more builder turn, then a pause Resume or Guide picks up. Not a failure.
+    if (state.emptyRetry !== state.gen) {
+      state.emptyRetry = state.gen
+      await buildStep(state, phase, `The last turn changed no files in ${run.workRepo}. Make the change there.`)
+      return
+    }
+    setPhase(state, 'paused', { error: 'This turn changed no files in the work repo.', resumePhase: 'build' })
     return
   }
   if (phase === 'review') state.run = { ...state.run, selfChecked: true }
@@ -703,18 +726,22 @@ async function verifyStep(state: Live): Promise<void> {
   }
   // T3 artifact: the combined verify output beside the run record, never in the work repo.
   if (t3) state.run = { ...state.run, verifyArtifact: saveRunText(state.run.id, 'verify', outs.join('\n\n') + '\n') }
-  const failed = rows.find((r) => r.status === 'fail')
-  if (failed) {
-    setPhase(state, 'failed', {
-      verify: rows,
-      error: `npm run ${failed.script} failed.`,
-      resumePhase: 'build',
-      note: `Verify failed: npm run ${failed.script}.\n${tail(failed.tail || '', 8)}`
-    })
+  state.run = { ...state.run, verify: rows }
+  // A red suite that names none of this turn's files is the repo next door, not this work: the row stays, review goes on.
+  // One that names a changed file gets one builder fix turn per verify pass, then review either way.
+  const ours = ourFail(state.run)
+  if (ours && state.verifyFix !== gen) {
+    state.verifyFix = gen
+    await buildStep(state, 'fix', `Verify failed: npm run ${ours.script}.\n${tail(ours.tail || '', 8)}`)
     return
   }
-  state.run = { ...state.run, verify: rows }
   await reviewStep(state)
+}
+
+/** The first red verify row that names a file this run changed. Unrelated red rows are the repo next door. */
+function ourFail(run: RunRecord): VerifyRow | undefined {
+  const changed = (run.audit?.work || []).map((r) => r.path).filter(Boolean)
+  return (run.verify || []).find((r) => r.status === 'fail' && changed.some((p) => String(r.tail || '').includes(p)))
 }
 
 /** After verify, in order: T1 self-check, Opus strict when required, voice when on, then diff + Commit. */
@@ -765,7 +792,7 @@ async function strictStep(state: Live): Promise<boolean> {
   state.abort = abort
   const res = await runOpus({
     cwd: run.workRepo,
-    prompt: strictPrompt({ task: run.task, tier: run.tier, risk: run.risk, base: run.base, diff: safeDiff(run.workRepo, run.base), workRepo: run.workRepo }),
+    prompt: strictPrompt({ task: run.task, tier: run.tier, risk: run.risk, base: run.base, diff: safeDiff(run.workRepo, run.base), workRepo: run.workRepo, verify: run.verify }),
     env: d.env(run.workRepo),
     bin: (d.claudeBin || (() => resolveBin('claude')))(),
     timeoutMs: OPUS_REVIEW_TIMEOUT_MS,
@@ -820,6 +847,8 @@ async function finishReview(state: Live): Promise<void> {
   if (!read || !diff.trim() || r.voice?.status === 'fail') return
   // Only reviewAccept's pass is an Opus approval. A missing reviewer, a fail, or a held reject never
   // auto-commits or auto-pushes. Approve in advance commits; Ship in advance commits then pushes. Never deploys.
+  // A red verify row that names a changed file waits for Joe, even after a PASS.
+  if (ourFail(r)) return
   const opusOk = r.strict?.status === 'pass'
   const auto = opusOk ? r.runThrough || r.shipThrough : r.runThrough && !strictNeeded(r) && !r.strict
   if (!auto) return
@@ -835,7 +864,7 @@ function liveFor(id: string): Live {
   return live.get(id)!
 }
 
-/** After an app restart: the run comes back paused, same tier, work repo, Grok session, and lock. */
+/** After an app restart: the run comes back paused, same tier, Grok session, and lock, on the repo its task or notes name. */
 export function restoreRun(id: string): RunRecord | null {
   const have = live.get(id)
   if (have) return have.run
@@ -851,10 +880,14 @@ export function restoreRun(id: string): RunRecord | null {
       return persist(state)
     }
   }
-  if (run.phase === 'paused') return run
-  const resumePhase: RunPhase = run.phase === 'failed' ? run.resumePhase || 'build' : run.phase
-  state.run = { ...run, phase: 'paused', resumePhase }
-  return persist(state)
+  if (run.phase !== 'paused') {
+    const resumePhase: RunPhase = run.phase === 'failed' ? run.resumePhase || 'build' : run.phase
+    state.run = { ...run, phase: 'paused', resumePhase }
+    persist(state)
+  }
+  // An app update may read the notes differently: move now, not on the next Guide. A dirty new repo shows the prep card.
+  reconcileWorkRepo(state)
+  return state.run
 }
 
 export function getRun(id: string): RunRecord | null {
@@ -1096,7 +1129,7 @@ export function guideRun(id: string, text: string): RunRecord {
       // The killed planner never answered: its notes go to the fresh one with the new note.
       const carried = state.planNotes || []
       state.planNotes = undefined
-      if (carried.length) state.run = { ...state.run, guide: state.run.guide?.map((g) => (carried.includes(g.text) && g.sent ? { at: g.at, text: g.text } : g)) }
+      if (carried.length) state.run = { ...state.run, guide: state.run.guide?.map((g) => (carried.includes(g.text) && g.sent ? { at: g.at, text: g.text, repo: g.repo } : g)) }
       track(state, opusPlan(state))
     }
     // Built or under review: a fix turn on the work. Otherwise one builder (T3 slices are not restarted).

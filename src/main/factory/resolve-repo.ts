@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { gitTop as realGitTop, isGitRepo as realIsGitRepo } from './git-audit.ts'
 import { realish } from './paths.ts'
 import { factoryDir } from './run-store.ts'
@@ -29,6 +29,8 @@ export type ResolveInput = {
   home?: string
   isGitRepo?: (p: string) => boolean
   gitTop?: (p: string) => string
+  /** Repo basenames a word only mentions, not chooses (the current and last work repo on a Guide note). */
+  ignore?: string[]
 }
 
 const PATH_RE = /(?:^|[\s"'`(<[=:,])((?:~|\/)[^\s"'`<>()[\]{},;]+)/g
@@ -73,6 +75,29 @@ const STOPWORDS = new Set(
 )
 
 const topic = (tok: string): boolean => tok.length >= 4 && !STOPWORDS.has(tok)
+
+/** `not`, `never`, `isn't` (tail `t`): the next word is what the repo is not. */
+const NEGATORS = new Set(['not', 'never', 'nor', 'isnt', 't'])
+const FILLER = new Set(['the', 'a', 'an', 'in', 'on', 'this', 'that', 'it', 'is', 'our', 'your'])
+
+/** Words with the one after a negator dropped: "this is not gutter iq" never picks gutter-iq. */
+function named(toks: string[]): string[] {
+  const out: string[] = []
+  let neg = false
+  for (const tok of toks) {
+    if (NEGATORS.has(tok)) {
+      neg = true
+      continue
+    }
+    if (neg && FILLER.has(tok)) continue
+    if (neg) {
+      neg = false
+      continue
+    }
+    out.push(tok)
+  }
+  return out
+}
 
 /** Letters and digits only: `brain app`, `brainapp`, and `brain-app` fold the same. */
 function fold(s: string): string {
@@ -206,9 +231,15 @@ export function resolveWorkRepo(o: ResolveInput): ResolvedRepo {
   const given = String(o.workRepo || '').trim()
   if (given) return { ok: true, workRepo: given, from: 'given' }
 
+  // "why is the work repo mykennel" complains about mykennel; it does not pick it. No step returns an
+  // ignored repo, by path, whole word, hyphen pair, partial name, or alias.
+  const ignored = new Set((o.ignore || []).map((p) => fold(basename(String(p || '')))).filter(Boolean))
+  const ignoredAt = new Set((o.ignore || []).filter(Boolean).map((p) => realish(String(p))))
+  const skip = (hit: string) => ignoredAt.has(realish(hit)) || ignored.has(fold(basename(hit)))
+
   for (const p of taskPaths(o.task, o.home)) {
     const hit = repoAt(nearestDir(p))
-    if (hit) return { ok: true, workRepo: hit, from: 'path' }
+    if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'path' }
   }
   // The task named a path in the brain and nothing else: refuse rather than fall back to another repo.
   const namedBrain = sawBrain
@@ -223,20 +254,31 @@ export function resolveWorkRepo(o: ResolveInput): ResolvedRepo {
     names = []
   }
   const byName = new Map(names.map((n) => [n.toLowerCase(), n]))
-  for (const tok of taskTokens(o.task)) {
+  const keep = (tok: string) => !ignored.has(fold(tok))
+  const toks = named(taskTokens(o.task)).filter(keep)
+  // Two words joined by a hyphen: `mail desk` finds the mail-desk folder before `desk` or `mail` alone.
+  for (let i = 0; i + 1 < toks.length; i++) {
+    for (const v of variants(toks[i])) {
+      const name = byName.get(`${v}-${toks[i + 1]}`)
+      if (!name || !keep(name)) continue
+      const hit = repoAt(join(projects, name))
+      if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'project' }
+    }
+  }
+  for (const tok of toks) {
     if (STOPWORDS.has(tok)) continue
     for (const v of variants(tok)) {
       const name = byName.get(v)
       if (!name || name.length < 3) continue
       const hit = repoAt(join(projects, name))
-      if (hit) return { ok: true, workRepo: hit, from: 'project' }
+      if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'project' }
     }
   }
   // One of its names: words from the task with paths taken out (paths already had their turn).
   let bare = String(o.task || '')
   for (const p of bare.match(PATH_RE) || []) bare = bare.replace(p, ' ')
   PATH_RE.lastIndex = 0
-  const words = taskTokens(bare)
+  const words = named(taskTokens(bare)).filter(keep)
   const okName = (n: string) => !!repoAt(join(projects, n), true)
   // Stopwords never pick here either: `work` must not find lotline-network before `email` finds mail-desk.
   for (const tok of words) {
@@ -245,7 +287,7 @@ export function resolveWorkRepo(o: ResolveInput): ResolvedRepo {
       const name = nameHit(v, names, okName)
       if (!name) continue
       const hit = repoAt(join(projects, name), true)
-      if (hit) return { ok: true, workRepo: hit, from: 'name' }
+      if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'name' }
     }
   }
   // What the folder calls itself (README, package.json). Stopwords never pick a repo here.
@@ -256,7 +298,7 @@ export function resolveWorkRepo(o: ResolveInput): ResolvedRepo {
       const name = aliasHit(v, aliases, okName)
       if (!name) continue
       const hit = repoAt(join(projects, name), true)
-      if (hit) return { ok: true, workRepo: hit, from: 'name' }
+      if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'name' }
     }
   }
 
