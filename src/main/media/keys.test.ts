@@ -19,10 +19,12 @@ import {
   unwrapBrainKeyWithRecovery,
   unwrapDek,
   unwrapKeyFromDevice,
+  unwrapKeyWithBrain,
   wrapBrainKeyWithPassphrase,
   wrapBrainKeyWithRecovery,
   wrapDek,
-  wrapKeyToDevice
+  wrapKeyToDevice,
+  wrapKeyWithBrain
 } from './keys.ts'
 import { SAFE_STORAGE_FAIL, ensureDeviceKey, type SafeStorageApi } from './device-key.ts'
 
@@ -160,4 +162,33 @@ test('live key map drops on clear', () => {
   assert.equal(takeKey('brain'), k)
   dropKeys()
   assert.equal(takeKey('brain'), undefined)
+})
+
+test('brain-target wrap recovers a project key and fails on the wrong brain key', () => {
+  const brainKey = createBrainKey()
+  const projectKey = createScopeKey()
+  const wrap = wrapKeyWithBrain({
+    key: projectKey,
+    brainKey,
+    mediaBrainId: 'media-brain-test-01',
+    scope: 'scope-alpha',
+    version: 2
+  })
+  const opened = unwrapKeyWithBrain({
+    wrap,
+    brainKey,
+    mediaBrainId: 'media-brain-test-01',
+    scope: 'scope-alpha',
+    version: 2
+  })
+  assert.equal(Buffer.compare(opened, projectKey), 0)
+  assert.throws(() =>
+    unwrapKeyWithBrain({
+      wrap,
+      brainKey: createBrainKey(),
+      mediaBrainId: 'media-brain-test-01',
+      scope: 'scope-alpha',
+      version: 2
+    })
+  )
 })

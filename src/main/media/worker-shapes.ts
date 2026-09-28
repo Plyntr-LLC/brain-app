@@ -1,10 +1,18 @@
-/** HTTP bodies that match brain-sync media-v1 Slice 5 (origin/main 5c978b68). */
+/** HTTP bodies that match brain-sync media-v1 Slice 5–6 (codes, pms_ seats, reclaim). */
 
 export const MEDIA_STATE_PATH = '/v1/media/state'
 export const MEDIA_WRAPS_PATH = '/v1/media/wraps'
 export const MEDIA_ROTATE_SCOPE_PATH = '/v1/media/rotate-scope'
 export const MEDIA_DEVICES_PATH = '/v1/media/devices'
 export const MEDIA_DOWNLOAD_PREFIX = '/v1/media/objects/'
+export const MEDIA_CODES_EMAIL_PATH = '/v1/media/codes/email'
+export const MEDIA_BRAINS_PATH = '/v1/media/brains'
+export const MEDIA_INVITES_PATH = '/v1/media/invites'
+export const MEDIA_INVITES_REDEEM_PATH = '/v1/media/invites/redeem'
+export const MEDIA_RECLAIM_START_PATH = '/v1/media/reclaim/start'
+export const MEDIA_RECLAIM_FINISH_PATH = '/v1/media/reclaim/finish'
+export const MEDIA_WRAP_PASSPHRASE_PATH = '/v1/media/wrap/passphrase'
+export const MEDIA_ROTATE_PATH = '/v1/media/rotate'
 
 export type MediaErrorBody = {
   error: string
@@ -61,4 +69,69 @@ export function mediaErrorBody(error: string): MediaErrorBody {
 
 export function isDeviceRevokedBody(body: unknown): boolean {
   return Boolean(body && typeof body === 'object' && (body as MediaErrorBody).error === 'device_revoked')
+}
+
+export type CodesEmailBody = {
+  email: string
+}
+
+export type ClaimBrainBody = {
+  email: string
+  code: string
+}
+
+export type MediaInviteBody = {
+  email: string
+  role?: string
+  roots?: string[]
+}
+
+export type MediaInviteRedeemBody = {
+  email: string
+  code: string
+}
+
+export type ReclaimStartBody = {
+  email: string
+  code: string
+  device_public_key: string
+  media_brain_id?: string
+}
+
+export type ReclaimStartOk = {
+  salt: string
+  N: number
+  r: number
+  p: number
+  passphrase_wrap: string
+  recovery_wrap: string
+  challenge: string
+  token: string
+  media_brain_id: string
+  brain_key_version: number
+}
+
+export type ReclaimFinishBody = {
+  token: string
+  signature: string
+  kind: 'passphrase' | 'recovery'
+  device_public_key: string
+  wrap?: { eph_pub: string; nonce: string; ciphertext: string }
+  scope_wraps?: Array<{ scope: string; key_version: number; eph_pub: string; nonce: string; ciphertext: string }>
+}
+
+export type WrapPassphraseBody = {
+  signature: string
+  kind: 'passphrase' | 'recovery'
+  wrap: string
+  proof_public_key: string
+  salt: string
+  N: number
+  r: number
+  p: number
+}
+
+export function reclaimStartHasSecrets(body: unknown): boolean {
+  const raw = JSON.stringify(body || {})
+  return /\bpbt_|\bpms_|X-Amz-|BEGIN [A-Z ]*PRIVATE|r2\.cloudflarestorage\.com|https?:\/\/[^\s"]*download/i.test(raw)
 }

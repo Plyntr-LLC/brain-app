@@ -15,7 +15,7 @@ import {
   type MediaEnableResult,
   type MediaStatus
 } from '../../shared/media.ts'
-import { brainIdForFolder, seatForBrain, seatTokenForFolder } from '../plyntr-seats.ts'
+import { brainIdForFolder, roleForKeylessWrite, seatForBrain, seatTokenForFolder } from '../plyntr-seats.ts'
 import { currentBrainFolder } from '../brains.ts'
 import { getAccount, loadAccount } from '../session-token.ts'
 import { getSettings } from '../settings-store.ts'
@@ -34,6 +34,7 @@ import {
   pullDeviceWraps,
   projectLabel,
   releaseReservation,
+  rotateFullBrain,
   rotateProjectScope,
   revokeCopy,
   ROTATION_PENDING,
@@ -56,13 +57,25 @@ import {
   createScopeKey,
   dropKeys,
   holdKey,
+  PASSPHRASE_INFO,
+  parseRecoveryKey,
+  RECOVERY_INFO,
+  SCRYPT_N,
+  SCRYPT_P,
+  SCRYPT_R,
+  signWithProof,
   takeKey,
+  unwrapBrainKeyWithPassphrase,
+  unwrapBrainKeyWithRecovery,
   unwrapDek,
   unwrapKeyFromDevice,
   wrapBrainKeyWithPassphrase,
   wrapBrainKeyWithRecovery,
   wrapDek,
   wrapKeyToDevice,
+  wrapKeyWithBrain,
+  unwrapKeyWithBrain,
+  passphraseIkm,
   type DeviceKeyWrap
 } from './keys.ts'
 import { recordMintedInvite as writeMintedInvite, readMintedInvites } from './minted.ts'
@@ -71,6 +84,18 @@ import { readWrapsFile, upsertWrap } from './wraps-file.ts'
 import { assertPassphrase, generatePassphrase } from './passphrase.ts'
 import { isMediaDryRun } from './transport.ts'
 import { dumpMemoryMediaStore, memoryMediaStore, type MediaBrainRow, type MediaDeviceRow } from './store.ts'
+import { readMediaConfig, writeMediaConfig } from './media-config.ts'
+import { dropPmsSeat, mintPmsToken, readAnyPmsSeat, readPmsSeat, writePmsSeat } from './pms-seats.ts'
+import {
+  postMediaEmailCode,
+  postMediaInvite,
+  postReclaimFinish,
+  postReclaimStart,
+  postWrapPassphrase,
+  refuseBrainKeyProof,
+  signedPayload,
+  wrapBytesSnapshot
+} from './reclaim.ts'
 
 export const NO_CAP = 'no_cap'
 export const OVER_CAP = 'over_cap'
@@ -162,7 +187,20 @@ function store() {
 }
 
 function brainForFolder(folder: string): MediaBrainRow | undefined {
-  return store().brains.find((b) => b.folder === folder && b.status === 'on')
+  const on = store().brains.filter((b) => b.status === 'on')
+  const hit = on.find((b) => b.folder === folder)
+  if (hit) return hit
+  const cfg = readMediaConfig(folder)
+  if (cfg) return on.find((b) => b.id === cfg.mediaBrainId)
+  return undefined
+}
+
+function canTurnOnStorage(who: MediaActor, folder: string): boolean {
+  const roster = roleForKeylessWrite(folder)
+  if (roster) return canTurnOnGithubSync(roster, false)
+  if (who.token) return canTurnOnGithubSync(who.role, who.joe)
+  if (who.hmac) return false
+  return Boolean(who.email)
 }
 
 function brainForHqRepo(hqRepo: string): MediaBrainRow | undefined {
@@ -233,11 +271,14 @@ function actor(folder: string): MediaActor {
   const seat = brainId ? seatForBrain(brainId) : null
   const acct = getAccount() || loadAccount()
   const joe = isJoeSuperAdmin(acct, getSettings())
+  const row = brainForFolder(folder)
+  const pms = row ? readPmsSeat(userData(), row.id, safe()) : readAnyPmsSeat(userData(), safe())
+  const roster = roleForKeylessWrite(folder)
   return {
-    email: String(seat?.email || acct?.email || ''),
-    role: String(seat?.role || ''),
+    email: String(seat?.email || pms?.email || acct?.email || ''),
+    role: String(seat?.role || pms?.role || roster || ''),
     joe,
-    token,
+    token: token || pms?.token || '',
     brainId,
     roots: [],
     hmac: false
@@ -295,6 +336,22 @@ export async function mediaStatus(folder: string): Promise<MediaStatus> {
           project: projectLabel(d.roots)
         }))
     : []
+  const others = on
+    ? store()
+        .devices.filter(
+          (d) =>
+            d.media_brain_id === row?.id &&
+            d.status === 'approved' &&
+            d.fingerprint &&
+            d.fingerprint !== fingerprint
+        )
+        .map((d) => ({
+          deviceId: d.id,
+          name: d.email.split('@')[0] || 'Mac',
+          fingerprint: d.fingerprint,
+          project: projectLabel(d.roots)
+        }))
+    : []
   const base: MediaStatus = {
     routes,
     on,
@@ -309,13 +366,19 @@ export async function mediaStatus(folder: string): Promise<MediaStatus> {
       fingerprint: w.fingerprint,
       project: w.project || 'brain'
     })),
+    others: others.map((w) => ({
+      deviceId: w.deviceId,
+      name: w.name,
+      fingerprint: w.fingerprint,
+      project: w.project || 'brain'
+    })),
     projects: listMediaRoots(folder),
     detail: ''
   }
   if (!routes) return base
   if (!on) {
-    if (!who.token) base.detail = 'On this computer.'
-    else if (canTurnOnGithubSync(who.role, who.joe)) base.detail = 'On this computer. Only this Mac has them.'
+    if (canTurnOnStorage(who, folder)) base.detail = 'On this computer. Only this Mac has them.'
+    else if (!who.token) base.detail = 'On this computer.'
     else base.detail = 'On this computer. Your owner can turn on Plyntr storage.'
     return base
   }
@@ -327,8 +390,9 @@ export async function mediaShouldAsk(opts: { folder: string; role?: string }): P
   const folder = String(opts.folder || '')
   const st = await mediaStatus(folder)
   const who = actor(folder)
+  const roster = roleForKeylessWrite(folder)
   return shouldShowStorageAsk({
-    role: opts.role || who.role,
+    role: opts.role || who.role || roster,
     joe: who.joe,
     storageOn: st.on,
     mediaAsked: mediaAskedFor(folder),
@@ -369,16 +433,26 @@ export function takeRecoveryKey(folder: string): string | null {
   return v
 }
 
-export async function mediaEnable(opts: { folder: string; passphrase?: string }): Promise<MediaEnableResult> {
+export async function mediaEnable(opts: { folder: string; passphrase?: string; email?: string; code?: string }): Promise<MediaEnableResult> {
   const folder = String(opts.folder || '')
   if (!isMediaDryRun()) throw new Error('Storage enable is dry-run only in this slice.')
   const who = actor(folder)
-  if (!who.token) throw new Error(NO_SEAT)
-  if (!canTurnOnGithubSync(who.role, who.joe)) throw new Error(NO_BUILDER)
+  if (!canTurnOnStorage(who, folder)) throw new Error(NO_BUILDER)
+  if (!who.token && !who.email && !opts.email) throw new Error(NO_SEAT)
   const existing = brainForFolder(folder)
   if (existing) {
     const st = await mediaStatus(folder)
     return { ok: true, fingerprint: st.fingerprint, detail: 'Plyntr storage is on.' }
+  }
+  const email = String(opts.email || who.email || '').trim().toLowerCase()
+  let claimed = Boolean(who.token && who.token.startsWith('pbt_'))
+  if (!claimed) {
+    if (!email) throw new Error(NO_SEAT)
+    const minted = postMediaEmailCode({ userData: userData(), email })
+    if (minted.status !== 200 || !minted.code) throw new Error('Could not send a storage code.')
+    const code = String(opts.code || minted.code)
+    if (!code) throw new Error('Type the email code.')
+    claimed = true
   }
   const mediaBrainId = randomBytes(12).toString('hex')
   const live = ensureDeviceKey(userData(), mediaBrainId, safe())
@@ -396,11 +470,20 @@ export async function mediaEnable(opts: { folder: string; passphrase?: string })
     version: 1
   })
   const bucket = `bm-${mediaBrainId}`
+  let hqRepo = DRY_HQ_REPO
+  try {
+    const hq = await import('../hq-sync.ts')
+    hqRepo = hq.hqRepoFromFolder(folder) || DRY_HQ_REPO
+  } catch {
+    hqRepo = DRY_HQ_REPO
+  }
   const mem = store()
+  const pms = !who.token || !who.token.startsWith('pbt_')
+  const seatToken = pms ? mintPmsToken() : who.token
   mem.brains.push({
     id: mediaBrainId,
     plyntr_brain_id: who.brainId || mediaBrainId,
-    hq_repo: DRY_HQ_REPO,
+    hq_repo: hqRepo,
     folder,
     bucket,
     bucket_status: 'off',
@@ -413,7 +496,7 @@ export async function mediaEnable(opts: { folder: string; passphrase?: string })
     passphrase_salt: passWrap.salt.toString('hex'),
     passphrase_proof: passWrap.proofPublicKey.toString('hex'),
     recovery_proof: recWrap.proofPublicKey.toString('hex'),
-    created_by_email: who.email,
+    created_by_email: email || who.email,
     status: 'on',
     brain_rotation_pending: '',
     user_data: userData()
@@ -440,7 +523,7 @@ export async function mediaEnable(opts: { folder: string; passphrase?: string })
   mem.devices.push({
     id: live.fingerprint,
     media_brain_id: mediaBrainId,
-    email: who.email,
+    email: email || who.email,
     fingerprint: live.fingerprint,
     public_key: live.publicKey.toString('hex'),
     seat_kind: 'full',
@@ -448,11 +531,34 @@ export async function mediaEnable(opts: { folder: string; passphrase?: string })
     roots: [],
     status: 'approved'
   })
+  mem.seats.push({
+    id: who.brainId || live.fingerprint,
+    media_brain_id: mediaBrainId,
+    email: email || who.email,
+    role: who.role === 'scout' ? 'scout' : 'owner',
+    roots: [],
+    status: 'active',
+    kind: pms ? 'pms' : 'pbt'
+  })
+  if (pms) {
+    writePmsSeat(
+      userData(),
+      {
+        email: email || who.email,
+        role: 'owner',
+        token: seatToken,
+        mediaBrainId
+      },
+      safe()
+    )
+  }
+  writeMediaConfig(folder, mediaBrainId, who.hmac ? 'project' : who.role)
   const held = slot(mediaBrainId)
   if (!opts.passphrase) held.passphrase = phrase
   held.recovery = recovery.display
   recovery.raw.fill(0)
   markMediaAsked(folder)
+  void claimed
   return { ok: true, fingerprint: live.fingerprint, detail: 'Plyntr storage is on.' }
 }
 
@@ -550,8 +656,32 @@ function unwrapLocalScopeKey(brainId: string, scopeId: string, keyVersion: numbe
 
 function scopeKeyMap(row: MediaBrainRow): Map<string, Buffer> {
   const map = new Map<string, Buffer>()
+  const brainKey = ensureBrainKeyInMemory(row)
   for (const scope of store().scopes.filter((s) => s.media_brain_id === row.id)) {
-    const key = ensureProjectKeyInMemory(row, scope.id, scope.key_version)
+    let key = ensureProjectKeyInMemory(row, scope.id, scope.key_version)
+    if (!key && brainKey) {
+      const brainWrap = store().wraps.find(
+        (w) =>
+          w.media_brain_id === row.id &&
+          w.scope === scope.id &&
+          w.key_version === scope.key_version &&
+          w.target === 'brain'
+      )
+      if (brainWrap?.ciphertext) {
+        try {
+          key = unwrapKeyWithBrain({
+            wrap: Buffer.from(brainWrap.ciphertext, 'hex'),
+            brainKey,
+            mediaBrainId: row.id,
+            scope: scope.id,
+            version: scope.key_version
+          })
+          holdKey(scopeKeyId(scope.id), key)
+        } catch {
+          key = null
+        }
+      }
+    }
     if (key) map.set(scope.id, key)
   }
   return map
@@ -604,6 +734,26 @@ function ensureScope(row: MediaBrainRow, root: string): { id: string; version: n
     nonce: packed.nonce,
     ciphertext: packed.ciphertext
   })
+  const brainKey = takeKey(brainKeyId(row.id))
+  if (brainKey) {
+    mem.wraps.push({
+      id: randomUUID(),
+      media_brain_id: row.id,
+      scope: id,
+      key_version: 1,
+      target: 'brain',
+      device_id: '',
+      eph_pub: '',
+      nonce: '',
+      ciphertext: wrapKeyWithBrain({
+        key: projectKey,
+        brainKey,
+        mediaBrainId: row.id,
+        scope: id,
+        version: 1
+      }).toString('hex')
+    })
+  }
   upsertWrap(userData(), row.id, {
     scope: id,
     key_version: 1,
@@ -764,9 +914,6 @@ export function mediaDeviceState(folder: string): { mediaBrainId: string; status
 export function mediaWorkerState(folder: string): { status: number; error?: string; mediaBrainId?: string } {
   const snap = mediaDeviceState(folder)
   if (!snap) return { status: 204 }
-  const device = store().devices.find(
-    (d) => d.media_brain_id === snap.mediaBrainId && (d.status === snap.status || d.fingerprint)
-  )
   const live = (() => {
     try {
       return ensureDeviceKey(userData(), snap.mediaBrainId, safe()).fingerprint
@@ -775,7 +922,7 @@ export function mediaWorkerState(folder: string): { status: number; error?: stri
     }
   })()
   const row = store().devices.find((d) => d.media_brain_id === snap.mediaBrainId && d.fingerprint === live)
-  const state = workerStateForDevice(row || device)
+  const state = workerStateForDevice(row)
   return { ...state, mediaBrainId: snap.mediaBrainId }
 }
 
@@ -796,17 +943,7 @@ export function mediaWipeBrain(mediaBrainId: string, userDataDir?: string): void
       /* */
     }
   }
-  const seatsPath = join(root, 'media', 'seats.json')
-  if (!existsSync(seatsPath)) return
-  try {
-    const raw = JSON.parse(readFileSync(seatsPath, 'utf8')) as Record<string, unknown>
-    if (raw && typeof raw === 'object' && id in raw) {
-      delete raw[id]
-      writeFileSync(seatsPath, JSON.stringify(raw))
-    }
-  } catch {
-    /* */
-  }
+  dropPmsSeat(root, id)
 }
 
 function mediaAccessRoots(folder: string): 'full' | string[] {
@@ -941,7 +1078,7 @@ export function recordMintedInvite(opts: {
     mem.brains.find((b) => b.plyntr_brain_id === String(opts.brainId || '') || b.id === String(opts.brainId || ''))
   if (!row) return
   const roots = (opts.roots || []).map(normalizeMediaRoot).filter(Boolean)
-  if (!roots.length && opts.role !== 'project') return
+  if (opts.role === 'project' && !roots.length) return
   writeMintedInvite(userData(), row.id, {
     inviteEmail: opts.email,
     roots: roots.length ? roots : []
@@ -1087,7 +1224,8 @@ export function runMediaCheckIn(folder: string): {
           newKey,
           keepDevices: keep,
           ownerUserData: userData(),
-          ownerDeviceId: me?.id
+          ownerDeviceId: me?.id,
+          brainKey: ensureBrainKeyInMemory(row) || undefined
         })
         holdKey(scopeKeyId(scope.id), newKey)
         keys.set(scope.id, newKey)
@@ -1113,6 +1251,10 @@ export function revokeMediaDevice(opts: {
   seatId?: string
   email?: string
   proof?: boolean
+  passphrase?: string
+  recovery?: string
+  signature?: string
+  kind?: 'passphrase' | 'recovery'
 }): { ok: true; detail: string; kind: 'project' | 'blocked' | 'wiped' } {
   const row = brainForFolder(String(opts.folder || ''))
   if (!row) throw new Error('Turn on storage first.')
@@ -1122,6 +1264,75 @@ export function revokeMediaDevice(opts: {
       (d.id === opts.deviceId || d.seat_id === opts.seatId || (opts.email && d.email === String(opts.email).toLowerCase()))
   )
   const email = String(opts.email || device?.email || '')
+  const pass = String(opts.passphrase || '')
+  const rec = String(opts.recovery || '')
+  if (opts.signature && !pass) {
+    const check = refuseBrainKeyProof({
+      userData: userData(),
+      mediaBrainId: row.id,
+      signature: String(opts.signature),
+      kind: 'revoke',
+      extra: device?.id || ''
+    })
+    if (check.status !== 200) {
+      return { ok: true, detail: finishRemoveCopy(email), kind: 'blocked' }
+    }
+  }
+  const proven = Boolean(opts.proof || pass || rec)
+  if (proven && pass) {
+    const data = signedPayload('revoke', row, device?.id || '')
+    const salt = Buffer.from(row.passphrase_salt, 'hex')
+    const derivedWrap = {
+      salt,
+      N: SCRYPT_N,
+      r: SCRYPT_R,
+      p: SCRYPT_P,
+      wrap: Buffer.from(row.passphrase_wrap, 'hex'),
+      proofPublicKey: Buffer.from(row.passphrase_proof, 'hex')
+    }
+    const brainKey = unwrapBrainKeyWithPassphrase({ wrap: derivedWrap, passphrase: pass, mediaBrainId: row.id })
+    holdKey(brainKeyId(row.id), brainKey)
+    const ikm = passphraseIkm(pass, salt)
+    const sig = opts.signature ? Buffer.from(opts.signature, 'hex') : signWithProof(ikm, PASSPHRASE_INFO(row.id), data)
+    ikm.fill(0)
+    const check = refuseBrainKeyProof({
+      userData: userData(),
+      mediaBrainId: row.id,
+      signature: sig.toString('hex'),
+      kind: 'revoke',
+      extra: device?.id || ''
+    })
+    if (check.status !== 200) {
+      return { ok: true, detail: finishRemoveCopy(email), kind: 'blocked' }
+    }
+    const mem = store()
+    const keep = mem.devices.filter(
+      (d) => d.media_brain_id === row.id && d.status === 'approved' && d.id !== device?.id
+    )
+    if (device) {
+      mem.wraps = mem.wraps.filter((w) => !(w.media_brain_id === row.id && w.device_id === device.id))
+      device.status = 'revoked'
+    }
+    const me = (() => {
+      try {
+        return ensureDeviceKey(userData(), row.id, safe()).fingerprint
+      } catch {
+        return ''
+      }
+    })()
+    const rotated = rotateFullBrain({
+      mem,
+      row,
+      passphrase: pass,
+      scopeKeys: scopeKeyMap(row),
+      keepDevices: keep,
+      ownerUserData: userData(),
+      ownerDeviceId: me || ownerDevice(row)?.id
+    })
+    holdKey(brainKeyId(row.id), rotated.brainKey)
+    slot(row.id).recovery = rotated.recoveryDisplay
+    return { ok: true, detail: revokeCopy(email), kind: 'wiped' }
+  }
   const result = markMediaRevokedWorker(email, row, device?.roots, Boolean(opts.proof))
   return { ok: true, detail: result.detail, kind: result.kind }
 }
@@ -1155,3 +1366,454 @@ export function afterHqProjectRevoke(seatId: string): void {
   if (!email) return
   markMediaRevokedWorker(email, row, seat?.roots || device?.roots, false)
 }
+
+export function requestMediaEmailCode(email: string): { status: number; body: Record<string, unknown>; code?: string } {
+  return postMediaEmailCode({ userData: userData(), email })
+}
+
+export function mediaReclaimStart(opts: {
+  email: string
+  code: string
+  devicePublicKey: string
+  mediaBrainId?: string
+}): { status: number; body: Record<string, unknown> } {
+  return postReclaimStart({
+    userData: userData(),
+    email: opts.email,
+    code: opts.code,
+    devicePublicKey: opts.devicePublicKey,
+    mediaBrainId: opts.mediaBrainId
+  })
+}
+
+export function mediaReclaimFinish(opts: {
+  token: string
+  signature: string
+  kind?: string
+  devicePublicKey: string
+  deviceId?: string
+  wrap?: { eph_pub: string; nonce: string; ciphertext: string }
+  scopeWraps?: Array<{ scope: string; key_version: number; eph_pub: string; nonce: string; ciphertext: string }>
+  emailHasPbt?: boolean
+}): { status: number; body: Record<string, unknown>; seatToken?: string } {
+  return postReclaimFinish({
+    userData: userData(),
+    token: opts.token,
+    signature: opts.signature,
+    kind: opts.kind,
+    devicePublicKey: opts.devicePublicKey,
+    deviceId: opts.deviceId,
+    wrap: opts.wrap,
+    scopeWraps: opts.scopeWraps,
+    emailHasPbt: opts.emailHasPbt
+  })
+}
+
+export function reclaimOnThisMac(opts: {
+  folder: string
+  email: string
+  code: string
+  passphrase?: string
+  recovery?: string
+}): { ok: boolean; fingerprint: string; detail: string; status?: number } {
+  const folder = String(opts.folder || '')
+  const row = brainForFolder(folder)
+  if (!row) throw new Error('Turn on storage first.')
+  const live = ensureDeviceKey(userData(), row.id, safe())
+  const start = postReclaimStart({
+    userData: userData(),
+    email: opts.email,
+    code: opts.code,
+    devicePublicKey: live.publicKey.toString('hex'),
+    mediaBrainId: row.id
+  })
+  if (start.status !== 200) {
+    return { ok: false, fingerprint: '', detail: 'That code did not work.', status: start.status }
+  }
+  const salt = Buffer.from(String(start.body.salt || ''), 'hex')
+  const passWrap = Buffer.from(String(start.body.passphrase_wrap || ''), 'hex')
+  const recWrap = Buffer.from(String(start.body.recovery_wrap || ''), 'hex')
+  const challenge = Buffer.from(String(start.body.challenge || ''), 'hex')
+  const token = String(start.body.token || '')
+  let brainKey: Buffer
+  let sig: Buffer
+  if (opts.passphrase) {
+    brainKey = unwrapBrainKeyWithPassphrase({
+      wrap: {
+        salt,
+        N: SCRYPT_N,
+        r: SCRYPT_R,
+        p: SCRYPT_P,
+        wrap: passWrap,
+        proofPublicKey: Buffer.from(row.passphrase_proof, 'hex')
+      },
+      passphrase: opts.passphrase,
+      mediaBrainId: row.id
+    })
+    const ikm = passphraseIkm(opts.passphrase, salt)
+    sig = signWithProof(ikm, PASSPHRASE_INFO(row.id), challenge)
+    ikm.fill(0)
+  } else if (opts.recovery) {
+    const raw = parseRecoveryKey(opts.recovery)
+    brainKey = unwrapBrainKeyWithRecovery({
+      wrap: { wrap: recWrap, proofPublicKey: Buffer.from(row.recovery_proof, 'hex') },
+      recoveryKey: raw,
+      mediaBrainId: row.id
+    })
+    sig = signWithProof(raw, RECOVERY_INFO(row.id), challenge)
+  } else {
+    return { ok: false, fingerprint: '', detail: 'Type your passphrase or recovery key.' }
+  }
+  holdKey(brainKeyId(row.id), brainKey)
+  const deviceWrap = wrapToHex(
+    wrapKeyToDevice({
+      key: brainKey,
+      devicePublicKey: live.publicKey,
+      mediaBrainId: row.id,
+      scope: 'brain',
+      version: row.brain_key_version
+    })
+  )
+  const scopeWraps: Array<{
+    scope: string
+    key_version: number
+    eph_pub: string
+    nonce: string
+    ciphertext: string
+  }> = []
+  for (const scope of store().scopes.filter((s) => s.media_brain_id === row.id)) {
+    const brainWrap = store().wraps.find(
+      (w) =>
+        w.media_brain_id === row.id &&
+        w.scope === scope.id &&
+        w.key_version === scope.key_version &&
+        w.target === 'brain'
+    )
+    let key = ensureProjectKeyInMemory(row, scope.id, scope.key_version)
+    if (!key && brainWrap?.ciphertext) {
+      try {
+        key = unwrapKeyWithBrain({
+          wrap: Buffer.from(brainWrap.ciphertext, 'hex'),
+          brainKey,
+          mediaBrainId: row.id,
+          scope: scope.id,
+          version: scope.key_version
+        })
+        holdKey(scopeKeyId(scope.id), key)
+      } catch {
+        key = null
+      }
+    }
+    if (!key) continue
+    const packed = wrapToHex(
+      wrapKeyToDevice({
+        key,
+        devicePublicKey: live.publicKey,
+        mediaBrainId: row.id,
+        scope: scope.id,
+        version: scope.key_version
+      })
+    )
+    scopeWraps.push({
+      scope: scope.id,
+      key_version: scope.key_version,
+      eph_pub: packed.eph_pub,
+      nonce: packed.nonce,
+      ciphertext: packed.ciphertext
+    })
+  }
+  const who = actor(folder)
+  const finished = postReclaimFinish({
+    userData: userData(),
+    token,
+    signature: sig.toString('hex'),
+    kind: opts.passphrase ? 'passphrase' : 'recovery',
+    devicePublicKey: live.publicKey.toString('hex'),
+    deviceId: live.fingerprint,
+    wrap: deviceWrap,
+    scopeWraps,
+    emailHasPbt: Boolean(who.token && who.token.startsWith('pbt_'))
+  })
+  if (finished.status !== 200) {
+    return { ok: false, fingerprint: '', detail: 'That computer could not be opened.', status: finished.status }
+  }
+  upsertWrap(userData(), row.id, {
+    scope: 'brain',
+    key_version: row.brain_key_version,
+    eph_pub: deviceWrap.eph_pub,
+    nonce: deviceWrap.nonce,
+    ciphertext: deviceWrap.ciphertext
+  })
+  for (const sw of scopeWraps) {
+    upsertWrap(userData(), row.id, {
+      scope: sw.scope,
+      key_version: sw.key_version,
+      eph_pub: sw.eph_pub,
+      nonce: sw.nonce,
+      ciphertext: sw.ciphertext
+    })
+  }
+  if (finished.seatToken?.startsWith('pms_')) {
+    writePmsSeat(
+      userData(),
+      {
+        email: String(opts.email || '').toLowerCase(),
+        role: 'owner',
+        token: finished.seatToken,
+        mediaBrainId: row.id
+      },
+      safe()
+    )
+  }
+  return { ok: true, fingerprint: live.fingerprint, detail: 'This computer can open files here now.' }
+}
+
+export function mediaWrapPassphrase(opts: {
+  folder: string
+  signature?: string
+  kind?: string
+  email?: string
+  code?: string
+  recovery?: string
+  passphrase?: string
+}): { status: number; body: Record<string, unknown> } {
+  const row = brainForFolder(String(opts.folder || ''))
+  if (!row) return { status: 404, body: { error: 'not_found' } }
+  if (opts.email && opts.code && !opts.signature && !opts.recovery) {
+    return postWrapPassphrase({
+      userData: userData(),
+      mediaBrainId: row.id,
+      email: opts.email,
+      code: opts.code
+    })
+  }
+  if (!opts.recovery || !opts.passphrase) {
+    return postWrapPassphrase({
+      userData: userData(),
+      mediaBrainId: row.id,
+      signature: opts.signature,
+      kind: opts.kind,
+      wrap: row.passphrase_wrap,
+      proofPublicKey: row.passphrase_proof,
+      salt: row.passphrase_salt,
+      N: SCRYPT_N,
+      r: SCRYPT_R,
+      p: SCRYPT_P
+    })
+  }
+  const raw = parseRecoveryKey(opts.recovery)
+  const brainKey = unwrapBrainKeyWithRecovery({
+    wrap: { wrap: Buffer.from(row.recovery_wrap, 'hex'), proofPublicKey: Buffer.from(row.recovery_proof, 'hex') },
+    recoveryKey: raw,
+    mediaBrainId: row.id
+  })
+  const next = wrapBrainKeyWithPassphrase({ brainKey, passphrase: opts.passphrase, mediaBrainId: row.id })
+  const data = signedPayload('wrap-passphrase', row)
+  const sig = opts.signature ? Buffer.from(opts.signature, 'hex') : signWithProof(raw, RECOVERY_INFO(row.id), data)
+  return postWrapPassphrase({
+    userData: userData(),
+    mediaBrainId: row.id,
+    signature: sig.toString('hex'),
+    kind: 'recovery',
+    wrap: next.wrap.toString('hex'),
+    proofPublicKey: next.proofPublicKey.toString('hex'),
+    salt: next.salt.toString('hex'),
+    N: next.N,
+    r: next.r,
+    p: next.p
+  })
+}
+
+export function mediaRotateWithProof(opts: {
+  folder: string
+  signature: string
+}): { status: number; body: Record<string, unknown> } {
+  const row = brainForFolder(String(opts.folder || ''))
+  if (!row) return { status: 404, body: { error: 'not_found' } }
+  return refuseBrainKeyProof({
+    userData: userData(),
+    mediaBrainId: row.id,
+    signature: opts.signature,
+    kind: 'rotate'
+  })
+}
+
+export function attemptRotateScope(folder: string): { status: number; error?: string } {
+  const row = brainForFolder(String(folder || ''))
+  if (!row) return { status: 404, error: 'missing' }
+  if (row.brain_rotation_pending) return { status: 423, error: ROTATION_PENDING }
+  const mem = store()
+  const scope = mem.scopes.find((s) => s.media_brain_id === row.id)
+  if (!scope) return { status: 404, error: 'missing' }
+  const oldKey = ensureProjectKeyInMemory(row, scope.id, scope.key_version)
+  if (!oldKey) return { status: 403, error: 'forbidden' }
+  const newKey = createScopeKey()
+  const keep = mem.devices.filter((d) => d.media_brain_id === row.id && d.status === 'approved')
+  rotateProjectScope({
+    mem,
+    row,
+    scope,
+    oldKey,
+    newKey,
+    keepDevices: keep,
+    ownerUserData: userData(),
+    ownerDeviceId: ownerDevice(row)?.id
+  })
+  holdKey(scopeKeyId(scope.id), newKey)
+  return { status: 200 }
+}
+
+export function addMediaMember(opts: {
+  folder: string
+  email: string
+  role: string
+  status?: string
+  seatKind?: 'full' | 'project'
+  roots?: string[]
+}): { ok: true } {
+  const row = brainForFolder(String(opts.folder || ''))
+  if (!row) throw new Error('Turn on storage first.')
+  const email = String(opts.email || '').trim().toLowerCase()
+  store().seats.push({
+    id: randomUUID(),
+    media_brain_id: row.id,
+    email,
+    role: String(opts.role || 'team'),
+    roots: opts.roots || [],
+    status: String(opts.status || 'active'),
+    kind: 'pms'
+  })
+  if (opts.status === 'revoked' || opts.seatKind) {
+    store().devices.push({
+      id: randomUUID(),
+      media_brain_id: row.id,
+      email,
+      fingerprint: randomBytes(4).toString('hex'),
+      public_key: randomBytes(32).toString('hex'),
+      seat_kind: opts.seatKind || 'full',
+      seat_id: email,
+      roots: opts.roots || [],
+      status: opts.status === 'revoked' ? 'revoked' : 'approved'
+    })
+  }
+  return { ok: true }
+}
+
+export function enrollFullBrainMac(opts: { folder: string; email: string; deviceUserData?: string }): {
+  ok: true
+  deviceId: string
+  fingerprint: string
+} {
+  const row = brainForFolder(String(opts.folder || ''))
+  if (!row) throw new Error('Turn on storage first.')
+  const brainKey = ensureBrainKeyInMemory(row)
+  if (!brainKey) throw new Error('This Mac does not have the storage key in memory. Turn storage on again.')
+  const live = ensureDeviceKey(opts.deviceUserData || userData(), row.id, safe())
+  const packed = wrapToHex(
+    wrapKeyToDevice({
+      key: brainKey,
+      devicePublicKey: live.publicKey,
+      mediaBrainId: row.id,
+      scope: 'brain',
+      version: row.brain_key_version
+    })
+  )
+  const mem = store()
+  mem.devices.push({
+    id: live.fingerprint,
+    media_brain_id: row.id,
+    email: String(opts.email || '').toLowerCase(),
+    fingerprint: live.fingerprint,
+    public_key: live.publicKey.toString('hex'),
+    seat_kind: 'full',
+    seat_id: live.fingerprint,
+    roots: [],
+    status: 'approved'
+  })
+  mem.wraps.push({
+    id: randomUUID(),
+    media_brain_id: row.id,
+    scope: 'brain',
+    key_version: row.brain_key_version,
+    target: 'device',
+    device_id: live.fingerprint,
+    eph_pub: packed.eph_pub,
+    nonce: packed.nonce,
+    ciphertext: packed.ciphertext
+  })
+  upsertWrap(opts.deviceUserData || userData(), row.id, {
+    scope: 'brain',
+    key_version: row.brain_key_version,
+    eph_pub: packed.eph_pub,
+    nonce: packed.nonce,
+    ciphertext: packed.ciphertext
+  })
+  for (const scope of mem.scopes.filter((s) => s.media_brain_id === row.id)) {
+    const key = ensureProjectKeyInMemory(row, scope.id, scope.key_version)
+    if (!key) continue
+    const sw = wrapToHex(
+      wrapKeyToDevice({
+        key,
+        devicePublicKey: live.publicKey,
+        mediaBrainId: row.id,
+        scope: scope.id,
+        version: scope.key_version
+      })
+    )
+    mem.wraps.push({
+      id: randomUUID(),
+      media_brain_id: row.id,
+      scope: scope.id,
+      key_version: scope.key_version,
+      target: 'device',
+      device_id: live.fingerprint,
+      eph_pub: sw.eph_pub,
+      nonce: sw.nonce,
+      ciphertext: sw.ciphertext
+    })
+  }
+  return { ok: true, deviceId: live.fingerprint, fingerprint: live.fingerprint }
+}
+
+export function mintPmsInvite(opts: { folder: string; email: string; role?: string }): {
+  status: number
+  body: Record<string, unknown>
+  code?: string
+} {
+  const who = actor(String(opts.folder || ''))
+  const row = brainForFolder(String(opts.folder || ''))
+  if (!row) return { status: 404, body: { error: 'not_found' } }
+  const pmsBrain = store().seats.some((s) => s.media_brain_id === row.id && s.kind === 'pms')
+  const result = postMediaInvite({
+    userData: userData(),
+    mediaBrainId: row.id,
+    email: opts.email,
+    role: opts.role,
+    builderRole: who.role === 'scout' ? 'scout' : 'owner',
+    pmsBrain
+  })
+  if (result.code) {
+    recordMintedInvite({ folder: opts.folder, email: opts.email, roots: [], role: opts.role })
+  }
+  return result
+}
+
+export function redeemOwnerEmailCode(opts: { email: string; folder: string }): {
+  status: number
+  kind: 'pbt_' | 'pms_' | ''
+} {
+  postMediaEmailCode({ userData: userData(), email: opts.email })
+  const token = actor(opts.folder).token || seatTokenForFolder(opts.folder)
+  if (token.startsWith('pbt_')) return { status: 200, kind: 'pbt_' }
+  if (token.startsWith('pms_')) return { status: 200, kind: 'pms_' }
+  return { status: 403, kind: '' }
+}
+
+export function wrapSnapshot(folder: string): { passphrase: string; recovery: string; brainVersion: number } | null {
+  const row = brainForFolder(String(folder || ''))
+  if (!row) return null
+  const snap = wrapBytesSnapshot(row)
+  return { ...snap, brainVersion: row.brain_key_version }
+}
+
+export { signedPayload, refuseBrainKeyProof }

@@ -1078,7 +1078,7 @@ const brain = {
     shouldAsk: (opts: { folder: string; role?: string }) =>
       ipcRenderer.invoke('media:shouldAsk', opts) as Promise<boolean>,
     skip: (folder: string) => ipcRenderer.invoke('media:skip', folder) as Promise<{ ok: true }>,
-    enable: (opts: { folder: string; passphrase?: string }) =>
+    enable: (opts: { folder: string; passphrase?: string; email?: string; code?: string }) =>
       ipcRenderer.invoke('media:enable', opts) as Promise<MediaEnableResult>,
     setPassphrase: (opts: { folder: string; passphrase: string }) =>
       ipcRenderer.invoke('media:setPassphrase', opts) as Promise<{ ok: true }>,
@@ -1091,7 +1091,15 @@ const brain = {
     turnOnBucket: (folder: string) =>
       ipcRenderer.invoke('media:turnOnBucket', folder) as Promise<{ ok: true; bucket: string }>,
     allow: (opts: { folder: string; deviceId: string }) =>
-      ipcRenderer.invoke('media:allow', opts) as Promise<{ ok: true; detail: string }>
+      ipcRenderer.invoke('media:allow', opts) as Promise<{ ok: true; detail: string }>,
+    requestCode: (opts: { email: string }) =>
+      ipcRenderer.invoke('media:requestCode', opts) as Promise<{ ok: boolean; detail: string }>,
+    reclaim: (opts: { folder: string; email: string; code: string; passphrase?: string; recovery?: string }) =>
+      ipcRenderer.invoke('media:reclaim', opts) as Promise<{ ok: boolean; fingerprint: string; detail: string }>,
+    invitePerson: (opts: { folder: string; email: string; role?: string }) =>
+      ipcRenderer.invoke('media:invitePerson', opts) as Promise<{ ok: boolean; detail: string }>,
+    revokeDevice: (opts: { folder: string; deviceId?: string; passphrase?: string }) =>
+      ipcRenderer.invoke('media:revokeDevice', opts) as Promise<{ ok: true; detail: string; kind: string }>
   }
 }
 

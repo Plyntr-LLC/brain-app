@@ -79,7 +79,11 @@ const brain = {
     add: () => Promise.resolve({ ok: false, status: 400, error: 'no', detail: '' }),
     setCap: () => Promise.resolve({ ok: true, capBytes: 0 }),
     turnOnBucket: () => Promise.resolve({ ok: true, bucket: '' }),
-    allow: () => Promise.resolve({ ok: true, detail: '' })
+    allow: () => Promise.resolve({ ok: true, detail: '' }),
+    requestCode: () => Promise.resolve({ ok: true, detail: '' }),
+    reclaim: () => Promise.resolve({ ok: true, fingerprint: '', detail: '' }),
+    invitePerson: () => Promise.resolve({ ok: true, detail: '' }),
+    revokeDevice: () => Promise.resolve({ ok: true, detail: '', kind: 'blocked' })
   }
 }
 
@@ -116,6 +120,7 @@ let mediaNow = {
   capBytes: null as number | null,
   bucketStatus: 'off' as const,
   waiting: [] as { deviceId: string; name: string; fingerprint: string; project: string }[],
+  others: [] as { deviceId: string; name: string; fingerprint: string; project: string }[],
   projects: [] as { id: string; name: string; root: string }[],
   detail: ''
 }

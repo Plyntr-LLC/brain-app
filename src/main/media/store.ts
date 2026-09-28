@@ -76,6 +76,40 @@ export type MediaSeatRow = {
   role: string
   roots: string[]
   status: string
+  kind?: 'pbt' | 'pms'
+}
+
+export type MediaCodeRow = {
+  id: string
+  email: string
+  hash: string
+  purpose: 'email' | 'invite'
+  media_brain_id: string
+  role: string
+  roots: string[]
+  expires: number
+  used: boolean
+}
+
+export type MediaInviteRow = {
+  id: string
+  media_brain_id: string
+  email: string
+  role: string
+  roots: string[]
+  hash: string
+  status: 'pending' | 'used' | 'revoked'
+  expires: number
+}
+
+export type MediaReclaimRow = {
+  token: string
+  email: string
+  media_brain_id: string
+  device_pub: string
+  challenge: string
+  expires: number
+  used: boolean
 }
 
 export type MemoryMediaStore = {
@@ -85,13 +119,26 @@ export type MemoryMediaStore = {
   devices: MediaDeviceRow[]
   scopes: MediaScopeRow[]
   seats: MediaSeatRow[]
+  codes: MediaCodeRow[]
+  invites: MediaInviteRow[]
+  reclaims: MediaReclaimRow[]
 }
 
 const DRY_WORKER = '__dry_worker__'
 const stores = new Map<string, MemoryMediaStore>()
 
 function empty(): MemoryMediaStore {
-  return { brains: [], wraps: [], objects: [], devices: [], scopes: [], seats: [] }
+  return {
+    brains: [],
+    wraps: [],
+    objects: [],
+    devices: [],
+    scopes: [],
+    seats: [],
+    codes: [],
+    invites: [],
+    reclaims: []
+  }
 }
 
 function storeKey(userData: string): string {

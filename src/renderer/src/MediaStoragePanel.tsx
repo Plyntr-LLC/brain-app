@@ -109,7 +109,16 @@ export function MediaStoragePanel({
   const [saved, setSaved] = useState(false)
   const [root, setRoot] = useState('')
   const [lost, setLost] = useState(false)
-  const canEnable = canTurnOnGithubSync(role, Boolean(joe))
+  const [reclaimEmail, setReclaimEmail] = useState('')
+  const [reclaimCode, setReclaimCode] = useState('')
+  const [reclaimPass, setReclaimPass] = useState('')
+  const [reclaimRec, setReclaimRec] = useState('')
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [removeId, setRemoveId] = useState('')
+  const [removePass, setRemovePass] = useState('')
+  const canEnable = st?.hasSeatToken
+    ? canTurnOnGithubSync(role, Boolean(joe))
+    : canTurnOnGithubSync(role, false)
 
   async function refresh() {
     const next = await window.brain.media.status(folder)
@@ -195,7 +204,7 @@ export function MediaStoragePanel({
     }
   }
 
-  const builder = canEnable && st.hasSeatToken
+  const builder = Boolean(canEnable)
 
   return (
     <div className="set-block" data-media-block="1">
@@ -248,7 +257,7 @@ export function MediaStoragePanel({
         </>
       ) : !st.on ? (
         <>
-          <p>{!st.hasSeatToken ? MEDIA_OFF_KEYLESS : builder ? MEDIA_OFF_OWNER : MEDIA_OFF_OTHER}</p>
+          <p>{builder ? MEDIA_OFF_OWNER : st.hasSeatToken ? MEDIA_OFF_OTHER : MEDIA_OFF_KEYLESS}</p>
           {builder ? (
             <>
               <div className="actions tight">
@@ -316,9 +325,125 @@ export function MediaStoragePanel({
                 </button>
               </div>
               {lost ? (
-                <p className="tiny">
-                  On a new computer, ask for an email code, then type your passphrase or recovery key.
-                </p>
+                <>
+                  <p className="tiny">
+                    On a new computer, ask for an email code, then type your passphrase or recovery key.
+                  </p>
+                  <label className="field">
+                    Email
+                    <input value={reclaimEmail} onChange={(e) => setReclaimEmail(e.target.value)} />
+                  </label>
+                  <div className="actions tight">
+                    <button
+                      className="ghost"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        void window.brain.media.requestCode({ email: reclaimEmail }).then((res) => {
+                          onDone(res.detail)
+                        })
+                      }}
+                    >
+                      Email me a code
+                    </button>
+                  </div>
+                  <label className="field">
+                    Code
+                    <input value={reclaimCode} onChange={(e) => setReclaimCode(e.target.value)} />
+                  </label>
+                  <label className="field">
+                    Passphrase
+                    <input value={reclaimPass} onChange={(e) => setReclaimPass(e.target.value)} type="password" />
+                  </label>
+                  <label className="field">
+                    Recovery key
+                    <input value={reclaimRec} onChange={(e) => setReclaimRec(e.target.value)} type="password" />
+                  </label>
+                  <div className="actions tight">
+                    <button
+                      className="primary"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        setBusy(true)
+                        void window.brain.media
+                          .reclaim({
+                            folder,
+                            email: reclaimEmail,
+                            code: reclaimCode,
+                            passphrase: reclaimPass || undefined,
+                            recovery: reclaimRec || undefined
+                          })
+                          .then((res) => {
+                            onDone(res.detail)
+                            setReclaimPass('')
+                            setReclaimRec('')
+                            setReclaimCode('')
+                            void refresh()
+                          })
+                          .catch((e) => setErr(ipcErrorText(e)))
+                          .finally(() => setBusy(false))
+                      }}
+                    >
+                      Open storage on this computer
+                    </button>
+                  </div>
+                  {st.waiting[0] ? (
+                    <p className="tiny">New sign-in by email, not approved on a known Mac.</p>
+                  ) : null}
+                  <label className="field">
+                    Remove this computer
+                    <select value={removeId} onChange={(e) => setRemoveId(e.target.value)}>
+                      <option value="">Pick a computer</option>
+                      {st.others.map((w) => (
+                        <option key={w.deviceId} value={w.deviceId}>
+                          {w.name} · {w.fingerprint}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    Passphrase to remove a computer
+                    <input value={removePass} onChange={(e) => setRemovePass(e.target.value)} type="password" />
+                  </label>
+                  <div className="actions tight">
+                    <button
+                      className="ghost"
+                      type="button"
+                      disabled={busy || !removeId}
+                      onClick={() => {
+                        void window.brain.media
+                          .revokeDevice({ folder, deviceId: removeId, passphrase: removePass })
+                          .then((res) => {
+                            onDone(res.detail)
+                            setRemovePass('')
+                            void refresh()
+                          })
+                      }}
+                    >
+                      Remove that computer
+                    </button>
+                  </div>
+                  <label className="field">
+                    Add a person
+                    <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+                  </label>
+                  <div className="actions tight">
+                    <button
+                      className="ghost"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        void window.brain.media.invitePerson({ folder, email: inviteEmail }).then((res) => {
+                          onDone(res.detail)
+                          setInviteEmail('')
+                        })
+                      }}
+                    >
+                      Add
+                    </button>
+                  </div>
+                </>
               ) : null}
             </>
           ) : null}

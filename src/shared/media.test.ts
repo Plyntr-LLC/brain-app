@@ -20,11 +20,12 @@ test('storage-ask hides when media health routes are down', () => {
   assert.equal(shouldShowStorageAsk({ ...eligible, routes: false }), false)
 })
 
-test('storage-ask still skips team, project, keyless, and asked paths when routes are live', () => {
+test('storage-ask still skips team, project, and asked paths when routes are live', () => {
   assert.equal(shouldShowStorageAsk({ ...eligible, role: 'team' }), false)
   assert.equal(shouldShowStorageAsk({ ...eligible, role: 'project' }), false)
-  assert.equal(shouldShowStorageAsk({ ...eligible, hasSeatToken: false }), false)
-  assert.equal(shouldShowStorageAsk({ ...eligible, joe: true, hasSeatToken: false }), false)
+  assert.equal(shouldShowStorageAsk({ ...eligible, hasSeatToken: false }), true)
+  assert.equal(shouldShowStorageAsk({ ...eligible, role: 'owner', joe: true, hasSeatToken: false }), true)
+  assert.equal(shouldShowStorageAsk({ ...eligible, role: 'team', joe: true, hasSeatToken: false }), false)
   assert.equal(shouldShowStorageAsk({ ...eligible, storageOn: true }), false)
   assert.equal(shouldShowStorageAsk({ ...eligible, mediaAsked: true }), false)
 })

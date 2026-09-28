@@ -1,5 +1,16 @@
 import { randomUUID } from 'node:crypto'
-import { wrapDek, unwrapDek, wrapKeyToDevice, type DeviceKeyWrap } from './keys.ts'
+import {
+  createBrainKey,
+  createRecoveryKey,
+  createScopeKey,
+  wrapBrainKeyWithPassphrase,
+  wrapBrainKeyWithRecovery,
+  wrapDek,
+  unwrapDek,
+  wrapKeyToDevice,
+  wrapKeyWithBrain,
+  type DeviceKeyWrap
+} from './keys.ts'
 import { mintedMatchesDevice, type MintedInvite } from './minted.ts'
 import { rootsOverlap } from './hmac-seat.ts'
 import {
@@ -235,6 +246,7 @@ export function rotateProjectScope(opts: {
   keepDevices: MediaDeviceRow[]
   ownerUserData?: string
   ownerDeviceId?: string
+  brainKey?: Buffer
 }): { to_version: number; post: RotateScopeBody } {
   const oldVersion = opts.scope.key_version
   const next = oldVersion + 1
@@ -281,6 +293,26 @@ export function rotateProjectScope(opts: {
     })
     if (body) wraps.push(rotateDeviceWrap(body))
   }
+  if (opts.brainKey) {
+    const sealed = wrapKeyWithBrain({
+      key: opts.newKey,
+      brainKey: opts.brainKey,
+      mediaBrainId: opts.row.id,
+      scope: opts.scope.id,
+      version: next
+    })
+    opts.mem.wraps.push({
+      id: randomUUID(),
+      media_brain_id: opts.row.id,
+      scope: opts.scope.id,
+      key_version: next,
+      target: 'brain',
+      device_id: '',
+      eph_pub: '',
+      nonce: '',
+      ciphertext: sealed.toString('hex')
+    })
+  }
   return {
     to_version: next,
     post: {
@@ -290,6 +322,72 @@ export function rotateProjectScope(opts: {
       wraps
     }
   }
+}
+
+export function rotateFullBrain(opts: {
+  mem: MemoryMediaStore
+  row: MediaBrainRow
+  passphrase: string
+  scopeKeys: Map<string, Buffer>
+  keepDevices: MediaDeviceRow[]
+  ownerUserData?: string
+  ownerDeviceId?: string
+}): { brainKey: Buffer; recoveryDisplay: string } {
+  const oldBrainVersion = opts.row.brain_key_version
+  const nextBrain = oldBrainVersion + 1
+  const newBrainKey = createBrainKey()
+  const recovery = createRecoveryKey()
+  const keep = opts.keepDevices.filter((d) => d.status === 'approved')
+  for (const scope of opts.mem.scopes.filter((s) => s.media_brain_id === opts.row.id)) {
+    const oldKey = opts.scopeKeys.get(scope.id)
+    if (!oldKey) continue
+    const newKey = createScopeKey()
+    rotateProjectScope({
+      mem: opts.mem,
+      row: opts.row,
+      scope,
+      oldKey,
+      newKey,
+      keepDevices: keep,
+      ownerUserData: opts.ownerUserData,
+      ownerDeviceId: opts.ownerDeviceId,
+      brainKey: newBrainKey
+    })
+    opts.scopeKeys.set(scope.id, newKey)
+  }
+  opts.row.brain_key_version = nextBrain
+  const passWrap = wrapBrainKeyWithPassphrase({
+    brainKey: newBrainKey,
+    passphrase: opts.passphrase,
+    mediaBrainId: opts.row.id
+  })
+  const recWrap = wrapBrainKeyWithRecovery({
+    brainKey: newBrainKey,
+    recoveryKey: recovery.raw,
+    mediaBrainId: opts.row.id
+  })
+  opts.row.passphrase_wrap = passWrap.wrap.toString('hex')
+  opts.row.passphrase_salt = passWrap.salt.toString('hex')
+  opts.row.passphrase_proof = passWrap.proofPublicKey.toString('hex')
+  opts.row.recovery_wrap = recWrap.wrap.toString('hex')
+  opts.row.recovery_proof = recWrap.proofPublicKey.toString('hex')
+  opts.row.brain_rotation_pending = ''
+  opts.mem.wraps = opts.mem.wraps.filter(
+    (w) => !(w.media_brain_id === opts.row.id && w.scope === 'brain' && w.key_version === oldBrainVersion)
+  )
+  for (const device of keep) {
+    if (device.seat_kind === 'project') continue
+    pushDeviceWrap({
+      mem: opts.mem,
+      row: opts.row,
+      device,
+      scope: 'brain',
+      version: nextBrain,
+      key: newBrainKey,
+      userData: opts.ownerUserData && device.id === opts.ownerDeviceId ? opts.ownerUserData : undefined
+    })
+  }
+  return { brainKey: newBrainKey, recoveryDisplay: recovery.display }
 }
 
 export function markMediaRevoked(opts: {

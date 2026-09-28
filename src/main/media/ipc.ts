@@ -14,6 +14,9 @@ import {
   mediaSkip,
   mediaStatus,
   mediaTurnOnBucket,
+  mintPmsInvite,
+  reclaimOnThisMac,
+  requestMediaEmailCode,
   revokeMediaDevice,
   takePassphrase,
   takeRecoveryKey
@@ -38,8 +41,10 @@ export function registerMediaIpc(): void {
   ipcMain.handle('media:skip', (_e, folder?: string) => {
     return assertRendererSafe(mediaSkip(String(folder || '')))
   })
-  ipcMain.handle('media:enable', async (_e, opts?: { folder?: string; passphrase?: string }) => {
-    return assertRendererSafe(await mediaEnable({ folder: folderOf(opts), passphrase: opts?.passphrase }))
+  ipcMain.handle('media:enable', async (_e, opts?: { folder?: string; passphrase?: string; email?: string; code?: string }) => {
+    return assertRendererSafe(
+      await mediaEnable({ folder: folderOf(opts), passphrase: opts?.passphrase, email: opts?.email, code: opts?.code })
+    )
   })
   ipcMain.handle('media:setPassphrase', (_e, opts?: { folder?: string; passphrase?: string }) => {
     return assertRendererSafe(mediaSetPassphrase({ folder: folderOf(opts), passphrase: String(opts?.passphrase || '') }))
@@ -75,16 +80,49 @@ export function registerMediaIpc(): void {
   ipcMain.handle('media:allow', (_e, opts?: { folder?: string; deviceId?: string }) => {
     return assertRendererSafe(mediaAllow({ folder: folderOf(opts), deviceId: String(opts?.deviceId || '') }))
   })
-  ipcMain.handle('media:revokeDevice', (_e, opts?: { folder?: string; deviceId?: string; seatId?: string }) => {
+  ipcMain.handle('media:revokeDevice', (_e, opts?: { folder?: string; deviceId?: string; seatId?: string; passphrase?: string }) => {
     return assertRendererSafe(
       revokeMediaDevice({
         folder: folderOf(opts),
         deviceId: opts?.deviceId,
-        seatId: opts?.seatId
+        seatId: opts?.seatId,
+        passphrase: opts?.passphrase
       })
     )
   })
   ipcMain.handle('media:revokeSeat', (_e, opts?: { folder?: string; seatId?: string }) => {
     return assertRendererSafe(revokeMediaDevice({ folder: folderOf(opts), seatId: String(opts?.seatId || '') }))
+  })
+  ipcMain.handle('media:requestCode', (_e, opts?: { email?: string }) => {
+    const sent = requestMediaEmailCode(String(opts?.email || ''))
+    return assertRendererSafe({ ok: sent.status === 200, detail: sent.status === 200 ? 'Code sent.' : 'Could not send a code.' })
+  })
+  ipcMain.handle(
+    'media:reclaim',
+    (_e, opts?: { folder?: string; email?: string; code?: string; passphrase?: string; recovery?: string }) => {
+      const result = reclaimOnThisMac({
+        folder: folderOf(opts),
+        email: String(opts?.email || ''),
+        code: String(opts?.code || ''),
+        passphrase: opts?.passphrase,
+        recovery: opts?.recovery
+      })
+      return assertRendererSafe({
+        ok: result.ok,
+        fingerprint: result.fingerprint,
+        detail: result.detail
+      })
+    }
+  )
+  ipcMain.handle('media:invitePerson', (_e, opts?: { folder?: string; email?: string; role?: string }) => {
+    const minted = mintPmsInvite({
+      folder: folderOf(opts),
+      email: String(opts?.email || ''),
+      role: opts?.role
+    })
+    return assertRendererSafe({
+      ok: minted.status === 200,
+      detail: minted.status === 200 ? 'Invite sent.' : 'Could not add that person.'
+    })
   })
 }
