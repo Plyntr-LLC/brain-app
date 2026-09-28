@@ -296,7 +296,10 @@ export function MediaStoragePanel({
                     className="ghost"
                     type="button"
                     onClick={() => {
-                      void window.brain.media.allow({ folder, deviceId: w.deviceId }).then((res) => onDone(res.detail))
+                      void window.brain.media.allow({ folder, deviceId: w.deviceId }).then((res) => {
+                        onDone(res.detail)
+                        void refresh()
+                      })
                     }}
                   >
                     Allow

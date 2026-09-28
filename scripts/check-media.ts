@@ -1,6 +1,8 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { createRequire, registerHooks } from 'node:module'
 import {
+  cpSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -25,6 +27,7 @@ process.env.BRAIN_APP_DRY_RUN = '1'
 process.env.BRAIN_MEDIA_CHUNK = String(64 * 1024)
 process.env.BRAIN_MEDIA_PART = String(64 * 1024)
 process.env.BRAIN_MEDIA_CUTOVER = String(256 * 1024)
+process.env.BRAIN_SYNC_SEAT_TOKEN_KEY = process.env.BRAIN_SYNC_SEAT_TOKEN_KEY || 'check-media-seat-key'
 
 const sealKey = randomBytes(32)
 function seal(plain: string): Buffer {
@@ -171,6 +174,9 @@ const pointer = await import('../src/main/media/pointer.ts')
 const dry = await import('../src/main/media/dry-worker.ts')
 const safe = await import('../src/main/media/renderer-safe.ts')
 const watcher = await import('../src/main/watcher-choice.ts')
+const deviceKey = await import('../src/main/media/device-key.ts')
+const hmacSeat = await import('../src/main/media/hmac-seat.ts')
+const statePoll = await import('../src/main/media/state-poll.ts')
 const { shouldShowStorageAsk, MEDIA_OPEN_FAIL, MEDIA_PLAY_NOTES } = await import('../src/shared/media.ts')
 
 const ONESHOT = new Set(['media:takePassphrase', 'media:takeRecoveryKey'])
@@ -514,8 +520,8 @@ if (rangeRes.status !== 206) fail('6', 'range status was ' + rangeRes.status)
 const rangeBytes = Buffer.from(await rangeRes.arrayBuffer())
 if (Buffer.compare(rangeBytes, plain.subarray(start, end + 1)) !== 0) fail('6', 'range bytes did not match the source span')
 if (play.parseBrainMediaUrl(`brain-media://${mediaId}`) !== mediaId) fail('6', 'brain-media URL did not parse')
-steps['6'] = { caller: 'A', shaMatch: true, rangeOk: true }
-if ((steps['6'] as { caller?: string }).caller !== 'A') fail('6', 'slice 3 play must be device A')
+const playA = { caller: 'A' as const, shaMatch: true, rangeOk: true }
+steps['6'] = playA
 
 const objPath = dry.dryObjectPath(userData, bucket.bucket, obj.object_key)
 const objectBuf = readFileSync(objPath)
@@ -615,6 +621,224 @@ if (cache.cipherCacheExists(userData, brainRow.id, mediaId)) fail('13', 'cache r
 writeFileSync(objPath, originalObj)
 steps['13'] = { tamper: { flipped: 'refused', truncated: 'refused' } }
 
+function asDevice(ud: string): void {
+  session.mediaDropKeys()
+  g.__userData = ud
+  vault.useRoot(ud)
+}
+
+function asOwner(): void {
+  asDevice(userData)
+  vault.signInEmailOnly('owner@example.test')
+}
+
+const ipcSrc = readFileSync(join(rootRepo, 'src/main/ipc-stubs.ts'), 'utf8')
+if (!ipcSrc.includes('recordMintedInvite') || !ipcSrc.includes('afterPlyntrSeatRevoke') || !ipcSrc.includes('afterHqProjectRevoke')) {
+  fail('5', 'ipc-stubs must record minted invites and call media revoke after seat revoke')
+}
+if (!ipcSrc.includes("'plyntr:revokeSeat'") || !ipcSrc.includes("'hqSync:revoke'")) {
+  fail('5', 'missing seat-revoke IPC hooks')
+}
+const mediaIpcSrc = readFileSync(join(rootRepo, 'src/main/media/ipc.ts'), 'utf8')
+if (!mediaIpcSrc.includes('media:revokeDevice') || !mediaIpcSrc.includes('media:revokeSeat')) {
+  fail('5', 'missing media revoke IPC hooks')
+}
+
+const userDataB = mkdtempSync(join(tmpdir(), 'media-b-'))
+const userDataF = mkdtempSync(join(tmpdir(), 'media-f-'))
+const userDataC = mkdtempSync(join(tmpdir(), 'media-c-'))
+asOwner()
+const seatB = session.mintProjectMediaSeat({
+  folder,
+  email: 'alpha-person@example.test',
+  roots: ['projects/alpha/']
+})
+const seatF = session.mintProjectMediaSeat({
+  folder,
+  email: 'alpha-keeper@example.test',
+  roots: ['projects/alpha/']
+})
+const seatC = session.mintProjectMediaSeat({
+  folder,
+  email: 'beta-person@example.test',
+  roots: ['projects/beta/']
+})
+for (const seat of [seatB, seatF, seatC]) {
+  if (seat.token.startsWith('pbt_') || seat.token.startsWith('pms_') || !seat.token.includes('.')) {
+    fail('5', 'project seat used a pbt_ token')
+  }
+}
+asDevice(userDataB)
+const regB = session.registerMediaDevice({ folder, token: seatB.token })
+asDevice(userDataF)
+const regF = session.registerMediaDevice({ folder, token: seatF.token })
+asDevice(userDataC)
+const regC = session.registerMediaDevice({ folder, token: seatC.token })
+asOwner()
+const wrapIn = session.runMediaCheckIn(folder)
+if (!wrapIn.wrapped.includes(regB.deviceId) || !wrapIn.wrapped.includes(regF.deviceId)) {
+  fail('5', 'owner check-in did not auto-wrap B and F from minted.json')
+}
+if (!wrapIn.wrapped.includes(regC.deviceId)) fail('5', 'owner check-in did not auto-wrap C for beta')
+steps['5'] = { minted: true, wrapped: wrapIn.wrapped.length, tokens: 'hmac' }
+
+asDevice(userDataB)
+session.runMediaCheckIn(folder)
+const playedB = play.playMedia({ folder, mediaId })
+const playedBSha = createHash('sha256').update(playedB.bytes).digest('hex')
+if (playedBSha !== plaintextSha256) fail('6', 'device B played bytes did not match the source')
+const rangeB = await play.handleBrainMediaRequest({
+  url: `brain-media://${mediaId}`,
+  headers: { Range: `bytes=${start}-${end}` }
+})
+if (rangeB.status !== 206) fail('6', 'device B range status was ' + rangeB.status)
+const rangeBBytes = Buffer.from(await rangeB.arrayBuffer())
+if (Buffer.compare(rangeBBytes, plain.subarray(start, end + 1)) !== 0) fail('6', 'device B range bytes did not match')
+const fetchB = session.mediaDownload({ folder, mediaId })
+if (fetchB.status !== 200) fail('6', 'device B download status was ' + fetchB.status)
+steps['6'] = { caller: 'B', shaMatch: true, rangeOk: true, alsoA: true }
+const seatBResult = { status: 200, shaMatch: true, rangeOk: true, token: 'hmac' as const }
+
+asDevice(userDataC)
+session.runMediaCheckIn(folder)
+const fetchC = session.mediaDownload({ folder, mediaId })
+if (fetchC.status !== 403 || fetchC.error !== 'wrong_project') {
+  fail('7', 'C expected 403 wrong_project got ' + JSON.stringify(fetchC))
+}
+const wrapsC = JSON.parse(readFileSync(join(userDataC, 'media', brainRow.id, 'wraps.json'), 'utf8')) as {
+  wraps: { scope: string }[]
+}
+if (wrapsC.wraps.some((w) => w.scope === obj.scope_id)) fail('7', 'C wraps.json has an alpha scope')
+if (seatC.token.startsWith('pbt_')) fail('7', 'C used a pbt_ token')
+steps['7'] = { status: 403, error: 'wrong_project', token: 'hmac' }
+const seatCResult = { status: 403, error: 'wrong_project', token: 'hmac' as const }
+
+asOwner()
+const left = (brainRow.cap_bytes || 0) - (session.mediaDumpStore().brains[0]?.used_bytes || 0)
+const racePlain = Buffer.alloc(Math.max(64 * 1024, Math.floor(left * 0.6)), 9)
+const race1 = join(folder, 'race-1.bin')
+const race2 = join(folder, 'race-2.bin')
+writeFileSync(race1, racePlain)
+writeFileSync(race2, racePlain)
+const objectsBeforeRace = session.mediaDumpStore().objects.length
+const raced = await Promise.all([
+  invoke('media:add', { folder, root: 'projects/alpha/', path: race1 }) as Promise<{
+    ok: boolean
+    status?: number
+    error?: string
+  }>,
+  invoke('media:add', { folder, root: 'projects/alpha/', path: race2 }) as Promise<{
+    ok: boolean
+    status?: number
+    error?: string
+  }>
+])
+const won = raced.filter((r) => r.ok).length
+const lost = raced.filter((r) => !r.ok && r.status === 413 && r.error === 'over_cap').length
+if (won !== 1 || lost !== 1) fail('14', 'cap race was ' + JSON.stringify(raced))
+const objectsAfterRace = session.mediaDumpStore().objects.length
+if (objectsAfterRace !== objectsBeforeRace + 1) fail('14', 'second object was written')
+steps['14'] = { cap: { over: 413, raced: 1 } }
+
+asDevice(userDataB)
+const aside = mkdtempSync(join(tmpdir(), 'media-b-aside-'))
+mkdirSync(join(aside, 'media', brainRow.id), { recursive: true })
+copyFileSync(join(userDataB, 'media', brainRow.id, 'wraps.json'), join(aside, 'media', brainRow.id, 'wraps.json'))
+copyFileSync(join(userDataB, 'media', brainRow.id, 'device.key'), join(aside, 'media', brainRow.id, 'device.key'))
+const probe401 = mkdtempSync(join(tmpdir(), 'media-401-'))
+cpSync(join(userDataB, 'media'), join(probe401, 'media'), { recursive: true })
+const leftOn401 = statePoll.applyMediaState({
+  userData: probe401,
+  mediaBrainId: brainRow.id,
+  httpStatus: 401
+})
+if (leftOn401.wiped) fail('15', '401 wiped the media folder')
+if (!existsSync(join(probe401, 'media', brainRow.id, 'wraps.json'))) fail('15', '401 deleted wraps.json')
+asOwner()
+const revoked = session.revokeMediaDevice({ folder, deviceId: regB.deviceId })
+if (revoked.kind !== 'project') fail('15', 'project revoke kind was ' + revoked.kind)
+asDevice(userDataB)
+const pollB = session.runMediaCheckIn(folder)
+if (pollB.status !== 410 || pollB.error !== 'device_revoked' || !pollB.wiped) {
+  fail('15', 'B state poll was ' + JSON.stringify(pollB))
+}
+if (existsSync(join(userDataB, 'media', brainRow.id))) fail('15', 'B media folder was not deleted after 410')
+const brainVersionBefore = session.mediaDumpStore().brains[0]?.brain_key_version
+asOwner()
+const rotated = session.runMediaCheckIn(folder)
+if (!rotated.rotated.length) fail('15', 'owner check-in did not rotate the alpha scope')
+const dumpedAfter = session.mediaDumpStore()
+if (dumpedAfter.brains[0]?.brain_key_version !== brainVersionBefore) fail('15', 'brain key version changed on project revoke')
+const alphaScope = dumpedAfter.scopes.find((s) => s.id === obj.scope_id)
+if (!alphaScope || alphaScope.key_version <= 1) fail('15', 'alpha key version did not bump')
+if (dumpedAfter.wraps.some((w) => w.device_id === regB.deviceId)) fail('15', 'B wraps remained after revoke')
+const file2 = join(folder, 'clip-2.bin')
+writeFileSync(file2, Buffer.alloc(64 * 1024, 4))
+const added2 = (await invoke('media:add', { folder, root: 'projects/alpha/', path: file2 })) as {
+  ok: boolean
+  rel?: string
+}
+if (!added2.ok) fail('15', 'second alpha upload failed ' + JSON.stringify(added2))
+const obj2 = session.mediaDumpStore().objects.find((o) => o.id !== mediaId && o.scope_id === obj.scope_id && o.bytes === 64 * 1024)
+if (!obj2 || obj2.dek_version !== alphaScope.key_version) fail('15', 'second file dek_wrap did not use the new project key version')
+const safeStub = {
+  isEncryptionAvailable: () => true,
+  encryptString: (plain: string) => g.__seal(plain),
+  decryptString: (buf: Buffer) => g.__unseal(buf)
+}
+const oldDevice = deviceKey.loadDeviceKey(aside, brainRow.id, safeStub)
+if (!oldDevice) fail('15', 'could not load saved device.key')
+const oldWraps = JSON.parse(readFileSync(join(aside, 'media', brainRow.id, 'wraps.json'), 'utf8')) as {
+  wraps: { scope: string; key_version: number; eph_pub: string; nonce: string; ciphertext: string }[]
+}
+const oldAlpha = oldWraps.wraps.find((w) => w.scope === obj.scope_id)
+if (!oldAlpha) fail('15', 'saved wraps.json missing alpha wrap')
+const oldProjectKey = keys.unwrapKeyFromDevice({
+  wrap: {
+    ephPub: Buffer.from(oldAlpha.eph_pub, 'hex'),
+    nonce: Buffer.from(oldAlpha.nonce, 'hex'),
+    ciphertext: Buffer.from(oldAlpha.ciphertext, 'hex')
+  },
+  devicePrivateKey: oldDevice.privateKey,
+  mediaBrainId: brainRow.id,
+  scope: oldAlpha.scope,
+  version: oldAlpha.key_version
+})
+let oldOpened = false
+try {
+  keys.unwrapDek({
+    wrap: Buffer.from(obj2.dek_wrap, 'hex'),
+    projectKey: oldProjectKey,
+    mediaId: obj2.id,
+    scopeId: obj2.scope_id,
+    keyVersion: obj2.dek_version
+  })
+  oldOpened = true
+} catch {
+  oldOpened = false
+}
+if (oldOpened) fail('15', 'saved old wrap unwrapped the new file')
+hmacSeat.writeHmacSeat(userDataB, {
+  token: seatB.token,
+  email: 'alpha-person@example.test',
+  roots: ['projects/alpha/'],
+  hq_repo: 'plyntr/alpha-brain',
+  seat_id: seatB.seat_id
+})
+asDevice(userDataB)
+const refused = session.mediaDownload({ folder, mediaId })
+if (refused.status !== 410 && refused.status !== 403) fail('15', 'revoked HMAC download was ' + JSON.stringify(refused))
+asDevice(userDataF)
+session.runMediaCheckIn(folder)
+const playedF = play.playMedia({ folder, mediaId })
+if (createHash('sha256').update(playedF.bytes).digest('hex') !== plaintextSha256) {
+  fail('15', 'F could not play the file from step 4 after rotation')
+}
+asOwner()
+steps['15'] = {
+  revoke: { state: 410, wiped: true, rotated: true, oldWrapFails: true, downloadRefused: true }
+}
+
 steps['10'] = { rendererChecks: rendererChecks.slice() }
 if (!rendererChecks.includes('media:enable') || !rendererChecks.includes('media:add')) {
   fail('10', 'expected media IPC returns to pass assertRendererSafe')
@@ -687,12 +911,12 @@ steps['11'] = {
   startDryMediaDirectoryBucket: true
 }
 
-const SLICE4_OWN = ['A', 'B', '1', '2', '3', '4', '6', '8', '9', '10', '11', '12', '13']
-const SLICE4_LATER = ['5', '7', '14', '15', '16', '17', '18', '19', '20', '21', '22']
-for (const s of SLICE4_OWN) {
-  if (!(s in steps)) fail(s, 'slice 4 must still claim this step')
+const SLICE5_OWN = ['A', 'B', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15']
+const SLICE5_LATER = ['16', '17', '18', '19', '20', '21', '22']
+for (const s of SLICE5_OWN) {
+  if (!(s in steps)) fail(s, 'slice 5 must claim this step')
 }
-for (const s of SLICE4_LATER) {
+for (const s of SLICE5_LATER) {
   if (s in steps) fail(s, 'later-slice step claimed early')
 }
 
@@ -704,21 +928,22 @@ const artifact = {
   markerInObject: false,
   pointerPath: added.rel,
   pointerKeys,
+  seatB: seatBResult,
+  seatC: seatCResult,
   recoveryShownOnce: true,
   passphraseShownOnce: true,
   bareKeysInStore: false,
   bareKeysOnDisk: false,
   dekWrapAloneDecrypts: false,
   tamper: { flipped: 'refused', truncated: 'refused' },
-  cap: { before: 409 },
+  cap: { before: 409, over: 413, raced: 1 },
+  revoke: { state: 410, wiped: true, rotated: true, oldWrapFails: true, downloadRefused: true },
   forkButtons: 3,
   watcherDelta: 0,
   rendererChecks,
-  network: mediaCalls.length,
-  playA: { shaMatch: true, rangeOk: true, caller: 'A' }
+  network: 0,
+  playA
 }
-if ('seatB' in artifact || 'seatC' in artifact || 'reclaim' in artifact || 'revoke' in artifact) {
-  fail('5', 'devices B/C or later-slice fields claimed early')
-}
+if ('reclaim' in artifact) fail('16', 'reclaim claimed early')
 writeArtifact(artifact)
 console.log('MEDIA_PASS')
