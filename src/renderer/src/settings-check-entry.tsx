@@ -411,7 +411,34 @@ async function run() {
       throw new Error('media block was not between localSyncOffer and Project-only people')
     }
     if (!(media.textContent || '').includes('Use Plyntr storage')) throw new Error('owner branch missing storage switch')
+    for (let i = 0; i < 40; i += 1) {
+      const live = document.querySelector('section.biz.current')
+      const capReady = Array.from(live?.querySelectorAll('label.field') || []).some((el) =>
+        (el.textContent || '').includes('Storage limit (GB)')
+      )
+      if (capReady) break
+      await tick()
+    }
+    const pack = Array.from(section?.querySelectorAll('label.field') || []).find(
+      (el) => (el.textContent || '').includes('Plan') && el.querySelector('select')
+    )
+    const cap = Array.from(section?.querySelectorAll('label.field') || []).find((el) =>
+      (el.textContent || '').includes('Storage limit (GB)')
+    )
+    const turnOn = Array.from(section?.querySelectorAll('button') || []).find((button) =>
+      (button.textContent || '').includes('Turn on storage for this brain')
+    )
+    if (!pack) throw new Error('owner branch missing PackSelect: ' + t)
+    if (!cap) throw new Error('owner branch missing storage cap field: ' + t)
+    if (!turnOn) throw new Error('owner branch missing turn-on storage button: ' + t)
+    if (!(pack.compareDocumentPosition(cap) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+      throw new Error('storage cap field was not under PackSelect')
+    }
+    if (!(cap.compareDocumentPosition(media) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+      throw new Error('storage cap field was not above the Videos block')
+    }
     lines.push('media-block-owner')
+    lines.push('storage-cap-under-pack')
   }
 
   unmount()
@@ -434,6 +461,12 @@ async function run() {
       throw new Error('media block was not between localSyncOffer and You are')
     }
     if (current?.querySelector('button.set-fold')) throw new Error('team branch showed add-users fold')
+    if ((current?.textContent || '').includes('Storage limit (GB)')) {
+      throw new Error('team branch showed the superadmin storage cap')
+    }
+    if ((current?.textContent || '').includes('Turn on storage for this brain')) {
+      throw new Error('team branch showed turn-on storage')
+    }
     lines.push('media-block-team')
   }
 
@@ -446,6 +479,8 @@ async function run() {
   release('list', offmac)
   await fillRosterAndSlow()
   if (text().includes('Videos and images')) throw new Error('packed hide failed: media block showed on 404')
+  if (text().includes('Storage limit (GB)')) throw new Error('packed hide showed the storage cap')
+  if (text().includes('Turn on storage for this brain')) throw new Error('packed hide showed turn-on storage')
   lines.push('media-block-hidden')
 
   ;(window as unknown as { __settingsResult?: unknown }).__settingsResult = { ok: true, lines }
