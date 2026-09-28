@@ -15,6 +15,9 @@ const projects = mkdtempSync(join(tmpdir(), 'factory-rr-projects-'))
 const app = join(projects, 'brain-app')
 execFileSync('/usr/bin/git', ['clone', '-q', tmpRepo('factory-rr-seed-'), app], { stdio: 'ignore' })
 mkdirSync(join(projects, 'notes'))
+for (const name of ['agency-brain', 'mykennel', 'lotline']) {
+  execFileSync('/usr/bin/git', ['clone', '-q', tmpRepo('factory-rr-seed-'), join(projects, name)], { stdio: 'ignore' })
+}
 
 const same = (a: string, b: string) => realish(a) === realish(b)
 
@@ -59,6 +62,39 @@ test('nothing named and no lastRepo gives the name-the-repo error', () => {
   assert.deepEqual(resolveWorkRepo({ task: '', brainPath: brain, projectsDir: projects }), { ok: false, error: NAME_THE_REPO })
   assert.deepEqual(resolveWorkRepo({ task: 'fix typo in footer', brainPath: brain, projectsDir: projects }), { ok: false, error: NAME_THE_REPO })
   assert.deepEqual(resolveWorkRepo({ task: 'fix typo', brainPath: brain, projectsDir: projects, lastRepo: join(projects, 'gone') }), { ok: false, error: NAME_THE_REPO })
+})
+
+test('one of its names finds the repo: folded, unique prefix, unique contains', () => {
+  const at = (task: string, extra: Partial<Parameters<typeof resolveWorkRepo>[0]> = {}) =>
+    resolveWorkRepo({ task, brainPath: brain, projectsDir: projects, lastRepo: work, ...extra })
+  const kennel = at('fix the footer on kennel')
+  assert.ok(kennel.ok && same(kennel.workRepo, join(projects, 'mykennel')) && kennel.from === 'name', JSON.stringify(kennel))
+  for (const task of ['fix footer in brain app', 'fix footer in brainapp', 'fix footer in brain']) {
+    const r = at(task)
+    assert.ok(r.ok && same(r.workRepo, app) && r.from === 'name', `${task}: ${JSON.stringify(r)}`)
+  }
+  const exact = at('fix footer in brain-app')
+  assert.ok(exact.ok && same(exact.workRepo, app) && exact.from === 'project', JSON.stringify(exact))
+  const lot = at('LotLine header')
+  assert.ok(lot.ok && same(lot.workRepo, join(projects, 'lotline')) && lot.from === 'project', JSON.stringify(lot))
+  const typo = at('fix typo')
+  assert.ok(typo.ok && same(typo.workRepo, work) && typo.from === 'last', JSON.stringify(typo))
+  assert.deepEqual(at('fix typo', { lastRepo: undefined }), { ok: false, error: NAME_THE_REPO })
+})
+
+test('an ambiguous name is skipped, not picked', () => {
+  // "agen" starts agency-brain only; "line" (lotline) comes later in the task.
+  const r = resolveWorkRepo({ task: 'update the agen line', brainPath: brain, projectsDir: projects, lastRepo: work })
+  assert.ok(r.ok && same(r.workRepo, join(projects, 'agency-brain')) && r.from === 'name', JSON.stringify(r))
+  // "rain" is inside brain-app and agency-brain: skipped, falls back to lastRepo.
+  const amb = resolveWorkRepo({ task: 'rain page', brainPath: brain, projectsDir: projects, lastRepo: work })
+  assert.ok(amb.ok && same(amb.workRepo, work) && amb.from === 'last', JSON.stringify(amb))
+})
+
+test('a name hit on the brain folder is skipped and does not flip the error', () => {
+  const brainIn = join(projects, 'agency-brain')
+  const r = resolveWorkRepo({ task: 'agency stuff', brainPath: brainIn, projectsDir: projects })
+  assert.deepEqual(r, { ok: false, error: NAME_THE_REPO })
 })
 
 test('taskPaths reads absolute and ~ paths and drops trailing punctuation', () => {

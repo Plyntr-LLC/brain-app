@@ -1,7 +1,7 @@
 /**
  * The per-turn Factory brief. Role, tier, and phase ride in every prompt so a resumed Grok
- * session does not depend on session/new rules. Hard cap 1,200 characters: the task (and note)
- * are cut, the rules lines (including plan and reviewer paths) never are.
+ * session does not depend on session/new rules. Hard cap 1,200 characters: the task is cut first,
+ * then the note; the rules lines (including plan and reviewer paths) never are.
  */
 
 import type { Tier } from '../../shared/factory.ts'
@@ -40,6 +40,8 @@ export const SLICES_LINE =
   'End with one JSON line: {"slices":[{"title":"...","files":["rel/path.ts"]}]}. Paths relative to the work repo. Slices that share no files run in parallel (up to 3).'
 
 const SLICE_MAX = 320
+/** Task characters kept when a long note needs the room. */
+const TASK_FLOOR = 160
 
 const PHASE_LINE: Record<BriefPhase, string> = {
   plan: 'Write a short plan: files, steps, tests. Do not edit files.',
@@ -78,8 +80,9 @@ export function buildBrief(input: BriefInput): string {
   let room = BRIEF_MAX - rules.length - '\n\nTask: '.length
   const noteRaw = String(input.note || '').trim()
   let note = ''
+  // The note (fix reason, Joe's guide) wins over the task; the task keeps a short floor and is cut first.
   if (noteRaw && room > 60) {
-    note = cut(noteRaw, Math.min(360, Math.floor(room / 2)))
+    note = cut(noteRaw, Math.min(900, Math.max(Math.floor(room / 2), room - TASK_FLOOR)))
     room -= note.length + '\nNote: '.length
   }
   const task = cut(input.task, room)

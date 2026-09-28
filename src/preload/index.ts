@@ -923,16 +923,28 @@ const brain = {
   },
   factory: {
     triage: (text: string) => ipcRenderer.invoke('factory:triage', text) as Promise<FactoryTriage>,
-    start: (p: { task: string; brainPath: string; runThrough?: boolean; proceedCritical?: boolean }) =>
+    start: (p: { task: string; brainPath: string; runThrough?: boolean; shipThrough?: boolean; proceedCritical?: boolean }) =>
       ipcRenderer.invoke('factory:start', p) as Promise<
         { ok: true; run: FactoryRun } | { ok: false; error: string; needsProceed?: boolean; runId?: string }
       >,
     resume: (id: string) => ipcRenderer.invoke('factory:resume', id) as Promise<FactoryResult>,
     decide: (
       id: string,
-      choice: 'upgrade' | 'trim' | 'stop' | 'approve-plan' | 'reject-plan' | 'proceed' | 'fix-copy',
+      choice:
+        | 'upgrade'
+        | 'trim'
+        | 'stop'
+        | 'approve-plan'
+        | 'reject-plan'
+        | 'proceed'
+        | 'fix-copy'
+        | 'prep-commit'
+        | 'prep-stash'
+        | 'keep-fix'
+        | 're-review',
       reason?: string
     ) => ipcRenderer.invoke('factory:decide', id, choice, { reason }) as Promise<FactoryResult>,
+    guide: (id: string, text: string) => ipcRenderer.invoke('factory:guide', id, text) as Promise<FactoryResult>,
     profile: (repo: string) =>
       ipcRenderer.invoke('factory:profile', repo) as Promise<
         { ok: true; profile: RepoProfile; line: string } | { ok: false; error: string }
@@ -958,7 +970,7 @@ const brain = {
     get: (id: string) => ipcRenderer.invoke('factory:get', id) as Promise<FactoryRun | null | { ok: false; error: string }>,
     resolveRepo: (task: string, brainPath: string) =>
       ipcRenderer.invoke('factory:resolveRepo', task, brainPath) as Promise<
-        { ok: true; workRepo: string; from: 'given' | 'path' | 'project' | 'last' } | { ok: false; error: string }
+        { ok: true; workRepo: string; from: 'given' | 'path' | 'project' | 'name' | 'last' } | { ok: false; error: string }
       >,
     onEvent: (
       fn: (
@@ -972,6 +984,7 @@ const brain = {
                 data?: string
                 title?: string
                 path?: string
+                tool?: string
                 detail?: string
                 options?: { id: string; label: string }[]
                 requestId?: string

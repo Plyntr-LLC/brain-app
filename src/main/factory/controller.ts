@@ -3,11 +3,11 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseGrokLine, resolveBin, type StreamEvent } from '../ai-cli'
-import type { Slice, Tier } from '../../shared/factory.ts'
+import type { GuideNote, Slice, Tier } from '../../shared/factory.ts'
 import { buildBrief, type BriefPhase } from './brief.ts'
 import { deploy as gitDeploy, deployBlock, publish as gitPublish, publishBlock, type PublishTarget } from './gates.ts'
-import { auditTurn, commitRun, currentBranch, diffText, gitTop, headSha, isClean, isGitRepo, numstat, porcelain } from './git-audit.ts'
-import { OPUS_PLAN_TIMEOUT_MS, OPUS_REVIEW_TIMEOUT_MS, planPrompt, runOpus, strictNeeded, strictPrompt, verdict, type SpawnFn } from './opus.ts'
+import { auditTurn, commitRun, currentBranch, diffText, dirtyPaths, gitTop, headSha, isClean, isGitRepo, numstat, porcelain, stashAll } from './git-audit.ts'
+import { OPUS_PLAN_TIMEOUT_MS, OPUS_REVIEW_TIMEOUT_MS, planPrompt, REVIEW_MAX, reviewAccept, runOpus, strictNeeded, strictPrompt, type SpawnFn } from './opus.ts'
 import { realish } from './paths.ts'
 import { detectProfile, readProfile, runProfile } from './profile.ts'
 import { lastRepo, rememberRepo, resolveWorkRepo } from './resolve-repo.ts'
@@ -44,7 +44,7 @@ export type Driver = {
   prompt: (o: { tabId: string; brainPath: string; text: string; onEvent: (ev: StreamEvent) => void }) => Promise<string>
   cancel: (tabId: string) => void
   close: (tabId: string) => void
-  /** Grok reasoning effort on the Factory session (T2 plan high, xhigh after an Opus plan; T3 xhigh). */
+  /** Grok reasoning effort on the Factory session (T2 build xhigh after an Opus plan, high otherwise; T3 xhigh). */
   setEffort?: (tabId: string, effort: string) => Promise<void>
 }
 
@@ -75,6 +75,9 @@ type Live = { run: RunRecord; gen: number; warm: boolean; busy: Promise<void> | 
 export const STRICT_MISSING = 'Opus reviewer not found (claude CLI). Commit is your call.'
 export const VOICE_HOLD = 'Voice check said REJECT. Fix the copy before Commit.'
 const NO_VERDICT = 'Reviewer did not end with PASS or FAIL.'
+export const HELD_LINE = `Opus has not approved after ${REVIEW_MAX} reviews. Gaps still count.`
+const GUIDE_MAX = 20
+const GUIDE_CHARS = 800
 
 let deps: FactoryDeps | null = null
 const live = new Map<string, Live>()
@@ -118,17 +121,18 @@ function track(state: Live, work: Promise<void>): void {
     if (state.run.phase === 'paused' || TERMINAL_PHASES.includes(state.run.phase)) return
     setPhase(state, 'failed', { error: String((e as Error)?.message || e).slice(0, 400), resumePhase: state.run.resumePhase || 'build' })
   })
-  state.busy = p.finally(() => {
-    if (state.busy === p) state.busy = null
+  const busy: Promise<void> = p.finally(() => {
+    if (state.busy === busy) state.busy = null
   })
+  state.busy = busy
 }
 
 export function triageTask(text: string, hints?: { files?: number; lines?: number }) {
   return triage(text, hints)
 }
 
-/** workRepo is optional: main resolves it from the task, then the last Factory repo. runThrough: Approve in advance. */
-export type StartInput = { task: string; workRepo?: string; brainPath: string; proceedCritical?: boolean; runThrough?: boolean }
+/** workRepo is optional: main resolves it from the task, then the last Factory repo. runThrough: Approve in advance. shipThrough: Ship in advance. */
+export type StartInput = { task: string; workRepo?: string; brainPath: string; proceedCritical?: boolean; runThrough?: boolean; shipThrough?: boolean }
 export type StartResult =
   | { ok: true; run: RunRecord }
   | { ok: false; error: string; needsProceed?: boolean; runId?: string }
@@ -149,7 +153,6 @@ export function startRun(input: StartInput): StartResult {
   }
   const held = activeRunFor(workRepo)
   if (held) return { ok: false, error: `Factory is already running on this repo: ${held.title}`, runId: held.runId }
-  if (!isClean(workRepo)) return { ok: false, error: 'This repo has uncommitted changes. Commit or stash them, then start again.' }
   const t = triage(task)
   if (t.risk === 'critical' && !input.proceedCritical) {
     return { ok: false, needsProceed: true, error: `Critical risk: ${t.reasons.filter((r) => r.startsWith('Critical')).join(' ')} Proceed at ${asTier(t.size)} to continue.` }
@@ -166,6 +169,7 @@ export function startRun(input: StartInput): StartResult {
     risk: t.risk,
     triage: { size: t.size, original: t.original, capped: t.capped, reasons: t.reasons },
     ...(input.runThrough ? { runThrough: true } : {}),
+    ...(input.shipThrough ? { shipThrough: true } : {}),
     phase: 'triage',
     resumePhase: 'triage',
     profile: runProfile(readProfile(workRepo)),
@@ -183,6 +187,13 @@ export function startRun(input: StartInput): StartResult {
   rememberRepo(workRepo)
   const state: Live = { run, gen: 0, warm: false, busy: null }
   live.set(id, state)
+  // Uncommitted changes: the run opens and waits for Commit first or Stash first. Approve in advance does not skip this.
+  if (!isClean(workRepo)) {
+    const dirty = dirtyPaths(workRepo)
+    state.run = { ...state.run, needsPrep: 'dirty', dirtyFiles: dirty.slice(0, 20), dirtyCount: dirty.length }
+    persist(state)
+    return { ok: true, run: state.run }
+  }
   persist(state)
   track(state, triageStep(state))
   return { ok: true, run: state.run }
@@ -194,6 +205,28 @@ function asTier(size: Size | string): Tier {
 
 function planned(tier: Tier): boolean {
   return tier === 'T2' || tier === 'T3'
+}
+
+/** Joe's notes that no builder or planner brief has carried yet. */
+function openNotes(run: RunRecord): string[] {
+  return (run.guide || []).filter((g) => !g.sent).map((g) => g.text)
+}
+
+function markSent(state: Live): void {
+  if (!state.run.guide?.some((g) => !g.sent)) return
+  state.run = { ...state.run, guide: state.run.guide.map((g): GuideNote => (g.sent ? g : { ...g, sent: true })) }
+}
+
+/** Joe's notes lead the brief note so the cap cuts the task and the fix reason first. */
+function withGuide(note: string | undefined, notes: string[]): string | undefined {
+  if (!notes.length) return note
+  const joe = `Joe says: ${notes.join(' / ')}`
+  return note ? `${joe}\n${note}` : joe
+}
+
+/** Opus strict failed REVIEW_MAX times (or more after Keep fixing): the diff waits for Joe. */
+function held(run: RunRecord): boolean {
+  return run.phase === 'review' && !!run.diff && run.strict?.status === 'fail' && (run.reviewCycles || 0) >= REVIEW_MAX
 }
 
 /** Grok low one-shot, raise-only. Critical raised by the model waits for a Proceed click. */
@@ -236,7 +269,7 @@ async function triageStep(state: Live): Promise<void> {
 }
 
 async function afterTriage(state: Live): Promise<void> {
-  if (planned(state.run.tier)) await planStep(state)
+  if (planned(state.run.tier)) await opusPlan(state)
   else await buildStep(state, 'build')
 }
 
@@ -267,51 +300,6 @@ function snap(repo: string): Record<string, string> {
   }
 }
 
-/** T2/T3 plan turn on the builder (T2 Grok high, T3 xhigh). Not afterTurn: a plan turn changes no work files by design. */
-async function planStep(state: Live, o: { note?: string; previous?: boolean } = {}): Promise<void> {
-  const d = need()
-  const gen = state.gen
-  const prev = state.run.plan
-  const plan: NonNullable<RunRecord['plan']> = { text: '', by: 'grok', status: 'waiting', rejects: prev?.rejects || 0, reasons: prev?.reasons || [] }
-  setPhase(state, 'plan', { plan, resumePhase: 'plan', error: undefined, needsProceed: undefined, note: o.note })
-  const run = state.run
-  const brainBefore = snap(run.brainPath)
-  if (!(await ensureWarm(state, gen))) return
-  const tier = state.run.tier === 'T3' ? 'T3' : 'T2'
-  await setEffort(state, tier === 'T3' ? 'xhigh' : 'high')
-  if (stale(state, gen)) return
-  const brief = buildBrief({
-    role: 'planner',
-    tier,
-    phase: 'plan',
-    workRepo: run.workRepo,
-    brainPath: run.brainPath,
-    task: run.task,
-    note: o.note,
-    previousPlanPath: o.previous ? runTextPath(run.id, 'plan') : undefined
-  })
-  const text = await d.driver.prompt({
-    tabId: run.acpTab,
-    brainPath: run.brainPath,
-    text: brief,
-    onEvent: (ev) => {
-      if (!stale(state, gen)) d.emit({ runId: run.id, kind: 'stream', ev })
-    }
-  })
-  if (stale(state, gen)) return
-  const audit = auditTurn({ brainPath: run.brainPath, workRepo: run.workRepo, brainBefore, base: run.base })
-  const brain = [...new Set([...(state.run.audit?.brain || []), ...audit.brain])].sort()
-  state.run = { ...state.run, audit: { brain, work: audit.work } }
-  const body = String(text || '').trim()
-  if (!body) {
-    setPhase(state, 'failed', { error: 'The plan turn returned no plan.', resumePhase: 'plan' })
-    return
-  }
-  saveRunText(run.id, 'plan', body)
-  setPhase(state, 'plan', { plan: { ...plan, text: body.slice(0, 8000) } })
-  if (state.run.runThrough) await approvePlan(state)
-}
-
 /** The plan is approved (click or Approve in advance): T3 reads its slices, then build starts. */
 async function approvePlan(state: Live): Promise<void> {
   const plan = state.run.plan
@@ -331,18 +319,26 @@ async function approvePlan(state: Live): Promise<void> {
   await buildStep(state, 'build')
 }
 
-/** Second reject: Opus 5.5 medium writes the plan. Missing, timeout, or non-zero exit pauses. */
+/**
+ * T2/T3 plan: a fresh Opus 5.5 medium process (plan mode, cannot edit) every time, first plan and
+ * every reject. Never the Grok builder. Missing, timeout, or non-zero exit pauses.
+ */
 async function opusPlan(state: Live): Promise<void> {
   const d = need()
   const gen = state.gen
-  const prev = state.run.plan!
-  setPhase(state, 'plan', { plan: { ...prev, text: '' }, resumePhase: 'plan', error: undefined })
+  const prev: NonNullable<RunRecord['plan']> = state.run.plan || { text: '', by: 'opus', status: 'waiting', rejects: 0, reasons: [] }
+  setPhase(state, 'plan', { plan: { ...prev, text: '', status: 'waiting' }, resumePhase: 'plan', error: undefined, needsProceed: undefined })
+  // Joe's guide notes go to the planner (never to a reviewer). Marked sent as this plan starts.
+  const notes = openNotes(state.run)
+  markSent(state)
+  if (notes.length) persist(state)
   const run = state.run
+  const earlier = (prev.rejects > 0 || notes.length) && existsSync(runTextPath(run.id, 'plan')) ? [runTextPath(run.id, 'plan')] : []
   const abort = new AbortController()
   state.abort = abort
   const res = await runOpus({
     cwd: run.workRepo,
-    prompt: planPrompt({ task: run.task, workRepo: run.workRepo, plans: [runTextPath(run.id, 'plan')], reasons: prev.reasons, tier: run.tier === 'T3' ? 'T3' : 'T2' }),
+    prompt: planPrompt({ task: run.task, workRepo: run.workRepo, plans: earlier, reasons: prev.reasons, tier: run.tier === 'T3' ? 'T3' : 'T2', guide: notes }),
     env: d.env(run.workRepo),
     bin: (d.claudeBin || (() => resolveBin('claude')))(),
     timeoutMs: OPUS_PLAN_TIMEOUT_MS,
@@ -359,12 +355,16 @@ async function opusPlan(state: Live): Promise<void> {
         ? 'Opus returned no plan.'
         : ''
   if (why) {
-    setPhase(state, 'paused', { plan: prev, resumePhase: 'plan', error: `${why} Paused.` })
+    // The notes did not reach a plan: they wait for the Resume.
+    const guide = state.run.guide?.map((g) => (notes.includes(g.text) && g.sent ? { at: g.at, text: g.text } : g))
+    setPhase(state, 'paused', { plan: prev, resumePhase: 'plan', error: `${why} Paused.`, guide })
     return
   }
   const body = res.text.trim()
   saveRunText(run.id, 'plan', body)
   setPhase(state, 'plan', { plan: { ...prev, text: body.slice(0, 8000), by: 'opus', status: 'waiting' } })
+  // Joe guided while Opus wrote: one more fresh plan with the note before anything is approved.
+  if (openNotes(state.run).length) return opusPlan(state)
   if (state.run.runThrough) await approvePlan(state)
 }
 
@@ -374,21 +374,25 @@ async function buildStep(state: Live, phase: BriefPhase, note?: string): Promise
   const run = state.run
   const inReview = phase === 'review' || phase === 'fix'
   // Any turn that can change files clears the last strict and voice results: the pipeline runs again.
+  // A fix turn keeps its reason (or Joe's note) on the run so the card says Grok is fixing, not Opus reviewing.
   setPhase(state, inReview ? 'review' : 'build', {
     error: undefined,
     tripwire: undefined,
-    note,
+    note: phase === 'fix' ? note || withGuide(undefined, openNotes(state.run)) : note,
     diff: inReview ? undefined : run.diff,
     strict: undefined,
     voice: undefined,
     resumePhase: inReview ? 'review' : 'build'
   })
   const brainBefore = snap(run.brainPath)
-  // T3 with more than one slice from the plan: parallel builders. Resume and fix turns use one builder.
-  if (phase === 'build' && !note && state.run.tier === 'T3' && (state.run.slices?.length || 0) > 1) {
+  // T3 with more than one slice from the plan: parallel builders. Resume, fix, and Joe's notes use one builder.
+  if (phase === 'build' && !note && !openNotes(state.run).length && state.run.tier === 'T3' && (state.run.slices?.length || 0) > 1) {
     await buildSlices(state, gen, brainBefore)
     return
   }
+  const notes = openNotes(state.run)
+  markSent(state)
+  if (notes.length) persist(state)
   if (!(await ensureWarm(state, gen))) return
   if (state.run.tier === 'T3') {
     await setEffort(state, 'xhigh')
@@ -397,16 +401,26 @@ async function buildStep(state: Live, phase: BriefPhase, note?: string): Promise
     await setEffort(state, state.run.plan?.status === 'approved' && state.run.plan.by === 'opus' ? 'xhigh' : 'high')
     if (stale(state, gen)) return
   }
+  await builderTurn(state, gen, phase, withGuide(note, notes))
+  if (stale(state, gen)) return
+  if (!(await drainGuide(state, gen, phase))) return
+  await afterTurn(state, phase, brainBefore)
+}
+
+/** One prompt on the run's own Grok tab with the phase brief. */
+async function builderTurn(state: Live, gen: number, phase: BriefPhase, note?: string): Promise<void> {
+  const d = need()
+  const run = state.run
   const brief = buildBrief({
     role: phase === 'review' ? 'self-check' : 'builder',
-    tier: state.run.tier,
+    tier: run.tier,
     phase,
     workRepo: run.workRepo,
     brainPath: run.brainPath,
     task: run.task,
     note,
-    planPath: state.run.plan?.status === 'approved' && phase === 'build' ? runTextPath(run.id, 'plan') : undefined,
-    reviewPath: phase === 'fix' && state.run.reviewCycles ? runTextPath(run.id, 'review') : undefined
+    planPath: run.plan?.status === 'approved' && phase === 'build' ? runTextPath(run.id, 'plan') : undefined,
+    reviewPath: phase === 'fix' && run.reviewCycles ? runTextPath(run.id, 'review') : undefined
   })
   await d.driver.prompt({
     tabId: run.acpTab,
@@ -416,8 +430,20 @@ async function buildStep(state: Live, phase: BriefPhase, note?: string): Promise
       if (!stale(state, gen)) d.emit({ runId: run.id, kind: 'stream', ev })
     }
   })
-  if (stale(state, gen)) return
-  await afterTurn(state, phase, brainBefore)
+}
+
+/** Notes Joe sent while a turn ran: one follow-up turn with them before verify. False: the run moved. */
+async function drainGuide(state: Live, gen: number, phase: BriefPhase): Promise<boolean> {
+  for (let i = 0; i < 5; i++) {
+    const notes = openNotes(state.run)
+    if (!notes.length) return true
+    markSent(state)
+    persist(state)
+    if (!(await ensureWarm(state, gen))) return false
+    await builderTurn(state, gen, phase === 'fix' ? 'fix' : 'build', withGuide(undefined, notes))
+    if (stale(state, gen)) return false
+  }
+  return true
 }
 
 function workerTab(state: Live, n: number): string {
@@ -508,6 +534,7 @@ async function buildSlices(state: Live, gen: number, brainBefore: Record<string,
   } finally {
     closeWorkers(state)
   }
+  if (!(await drainGuide(state, gen, 'build'))) return
   await afterTurn(state, 'build', brainBefore)
 }
 
@@ -631,7 +658,7 @@ async function reviewStep(state: Live): Promise<void> {
     if (!go || stale(state, gen)) return
   }
   if (state.run.profile?.voice.on && !state.run.voice) {
-    setPhase(state, 'review', { diff: undefined, resumePhase: 'review' })
+    setPhase(state, 'review', { diff: undefined, note: undefined, resumePhase: 'review' })
     const row = await runVoice({
       runId: state.run.id,
       diff: safeDiff(state.run.workRepo, state.run.base),
@@ -644,7 +671,7 @@ async function reviewStep(state: Live): Promise<void> {
     state.run = { ...state.run, voice: row }
     persist(state)
   }
-  finishReview(state)
+  await finishReview(state)
 }
 
 function safeDiff(repo: string, base: string): string {
@@ -659,7 +686,8 @@ function safeDiff(repo: string, base: string): string {
 async function strictStep(state: Live): Promise<boolean> {
   const d = need()
   const gen = state.gen
-  setPhase(state, 'review', { diff: undefined, resumePhase: 'review' })
+  // Opus reviews now: the last fix note is done.
+  setPhase(state, 'review', { diff: undefined, note: undefined, resumePhase: 'review' })
   const run = state.run
   const abort = new AbortController()
   state.abort = abort
@@ -679,25 +707,34 @@ async function strictStep(state: Live): Promise<boolean> {
     persist(state)
     return true
   }
-  const v = res.code === 0 ? verdict(res.text) : null
-  if (v === 'PASS') {
+  // The controller reads the review (reviewAccept), not Opus's story: any gap is a fail, even under PASS.
+  const acc = res.code === 0 ? reviewAccept(res.text) : { status: 'fail' as const, why: NO_VERDICT }
+  if (acc.status === 'pass') {
     state.run = { ...state.run, strict: { status: 'pass', text: tail(res.text, 12) } }
     persist(state)
     return true
   }
-  const text = v === 'FAIL' ? res.text.trim() : `${NO_VERDICT}${res.text.trim() ? `\n${tail(res.text, 12)}` : ''}`
+  const body = res.text.trim()
+  const text = acc.why === 'FAIL' ? body : acc.why === NO_VERDICT ? `${NO_VERDICT}${body ? `\n${tail(body, 12)}` : ''}` : `${acc.why}.\n${body}`
   const cycles = (state.run.reviewCycles || 0) + 1
   saveRunText(run.id, 'review', text)
   state.run = { ...state.run, reviewCycles: cycles, strict: { status: 'fail', text: text.slice(-8000) } }
   persist(state)
-  if (cycles < 2) {
-    await buildStep(state, 'fix', 'The strict reviewer said FAIL.')
+  // Auto fix + a fresh independent review until REVIEW_MAX; the last fail holds for Joe.
+  if (cycles < REVIEW_MAX) {
+    await buildStep(state, 'fix', acc.why === 'FAIL' ? 'The strict reviewer said FAIL.' : `The strict reviewer did not approve: ${acc.why}. Every gap counts.`)
     return false
   }
   return true
 }
 
-function finishReview(state: Live): void {
+async function finishReview(state: Live): Promise<void> {
+  // Joe guided during verify or review: that note gets a turn before anything commits.
+  // The work is built by now: one builder fix turn carries the note, never a fresh (T3: sliced) build.
+  if (openNotes(state.run).length) {
+    await buildStep(state, 'fix')
+    return
+  }
   let diff = ''
   let read = true
   try {
@@ -707,10 +744,15 @@ function finishReview(state: Live): void {
     diff = `Could not read the diff: ${String((e as Error).message || e)}`
   }
   setPhase(state, 'review', { diff, resumePhase: 'review' })
-  // Approve in advance commits a clean review. Strict FAIL and voice REJECT still wait. Never push or deploy.
   const r = state.run
-  const strictOk = !r.strict || r.strict.status === 'pass' || r.strict.status === 'missing'
-  if (r.runThrough && read && diff.trim() && r.voice?.status !== 'fail' && strictOk) commitRunNow(r.id)
+  if (!read || !diff.trim() || r.voice?.status === 'fail') return
+  // Only reviewAccept's pass is an Opus approval. A missing reviewer, a fail, or a held reject never
+  // auto-commits or auto-pushes. Approve in advance commits; Ship in advance commits then pushes. Never deploys.
+  const opusOk = r.strict?.status === 'pass'
+  const auto = opusOk ? r.runThrough || r.shipThrough : r.runThrough && !strictNeeded(r) && !r.strict
+  if (!auto) return
+  const done = commitRunNow(r.id)
+  if (done.phase === 'done' && opusOk && r.shipThrough) await publishRun(r.id)
 }
 
 function liveFor(id: string): Live {
@@ -791,19 +833,25 @@ export function resumeRun(id: string): RunRecord {
   state.gen++
   if (target === 'upgrade') return setPhase(state, 'upgrade')
   if (target === 'triage') {
+    // Still waiting on Commit first or Stash first: resume never starts triage.
+    if (run.needsPrep) return setPhase(state, 'triage', { error: undefined })
     if (run.needsProceed) return setPhase(state, 'triage', { error: undefined })
     track(state, run.triage.llm ? afterTriage(state) : triageStep(state))
     return state.run
   }
   if (target === 'plan') {
     // A waiting plan comes back as it was; a resume never starts a build.
-    if (run.plan?.status === 'waiting' && run.plan.text) {
+    if (run.plan?.status === 'waiting' && run.plan.text && !openNotes(run).length) {
       if (!run.runThrough) return setPhase(state, 'plan', { error: undefined })
       state.run = { ...run, error: undefined }
       track(state, approvePlan(state))
       return state.run
     }
-    track(state, planStep(state, { note: 'Resumed after a pause. Write the plan.' }))
+    track(state, opusPlan(state))
+    return state.run
+  }
+  if (target === 'review' && run.diff && openNotes(run).length) {
+    track(state, buildStep(state, 'fix'))
     return state.run
   }
   if (target === 'review' && run.diff) return setPhase(state, 'review')
@@ -819,11 +867,39 @@ export function resumeRun(id: string): RunRecord {
   return state.run
 }
 
-export type Decision = 'upgrade' | 'trim' | 'stop' | 'approve-plan' | 'reject-plan' | 'proceed' | 'fix-copy'
+export type Decision =
+  | 'upgrade'
+  | 'trim'
+  | 'stop'
+  | 'approve-plan'
+  | 'reject-plan'
+  | 'proceed'
+  | 'fix-copy'
+  | 'prep-commit'
+  | 'prep-stash'
+  | 'keep-fix'
+  | 're-review'
 
 export function decideRun(id: string, choice: Decision, opts: { reason?: string } = {}): RunRecord {
   const state = liveFor(id)
   const run = state.run
+  if (choice === 'prep-commit' || choice === 'prep-stash') {
+    if (run.phase !== 'triage' || run.needsPrep !== 'dirty') throw new Error('This run is not waiting on uncommitted changes.')
+    state.gen++
+    try {
+      // Cleaned up by hand since Start: nothing to commit or stash.
+      const paths = dirtyPaths(run.workRepo)
+      if (paths.length && choice === 'prep-commit') commitRun(run.workRepo, paths, `WIP before Factory: ${run.title}`)
+      else if (paths.length) stashAll(run.workRepo, `Factory: ${run.title}`)
+    } catch (e) {
+      const what = choice === 'prep-commit' ? 'Commit' : 'Stash'
+      return setPhase(state, 'triage', { error: `${what} failed: ${String((e as Error).message || e).slice(0, 300)}` })
+    }
+    state.run = { ...state.run, base: headSha(run.workRepo), needsPrep: undefined, dirtyFiles: undefined, dirtyCount: undefined, error: undefined }
+    persist(state)
+    track(state, triageStep(state))
+    return state.run
+  }
   if (choice === 'approve-plan' || choice === 'reject-plan') {
     if (run.phase !== 'plan' || run.plan?.status !== 'waiting' || !run.plan.text) throw new Error('This run is not waiting on a plan.')
     state.gen++
@@ -835,11 +911,8 @@ export function decideRun(id: string, choice: Decision, opts: { reason?: string 
     const plan = { ...run.plan, rejects: run.plan.rejects + 1, reasons: [...run.plan.reasons, reason] }
     state.run = { ...run, plan }
     if (plan.rejects >= 3) return setPhase(state, 'paused', { resumePhase: 'plan', error: 'Plan rejected three times. Paused.' })
-    if (plan.rejects === 2) {
-      track(state, opusPlan(state))
-      return state.run
-    }
-    track(state, planStep(state, { note: reason ? `Plan rejected: ${reason}` : 'Plan rejected. Write a better one.', previous: true }))
+    // Every reject is another fresh Opus process with the reasons and the rejected plan path.
+    track(state, opusPlan(state))
     return state.run
   }
   if (choice === 'proceed') {
@@ -854,6 +927,19 @@ export function decideRun(id: string, choice: Decision, opts: { reason?: string 
     if (run.phase !== 'review' || run.voice?.status !== 'fail') throw new Error('The voice check did not hold this run.')
     state.gen++
     track(state, buildStep(state, 'fix', `Voice check said REJECT. Fix the copy.\n${tail(run.voice.tail || '', 8)}`))
+    return state.run
+  }
+  if (choice === 'keep-fix' || choice === 're-review' || (choice === 'trim' && held(run))) {
+    if (!held(run)) throw new Error('Opus has not held this run.')
+    state.gen++
+    // Cycles keep counting past REVIEW_MAX; each review is a fresh Opus process.
+    if (choice === 'keep-fix') track(state, buildStep(state, 'fix', String(opts.reason || '').trim().slice(0, GUIDE_CHARS) || HELD_LINE))
+    else if (choice === 'trim') track(state, buildStep(state, 'trim', `${HELD_LINE} Cut the change down to what the task needs.`))
+    else {
+      state.run = { ...run, strict: undefined, diff: undefined, error: undefined }
+      persist(state)
+      track(state, reviewStep(state))
+    }
     return state.run
   }
   if (run.phase !== 'upgrade') throw new Error('This run is not waiting on a tier decision.')
@@ -872,6 +958,35 @@ export function decideRun(id: string, choice: Decision, opts: { reason?: string 
   const note = `Over the ${run.tier} limit: ${(run.tripwire?.reasons || []).join(' ')}`
   track(state, buildStep(state, 'trim', note))
   return state.run
+}
+
+/**
+ * Joe's note after Start. Stored on the run; the next builder or planner brief carries it (never the
+ * Opus reviewer). A waiting plan gets a fresh Opus plan with it; a diff in review (a held reject
+ * included) gets a builder turn with it. While a turn is in flight it waits and drains after that turn.
+ * Paused, prep, Proceed, and tier cards keep it for the next brief.
+ */
+export function guideRun(id: string, text: string): RunRecord {
+  const state = liveFor(id)
+  const body = String(text || '').trim().slice(0, GUIDE_CHARS)
+  if (!body) throw new Error('Type a note first.')
+  if (TERMINAL_PHASES.includes(state.run.phase)) throw new Error('This run is over. Start a new run.')
+  state.run = { ...state.run, guide: [...(state.run.guide || []), { at: Date.now(), text: body }].slice(-GUIDE_MAX) }
+  persist(state)
+  const run = state.run
+  if (state.busy) return run
+  if (run.phase === 'plan' && run.plan?.status === 'waiting' && run.plan.text) {
+    state.gen++
+    track(state, opusPlan(state))
+    return state.run
+  }
+  // A diff exists: one builder fix turn with the note, never a fresh (T3: sliced) build.
+  if (run.phase === 'review' && run.diff) {
+    state.gen++
+    track(state, buildStep(state, 'fix'))
+    return state.run
+  }
+  return run
 }
 
 export function commitRunNow(id: string): RunRecord {

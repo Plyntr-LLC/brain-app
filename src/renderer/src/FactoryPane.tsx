@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FactoryTriage, RunPhase, RunRecord } from '../../shared/factory'
+import { REVIEW_MAX, type FactoryTriage, type RunPhase, type RunRecord } from '../../shared/factory'
 
 type Perm = { title?: string; path?: string; detail?: string; options?: { id: string; label: string }[] }
+type FileHit = { path: string; tool?: string; live: boolean }
+
+/** Live file cards per run, same cap for every tier. */
+const FILE_CAP = 40
+
+function baseName(p: string): string {
+  return p.replace(/\\/g, '/').split('/').filter(Boolean).pop() || p
+}
 
 const RAIL: { key: RunPhase; label: string }[] = [
   { key: 'triage', label: 'Triage' },
@@ -40,7 +48,10 @@ export function FactoryPane(props: {
   const [run, setRun] = useState<RunRecord | null>(null)
   const [task, setTask] = useState('')
   const [runThrough, setRunThrough] = useState(true)
+  const [shipThrough, setShipThrough] = useState(true)
+  const [note, setNote] = useState('')
   const [workRepo, setWorkRepo] = useState('')
+  const [repoFrom, setRepoFrom] = useState('')
   const [repoError, setRepoError] = useState('')
   const [tri, setTri] = useState<FactoryTriage | null>(null)
   const [error, setError] = useState('')
@@ -54,10 +65,13 @@ export function FactoryPane(props: {
   const [reason, setReason] = useState('')
   const [pushBlock, setPushBlock] = useState<string | null>(null)
   const [deployBlock, setDeployBlock] = useState<string | null>(null)
+  const [files, setFiles] = useState<FileHit[]>([])
   const runRef = useRef<string>(runId || '')
+  const noteRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     runRef.current = runId || ''
+    setFiles([])
     if (!runId) return
     void window.brain.factory.get(runId).then((r) => {
       if (r && 'id' in r) setRun(r)
@@ -70,6 +84,8 @@ export function FactoryPane(props: {
       if (e.kind === 'run') {
         setRun(e.run)
         if (e.run.phase !== 'build' && e.run.phase !== 'review') setPermission(null)
+        // One T3 worker's done or error is not the end of the build: live clears when no builder turn can be running.
+        if (e.run.phase !== 'build' && !(e.run.phase === 'review' && !e.run.diff)) setFiles((f) => (f.some((x) => x.live) ? f.map((x) => ({ ...x, live: false })) : f))
         return
       }
       const ev = e.ev
@@ -77,6 +93,10 @@ export function FactoryPane(props: {
       else if (ev.kind === 'text' && ev.data) setActivity((a) => (a + ev.data).slice(-1200))
       else if (ev.kind === 'status' && ev.data?.startsWith('work:')) setWork(ev.data.slice(5))
       else if (ev.kind === 'error' && ev.data) setWork(ev.data)
+      if (ev.kind === 'file' && ev.path) {
+        const hit: FileHit = { path: ev.path, tool: ev.tool, live: true }
+        setFiles((f) => (f.length >= FILE_CAP || f.some((x) => x.path === hit.path) ? f : [...f, hit]))
+      }
     })
   }, [])
 
@@ -97,6 +117,7 @@ export function FactoryPane(props: {
     const t = window.setTimeout(() => {
       void window.brain.factory.resolveRepo(task, cwd).then((r) => {
         setWorkRepo(r.ok ? r.workRepo : '')
+        setRepoFrom(r.ok ? r.from : '')
         setRepoError(r.ok ? '' : r.error)
       })
     }, 250)
@@ -144,11 +165,12 @@ export function FactoryPane(props: {
     setBusy(true)
     setError('')
     try {
-      const res = await window.brain.factory.start({ task, brainPath: cwd, runThrough, proceedCritical })
+      const res = await window.brain.factory.start({ task, brainPath: cwd, runThrough, shipThrough, proceedCritical })
       if (res.ok) {
         runRef.current = res.run.id
         setRun(res.run)
         setActivity('')
+        setFiles([])
         setNeedsProceed(false)
         onRun(res.run.id, res.run.title)
       } else {
@@ -193,7 +215,11 @@ export function FactoryPane(props: {
               </ul>
             </div>
           ) : null}
-          <p className="tiny">Work repo: {workRepo || repoError || '...'}</p>
+          <p className="tiny">
+            Work repo: {workRepo ? <strong>{baseName(workRepo)}</strong> : repoError || '...'}
+            {workRepo ? ` ${workRepo}` : ''}
+          </p>
+          {workRepo && repoFrom === 'last' ? <p className="tiny">Last Factory repo. Name the folder in the task if this is wrong.</p> : null}
           {repoLine ? (
             <div className="factory-repo-line">
               <span className="tiny">{repoLine}</span>
@@ -205,7 +231,11 @@ export function FactoryPane(props: {
           <p className="tiny">Brain: {cwd}</p>
           <label className="tiny">
             <input type="checkbox" checked={runThrough} onChange={(e) => setRunThrough(e.target.checked)} /> Approve in advance (plan, asks, and a clean
-            Commit go ahead; never pushes or deploys)
+            Commit go ahead; never deploys)
+          </label>
+          <label className="tiny">
+            <input type="checkbox" checked={shipThrough} onChange={(e) => setShipThrough(e.target.checked)} /> Ship in advance (if Opus finds no gaps,
+            commit and push; never deploys; never pushes main, master, staging, prod, or production)
           </label>
           {error ? <p className="factory-err">{error}</p> : null}
           <div className="factory-actions">
@@ -228,28 +258,52 @@ export function FactoryPane(props: {
   const word = STATUS_WORD[run.phase]
   const live = run.phase !== 'done' && run.phase !== 'abandoned'
   const planWaiting = run.phase === 'plan' && run.plan?.status === 'waiting' && !!run.plan.text
+  const prepWaiting = run.phase === 'triage' && run.needsPrep === 'dirty'
   const running =
     run.phase === 'build' ||
     run.phase === 'verify' ||
-    (run.phase === 'triage' && !run.needsProceed) ||
+    (run.phase === 'triage' && !run.needsProceed && !prepWaiting) ||
     (run.phase === 'plan' && !planWaiting) ||
     (run.phase === 'review' && !run.diff)
   const waitLine =
-    run.phase === 'triage' && !run.needsProceed
+    run.phase === 'triage' && !run.needsProceed && !prepWaiting
       ? 'Checking size with Grok (up to 8 s)'
       : run.phase === 'plan' && !planWaiting
-        ? run.plan && run.plan.rejects === 2
-          ? 'Opus is writing the plan'
-          : 'Grok is writing the plan'
-        : run.phase === 'review' && !run.diff && (run.tier === 'T2' || run.tier === 'T3' || run.risk !== 'none') && !run.strict
+        ? 'Opus is writing the plan'
+        : run.phase === 'review' && !run.diff && run.note
+          ? `Grok is fixing: ${run.note.split('\n')[0].slice(0, 140)}`
+          : run.phase === 'review' && !run.diff && run.tier === 'T1' && !run.selfChecked
+            ? 'Grok is re-reading its diff'
+            : run.phase === 'review' && !run.diff && (run.tier === 'T2' || run.tier === 'T3' || run.risk !== 'none') && !run.strict
           ? 'Opus strict review running'
           : ''
-  const strictHeld = run.strict?.status === 'fail' && (run.reviewCycles || 0) >= 2
+  const strictHeld = run.phase === 'review' && !!run.diff && run.strict?.status === 'fail' && (run.reviewCycles || 0) >= REVIEW_MAX
+  // The true count; runs saved before dirtyCount only kept the first 20 paths.
+  const dirtyN = run.dirtyCount ?? run.dirtyFiles?.length ?? 0
+  const dirtyLabel = run.dirtyCount === undefined && dirtyN >= 20 ? '20+' : String(dirtyN)
+  const opusReviews = run.tier === 'T2' || run.tier === 'T3' || run.risk !== 'none' || /mypuppies/i.test(run.workRepo)
+
+  async function sendNote() {
+    const text = note.trim()
+    if (!text || !run) return
+    setError('')
+    const res = await window.brain.factory.guide(run.id, text)
+    // A refused note stays in the box with the reason.
+    if (!res.ok) {
+      setError(res.error)
+      return
+    }
+    setNote((n) => (n.trim() === text ? '' : n))
+    if (res.run) setRun(res.run)
+  }
   const voiceHeld = run.voice?.status === 'fail'
   return (
     <div className={`factorywrap ${active ? 'on' : ''}`}>
       <div className="factory">
         <h3 className="factory-h">{run.title}</h3>
+        <p className="tiny">
+          Work repo: <strong>{baseName(run.workRepo)}</strong> {run.workRepo}
+        </p>
         <div className="phaserail">
           {RAIL.map((r, i) => (
             <span
@@ -268,8 +322,19 @@ export function FactoryPane(props: {
             {run.tier} · risk {run.risk}
           </span>
         </div>
-        <p className="tiny">Work repo: {run.workRepo}</p>
-        {run.runThrough ? <p className="tiny">Approved in advance. Brain commits a clean review. It never pushes or deploys.</p> : null}
+        {run.runThrough ? (
+          <p className="tiny">
+            Approved in advance. Brain commits a clean review.{run.shipThrough ? ' It never deploys.' : ' It never pushes or deploys.'}
+          </p>
+        ) : null}
+        {run.shipThrough ? (
+          <p className="tiny">
+            {opusReviews
+              ? 'Ship in advance. After an Opus review with no gaps, Brain commits and pushes this branch. It never deploys.'
+              : 'Ship in advance. Brain does not push a run with no Opus review. It never deploys.'}
+            {opusReviews ? '' : ' Ship in advance waits for an Opus review with no gaps.'}
+          </p>
+        ) : null}
         {run.tripwire?.auto ? <p className="tiny">Moved to {run.tier} in advance: {run.tripwire.reasons.join(' ')}</p> : null}
         {run.tier === 'T3' && run.slices?.length ? (
           <div className="factory-audit">
@@ -316,6 +381,39 @@ export function FactoryPane(props: {
             {waitLine ? <p className="tiny">{waitLine}</p> : null}
             {work ? <p className="tiny">{work}</p> : null}
             {activity ? <pre>{activity}</pre> : null}
+          </div>
+        ) : null}
+        {files.length ? (
+          <div className="factory-files">
+            {files.map((f) => (
+              <div key={f.path} className={`skin-tool${f.live ? ' live' : ''}`} title={f.path}>
+                <span className="k">{f.tool || 'file'}</span>
+                <span className="p">{baseName(f.path)}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {prepWaiting ? (
+          <div className="factory-trip">
+            <strong>
+              This repo has uncommitted changes ({dirtyLabel} files). Commit them first, or
+              stash them, then Factory starts.
+            </strong>
+            {run.dirtyFiles?.length ? (
+              <ul>
+                {run.dirtyFiles.slice(0, 8).map((f) => (
+                  <li key={f}>{f}</li>
+                ))}
+              </ul>
+            ) : null}
+            <div className="factory-actions">
+              <button type="button" className="primary" onClick={() => void act(window.brain.factory.decide(run.id, 'prep-commit'))}>
+                Commit first
+              </button>
+              <button type="button" className="ghost" onClick={() => void act(window.brain.factory.decide(run.id, 'prep-stash'))}>
+                Stash first
+              </button>
+            </div>
           </div>
         ) : null}
         {run.phase === 'triage' && run.needsProceed ? (
@@ -442,6 +540,32 @@ export function FactoryPane(props: {
           </div>
         ) : null}
         {run.phase === 'review' && run.diff ? <pre className="factory-diff">{run.diff}</pre> : null}
+        {strictHeld ? (
+          <div className="factory-trip">
+            <strong>{`Opus has not approved after ${REVIEW_MAX} reviews. Gaps still count.`}</strong>
+            <p className="tiny">
+              Reviews so far: {run.reviewCycles}. Commit anyway is your call, not an Opus approval. Approve in advance and Ship in advance do not
+              commit or push from here.
+            </p>
+            <div className="factory-actions">
+              <button type="button" className="primary" onClick={() => void act(window.brain.factory.decide(run.id, 'keep-fix'))}>
+                Keep fixing
+              </button>
+              <button type="button" className="ghost" onClick={() => void act(window.brain.factory.decide(run.id, 're-review'))}>
+                Re-review
+              </button>
+              <button type="button" className="ghost" onClick={() => noteRef.current?.focus()}>
+                Guide
+              </button>
+              <button type="button" className="ghost" onClick={() => void act(window.brain.factory.decide(run.id, 'trim'))}>
+                Trim
+              </button>
+              <button type="button" className="ghost" onClick={() => void act(window.brain.factory.pause(run.id))}>
+                Pause
+              </button>
+            </div>
+          </div>
+        ) : null}
         {run.error ? <p className="factory-err">{run.error}</p> : null}
         {error ? <p className="factory-err">{error}</p> : null}
         <div className="factory-actions">
@@ -502,6 +626,36 @@ export function FactoryPane(props: {
           {run.phase === 'done' && run.deployError && !run.deployed ? <span className="factory-err">{run.deployError}</span> : null}
           {run.phase === 'done' && run.pushError && !run.pushed ? <span className="factory-err">{run.pushError}</span> : null}
         </div>
+        {run.guide?.length ? (
+          <div className="thread factory-guide">
+            {run.guide.map((g, i) => (
+              <div key={`${i}-${g.at}`} className="bubble me">
+                {g.text}
+                {g.sent ? null : <p className="tiny">Waiting for the next turn.</p>}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {live ? (
+          <div className="factory-compose">
+            <textarea
+              ref={noteRef}
+              value={note}
+              rows={2}
+              placeholder="Guide this run"
+              onChange={(e) => setNote(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault()
+                  void sendNote()
+                }
+              }}
+            />
+            <button type="button" className="primary" disabled={!note.trim()} onClick={() => void sendNote()}>
+              Send
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   )

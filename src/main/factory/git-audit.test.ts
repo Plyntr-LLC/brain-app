@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { sh, tmpRepo } from './test-git.ts'
-import { auditTurn, commitRun, diffText, headSha, isClean, numstat, porcelain } from './git-audit.ts'
+import { auditTurn, commitRun, diffText, dirtyPaths, headSha, isClean, numstat, porcelain, stashAll } from './git-audit.ts'
 
 test('audit lists a brain AGENTS.md write and skips files dirty before the snapshot', () => {
   const brain = tmpRepo('factory-brain-', { 'AGENTS.md': 'rules\n', 'notes.md': 'a\n' })
@@ -50,4 +50,18 @@ test('isClean is false with an untracked file', () => {
   assert.equal(isClean(work), true)
   writeFileSync(join(work, 'x.txt'), 'x')
   assert.equal(isClean(work), false)
+})
+
+test('dirtyPaths lists tracked and untracked changes; stashAll leaves a stash and a clean tree', () => {
+  const work = tmpRepo('factory-dirty-', { 'a.md': 'a\n' })
+  assert.deepEqual(dirtyPaths(work), [])
+  writeFileSync(join(work, 'a.md'), 'a2\n')
+  mkdirSync(join(work, 'n'))
+  writeFileSync(join(work, 'n', 'b.md'), 'b\n')
+  assert.deepEqual(dirtyPaths(work).sort(), ['a.md', 'n/b.md'])
+  const base = headSha(work)
+  stashAll(work, 'Factory: fix it')
+  assert.equal(isClean(work), true)
+  assert.equal(headSha(work), base)
+  assert.match(sh(work, ['stash', 'list']), /Factory: fix it/)
 })

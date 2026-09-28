@@ -55,3 +55,11 @@ test('T3 plan brief asks for the slices JSON line; a T3 worker brief names its f
   assert.match(worker, /No git push, no gh, no deploy/)
   assert.ok(worker.length <= BRIEF_MAX)
 })
+
+test("Joe's guide note wins over a long task; the task keeps a floor", () => {
+  const joe = `Joe says: ${'g'.repeat(400)}`
+  const b = buildBrief({ ...base, tier: 'T2', phase: 'fix', task: 't'.repeat(5_000), note: joe, reviewPath: '/u/factory/runs/run-abc.review.md' })
+  assert.ok(b.length <= BRIEF_MAX, String(b.length))
+  assert.ok(b.includes(joe), 'the whole guide note survives')
+  assert.match(b, /Task: t{100,}\.\.\./)
+})

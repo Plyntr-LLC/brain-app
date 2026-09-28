@@ -91,6 +91,16 @@ export function isClean(repo: string): boolean {
   return isGitRepo(repo) && statusEntries(repo).length === 0
 }
 
+/** Repo-relative paths with uncommitted changes (tracked and untracked), porcelain order. */
+export function dirtyPaths(repo: string): string[] {
+  return statusEntries(repo).map((e) => e.path)
+}
+
+/** git stash push -u with a message. Never pops. */
+export function stashAll(repo: string, message: string): void {
+  git(repo, ['stash', 'push', '-u', '-q', '-m', message])
+}
+
 function countLines(abs: string): number {
   try {
     const buf = readFileSync(abs)

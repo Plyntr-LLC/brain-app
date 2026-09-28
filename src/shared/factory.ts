@@ -19,6 +19,12 @@ export type RunPhase =
   | 'failed'
   | 'abandoned'
 
+/** Opus strict reviews that may fail before the run holds for Joe (auto fix + fresh review until then). */
+export const REVIEW_MAX = 5
+
+/** One note Joe sent from the Factory composer. `sent` once a builder or planner brief carried it. */
+export type GuideNote = { at: number; text: string; sent?: boolean }
+
 export type VerifyRow = { script: string; status: 'pass' | 'fail' | 'skipped'; tail?: string }
 
 /** Per work repo settings, kept in userData only. Keyed by lockKey(repo). */
@@ -50,8 +56,18 @@ export type RunRecord = {
   }
   /** Approve in advance: plan, permission asks, suggested upgrades, and a clean Commit go ahead without a click. Never push or deploy. */
   runThrough?: boolean
+  /** Ship in advance: after a clean Opus pass (no gaps), commit and push. Never deploys; protected branches are refused. */
+  shipThrough?: boolean
+  /** Joe's notes after Start (last 20, each cut at 800). Unsent ones ride in the next builder or planner brief. */
+  guide?: GuideNote[]
   /** Model triage raised risk to critical after Start: waits for a Proceed click. */
   needsProceed?: boolean
+  /** The work repo had uncommitted changes at Start: waits for Commit first or Stash first. Triage has not run. */
+  needsPrep?: 'dirty'
+  /** Repo-relative porcelain paths seen at Start (cap 20). */
+  dirtyFiles?: string[]
+  /** How many paths were dirty at Start (uncapped). */
+  dirtyCount?: number
   phase: RunPhase
   /** The phase a paused or failed run goes back to on Resume. */
   resumePhase?: RunPhase
@@ -78,7 +94,7 @@ export type RunRecord = {
   verifyArtifact?: string
   /** T1: the self-check turn ran. */
   selfChecked?: boolean
-  /** Opus strict FAIL count for this run. */
+  /** Opus strict rejects (FAIL, or a PASS with gaps) for this run. REVIEW_MAX holds for Joe. */
   reviewCycles?: number
   strict?: { status: 'pass' | 'fail' | 'missing'; text: string }
   voice?: VerifyRow

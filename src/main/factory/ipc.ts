@@ -10,6 +10,7 @@ import {
   deployRun,
   detachRun,
   getRun,
+  guideRun,
   listFactoryRuns,
   pauseRun,
   publishBlockFor,
@@ -65,12 +66,13 @@ export function registerFactoryIpc(): void {
   // No work-repo picker: main resolves the repo from the task, then the last Factory repo. Start remembers it.
   ipcMain.handle(
     'factory:start',
-    (_e, p: { task: string; brainPath: string; runThrough?: boolean; proceedCritical?: boolean }) =>
+    (_e, p: { task: string; brainPath: string; runThrough?: boolean; shipThrough?: boolean; proceedCritical?: boolean }) =>
       safe(() =>
         startRun({
           task: String(p?.task || ''),
           brainPath: String(p?.brainPath || ''),
           runThrough: Boolean(p?.runThrough),
+          shipThrough: Boolean(p?.shipThrough),
           proceedCritical: Boolean(p?.proceedCritical)
         })
       )
@@ -82,6 +84,7 @@ export function registerFactoryIpc(): void {
   ipcMain.handle('factory:decide', (_e, id: string, choice: Decision, opts?: { reason?: string }) =>
     safe(() => ({ ok: true as const, run: decideRun(String(id), choice, { reason: String(opts?.reason || '') }) }))
   )
+  ipcMain.handle('factory:guide', (_e, id: string, text: string) => safe(() => ({ ok: true as const, run: guideRun(String(id), String(text || '')) })))
   ipcMain.handle('factory:profile', (_e, repo: string) =>
     safe(() => {
       const p = readProfile(repoTop(repo))

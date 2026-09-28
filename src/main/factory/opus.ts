@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import type { RunRecord } from '../../shared/factory.ts'
 
+export { REVIEW_MAX } from '../../shared/factory.ts'
+
 /**
  * Opus 5.5 through the signed-in Claude CLI (Claude Max), a fresh `claude -p` every call. Plan
  * permission mode so it cannot edit. Prompt in argv, stdin closed, no Anthropic API keys, no shell,
@@ -120,11 +122,13 @@ export function strictPrompt(o: { task: string; tier: string; risk: string; base
     `Diff against the base (cut at 60k characters; run \`git diff ${o.base}\` in the work repo for the rest):`,
     o.diff,
     '',
-    'Name every real defect with file and line. Your last line must be exactly PASS or FAIL.'
+    'Name every real defect with file and line. Any gap is FAIL: nits, non-blockers, and follow-ups count as gaps.',
+    'Do not write nit, non-blocker, or follow-up in a PASS review; if you would, it is a FAIL.',
+    'End with two lines: GAPS: <n> (how many gaps you found), then exactly PASS or FAIL. PASS only with GAPS: 0.'
   ].join('\n')
 }
 
-export function planPrompt(o: { task: string; workRepo: string; plans: string[]; reasons: string[]; tier?: 'T2' | 'T3' }): string {
+export function planPrompt(o: { task: string; workRepo: string; plans: string[]; reasons: string[]; tier?: 'T2' | 'T3'; guide?: string[] }): string {
   const t3 = o.tier === 'T3'
   return [
     'Write the implementation plan for this change. You cannot edit files; read the repo as needed.',
@@ -135,8 +139,9 @@ export function planPrompt(o: { task: string; workRepo: string; plans: string[];
     'Give: files to change, steps, tests to run. Keep it short.',
     ...(t3 ? ['End with one JSON line: {"slices":[{"title":"...","files":["rel/path.ts"]}]}. Paths relative to the work repo; slices that share no files run in parallel.'] : []),
     `Task: ${String(o.task || '').slice(0, 4000)}`,
-    ...(o.plans.length ? ['', 'Earlier plans (rejected):', ...o.plans.map((p) => `- ${p}`)] : []),
-    ...(o.reasons.filter(Boolean).length ? ['', 'Why they were rejected:', ...o.reasons.filter(Boolean).map((r) => `- ${r}`)] : [])
+    ...(o.plans.length ? ['', 'Earlier plans:', ...o.plans.map((p) => `- ${p}`)] : []),
+    ...(o.reasons.filter(Boolean).length ? ['', 'Why they were rejected:', ...o.reasons.filter(Boolean).map((r) => `- ${r}`)] : []),
+    ...(o.guide?.filter(Boolean).length ? ['', "Joe's notes for this plan:", ...o.guide.filter(Boolean).map((g) => `- ${g}`)] : [])
   ].join('\n')
 }
 
@@ -144,4 +149,86 @@ export function planPrompt(o: { task: string; workRepo: string; plans: string[];
 export function verdict(text: string): 'PASS' | 'FAIL' | null {
   const last = lastLine(text).replace(/[*`_.]/g, '').trim().toUpperCase()
   return last === 'PASS' ? 'PASS' : last === 'FAIL' ? 'FAIL' : null
+}
+
+/** Words that name a leftover. A review that names one did not find zero gaps. */
+const LEFTOVER = /\b(nit(?:s|pick(?:s|ing|y)?)?|non-?block(?:ers?|ing)|not a blocker|for (?:a |another )?later|optional follow|follow[- ]?ups?)\b/i
+/**
+ * One whole leftover word, not followed by a colon (so "non-blocker: x" still names an item). The
+ * \b stops backtracking to "nit" in "nits: x" or "nitpick: x" to dodge the colon check.
+ */
+const LEFT_WORD = String.raw`(?:nit(?:s|pick(?:s|ing|y)?)?|non-?block(?:ers?|ing)|follow[- ]?ups?)\b(?!\s*:)`
+/**
+ * Words that turn a none into "none, but here is one": "No nits, however rename x", "No nits. Still,
+ * rename x". One at the start of the next sentence keeps the none a leftover.
+ */
+const CONTRAST = String.raw`\b(?:except|besides|other than|apart from|but|however|though|although|yet|still|that said|only|just|nevertheless|nonetheless|instead|meanwhile|save for|aside from)\b`
+/** A leftover word with an optional plain noun after it: "non-blocking issues". */
+const LEFT_ITEM = String.raw`${LEFT_WORD}(?:\s+(?:issues?|items?|notes?|comments?|concerns?))?`
+/** Only quote, bullet, or emphasis marks may come before a none: the claim must open its sentence. */
+const LEAD = String.raw`^[\s"'*_>\-]*`
+/**
+ * "No nits.", "No follow-ups needed", "Nits: none", "No nits, non-blockers, or follow-ups.", "Nothing
+ * to leave for later". A none is only a none when it is the whole sentence: nothing before it but
+ * marks, nothing after it but trailers (needed, found, remain...). "Rename x, no other nits",
+ * "Clean, no follow-ups needed", and "No nits, however rename x" are not nones. "No other / further /
+ * more / remaining nits" is not a none either: it implies some were named.
+ */
+const NONE_LEFT = [
+  new RegExp(
+    LEAD +
+      String.raw`(?:no|zero|without(?: any)?|not any|free of)\s+` +
+      LEFT_ITEM +
+      String.raw`(?:\s*,\s*(?:(?:or|and|nor)\s+)?${LEFT_ITEM}|\s+(?:or|and|nor)\s+${LEFT_ITEM})*` +
+      String.raw`(?:\s+(?:are\s+|is\s+)?(?:needed|required|found|left|remains?|remaining))?\s*$`,
+    'i'
+  ),
+  new RegExp(LEAD + String.raw`(?:nit(?:s|pick(?:s|ing|y)?)?|non-?block(?:ers?|ing)|follow[- ]?ups?)\s*:\s*(?:none|0|n\/a)\s*$`, 'i'),
+  new RegExp(LEAD + String.raw`nothing\s+(?:(?:is|was)\s+)?(?:to\s+)?(?:leave|left)\s+(?:(?:it|this|that|them)\s+)?for later\s*$`, 'i')
+]
+
+/**
+ * Drop each sentence that is only a none claim, unless the next sentence opens with a contrast.
+ * Sentences end at . ; ! ? before a space, or at a newline, so "a.ts" stays whole.
+ */
+function stripNones(body: string): string {
+  const sentences = body.split(/(?:[.;!?]+(?=\s|$)|\n)+/)
+  const opensWithContrast = new RegExp(String.raw`^[\s"'*_>\-,]*${CONTRAST}`, 'i')
+  return sentences
+    .map((s, i) => {
+      const next = sentences.slice(i + 1).find((n) => n.trim()) || ''
+      if (opensWithContrast.test(next)) return s
+      return NONE_LEFT.some((re) => re.test(s)) ? '' : s
+    })
+    .join('\n')
+}
+
+export type ReviewAccept = { status: 'pass' | 'fail'; gaps: number | null; why: string }
+
+/**
+ * The controller's reading of an Opus review, not Opus's story. PASS needs a `GAPS: 0` line and a
+ * body that names no nits, non-blockers, or follow-ups. Anything else is a fail with a why.
+ */
+export function reviewAccept(text: string): ReviewAccept {
+  const lines = String(text || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+  const v = verdict(text)
+  // Every GAPS line counts: a later "GAPS: 0" does not undo an earlier "GAPS: 2".
+  let gaps: number | null = null
+  const gapsAt = new Set<number>()
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^[*`_\s]*GAPS\s*:\s*(\d+)/i.exec(lines[i])
+    if (!m) continue
+    gaps = Math.max(gaps ?? 0, Number(m[1]))
+    gapsAt.add(i)
+  }
+  if (v === null) return { status: 'fail', gaps, why: 'Reviewer did not end with PASS or FAIL.' }
+  if (v === 'FAIL') return { status: 'fail', gaps, why: 'FAIL' }
+  if (gaps === null) return { status: 'fail', gaps, why: 'PASS without GAPS: 0' }
+  if (gaps > 0) return { status: 'fail', gaps, why: 'PASS named gaps' }
+  const body = lines.filter((_, i) => !gapsAt.has(i) && i !== lines.length - 1).join('\n')
+  if (LEFTOVER.test(stripNones(body))) return { status: 'fail', gaps, why: 'PASS named gaps' }
+  return { status: 'pass', gaps: 0, why: '' }
 }

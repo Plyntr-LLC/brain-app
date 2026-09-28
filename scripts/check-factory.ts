@@ -370,12 +370,74 @@ ctl.configureFactory(fakeDeps)
   git(work, ['checkout', '--', '.'])
 }
 
-// Dirty work repo refuses start; critical risk needs a click.
+// Dirty work repo: Start opens the run and waits on Commit first / Stash first (Approve in advance too). Critical risk needs a click.
 {
+  const turns = () => calls.filter((c) => c.fn === 'prompt').length
+  const stashes = () => git(work, ['stash', 'list']).trim().split('\n').filter(Boolean).length
+  promptPlan = async () => {
+    writeFileSync(join(work, 'src', 'footer.ts'), 'export const footer = "Copyright 2026"\n')
+  }
   writeFileSync(join(work, 'scratch.txt'), 'dirty')
-  const dirty = ctl.startRun({ task: 'fix typo', workRepo: work, brainPath: brainA })
-  check('dirty work repo refuses start', !dirty.ok && dirty.error.startsWith('This repo has uncommitted changes.'))
-  execFileSync('/bin/rm', ['-f', join(work, 'scratch.txt')])
+  writeFileSync(join(work, 'src', 'footer.ts'), 'export const footer = "Copyrigth 2026 wip"\n')
+  const head0 = git(work, ['rev-parse', 'HEAD']).trim()
+  const t0 = turns()
+  const dirty = ctl.startRun({ task: 'fix typo in footer text', workRepo: work, brainPath: brainA })
+  const did = dirty.ok ? dirty.run.id : ''
+  check(
+    'dirty start returns ok with needsPrep and the dirty files',
+    dirty.ok && dirty.run.phase === 'triage' && dirty.run.needsPrep === 'dirty' && !!dirty.run.dirtyFiles?.includes('scratch.txt') && dirty.run.dirtyFiles.includes('src/footer.ts'),
+    JSON.stringify(dirty.ok ? { phase: dirty.run.phase, prep: dirty.run.needsPrep, files: dirty.run.dirtyFiles } : dirty)
+  )
+  await ctl.settle(did)
+  check('dirty start: triage has not run, no turn, lock held', !store.loadRun(did)?.triage.llm && turns() === t0 && store.holdsLock(work, did) && store.loadRun(did)?.base === head0)
+  ctl.resumeRun(did)
+  await ctl.settle(did)
+  check('dirty start: Resume does not start triage', store.loadRun(did)?.needsPrep === 'dirty' && !store.loadRun(did)?.triage.llm && turns() === t0)
+  ctl.decideRun(did, 'prep-commit')
+  const committed = await ctl.settle(did)
+  const wip = git(work, ['rev-parse', 'HEAD']).trim()
+  check('prep-commit makes a WIP commit with every dirty path', wip !== head0 && git(work, ['log', '-1', '--format=%s']).trim() === 'WIP before Factory: fix typo in footer text' && git(work, ['show', '--name-only', '--format=', 'HEAD']).includes('scratch.txt'))
+  check(
+    'prep-commit clears prep, base is the new HEAD, triage then build ran',
+    !committed?.needsPrep && !committed?.dirtyFiles && committed?.base === wip && !!committed.triage.llm && committed.phase === 'review' && turns() === t0 + 1,
+    JSON.stringify({ phase: committed?.phase, base: committed?.base, error: committed?.error })
+  )
+  ctl.abandonRun(did)
+  git(work, ['checkout', '--', '.'])
+
+  writeFileSync(join(work, 'scratch2.txt'), 'dirty again')
+  const s0 = stashes()
+  const t1 = turns()
+  const through = ctl.startRun({ task: 'fix typo in footer text', workRepo: work, brainPath: brainA, runThrough: true })
+  const tid = through.ok ? through.run.id : ''
+  await ctl.settle(tid)
+  check('runThrough still waits on dirty prep (no auto WIP commit)', through.ok && store.loadRun(tid)?.needsPrep === 'dirty' && turns() === t1 && git(work, ['rev-parse', 'HEAD']).trim() === wip && stashes() === s0)
+  ctl.decideRun(tid, 'prep-stash')
+  const stashed = await ctl.settle(tid)
+  check('prep-stash leaves a stash and a clean start, base is HEAD', stashes() === s0 + 1 && git(work, ['stash', 'list']).includes('Factory: fix typo in footer text') && stashed?.base === wip && !stashed.needsPrep, JSON.stringify({ base: stashed?.base, phase: stashed?.phase }))
+  check('prep-stash run goes on to a commit and never pops the stash', stashed?.phase === 'done' && !!stashed.commitSha && stashes() === s0 + 1 && !existsSync(join(work, 'scratch2.txt')), JSON.stringify({ phase: stashed?.phase, error: stashed?.error }))
+  git(work, ['stash', 'drop', '-q'])
+
+  writeFileSync(join(work, 'scratch3.txt'), 'dirty')
+  const head1 = git(work, ['rev-parse', 'HEAD']).trim()
+  const left = ctl.startRun({ task: 'fix typo in footer text', workRepo: work, brainPath: brainA })
+  const lid = left.ok ? left.run.id : ''
+  const gone = ctl.abandonRun(lid)
+  check('Abandon from the dirty wait releases the lock, no commit, no stash', gone.phase === 'abandoned' && store.activeRunFor(work) === null && git(work, ['rev-parse', 'HEAD']).trim() === head1 && stashes() === s0 && existsSync(join(work, 'scratch3.txt')))
+  execFileSync('/bin/rm', ['-f', join(work, 'scratch3.txt')])
+  // 25 dirty paths: the list keeps 20, dirtyCount keeps the true number for the card.
+  const many = repo('many-dirty', { 'README.md': 'x\n' })
+  for (let i = 0; i < 25; i++) writeFileSync(join(many, `d${i}.txt`), 'dirty')
+  const lots = ctl.startRun({ task: 'fix typo in footer text', workRepo: many, brainPath: brainA })
+  check('dirty start stores the true dirtyCount (25) and caps dirtyFiles at 20', lots.ok && lots.run.dirtyCount === 25 && lots.run.dirtyFiles?.length === 20, JSON.stringify(lots.ok ? { n: lots.run.dirtyCount, files: lots.run.dirtyFiles?.length } : lots))
+  if (lots.ok) ctl.abandonRun(lots.run.id)
+  const clean = ctl.startRun({ task: 'fix typo in footer text', workRepo: work, brainPath: brainA })
+  check('clean Start has no needsPrep', clean.ok && !clean.run.needsPrep && !clean.run.dirtyFiles)
+  if (clean.ok) {
+    await ctl.settle(clean.run.id)
+    ctl.abandonRun(clean.run.id)
+  }
+  git(work, ['checkout', '--', '.'])
   const crit = ctl.startRun({ task: 'fix the stripe checkout total', workRepo: work, brainPath: brainA })
   check('critical risk needs Proceed at T1', !crit.ok && !!crit.needsProceed && store.activeRunFor(work) === null)
 }
@@ -430,37 +492,40 @@ const effortCount = () => calls.filter((c) => c.fn === 'effort').length
   check('S2 6 profile line', profiles.profileLine(p) === 'This repo: typecheck · test · test:e2e')
 }
 
-// 3 + 4. T2: triage then plan; no build before Approve; resume stays in plan; rejects; Opus plan; approve.
+// 3 + 4. T2: triage then an Opus plan; no build before Approve; resume stays in plan; every reject is a fresh Opus; approve.
 const T2TASK = 'Add a new page for team settings with a new route and shared types'
 {
-  const planned: string[] = []
   promptPlan = async (o) => {
-    if (/Phase: plan\./.test(o.text)) {
-      planned.push(o.text)
-      return `Plan ${planned.length}: add src/team.ts and src/routes.ts, test with npm test.`
-    }
     if (/Phase: build\./.test(o.text)) {
       writeFileSync(join(work2, 'src', 'team.ts'), 'export const team = 1\n')
       writeFileSync(join(work2, 'src', 'routes.ts'), 'export const routes = ["team"]\n')
     }
     if (/Phase: fix\./.test(o.text)) writeFileSync(join(work2, 'src', 'team.ts'), 'export const team = 2\n')
   }
+  claudeSays(['Plan 1: add src/team.ts and src/routes.ts, test with npm test.'])
   const p0 = promptCount()
-  const e0 = effortCount()
+  const c00 = claudeRows().length
   const res = ctl.startRun({ task: T2TASK, workRepo: work2, brainPath: brainA })
   check('S2 3 T2 start lands in triage first', res.ok && res.run.phase === 'triage' && res.run.tier === 'T2', JSON.stringify(res))
   const id = res.ok ? res.run.id : ''
   let r = await ctl.settle(id)
-  check('S2 3 T2 run waits in plan', r?.phase === 'plan' && r.plan?.status === 'waiting' && !!r.plan.text.startsWith('Plan 1') && r.plan.by === 'grok', JSON.stringify({ phase: r?.phase, plan: r?.plan, error: r?.error }))
-  check('S2 3 no build turn ran and the work repo is clean', promptsFrom(p0).every((t) => /Phase: plan\./.test(t)) && git(work2, ['status', '--porcelain']).trim() === '')
-  check('S2 3 plan turn is Role planner, Tier T2, at Grok high', /Role: planner\. Tier: T2\. Phase: plan\./.test(planned[0] || '') && effortsFrom(e0)[0] === 'high')
+  const planner1 = claudeRows()[c00]
+  const pArgv = planner1?.argv || []
+  const pFlag = (f: string) => pArgv[pArgv.indexOf(f) + 1]
+  check('S2 3 T2 first plan is by Opus and waits for Approve', r?.phase === 'plan' && r.plan?.status === 'waiting' && !!r.plan.text.startsWith('Plan 1') && r.plan.by === 'opus' && r.plan.rejects === 0, JSON.stringify({ phase: r?.phase, plan: r?.plan, error: r?.error }))
+  check('S2 3 first plan: one claude spawn, no Grok plan or build turn, work repo clean', claudeRows().length === c00 + 1 && promptsFrom(p0).length === 0 && git(work2, ['status', '--porcelain']).trim() === '', JSON.stringify(promptsFrom(p0)))
+  check(
+    'S2 3 first plan argv: -p T2 plan prompt, --model opus, --effort medium, --permission-mode plan; stdin empty, no Anthropic keys, cwd work repo',
+    pArgv[0] === '-p' && pArgv[1].includes(T2TASK) && pArgv[1].includes('Limit T2') && !pArgv[1].includes('Earlier plans') && pFlag('--model') === 'opus' && pFlag('--effort') === 'medium' && pFlag('--permission-mode') === 'plan' && planner1.stdinBytes === 0 && !planner1.anthropic && !planner1.translator && realish(planner1.cwd) === realish(work2),
+    JSON.stringify(pArgv.filter((a) => a.length < 40))
+  )
   check('S2 3 run keeps the profile snapshot', r?.profile?.scripts.e2e === 'test:e2e')
   check('S2 3 plan text sits beside the run record', existsSync(store.runTextPath(id, 'plan')) && readFileSync(store.runTextPath(id, 'plan'), 'utf8').startsWith('Plan 1'))
   ctl.dropMemory()
   const p1 = promptCount()
   ctl.resumeRun(id)
   r = await ctl.settle(id)
-  check('S2 3 resumeRun after dropMemory stays in plan and sends no turn', r?.phase === 'plan' && r.plan?.status === 'waiting' && promptCount() === p1, JSON.stringify({ phase: r?.phase }))
+  check('S2 3 resumeRun after dropMemory stays in plan and sends no turn or claude', r?.phase === 'plan' && r.plan?.status === 'waiting' && promptCount() === p1 && claudeRows().length === c00 + 1, JSON.stringify({ phase: r?.phase }))
   let threw = false
   try {
     ctl.commitRunNow(id)
@@ -469,15 +534,21 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   }
   check('S2 3 Commit is refused while the plan waits', threw)
 
-  // Reject 1: one Grok fix-plan turn with the reason and the previous plan path.
+  // Reject 1: a fresh claude with the reason and the rejected plan path, no Grok turn.
+  claudeSays(['Plan 2: src/team.ts only, test with npm test.'])
   const p2 = promptCount()
+  const c01 = claudeRows().length
   ctl.decideRun(id, 'reject-plan', { reason: 'Too broad, skip routes' })
   r = await ctl.settle(id)
-  const fixPlan = promptsFrom(p2)
-  check('S2 4 reject 1 sends one Grok plan turn with the reason', fixPlan.length === 1 && /Phase: plan\./.test(fixPlan[0]) && fixPlan[0].includes('Too broad, skip routes') && fixPlan[0].includes(`Previous plan: ${store.runTextPath(id, 'plan')}`), JSON.stringify(fixPlan))
-  check('S2 4 reject count survives on disk', store.loadRun(id)?.plan?.rejects === 1 && r?.plan?.text.startsWith('Plan 2') === true)
+  const planner2 = claudeRows()[c01]
+  check(
+    'S2 4 reject 1 is one new claude process with the reason and the rejected plan path',
+    claudeRows().length === c01 + 1 && planner2.pid !== planner1?.pid && planner2.argv[1].includes('Too broad, skip routes') && planner2.argv[1].includes(store.runTextPath(id, 'plan')) && promptsFrom(p2).length === 0,
+    JSON.stringify({ spawns: claudeRows().length - c01, prompts: promptsFrom(p2) })
+  )
+  check('S2 4 reject count survives on disk', store.loadRun(id)?.plan?.rejects === 1 && r?.plan?.text.startsWith('Plan 2') === true && r.plan.by === 'opus' && r.plan.status === 'waiting')
 
-  // Reject 2: fresh claude -p writes the plan.
+  // Reject 2: another fresh claude -p writes the plan.
   claudeSays(['Opus plan: one route, one component, one test.'])
   const c0 = claudeRows().length
   ctl.decideRun(id, 'reject-plan', { reason: 'Still wrong' })
@@ -485,13 +556,13 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   const row = claudeRows()[c0]
   const argv = row?.argv || []
   const flag = (f: string) => argv[argv.indexOf(f) + 1]
-  check('S2 4 reject 2 spawns claude once', claudeRows().length === c0 + 1)
+  check('S2 4 reject 2 spawns claude once, a new process', claudeRows().length === c0 + 1 && row?.pid !== planner2?.pid && row?.pid !== planner1?.pid)
   check('S2 4 Opus argv: -p prompt, --model opus, --effort medium, --permission-mode plan, --output-format text, no --bare', argv[0] === '-p' && argv[1].includes(T2TASK) && flag('--model') === 'opus' && flag('--effort') === 'medium' && flag('--permission-mode') === 'plan' && flag('--output-format') === 'text' && !argv.includes('--bare'), JSON.stringify(argv.filter((a) => a.length < 40)))
   check('S2 4 Opus stdin empty, no Anthropic keys, cwd is the work repo', row?.stdinBytes === 0 && row.anthropic === false && row.translator === false && realish(row.cwd) === realish(work2), JSON.stringify({ ...row, argv: undefined }))
   check('S2 4 plan by Opus waits for Approve', r?.phase === 'plan' && r.plan?.by === 'opus' && r.plan.status === 'waiting' && r.plan.text.startsWith('Opus plan') && r.plan.rejects === 2, JSON.stringify({ phase: r?.phase, plan: r?.plan, error: r?.error }))
 
-  // Approve: build with the plan path line at Grok xhigh (Opus plan), verify with e2e, strict FAIL twice.
-  claudeSays(['a.ts:1 is wrong\nFAIL', 'still wrong at a.ts:1\nFAIL'])
+  // Approve: build with the plan path line at Grok xhigh (Opus plan), verify with e2e, strict FAIL five times (a PASS with gaps is a FAIL).
+  claudeSays(['a.ts:1 is wrong\nGAPS: 1\nFAIL', 'still wrong at a.ts:1\nFAIL', 'ok\nPASS', 'One nit: rename x.\nGAPS: 0\nPASS', 'still wrong at a.ts:9\nGAPS: 1\nFAIL'])
   const p3 = promptCount()
   const e3 = effortCount()
   const c1 = claudeRows().length
@@ -502,12 +573,36 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   check('S2 3 approve-plan starts build with the Approved plan path line', /Phase: build\./.test(after[0] || '') && (after[0] || '').includes(`Approved plan: ${store.runTextPath(id, 'plan')}. Read it first.`), after[0])
   check('S2 3 build after an Opus plan runs at Grok xhigh', effortsFrom(e3).includes('xhigh'), JSON.stringify(effortsFrom(e3)))
   check('S2 5 T2 verify runs typecheck, test and the profile e2e', scriptRuns.slice(0, 3).join(',') === 'typecheck,test,test:e2e' && r?.verify?.some((v) => v.script === 'test:e2e' && v.status === 'pass') === true, JSON.stringify(scriptRuns))
-  const fix = after.find((t) => /Phase: fix\./.test(t)) || ''
+  const fixes = after.filter((t) => /Phase: fix\./.test(t))
   check('S2 8 T2 has no self-check turn', !after.some((t) => /Role: self-check/.test(t)))
-  check('S2 8 FAIL sends one fix turn with the Reviewer notes path', after.filter((t) => /Phase: fix\./.test(t)).length === 1 && fix.includes(`Reviewer notes: ${store.runTextPath(id, 'review')}. Fix what it names.`), fix)
+  check('S2 8 five fails send four auto fix turns with the Reviewer notes path', fixes.length === 4 && fixes.every((f) => f.includes(`Reviewer notes: ${store.runTextPath(id, 'review')}. Fix what it names.`)), JSON.stringify(fixes.length))
+  check('S2 8 a PASS without GAPS and a PASS naming a nit are fails', fixes.some((f) => f.includes('PASS without GAPS: 0')) && fixes.some((f) => f.includes('PASS named gaps')), JSON.stringify(fixes.map((f) => f.split('\n').find((l) => l.startsWith('Note:')))))
   const reviews = claudeRows().slice(c1)
-  check('S2 8 exactly 2 claude review spawns, each a new process', reviews.length === 2 && reviews[0].pid !== reviews[1].pid && reviews.every((x) => x.argv[1].includes('strict-code-review/SKILL.md') && x.argv[1].trimEnd().endsWith('Your last line must be exactly PASS or FAIL.')), JSON.stringify(reviews.map((x) => x.pid)))
-  check('S2 8 second FAIL stays in review with the FAIL text and reviewCycles 2', r?.phase === 'review' && !!r.diff && r.reviewCycles === 2 && r.strict?.status === 'fail' && r.strict.text.includes('still wrong') && store.loadRun(id)?.reviewCycles === 2, JSON.stringify({ phase: r?.phase, cycles: r?.reviewCycles, strict: r?.strict, error: r?.error }))
+  const plannerPids = [planner1?.pid, planner2?.pid, row?.pid]
+  check('S2 8 reviewers are never the planner process', reviews.length === 5 && reviews.every((x) => !plannerPids.includes(x.pid)), JSON.stringify({ planners: plannerPids, reviewers: reviews.map((x) => x.pid) }))
+  check(
+    'S2 8 exactly 5 claude review spawns, each a new process, prompt asks for GAPS then PASS/FAIL',
+    reviews.length === 5 && new Set(reviews.map((x) => x.pid)).size === 5 && reviews.every((x) => x.argv[1].includes('strict-code-review/SKILL.md') && x.argv[1].trimEnd().endsWith('PASS only with GAPS: 0.')),
+    JSON.stringify(reviews.map((x) => x.pid))
+  )
+  check('S2 8 the fifth fail holds in review with the FAIL text and reviewCycles 5, no auto-commit', r?.phase === 'review' && !!r.diff && r.reviewCycles === 5 && r.strict?.status === 'fail' && r.strict.text.includes('a.ts:9') && store.loadRun(id)?.reviewCycles === 5 && !r.commitSha, JSON.stringify({ phase: r?.phase, cycles: r?.reviewCycles, strict: r?.strict, error: r?.error }))
+  check('S2 8 no Joe guide reached a reviewer', reviews.every((x) => !x.argv[1].includes('Joe says')))
+  // Keep fixing after the hold: one builder fix turn, then a sixth fresh reviewer; still held (cycles past 5).
+  claudeSays(['a.ts:9 still\nGAPS: 1\nFAIL'])
+  const p4 = promptCount()
+  const c4 = claudeRows().length
+  ctl.decideRun(id, 'keep-fix')
+  r = await ctl.settle(id)
+  const kf = promptsFrom(p4)
+  const r6 = claudeRows().slice(c4)
+  check('S2 8 keep-fix: one fix turn, then another fresh Opus review, held again at 6', kf.length === 1 && /Phase: fix\./.test(kf[0]) && r6.length === 1 && !reviews.some((x) => x.pid === r6[0].pid) && r?.phase === 'review' && r.reviewCycles === 6 && r.strict?.status === 'fail', JSON.stringify({ turns: kf.length, spawns: r6.length, phase: r?.phase, cycles: r?.reviewCycles }))
+  // Re-review: a fresh Opus only, no builder turn.
+  claudeSays(['a.ts:9 still\nGAPS: 1\nFAIL'])
+  const p5 = promptCount()
+  const c5 = claudeRows().length
+  ctl.decideRun(id, 're-review')
+  r = await ctl.settle(id)
+  check('S2 8 re-review: no builder turn, one new claude, held at 7', promptCount() === p5 && claudeRows().length === c5 + 1 && r?.phase === 'review' && r.reviewCycles === 7 && !!r.diff, JSON.stringify({ phase: r?.phase, cycles: r?.reviewCycles }))
   const done = ctl.commitRunNow(id)
   check('S2 8 Commit anyway commits and records the branch', done.phase === 'done' && done.branch === 'main' && git(work2, ['rev-parse', 'HEAD']).trim() === done.commitSha)
   const before = git(bare, ['for-each-ref']).trim()
@@ -515,15 +610,15 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   check('S2 9 Push on main is refused and the remote is unchanged', !pushed.pushed && /does not push to main/.test(pushed.pushError || '') && git(bare, ['for-each-ref']).trim() === before && ctl.publishBlockFor(id) === pushed.pushError, pushed.pushError)
 }
 
-// 4. Third reject pauses; with no claude, reject 2 pauses.
+// 4. Third reject pauses; with no claude, the first plan and a reject both pause.
 {
-  promptPlan = async (o) => (/Phase: plan\./.test(o.text) ? 'Plan: small.' : undefined)
+  promptPlan = async () => {}
+  claudeSays(['Plan: small.', 'Opus plan A.', 'Opus plan B.'])
   const res = ctl.startRun({ task: T2TASK, workRepo: work2, brainPath: brainA })
   const id = res.ok ? res.run.id : ''
   await ctl.settle(id)
   ctl.decideRun(id, 'reject-plan')
   await ctl.settle(id)
-  claudeSays(['Opus plan B.'])
   ctl.decideRun(id, 'reject-plan')
   await ctl.settle(id)
   const p0 = promptCount()
@@ -534,14 +629,24 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   ctl.abandonRun(id)
 
   execFileSync('/bin/rm', ['-f', claudeBin])
+  const p1 = promptCount()
+  const res1 = ctl.startRun({ task: T2TASK, workRepo: work2, brainPath: brainA })
+  const id1 = res1.ok ? res1.run.id : ''
+  const r1 = await ctl.settle(id1)
+  check('S2 4 no claude at the first plan pauses in plan, no Grok plan turn', r1?.phase === 'paused' && r1.resumePhase === 'plan' && /Opus planner not found/.test(r1.error || '') && promptCount() === p1, JSON.stringify({ phase: r1?.phase, error: r1?.error }))
+  ctl.resumeRun(id1)
+  const r1b = await ctl.settle(id1)
+  check('S2 4 resume of that pause asks Opus again (still missing: paused), never Grok', r1b?.phase === 'paused' && /not found/.test(r1b.error || '') && promptCount() === p1, JSON.stringify({ phase: r1b?.phase, error: r1b?.error }))
+  ctl.abandonRun(id1)
+  installClaude()
+  claudeSays(['Plan: small.'])
   const res2 = ctl.startRun({ task: T2TASK, workRepo: work2, brainPath: brainA })
   const id2 = res2.ok ? res2.run.id : ''
   await ctl.settle(id2)
-  ctl.decideRun(id2, 'reject-plan')
-  await ctl.settle(id2)
+  execFileSync('/bin/rm', ['-f', claudeBin])
   ctl.decideRun(id2, 'reject-plan')
   const r2 = await ctl.settle(id2)
-  check('S2 4 no claude at reject 2 pauses in plan', r2?.phase === 'paused' && r2.resumePhase === 'plan' && /not found/.test(r2.error || ''), JSON.stringify({ phase: r2?.phase, error: r2?.error }))
+  check('S2 4 no claude at reject 1 pauses in plan', r2?.phase === 'paused' && r2.resumePhase === 'plan' && /not found/.test(r2.error || ''), JSON.stringify({ phase: r2?.phase, error: r2?.error }))
   const back = ctl.resumeRun(id2)
   check('S2 4 resume after that pause shows the waiting plan, no build', back.phase === 'plan' && back.plan?.status === 'waiting' && !!back.plan.text)
   ctl.abandonRun(id2)
@@ -556,7 +661,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
     if (/Role: self-check/.test(o.text)) claudeAtSelfCheck = claudeRows().length
     else writeFileSync(join(work2, 'src', 'app.ts'), 'export const app = "API error: try again"\n')
   }
-  claudeSays(['Checked the diff.\nPASS'])
+  claudeSays(['Checked the diff.\nGAPS: 0\nPASS'])
   const c0 = claudeRows().length
   const res = ctl.startRun({ task: 'fix the API error message', workRepo: work2, brainPath: brainA })
   check('S2 8 T1 elevated start', res.ok && res.run.tier === 'T1' && res.run.risk === 'elevated', JSON.stringify(res.ok ? { tier: res.run.tier, risk: res.run.risk } : res))
@@ -587,7 +692,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   promptPlan = async () => {
     for (const n of ['a', 'b', 'c', 'd', 'e']) writeFileSync(join(work2, 'src', `${n}.ts`), Array.from({ length: 40 }, (_, i) => `export const ${n}${i} = ${i}`).join('\n') + '\n')
   }
-  claudeSays(['ok\nPASS'])
+  claudeSays(['GAPS: 0\nPASS'])
   const res = ctl.startRun({ task: 'Fix the date shown one day off in the order list', workRepo: work2, brainPath: brainA })
   const id = res.ok ? res.run.id : ''
   let r = await ctl.settle(id)
@@ -611,7 +716,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   promptPlan = async () => {
     writeFileSync(join(work2, 'src', 'app.ts'), 'export const app = 3\n')
   }
-  claudeSays(['ok\nPASS'])
+  claudeSays(['GAPS: 0\nPASS'])
   const p0 = promptCount()
   const res = ctl.startRun({ task: 'Fix the date shown one day off in the order list', workRepo: work2, brainPath: brainA })
   const id = res.ok ? res.run.id : ''
@@ -743,16 +848,16 @@ fakeDeps.deploy = async () => {
 }
 ctl.configureFactory(fakeDeps)
 
-// S3 2 + 9. runThrough T2: plan written, build starts without approve-plan, clean review auto-commits, never pushes.
+// S3 2 + 9. runThrough T2: Opus plan written, build starts without approve-plan, clean review auto-commits, never pushes.
 {
   promptPlan = async (o) => {
-    if (/Phase: plan\./.test(o.text)) return 'Plan: add src/team.ts and src/routes.ts, test with npm test.'
     if (/Phase: build\./.test(o.text)) {
       writeFileSync(join(work2, 'src', 'team.ts'), 'export const team = 1\n')
       writeFileSync(join(work2, 'src', 'routes.ts'), 'export const routes = ["team"]\n')
     }
   }
-  claudeSays(['ok\nPASS'])
+  claudeSays(['Plan: add src/team.ts and src/routes.ts, test with npm test.', 'GAPS: 0\nPASS'])
+  const c0 = claudeRows().length
   const refs = git(bare, ['for-each-ref']).trim()
   const head0 = git(work2, ['rev-parse', 'HEAD']).trim()
   const res = ctl.startRun({ task: T2TASK, workRepo: work2, brainPath: brainA, runThrough: true })
@@ -762,20 +867,181 @@ ctl.configureFactory(fakeDeps)
   const seen = events.filter((e) => e.runId === id && e.kind === 'run').map((e) => e.run?.phase)
   check('S3 2 lands in plan, then reaches build with no approve-plan click', seen.includes('plan') && seen.indexOf('build') > seen.indexOf('plan') && r?.plan?.status === 'approved' && !!r.plan.approvedAt, JSON.stringify(seen))
   check('S3 2 plan sidecar exists under userData', existsSync(store.runTextPath(id, 'plan')) && readFileSync(store.runTextPath(id, 'plan'), 'utf8').startsWith('Plan: add src/team.ts'))
+  const rows = claudeRows().slice(c0)
+  check('S3 2 runThrough T2 plan is by Opus; the strict reviewer is a second, different claude process', r?.plan?.by === 'opus' && rows.length === 2 && rows[0].pid !== rows[1].pid && rows[1].argv[1].includes('strict-code-review/SKILL.md') && r.strict?.status === 'pass', JSON.stringify({ by: r?.plan?.by, pids: rows.map((x) => x.pid) }))
   check('S3 9 clean review auto-commits the work files', r?.phase === 'done' && !!r.commitSha && git(work2, ['rev-parse', 'HEAD']).trim() === r.commitSha && r.commitSha !== head0 && git(work2, ['show', '--name-only', '--format=', 'HEAD']).includes('src/team.ts'), JSON.stringify({ phase: r?.phase, error: r?.error, strict: r?.strict }))
   check('S3 9 auto-commit never pushes', pushCalls === 0 && git(bare, ['for-each-ref']).trim() === refs && !r?.pushed)
   check('S3 10 deploy is refused before Push and never called', ctl.deployBlockFor(id) === 'Deploy comes after Push.' && deployCalls === 0)
   check('S3 git status clean after auto-commit', git(work2, ['status', '--porcelain']).trim() === '')
 }
 
+// UX 7 + 8. Ship in advance: push only after reviewAccept's clean pass; protected branch, missing claude, and plain T0 never push.
+{
+  const APITASK = 'fix the API error message'
+  let n = 0
+  promptPlan = async (o) => {
+    if (!/Role: self-check/.test(o.text)) writeFileSync(join(work2, 'src', 'app.ts'), `export const app = "API error ${++n}"\n`)
+  }
+  const publish0 = fakeDeps.publish
+  fakeDeps.publish = async (r, t) => {
+    pushCalls++
+    return gates.publish(r, t)
+  }
+  ctl.configureFactory(fakeDeps)
+
+  git(work2, ['checkout', '-q', '-b', 'factory/ship'])
+  claudeSays(['Checked it.\nGAPS: 0\nPASS'])
+  const push0 = pushCalls
+  const res = ctl.startRun({ task: APITASK, workRepo: work2, brainPath: brainA, runThrough: false, shipThrough: true })
+  const id = res.ok ? res.run.id : ''
+  const r = await ctl.settle(id)
+  check('UX 7 shipThrough is stored on the run', res.ok && res.run.shipThrough === true && !res.run.runThrough)
+  check(
+    'UX 7 shipThrough + clean Opus pass: commit and push to the run branch, no deploy',
+    r?.phase === 'done' && !!r.commitSha && r.pushed?.branch === 'factory/ship' && pushCalls === push0 + 1 && git(bare, ['rev-parse', 'refs/heads/factory/ship']).trim() === r.commitSha && deployCalls === 0 && !r.deployed,
+    JSON.stringify({ phase: r?.phase, pushed: r?.pushed, err: r?.pushError, strict: r?.strict, error: r?.error })
+  )
+  git(work2, ['checkout', '-q', 'main'])
+
+  claudeSays(['Checked it.\nGAPS: 0\nPASS'])
+  const refs = git(bare, ['for-each-ref']).trim()
+  const push1 = pushCalls
+  const res2 = ctl.startRun({ task: APITASK, workRepo: work2, brainPath: brainA, shipThrough: true })
+  const id2 = res2.ok ? res2.run.id : ''
+  const r2 = await ctl.settle(id2)
+  check(
+    'UX 7 shipThrough on main: commit, pushError set, no push call, remote unchanged',
+    r2?.phase === 'done' && !!r2.commitSha && !r2.pushed && /does not push to main/.test(r2.pushError || '') && pushCalls === push1 && git(bare, ['for-each-ref']).trim() === refs,
+    JSON.stringify({ phase: r2?.phase, err: r2?.pushError })
+  )
+
+  execFileSync('/bin/rm', ['-f', claudeBin])
+  const head2 = git(work2, ['rev-parse', 'HEAD']).trim()
+  const res3 = ctl.startRun({ task: APITASK, workRepo: work2, brainPath: brainA, runThrough: true, shipThrough: true })
+  const id3 = res3.ok ? res3.run.id : ''
+  const r3 = await ctl.settle(id3)
+  check('UX 7 missing claude: no auto-commit and no push, even with both boxes', r3?.phase === 'review' && r3.strict?.status === 'missing' && !r3.commitSha && git(work2, ['rev-parse', 'HEAD']).trim() === head2 && pushCalls === push1, JSON.stringify({ phase: r3?.phase, strict: r3?.strict }))
+  ctl.abandonRun(id3)
+  reset2()
+  installClaude()
+
+  const c0 = claudeRows().length
+  const res4 = ctl.startRun({ task: 'fix typo in the app label', workRepo: work2, brainPath: brainA, shipThrough: true })
+  const id4 = res4.ok ? res4.run.id : ''
+  const r4 = await ctl.settle(id4)
+  check('UX 7 plain T0 with only shipThrough: no Opus, waits on Commit, never pushes', res4.ok && res4.run.tier === 'T0' && r4?.phase === 'review' && !!r4.diff && !r4.commitSha && claudeRows().length === c0 && pushCalls === push1, JSON.stringify({ phase: r4?.phase, tier: r4?.tier }))
+  ctl.abandonRun(id4)
+  reset2()
+
+  // UX 8 + 9: every review names a nit under PASS: never a pass; four auto fixes, held at 5, no commit, no push.
+  const nit = 'Looks fine. One nit: rename x, a non-blocker.\nGAPS: 0\nPASS'
+  claudeSays([nit, nit, nit, nit, nit])
+  const head5 = git(work2, ['rev-parse', 'HEAD']).trim()
+  const p5 = promptCount()
+  const res5 = ctl.startRun({ task: APITASK, workRepo: work2, brainPath: brainA, runThrough: true, shipThrough: true })
+  const id5 = res5.ok ? res5.run.id : ''
+  let r5 = await ctl.settle(id5)
+  check(
+    'UX 8 PASS naming nits never auto-commits: held at 5 with both boxes on',
+    r5?.phase === 'review' && !!r5.diff && r5.reviewCycles === 5 && r5.strict?.status === 'fail' && r5.strict.text.startsWith('PASS named gaps') && !r5.commitSha && git(work2, ['rev-parse', 'HEAD']).trim() === head5 && pushCalls === push1,
+    JSON.stringify({ phase: r5?.phase, cycles: r5?.reviewCycles, strict: r5?.strict?.text.slice(0, 40), sha: r5?.commitSha })
+  )
+  check('UX 9 four auto fix turns before the hold', promptsFrom(p5).filter((t) => /Phase: fix\./.test(t)).length === 4)
+
+  // UX 6: Guide on a held reject is Keep fixing with that note, then a fresh reviewer that never sees the note.
+  claudeSays(['Checked it.\nGAPS: 0\nPASS'])
+  const p6 = promptCount()
+  const c6 = claudeRows().length
+  ctl.guideRun(id5, 'Rename x to count in src/app.ts')
+  r5 = await ctl.settle(id5)
+  const g6 = promptsFrom(p6)
+  const rev6 = claudeRows().slice(c6)
+  check(
+    'UX 6 guide on a held run: one fix turn with the note, then a fresh Opus review',
+    g6.length === 1 && /Phase: fix\./.test(g6[0]) && g6[0].includes('Joe says: Rename x to count in src/app.ts') && rev6.length === 1 && !rev6[0].argv[1].includes('Rename x to count'),
+    JSON.stringify({ turns: g6.length, spawns: rev6.length })
+  )
+  check('UX 6 guide note is on the run and marked sent', r5?.guide?.length === 1 && r5.guide[0].text === 'Rename x to count in src/app.ts' && r5.guide[0].sent === true)
+  check('UX 9 clean pass after keep fixing is an Opus approval: runThrough + shipThrough commit, main refuses the push', r5?.phase === 'done' && !!r5.commitSha && /does not push to main/.test(r5.pushError || '') && pushCalls === push1, JSON.stringify({ phase: r5?.phase, err: r5?.pushError }))
+  if (r5?.phase !== 'done') ctl.abandonRun(id5)
+  fakeDeps.publish = publish0
+  ctl.configureFactory(fakeDeps)
+  reset2()
+}
+
+// UX 6. Guide while the plan waits: a fresh Opus plan with the note, still waiting, not a reject.
+{
+  promptPlan = async () => {}
+  claudeSays(['Plan: small.', 'Plan: small, with the footer.'])
+  const res = ctl.startRun({ task: T2TASK, workRepo: work2, brainPath: brainA })
+  const id = res.ok ? res.run.id : ''
+  await ctl.settle(id)
+  const c0 = claudeRows().length
+  const p0 = promptCount()
+  ctl.guideRun(id, 'Also touch the footer')
+  const r = await ctl.settle(id)
+  const row = claudeRows()[c0]
+  check(
+    'UX 6 guide on a waiting plan: one new claude with the note and the earlier plan path, still waiting, no Grok turn',
+    claudeRows().length === c0 + 1 && row.argv[1].includes('Also touch the footer') && row.argv[1].includes(store.runTextPath(id, 'plan')) && r?.phase === 'plan' && r.plan?.status === 'waiting' && r.plan.text === 'Plan: small, with the footer.' && r.plan.rejects === 0 && promptCount() === p0,
+    JSON.stringify({ spawns: claudeRows().length - c0, phase: r?.phase, plan: r?.plan })
+  )
+  ctl.abandonRun(id)
+  let threw = false
+  try {
+    ctl.guideRun(id, 'too late')
+  } catch {
+    threw = true
+  }
+  check('UX 6 guide on an abandoned run is refused', threw)
+  reset2()
+}
+
+// UX 6. Guide while a turn is in flight: queued, then one follow-up turn with the note before verify.
+{
+  let release: () => void = () => {}
+  let scriptsAtFollowUp = -1
+  let turn = 0
+  promptPlan = (o) => {
+    turn++
+    if (turn === 1)
+      return new Promise<void>((r) => {
+        release = () => {
+          writeFileSync(join(work2, 'src', 'app.ts'), 'export const app = "label"\n')
+          r()
+        }
+      })
+    if (o.text.includes('Joe says:')) scriptsAtFollowUp = scriptRuns.length
+    return Promise.resolve()
+  }
+  scriptRuns.length = 0
+  const p0 = promptCount()
+  const res = ctl.startRun({ task: 'fix typo in the app label', workRepo: work2, brainPath: brainA })
+  const id = res.ok ? res.run.id : ''
+  for (let i = 0; i < 100 && promptCount() === p0; i++) await new Promise((r) => setTimeout(r, 10))
+  const queued = ctl.guideRun(id, 'Keep the label lowercase')
+  check('UX 6 guide while busy is stored unsent, no new turn yet', queued.guide?.[0]?.sent !== true && promptCount() === p0 + 1)
+  release()
+  const r = await ctl.settle(id)
+  const turns = promptsFrom(p0)
+  check(
+    'UX 6 queued note gets one follow-up build turn before verify',
+    turns.length === 2 && /Phase: build\./.test(turns[1]) && turns[1].includes('Joe says: Keep the label lowercase') && scriptsAtFollowUp === 0 && scriptRuns.length > 0 && r?.phase === 'review' && r.guide?.[0]?.sent === true,
+    JSON.stringify({ turns: turns.length, scriptsAtFollowUp, phase: r?.phase })
+  )
+  ctl.abandonRun(id)
+  reset2()
+}
+
 // S3 3. runThrough false T2: still waits in plan until Approve.
 {
-  promptPlan = async (o) => (/Phase: plan\./.test(o.text) ? 'Plan: small.' : undefined)
+  promptPlan = async () => {}
+  claudeSays(['Plan: small.'])
   const p0 = promptCount()
   const res = ctl.startRun({ task: T2TASK, workRepo: work2, brainPath: brainA, runThrough: false })
   const id = res.ok ? res.run.id : ''
   const r = await ctl.settle(id)
-  check('S3 3 runThrough false T2 waits in plan, no build turn', r?.phase === 'plan' && r.plan?.status === 'waiting' && promptsFrom(p0).every((t) => /Phase: plan\./.test(t)) && !r.runThrough, JSON.stringify({ phase: r?.phase, plan: r?.plan?.status }))
+  check('S3 3 runThrough false T2 waits on the Opus plan, no Grok turn', r?.phase === 'plan' && r.plan?.status === 'waiting' && r.plan.by === 'opus' && r.plan.text === 'Plan: small.' && promptsFrom(p0).length === 0 && !r.runThrough, JSON.stringify({ phase: r?.phase, plan: r?.plan?.status }))
   ctl.abandonRun(id)
   reset2()
 }
@@ -783,8 +1049,10 @@ ctl.configureFactory(fakeDeps)
 // S3 5 + 8 + 11. T3, two disjoint slices: two worker tabs in parallel, verify with e2e:full and an artifact, Opus high.
 const T3TASK = 'Rewrite the whole app in Svelte'
 const order: string[] = []
-const t3Plan = (slices: { title: string; files: string[] }[]) => async (o: { text: string; tabId?: string }) => {
-  if (/Phase: plan\./.test(o.text)) return `Plan: split it.\n${JSON.stringify({ slices })}`
+type SliceSpec = { title: string; files: string[] }[]
+// The T3 plan comes from the fake claude (Opus), then any reviewer verdicts.
+const t3Says = (slices: SliceSpec, ...after: string[]) => claudeSays([`Plan: split it.\n${JSON.stringify({ slices })}`, ...after])
+const t3Build = async (o: { text: string; tabId?: string }) => {
   if (/Phase: build\./.test(o.text)) {
     const m = /Your slice (\d+) of \d+: [^.]+\. Edit only these files; other builders own the rest: (.+)/.exec(o.text)
     order.push(`start:${o.tabId}`)
@@ -796,16 +1064,18 @@ const t3Plan = (slices: { title: string; files: string[] }[]) => async (o: { tex
   }
 }
 {
-  promptPlan = t3Plan([
+  const slices = [
     { title: 'api', files: ['src/api.ts'] },
     { title: 'ui', files: ['src/ui.ts'] }
-  ])
+  ]
+  promptPlan = t3Build
   order.length = 0
-  claudeSays(['ok\nPASS'])
+  t3Says(slices, 'GAPS: 0\nPASS')
   scriptRuns.length = 0
   const e0 = effortCount()
   const c0 = claudeRows().length
   const p0 = promptCount()
+  const push0 = pushCalls
   const res = ctl.startRun({ task: T3TASK, workRepo: work2, brainPath: brainA, runThrough: true })
   check('S3 5 T3 start keeps T3 (asTier)', res.ok && res.run.tier === 'T3', JSON.stringify(res.ok ? res.run.tier : res))
   const id = res.ok ? res.run.id : ''
@@ -813,7 +1083,8 @@ const t3Plan = (slices: { title: string; files: string[] }[]) => async (o: { tex
   const builds = calls.filter((c) => c.fn === 'prompt').slice(p0).filter((c) => /Phase: build\./.test(String(c.o?.text)))
   const tabs = builds.map((c) => String(c.o?.tabId))
   const plans = promptsFrom(p0).filter((t) => /Phase: plan\./.test(t))
-  check('S3 5 T3 plan brief asks for slices JSON at Grok xhigh', plans.length === 1 && plans[0].includes('{"slices":') && /Tier: T3/.test(plans[0]) && effortsFrom(e0)[0] === 'xhigh', JSON.stringify(effortsFrom(e0)))
+  const planner = claudeRows().slice(c0)[0]
+  check('S3 5 T3 plan is Opus (claude) asking for slices JSON; no Grok plan turn; builders at Grok xhigh', plans.length === 0 && !!planner && planner.argv[1].includes('{"slices":') && planner.argv[1].includes('Limit T3') && r?.plan?.by === 'opus' && effortsFrom(e0).length > 0 && effortsFrom(e0).every((e) => e === 'xhigh'), JSON.stringify(effortsFrom(e0)))
   check('S3 5 slices parsed onto the run', r?.slices?.length === 2 && r.slices[0].files[0] === 'src/api.ts', JSON.stringify(r?.slices))
   check('S3 5 two worker tabIds factory-<id>-w1 and -w2', tabs.length === 2 && tabs.includes(`factory-${id}-w1`) && tabs.includes(`factory-${id}-w2`), JSON.stringify(tabs))
   check('S3 5 disjoint slices run in parallel (both start before either ends)', order.indexOf(`end:factory-${id}-w1`) > order.indexOf(`start:factory-${id}-w2`) && order.indexOf(`end:factory-${id}-w2`) > order.indexOf(`start:factory-${id}-w1`), JSON.stringify(order))
@@ -822,20 +1093,22 @@ const t3Plan = (slices: { title: string; files: string[] }[]) => async (o: { tex
   check('S3 6 verify T3 runs typecheck, test, the profile e2e, and an e2e:full row', scriptRuns.join(',') === 'typecheck,test,test:e2e' && r?.verify?.map((v) => v.script).join(',') === 'typecheck,test,test:e2e,e2e:full' && r.verify.at(-1)?.status === 'skipped', JSON.stringify({ scripts: scriptRuns, verify: r?.verify }))
   const art = store.runTextPath(id, 'verify')
   check('S3 8 verify artifact <id>.verify.txt under userData', r?.verifyArtifact === art && art.endsWith(`${id}.verify.txt`) && underPath(realish(userData), realish(art)) && readFileSync(art, 'utf8').includes('npm run typecheck: pass'), String(r?.verifyArtifact))
-  const review = claudeRows().slice(c0)[0]
+  const review = claudeRows().slice(c0)[1]
+  check('S3 11 T3 planner and reviewer are different claude processes', !!review && review.pid !== planner?.pid && review.argv[1].includes('strict-code-review/SKILL.md'))
   check('S3 11 T3 Opus review argv has --effort medium, plan mode', !!review && review.argv[review.argv.indexOf('--effort') + 1] === 'medium' && review.argv[review.argv.indexOf('--permission-mode') + 1] === 'plan', JSON.stringify(review?.argv.filter((a) => a.length < 40)))
-  check('S3 5 T3 runThrough reaches done with a commit, not pushed', r?.phase === 'done' && !!r.commitSha && !r.pushed && pushCalls === 0, JSON.stringify({ phase: r?.phase, error: r?.error, strict: r?.strict }))
+  check('S3 5 T3 runThrough reaches done with a commit, not pushed', r?.phase === 'done' && !!r.commitSha && !r.pushed && pushCalls === push0, JSON.stringify({ phase: r?.phase, error: r?.error, strict: r?.strict }))
   check('S3 8 work repo git status is clean of the artifact', git(work2, ['status', '--porcelain', '--ignored']).trim() === '' && !existsSync(join(work2, `${id}.verify.txt`)))
 }
 
 // S3 6. Overlapping slices go sequential.
 {
-  promptPlan = t3Plan([
+  const slices = [
     { title: 'one', files: ['src/shared.ts'] },
     { title: 'two', files: ['src/shared.ts', 'src/extra.ts'] }
-  ])
+  ]
+  promptPlan = t3Build
   order.length = 0
-  claudeSays(['ok\nPASS'])
+  t3Says(slices, 'GAPS: 0\nPASS')
   const res = ctl.startRun({ task: T3TASK, workRepo: work2, brainPath: brainA, runThrough: true })
   const id = res.ok ? res.run.id : ''
   const r = await ctl.settle(id)
@@ -845,20 +1118,48 @@ const t3Plan = (slices: { title: string; files: string[] }[]) => async (o: { tex
   check('S3 6 overlapping run still finishes', r?.phase === 'done', JSON.stringify({ phase: r?.phase, error: r?.error }))
 }
 
-// S3 5b. T3 disjoint slices, builder 2's prompt fails: builder 1 is cancelled and closed, the run fails.
+// UX fix 1. T3 two slices waiting in review: a guide note is one builder fix turn on the run tab, never the slice workers again.
 {
-  const ok = t3Plan([
+  const slices = [
     { title: 'api', files: ['src/api.ts'] },
     { title: 'ui', files: ['src/ui.ts'] }
-  ])
+  ]
+  promptPlan = t3Build
+  order.length = 0
+  t3Says(slices, 'GAPS: 0\nPASS', 'GAPS: 0\nPASS')
+  const res = ctl.startRun({ task: T3TASK, workRepo: work2, brainPath: brainA, runThrough: false })
+  const id = res.ok ? res.run.id : ''
+  await ctl.settle(id)
+  ctl.decideRun(id, 'approve-plan')
+  const r0 = await ctl.settle(id)
+  const p0 = promptCount()
+  ctl.guideRun(id, 'Name the api export count')
+  const r = await ctl.settle(id)
+  const extra = calls.filter((c) => c.fn === 'prompt').slice(p0)
+  check(
+    'UX fix 1 T3 guide in review: one builder fix turn with the note on the run tab, no worker tabs',
+    r0?.phase === 'review' && !!r0.diff && extra.length === 1 && extra[0].o?.tabId === `factory-${id}` && /Phase: fix\./.test(String(extra[0].o?.text)) && String(extra[0].o?.text).includes('Joe says: Name the api export count') && r?.phase === 'review' && !!r.diff,
+    JSON.stringify({ r0: r0?.phase, n: extra.length, tabs: extra.map((c) => c.o?.tabId), phase: r?.phase, error: r?.error })
+  )
+  ctl.abandonRun(id)
+  reset2()
+}
+
+// S3 5b. T3 disjoint slices, builder 2's prompt fails: builder 1 is cancelled and closed, the run fails.
+{
+  const slices = [
+    { title: 'api', files: ['src/api.ts'] },
+    { title: 'ui', files: ['src/ui.ts'] }
+  ]
+  t3Says(slices)
   // w2 fails at once; w1 is still mid-prompt and must see its cancel before it finishes.
   let cancelledMidPrompt = false
   promptPlan = async (o) => {
-    if (!/Phase: build\./.test(o.text)) return ok(o)
+    if (!/Phase: build\./.test(o.text)) return
     if (String(o.tabId).endsWith('-w2')) throw new Error('builder 2 broke')
     await new Promise((r) => setTimeout(r, 30))
     cancelledMidPrompt = calls.some((c) => c.fn === 'cancel' && c.o?.tabId === o.tabId)
-    return ok(o)
+    return t3Build(o)
   }
   order.length = 0
   const c0 = calls.length
@@ -885,7 +1186,7 @@ const t3Plan = (slices: { title: string; files: string[] }[]) => async (o: { tex
   promptPlan = async () => {
     for (const n of ['a', 'b', 'c', 'd', 'e']) writeFileSync(join(work2, 'src', `${n}.ts`), Array.from({ length: 40 }, (_, i) => `export const ${n}${i} = ${i}`).join('\n') + '\n')
   }
-  claudeSays(['ok\nPASS'])
+  claudeSays(['GAPS: 0\nPASS'])
   const res = ctl.startRun({ task: 'Fix the date shown one day off in the order list', workRepo: work2, brainPath: brainA, runThrough: true })
   const id = res.ok ? res.run.id : ''
   const r = await ctl.settle(id)
@@ -967,7 +1268,7 @@ const t3Plan = (slices: { title: string; files: string[] }[]) => async (o: { tex
   promptPlan = async () => {
     writeFileSync(join(work2, 'src', 'app.ts'), 'export const app = 88\n')
   }
-  claudeSays(['ok\nPASS'])
+  claudeSays(['GAPS: 0\nPASS'])
   const res = ctl.startRun({ task: 'fix typo in the app label', workRepo: work2, brainPath: brainA, runThrough: true })
   const id = res.ok ? res.run.id : ''
   const r = await ctl.settle(id)
@@ -1073,7 +1374,6 @@ if (argv[0] === '-p') {
   writeFileSync(
     plan,
     JSON.stringify([
-      { match: 'Phase: plan\\.', steps: [{ say: 'Plan: 1. add src/team.ts 2. test it.' }] },
       {
         match: 'Phase: build\\.',
         steps: [
@@ -1140,15 +1440,17 @@ if (argv[0] === '-p') {
   const triageRun = lines.find((l) => Array.isArray(l.argv) && (l.argv as string[])[0] === '-p') as { argv: string[]; path0: string; anthropic: boolean } | undefined
   check('S2 2 e2e triage one-shot: grok -p, --effort low, no --always-approve, shims first, no key', !!triageRun && triageRun.argv[triageRun.argv.indexOf('--effort') + 1] === 'low' && !triageRun.argv.includes('--always-approve') && triageRun.path0 === store.factoryShimDir() && !triageRun.anthropic, JSON.stringify(triageRun?.argv?.filter((a) => a.length < 40)))
   check('S2 2 e2e model triage kept T0 (raise-only)', end?.tier === 'T0' && end.triage.llm?.size === 'T0')
-  // T2 plan turn through the real lane: text only, effort high reaches Grok, nothing written.
+  // T2 through the real lane: the plan is the fake claude (Opus), never a Grok plan turn; nothing written.
+  claudeSays(['Plan: 1. add src/team.ts 2. test it.'])
+  const grokPrompts0 = lines.filter((l) => l.method === 'session/prompt').length
   const t2 = ctl.startRun({ task: 'Add a new page for team settings with a new route and shared types', workRepo: work, brainPath: brainA })
   const t2id = t2.ok ? t2.run.id : ''
   const t2end = await ctl.settle(t2id)
   const lines2 = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>)
-  const effortSet = lines2.find((l) => l.method === 'session/set_config_option' && (l.params as { configId?: string }).configId === 'reasoning_effort') as { params: { value?: string } } | undefined
-  check('S2 3 e2e T2 plan turn waits with the Grok plan text', t2end?.phase === 'plan' && t2end.plan?.text.startsWith('Plan: 1.') === true, JSON.stringify({ phase: t2end?.phase, plan: t2end?.plan, error: t2end?.error }))
-  check('S2 3 e2e factorySetEffort sends reasoning_effort high to the factory Grok', effortSet?.params?.value === 'high', JSON.stringify(effortSet))
-  check('S2 3 e2e plan turn wrote nothing in the work repo', git(work, ['status', '--porcelain']).trim() === '')
+  const grokPrompts = lines2.filter((l) => l.method === 'session/prompt')
+  check('S2 3 e2e T2 waits with the Opus plan text', t2end?.phase === 'plan' && t2end.plan?.by === 'opus' && t2end.plan.text.startsWith('Plan: 1.') === true, JSON.stringify({ phase: t2end?.phase, plan: t2end?.plan, error: t2end?.error }))
+  check('S2 3 e2e no Grok session/prompt for the plan', grokPrompts.length === grokPrompts0 && !grokPrompts.some((l) => /Phase: plan\./.test(JSON.stringify(l.params))), String(grokPrompts.length - grokPrompts0))
+  check('S2 3 e2e plan wrote nothing in the work repo', git(work, ['status', '--porcelain']).trim() === '')
   ctl.abandonRun(t2id)
   acp.acpKillAll()
   await new Promise((r) => setTimeout(r, 200))

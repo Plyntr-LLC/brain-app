@@ -1925,6 +1925,11 @@ button.runmeta-v:hover { color: var(--orange-deep); }
 .factory-repo-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.8rem; margin: -0.3rem 0 0.5rem; }
 .factory-repo-line label { display: inline-flex; align-items: center; gap: 0.3rem; }
 .factory-warn { color: var(--warn); margin: 0.3rem 0; font-size: 0.85rem; }
+.factory-files { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0; }
+.factory-guide { flex: none; overflow: visible; margin-top: 0.8rem; padding-bottom: 0; }
+.factory-guide .bubble { white-space: pre-wrap; font-size: 0.88rem; }
+.factory-compose { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 0.45rem; margin-top: 0.8rem; border-top: 1px solid var(--line); padding-top: 0.75rem; }
+.factory-compose textarea { border-radius: 8px; field-sizing: content; resize: none; min-height: 2.45rem; max-height: 30vh; font: inherit; }
 .factory-err { color: #b3261e; margin: 0.5rem 0; font-size: 0.85rem; }
 .factory-brain { margin-top: 0.5rem; color: #b3261e; }
 :root[data-theme='dark'] .factory-err,
