@@ -2064,7 +2064,6 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
       (r2c?.reviewCycles || 0) - cyc1 === 1 && h3.includes('- nit: rename x') && !h3.includes('Split changes') && r2c?.strict?.status === 'pass',
       JSON.stringify({ cycles: (r2c?.reviewCycles || 0) - cyc1, h3: h3.slice(0, 200), strict: r2c?.strict?.status })
     )
-    // The moved line is per turn: gone once a later builder turn starts.
     // RV 3b: no reviewer at all -> followUps empty.
     execFileSync('/bin/rm', ['-f', claudeBin])
     claudeSays([])
