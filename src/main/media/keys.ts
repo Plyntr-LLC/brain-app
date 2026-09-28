@@ -410,6 +410,10 @@ export function unwrapKeyWithBrain(opts: {
   return aesGcmOpen(opts.brainKey, opts.wrap, wrapAad(['brain', opts.mediaBrainId, opts.scope, opts.version]))
 }
 
+export function createBrainKey(): Buffer {
+  return randomKey()
+}
+
 export function createScopeKey(): Buffer {
   return randomKey()
 }

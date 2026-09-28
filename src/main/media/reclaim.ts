@@ -83,8 +83,7 @@ function reclaimDenied(row: MediaBrainRow | undefined, email: string, store: Mem
   if (seat?.role === 'project' || device?.seat_kind === 'project') return FORBIDDEN
   if (seat?.role === 'team') return FORBIDDEN
   if (seat?.role === 'owner' || seat?.role === 'scout') return null
-  if (device?.seat_kind === 'full' && row.created_by_email.toLowerCase() === want) return null
-  if (row.created_by_email.toLowerCase() === want && device?.seat_kind !== 'project') return null
+  if (row.created_by_email.toLowerCase() === want) return null
   return FORBIDDEN
 }
 
