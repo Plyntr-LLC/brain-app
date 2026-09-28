@@ -318,6 +318,10 @@ async function run() {
     for (let i = 0; i < 40 && !(slots[name] || [])[0]; i += 1) await tick()
     release(name, name === 'companies' ? [] : name === 'seats' ? { seats: [], invites: [], pack: '' } : name === 'health' ? { lastSync: '' } : name === 'skin' ? { joe: false, capture: false, jev: false, jevReady: false, components: [], learned: [] } : { on: false, url: '', origin: '', detail: '', platform: '', watching: false, pairPin: '', pairQr: '', pairUntil: 0, devices: [] })
   }
+  const projectFoldBtn = Array.from(document.querySelectorAll('button')).find((button) =>
+    (button.textContent || '').includes('Project-only people')
+  )
+  if (projectFoldBtn && !text().includes('This folder is other/brain')) projectFoldBtn.click()
   for (let i = 0; i < 40 && !text().includes('This folder is other/brain'); i += 1) await tick()
   if (!text().includes('This folder is other/brain')) throw new Error('watched repo did not show: ' + text())
   if (!text().includes('This brain is signed in as')) throw new Error('plyntr mode dropped early')
@@ -396,12 +400,17 @@ async function run() {
   {
     const section = document.querySelector('section.biz.current')
     const t = section?.textContent || ''
-    const mediaAt = t.indexOf('Videos and images')
-    const nextAt = t.indexOf('Project-only people')
-    if (mediaAt < 0) throw new Error('owner branch missing media block: ' + t)
-    if (nextAt < 0) throw new Error('owner branch missing project fold: ' + t)
-    if (mediaAt > nextAt) throw new Error('media block was not between localSyncOffer and Project-only people')
-    if (t.indexOf('Use Plyntr storage') < 0) throw new Error('owner branch missing storage switch')
+    for (let i = 0; i < 40 && !section?.querySelector('[data-media-block="1"]'); i += 1) await tick()
+    const media = document.querySelector('section.biz.current [data-media-block="1"]')
+    const fold = Array.from(document.querySelectorAll('section.biz.current button.set-fold')).find((button) =>
+      (button.textContent || '').includes('Project-only people')
+    )
+    if (!media) throw new Error('owner branch missing media block: ' + t)
+    if (!fold) throw new Error('owner branch missing project fold: ' + t)
+    if (!(media.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+      throw new Error('media block was not between localSyncOffer and Project-only people')
+    }
+    if (!(media.textContent || '').includes('Use Plyntr storage')) throw new Error('owner branch missing storage switch')
     lines.push('media-block-owner')
   }
 
@@ -414,13 +423,17 @@ async function run() {
   await fillRosterAndSlow()
   {
     const section = document.querySelector('section.biz.current')
-    const t = section?.textContent || ''
-    const mediaAt = t.indexOf('Videos and images')
-    const nextAt = t.indexOf('You are Team')
-    if (mediaAt < 0) throw new Error('team branch missing media block: ' + t)
-    if (nextAt < 0) throw new Error('team branch missing You are line: ' + t)
-    if (mediaAt > nextAt) throw new Error('media block was not between localSyncOffer and You are')
-    if (t.includes('Project-only people')) throw new Error('team branch showed add-users fold')
+    for (let i = 0; i < 40 && !section?.querySelector('[data-media-block="1"]'); i += 1) await tick()
+    const current = document.querySelector('section.biz.current')
+    const t = current?.textContent || ''
+    const media = current?.querySelector('[data-media-block="1"]')
+    const you = Array.from(current?.querySelectorAll('p') || []).find((p) => (p.textContent || '').startsWith('You are Team'))
+    if (!media) throw new Error('team branch missing media block: ' + t)
+    if (!you) throw new Error('team branch missing You are line: ' + t)
+    if (!(media.compareDocumentPosition(you) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+      throw new Error('media block was not between localSyncOffer and You are')
+    }
+    if (current?.querySelector('button.set-fold')) throw new Error('team branch showed add-users fold')
     lines.push('media-block-team')
   }
 

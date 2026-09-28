@@ -121,15 +121,13 @@ g.fetch = (async (input: string | URL) => {
 }) as typeof fetch
 void realFetch
 
-const net = await import('node:net')
-const tls = await import('node:tls')
-const https = await import('node:https')
+const req = createRequire(join(rootRepo, 'package.json'))
 const boom = () => {
   throw new Error('check-media forbids sockets')
 }
-;(net as { connect: typeof net.connect }).connect = boom as typeof net.connect
-;(tls as { connect: typeof tls.connect }).connect = boom as typeof tls.connect
-;(https as { request: typeof https.request }).request = boom as typeof https.request
+req('node:net').connect = boom
+req('node:tls').connect = boom
+req('node:https').request = boom
 
 const steps: Record<string, unknown> = {}
 const rendererChecks: string[] = []
