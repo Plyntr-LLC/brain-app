@@ -67,7 +67,20 @@ const brain = {
   },
   version: () => Promise.resolve('test'),
   onUpdate: () => () => {},
-  setup: { onBack: () => () => {} }
+  setup: { onBack: () => () => {} },
+  media: {
+    status: () => Promise.resolve(mediaNow),
+    shouldAsk: () => Promise.resolve(false),
+    skip: () => Promise.resolve({ ok: true }),
+    enable: () => Promise.resolve({ ok: true, fingerprint: '', detail: '' }),
+    setPassphrase: () => Promise.resolve({ ok: true }),
+    takePassphrase: () => Promise.resolve(null),
+    takeRecoveryKey: () => Promise.resolve(null),
+    add: () => Promise.resolve({ ok: false, status: 400, error: 'no', detail: '' }),
+    setCap: () => Promise.resolve({ ok: true, capBytes: 0 }),
+    turnOnBucket: () => Promise.resolve({ ok: true, bucket: '' }),
+    allow: () => Promise.resolve({ ok: true, detail: '' })
+  }
 }
 
 ;(window as unknown as { brain: typeof brain }).brain = brain
@@ -94,6 +107,18 @@ let bridgeNow: {
   businesses: { id: string; name: string; hq_repo: string; owners: { email: string; name: string; role: string }[] }[]
 } | null = null
 let watchedNow: () => Promise<string> = () => Promise.resolve('')
+let mediaNow = {
+  routes: false,
+  on: false,
+  hasSeatToken: false,
+  fingerprint: '',
+  usedBytes: 0,
+  capBytes: null as number | null,
+  bucketStatus: 'off' as const,
+  waiting: [] as { deviceId: string; name: string; fingerprint: string; project: string }[],
+  projects: [] as { id: string; name: string; root: string }[],
+  detail: ''
+}
 
 function mount() {
   entered.length = 0
@@ -293,6 +318,10 @@ async function run() {
     for (let i = 0; i < 40 && !(slots[name] || [])[0]; i += 1) await tick()
     release(name, name === 'companies' ? [] : name === 'seats' ? { seats: [], invites: [], pack: '' } : name === 'health' ? { lastSync: '' } : name === 'skin' ? { joe: false, capture: false, jev: false, jevReady: false, components: [], learned: [] } : { on: false, url: '', origin: '', detail: '', platform: '', watching: false, pairPin: '', pairQr: '', pairUntil: 0, devices: [] })
   }
+  const projectFoldBtn = Array.from(document.querySelectorAll('button')).find((button) =>
+    (button.textContent || '').includes('Project-only people')
+  )
+  if (projectFoldBtn && !text().includes('This folder is other/brain')) projectFoldBtn.click()
   for (let i = 0; i < 40 && !text().includes('This folder is other/brain'); i += 1) await tick()
   if (!text().includes('This folder is other/brain')) throw new Error('watched repo did not show: ' + text())
   if (!text().includes('This brain is signed in as')) throw new Error('plyntr mode dropped early')
@@ -332,6 +361,93 @@ async function run() {
   if (hqValue() !== 'acme/hq') throw new Error('watched failure did not clear the folder repo: ' + hqValue())
   lines.push('inactive-clears-plyntr')
   lines.push('watched-repo-cleared')
+
+  async function fillRosterAndSlow() {
+    for (let i = 0; i < 40 && (slots.rosterAt || []).length < 1; i += 1) await tick()
+    while ((slots.rosterAt || [])[0]) release('rosterAt', [])
+    for (let i = 0; i < 40 && !(slots.roster || [])[0]; i += 1) await tick()
+    if ((slots.roster || [])[0]) release('roster', [])
+    for (let i = 0; i < 40 && !(slots.team || [])[0]; i += 1) await tick()
+    if ((slots.team || [])[0]) release('team', teamOnly)
+    for (const name of ['companies', 'seats', 'health', 'skin', 'phone']) {
+      for (let i = 0; i < 40 && !(slots[name] || [])[0]; i += 1) await tick()
+      if ((slots[name] || [])[0]) {
+        release(
+          name,
+          name === 'companies'
+            ? []
+            : name === 'seats'
+              ? { seats: [], invites: [], pack: '' }
+              : name === 'health'
+                ? { lastSync: '' }
+                : name === 'skin'
+                  ? { joe: false, capture: false, jev: false, jevReady: false, components: [], learned: [] }
+                  : { on: false, url: '', origin: '', detail: '', platform: '', watching: false, pairPin: '', pairQr: '', pairUntil: 0, devices: [] }
+        )
+      }
+    }
+    for (let i = 0; i < 40; i += 1) await tick()
+  }
+
+  mediaNow = { ...mediaNow, routes: true, on: false, hasSeatToken: true }
+  unmount()
+  await tick()
+  show('owner')
+  await tick()
+  release('get', { name: 'Bea', superAdmin: true, email: 'joe@plyntr.com', role: 'owner', brainPath: '/tmp/Offmac', brainName: 'Offmac' })
+  release('list', offmac)
+  await fillRosterAndSlow()
+  {
+    const section = document.querySelector('section.biz.current')
+    const t = section?.textContent || ''
+    for (let i = 0; i < 40 && !section?.querySelector('[data-media-block="1"]'); i += 1) await tick()
+    const media = document.querySelector('section.biz.current [data-media-block="1"]')
+    const fold = Array.from(document.querySelectorAll('section.biz.current button.set-fold')).find((button) =>
+      (button.textContent || '').includes('Project-only people')
+    )
+    if (!media) throw new Error('owner branch missing media block: ' + t)
+    if (!fold) throw new Error('owner branch missing project fold: ' + t)
+    if (!(media.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+      throw new Error('media block was not between localSyncOffer and Project-only people')
+    }
+    if (!(media.textContent || '').includes('Use Plyntr storage')) throw new Error('owner branch missing storage switch')
+    lines.push('media-block-owner')
+  }
+
+  unmount()
+  await tick()
+  show('team')
+  await tick()
+  release('get', { name: 'Pat', superAdmin: false, email: 'pat@example.com', role: 'team', brainPath: '/tmp/Offmac', brainName: 'Offmac' })
+  release('list', offmac)
+  await fillRosterAndSlow()
+  {
+    const section = document.querySelector('section.biz.current')
+    for (let i = 0; i < 40 && !section?.querySelector('[data-media-block="1"]'); i += 1) await tick()
+    const current = document.querySelector('section.biz.current')
+    const t = current?.textContent || ''
+    const media = current?.querySelector('[data-media-block="1"]')
+    const you = Array.from(current?.querySelectorAll('p') || []).find((p) => (p.textContent || '').startsWith('You are Team'))
+    if (!media) throw new Error('team branch missing media block: ' + t)
+    if (!you) throw new Error('team branch missing You are line: ' + t)
+    if (!(media.compareDocumentPosition(you) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+      throw new Error('media block was not between localSyncOffer and You are')
+    }
+    if (current?.querySelector('button.set-fold')) throw new Error('team branch showed add-users fold')
+    lines.push('media-block-team')
+  }
+
+  mediaNow = { ...mediaNow, routes: false, hasSeatToken: false }
+  unmount()
+  await tick()
+  show('owner')
+  await tick()
+  release('get', { name: 'Bea', superAdmin: true, email: 'joe@plyntr.com', role: 'owner', brainPath: '/tmp/Offmac', brainName: 'Offmac' })
+  release('list', offmac)
+  await fillRosterAndSlow()
+  if (text().includes('Videos and images')) throw new Error('packed hide failed: media block showed on 404')
+  lines.push('media-block-hidden')
+
   ;(window as unknown as { __settingsResult?: unknown }).__settingsResult = { ok: true, lines }
 }
 

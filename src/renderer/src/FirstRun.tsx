@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { STEPS, type AiKind, type PathKind, type Session } from '@shared/contracts'
 import { prettyEffort } from '@shared/effort'
+import { MEDIA_ASK_BODY, MEDIA_ASK_H1, MEDIA_PASS_COPY, MEDIA_RECOVERY_COPY } from '@shared/media'
 import { CODE_PROJECT_HEDGE, CODE_SENT_MANY, ipcErrorText } from '@shared/plyntr-org-copy'
 import { agencyVerifyButtons, plyntrJoinButtons } from '@shared/setup-guide'
 import { openBrainAccountLabel } from '@shared/shell-switch'
@@ -108,6 +109,14 @@ export function FirstRun() {
   } | null>(null)
   channelRef.current = s.channel
   const [folderCopyBusy, setFolderCopyBusy] = useState(false)
+  const [storageAskErr, setStorageAskErr] = useState('')
+  const [storageBusy, setStorageBusy] = useState(false)
+  const [storageWords, setStorageWords] = useState('')
+  const [storageRecovery, setStorageRecovery] = useState('')
+  const [storageOwn, setStorageOwn] = useState('')
+  const [storageOwn2, setStorageOwn2] = useState('')
+  const [storageSaved, setStorageSaved] = useState(false)
+  const skipStorageAsk = useRef(false)
 
   function defaultBackScreen(current: string, session: Session): string | null {
     switch (current) {
@@ -265,6 +274,77 @@ export function FirstRun() {
     })
   }
 
+  function goChat(patch?: Partial<Session>) {
+    void (async () => {
+      const folder = String(patch?.brainPath || s.brainPath || '').trim()
+      const role = String(patch?.role || s.role || '')
+      try {
+        if (!skipStorageAsk.current && folder && window.brain.media?.shouldAsk) {
+          const ask = await window.brain.media.shouldAsk({ folder, role })
+          if (ask) {
+            setStorageAskErr('')
+            setStorageWords('')
+            setStorageRecovery('')
+            setStorageOwn('')
+            setStorageOwn2('')
+            setStorageSaved(false)
+            go('storage-ask', patch)
+            return
+          }
+        }
+      } catch {
+        /* Storage error still opens chat. */
+      }
+      go('chat', patch)
+    })()
+  }
+
+  async function keepOnThisComputer() {
+    const folder = String(s.brainPath || '')
+    try {
+      if (folder) await window.brain.media?.skip(folder)
+    } catch {
+      /* Setup never blocks on storage. */
+    }
+    skipStorageAsk.current = true
+    goChat()
+  }
+
+  async function usePlyntrFromAsk() {
+    const folder = String(s.brainPath || '')
+    setStorageBusy(true)
+    setStorageAskErr('')
+    try {
+      await window.brain.media.enable({ folder })
+      setStorageWords((await window.brain.media.takePassphrase(folder)) || '')
+      setStorageRecovery((await window.brain.media.takeRecoveryKey(folder)) || '')
+    } catch (e) {
+      setStorageAskErr(ipcErrorText(e))
+    } finally {
+      setStorageBusy(false)
+    }
+  }
+
+  async function finishStorageAsk() {
+    const folder = String(s.brainPath || '')
+    if (storageOwn || storageOwn2) {
+      if (storageOwn !== storageOwn2) {
+        setStorageAskErr('Type the same passphrase twice.')
+        return
+      }
+      try {
+        await window.brain.media.setPassphrase({ folder, passphrase: storageOwn })
+      } catch (e) {
+        setStorageAskErr(ipcErrorText(e))
+        return
+      }
+    }
+    setStorageWords('')
+    setStorageRecovery('')
+    skipStorageAsk.current = true
+    goChat()
+  }
+
   async function openChatOrSignIn(
     pick: AiKind,
     path: string,
@@ -414,7 +494,7 @@ export function FirstRun() {
         go('needs', { brainPath: draft.path, ai: who, channel: 'agency', role: 'owner', team })
         return
       }
-      go('chat', {
+      goChat({
         brainPath: draft.path,
         ai: who,
         channel: 'agency',
@@ -551,7 +631,7 @@ export function FirstRun() {
         go('needs', next)
         return
       }
-      if (pick && signed) go('chat', next)
+      if (pick && signed) goChat(next)
       else if (pick) go('aiwork', next)
       else go('aipick', next)
     } catch (e) {
@@ -570,7 +650,7 @@ export function FirstRun() {
       if (!path) go('aipick')
       else if (!st?.ready) go('needs')
       else if (await holdForBridge({ brainPath: path, abWatching: Boolean(st?.watching) })) return
-      else go('chat', { brainPath: path, abWatching: Boolean(st?.watching) })
+      else goChat({ brainPath: path, abWatching: Boolean(st?.watching) })
     })()
   }
 
@@ -684,7 +764,7 @@ export function FirstRun() {
     if (st.ready && signed && path) {
       const patch = { ...lane, email, member: res.member, abWatching: true, ai: pick, brainPath: path }
       if (await holdForBridge(patch)) return
-      go('chat', patch)
+      goChat(patch)
       return
     }
     if (st.watching || path) {
@@ -1231,6 +1311,83 @@ export function FirstRun() {
               </div>
             </div>
           )}
+          {s.screen === 'storage-ask' && (
+            <div data-setup-screen="storage-ask">
+              <p className="kicker">Videos and images</p>
+              <h1>{MEDIA_ASK_H1}</h1>
+              <p>{MEDIA_ASK_BODY}</p>
+              {storageAskErr ? <p className="note">{storageAskErr}</p> : null}
+              {storageWords || storageRecovery ? (
+                <>
+                  <p>{MEDIA_PASS_COPY}</p>
+                  {storageWords ? (
+                    <p>
+                      <code>{storageWords}</code>
+                    </p>
+                  ) : null}
+                  <div className="actions">
+                    <button
+                      className="ghost"
+                      type="button"
+                      onClick={() => {
+                        if (storageWords) void navigator.clipboard?.writeText(storageWords)
+                      }}
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <label className="field">
+                    Use your own
+                    <input value={storageOwn} onChange={(e) => setStorageOwn(e.target.value)} type="password" />
+                  </label>
+                  <label className="field">
+                    Type it again
+                    <input value={storageOwn2} onChange={(e) => setStorageOwn2(e.target.value)} type="password" />
+                  </label>
+                  <p>{MEDIA_RECOVERY_COPY}</p>
+                  {storageRecovery ? (
+                    <p>
+                      <code>{storageRecovery}</code>
+                    </p>
+                  ) : null}
+                  <div className="actions">
+                    <button
+                      className="ghost"
+                      type="button"
+                      onClick={() => {
+                        if (storageRecovery) void navigator.clipboard?.writeText(storageRecovery)
+                      }}
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <label className="tiny">
+                    <input type="checkbox" checked={storageSaved} onChange={(e) => setStorageSaved(e.target.checked)} /> I
+                    saved both
+                  </label>
+                  <div className="actions">
+                    <button
+                      className="primary"
+                      type="button"
+                      disabled={!storageSaved}
+                      onClick={() => void finishStorageAsk()}
+                    >
+                      Done
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="actions">
+                  <button className="primary" type="button" disabled={storageBusy} onClick={() => void keepOnThisComputer()}>
+                    Keep on this computer
+                  </button>
+                  <button className="ghost" type="button" disabled={storageBusy} onClick={() => void usePlyntrFromAsk()}>
+                    Use Plyntr storage
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {s.screen === 'github-verify' && (
             <div data-setup-screen="github-verify">
               <p className="kicker">GitHub</p>
@@ -1293,11 +1450,11 @@ export function FirstRun() {
                 if (routed === 'blocked') return false
                 if (routed === 'sign-in') return true
                 if (String(path).includes('setup-drafts')) {
-                  go('chat', patch)
+                  goChat(patch)
                   return true
                 }
                 if (await holdForBridge(patch)) return true
-                go('chat', patch)
+                goChat(patch)
                 return true
               }}
               onNeedFolder={() => (s.channel === 'local' ? go('plyntr-code') : go('github'))}
