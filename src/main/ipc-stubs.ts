@@ -146,6 +146,7 @@ import {
   type ClientBrain,
   type TeamPerson
 } from './settings-store'
+import { afterHqProjectRevoke, afterPlyntrSeatRevoke, recordMintedInvite } from './media/session'
 
 type RecentFolder = { path: string; name: string; watching?: boolean }
 
@@ -548,6 +549,7 @@ export function registerStubIpc(): void {
     }
     if (row.role === 'project') {
       const added = await addProjectSeat({ name: row.name, email, roots: brains })
+      recordMintedInvite({ email, roots: brains, role: 'project' })
       return { people: loadTeam(), roster: { ok: added.ok, detail: added.detail } }
     }
     const people = loadTeam()
@@ -849,7 +851,11 @@ export function registerStubIpc(): void {
       }
     })
   )
-  ipcMain.handle('hqSync:revoke', (_e, seatId: string) => revokeProjectSeat(seatId))
+  ipcMain.handle('hqSync:revoke', async (_e, seatId: string) => {
+    const result = await revokeProjectSeat(seatId)
+    afterHqProjectRevoke(String(seatId || ''))
+    return result
+  })
   ipcMain.handle('hqSync:health', () => readSyncHealth())
   ipcMain.handle(
     'hqSync:addCompany',
@@ -1779,10 +1785,22 @@ export function registerStubIpc(): void {
   })
   ipcMain.handle(
     'plyntr:invite',
-    async (_e, brainId: string, body: { email: string; name: string; role: string; roots?: string[] }) =>
-      plyntrMintInvite(brainId, body)
+    async (_e, brainId: string, body: { email: string; name: string; role: string; roots?: string[] }) => {
+      const result = await plyntrMintInvite(brainId, body)
+      recordMintedInvite({
+        brainId: String(brainId || ''),
+        email: String(body?.email || ''),
+        roots: Array.isArray(body?.roots) ? body.roots.map(String) : [],
+        role: String(body?.role || '')
+      })
+      return result
+    }
   )
-  ipcMain.handle('plyntr:revokeSeat', async (_e, brainId: string, seatId: string) => plyntrRevokeSeat(brainId, seatId))
+  ipcMain.handle('plyntr:revokeSeat', async (_e, brainId: string, seatId: string) => {
+    const result = await plyntrRevokeSeat(brainId, seatId)
+    afterPlyntrSeatRevoke(String(brainId || ''), String(seatId || ''))
+    return result
+  })
   ipcMain.handle('plyntr:revokeInvite', async (_e, brainId: string, inviteId: string) => plyntrRevokeInvite(brainId, inviteId))
   ipcMain.handle('plyntr:transfer', async (_e, brainId: string) => plyntrTransferScout(brainId))
   ipcMain.handle('plyntr:active', () => {

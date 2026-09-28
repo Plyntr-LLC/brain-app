@@ -1,6 +1,7 @@
 export type MediaBrainRow = {
   id: string
   plyntr_brain_id: string
+  hq_repo: string
   folder: string
   bucket: string
   bucket_status: 'off' | 'on'
@@ -8,6 +9,7 @@ export type MediaBrainRow = {
   used_bytes: number
   reserved_bytes: number
   brain_key_version: number
+  brain_rotation_pending: string
   recovery_wrap: string
   passphrase_wrap: string
   passphrase_salt: string
@@ -15,6 +17,7 @@ export type MediaBrainRow = {
   recovery_proof: string
   created_by_email: string
   status: string
+  user_data: string
 }
 
 export type MediaWrapRow = {
@@ -50,6 +53,10 @@ export type MediaDeviceRow = {
   media_brain_id: string
   email: string
   fingerprint: string
+  public_key: string
+  seat_kind: 'full' | 'project'
+  seat_id: string
+  roots: string[]
   status: 'approved' | 'pending' | 'blocked' | 'revoked'
 }
 
@@ -59,6 +66,50 @@ export type MediaScopeRow = {
   root: string
   key_version: number
   escrow_wrap: string
+  needs_rotation: boolean
+}
+
+export type MediaSeatRow = {
+  id: string
+  media_brain_id: string
+  email: string
+  role: string
+  roots: string[]
+  status: string
+  kind?: 'pbt' | 'pms'
+}
+
+export type MediaCodeRow = {
+  id: string
+  email: string
+  hash: string
+  purpose: 'email' | 'invite'
+  media_brain_id: string
+  role: string
+  roots: string[]
+  expires: number
+  used: boolean
+}
+
+export type MediaInviteRow = {
+  id: string
+  media_brain_id: string
+  email: string
+  role: string
+  roots: string[]
+  hash: string
+  status: 'pending' | 'used' | 'revoked'
+  expires: number
+}
+
+export type MediaReclaimRow = {
+  token: string
+  email: string
+  media_brain_id: string
+  device_pub: string
+  challenge: string
+  expires: number
+  used: boolean
 }
 
 export type MemoryMediaStore = {
@@ -67,16 +118,36 @@ export type MemoryMediaStore = {
   objects: MediaObjectRow[]
   devices: MediaDeviceRow[]
   scopes: MediaScopeRow[]
+  seats: MediaSeatRow[]
+  codes: MediaCodeRow[]
+  invites: MediaInviteRow[]
+  reclaims: MediaReclaimRow[]
 }
 
+const DRY_WORKER = '__dry_worker__'
 const stores = new Map<string, MemoryMediaStore>()
 
 function empty(): MemoryMediaStore {
-  return { brains: [], wraps: [], objects: [], devices: [], scopes: [] }
+  return {
+    brains: [],
+    wraps: [],
+    objects: [],
+    devices: [],
+    scopes: [],
+    seats: [],
+    codes: [],
+    invites: [],
+    reclaims: []
+  }
+}
+
+function storeKey(userData: string): string {
+  if (process.env.BRAIN_APP_DRY_RUN === '1') return DRY_WORKER
+  return String(userData || '')
 }
 
 export function memoryMediaStore(userData: string): MemoryMediaStore {
-  const key = String(userData || '')
+  const key = storeKey(userData)
   let hit = stores.get(key)
   if (!hit) {
     hit = empty()
@@ -86,8 +157,10 @@ export function memoryMediaStore(userData: string): MemoryMediaStore {
 }
 
 export function resetMemoryMediaStore(userData?: string): void {
-  if (userData) stores.delete(String(userData))
-  else stores.clear()
+  if (userData) {
+    stores.delete(String(userData))
+    stores.delete(DRY_WORKER)
+  } else stores.clear()
 }
 
 export function dumpMemoryMediaStore(userData: string): MemoryMediaStore {

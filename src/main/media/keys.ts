@@ -9,6 +9,7 @@ import {
   randomBytes,
   scryptSync,
   sign,
+  verify,
   type KeyObject
 } from 'node:crypto'
 import { PLYNTR_CODE_ALPHABET } from '../../shared/plyntr-invite.ts'
@@ -31,6 +32,7 @@ export const PASSPHRASE_SHORT_FAIL = 'Use at least 16 characters for the passphr
 const live = new Map<string, Buffer>()
 
 const ED25519_PKCS8_HEAD = Buffer.from('302e020100300506032b657004220420', 'hex')
+const ED25519_SPKI_HEAD = Buffer.from('302a300506032b6570032100', 'hex')
 const X25519_SPKI_HEAD = Buffer.from('302a300506032b656e032100', 'hex')
 
 export function crockfordFromBytes(bytes: Buffer, length: number): string {
@@ -168,6 +170,10 @@ function scryptPassphrase(passphrase: string, salt: Buffer): Buffer {
   }
 }
 
+export function passphraseIkm(passphrase: string, salt: Buffer): Buffer {
+  return scryptPassphrase(passphrase, salt)
+}
+
 export function hkdfBytes(ikm: Buffer, info: string, length: number, salt: Buffer = Buffer.alloc(0)): Buffer {
   return Buffer.from(hkdfSync('sha256', ikm, salt, info, length))
 }
@@ -204,6 +210,25 @@ export function signWithProof(ikm: Buffer, info: string, data: Buffer): Buffer {
   const priv = ed25519PrivateFromSeed(seed)
   seed.fill(0)
   return sign(null, data, priv)
+}
+
+export function signWithSeed(seed: Buffer, data: Buffer): Buffer {
+  return sign(null, data, ed25519PrivateFromSeed(seed))
+}
+
+export function verifyEd25519(publicKey: Buffer, data: Buffer, signature: Buffer): boolean {
+  if (!Buffer.isBuffer(publicKey) || publicKey.length !== KEY_BYTES) return false
+  if (!Buffer.isBuffer(signature) || !signature.length) return false
+  try {
+    const pub = createPublicKey({
+      key: Buffer.concat([ED25519_SPKI_HEAD, publicKey]),
+      format: 'der',
+      type: 'spki'
+    })
+    return verify(null, data, pub, signature)
+  } catch {
+    return false
+  }
 }
 
 export const PASSPHRASE_INFO = (mediaBrainId: string): string => `brain-media passphrase v1|${mediaBrainId}`
@@ -363,6 +388,26 @@ export function unwrapKeyFromDevice(opts: {
     wrapKey.fill(0)
     throw new Error(KEY_UNLOCK_FAIL)
   }
+}
+
+export function wrapKeyWithBrain(opts: {
+  key: Buffer
+  brainKey: Buffer
+  mediaBrainId: string
+  scope: string
+  version: number
+}): Buffer {
+  return aesGcmSeal(opts.brainKey, opts.key, wrapAad(['brain', opts.mediaBrainId, opts.scope, opts.version]))
+}
+
+export function unwrapKeyWithBrain(opts: {
+  wrap: Buffer
+  brainKey: Buffer
+  mediaBrainId: string
+  scope: string
+  version: number
+}): Buffer {
+  return aesGcmOpen(opts.brainKey, opts.wrap, wrapAad(['brain', opts.mediaBrainId, opts.scope, opts.version]))
 }
 
 export function createBrainKey(): Buffer {

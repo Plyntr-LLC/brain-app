@@ -16,6 +16,7 @@ export type MediaStatus = {
   capBytes: number | null
   bucketStatus: 'off' | 'on'
   waiting: MediaWaiting[]
+  others: MediaWaiting[]
   projects: { id: string; name: string; root: string }[]
   detail: string
 }
@@ -40,8 +41,8 @@ export function shouldShowStorageAsk(opts: {
 }): boolean {
   if (!opts.routes) return false
   if (opts.storageOn || opts.mediaAsked) return false
-  if (!opts.hasSeatToken) return false
-  return canTurnOnGithubSync(opts.role, Boolean(opts.joe))
+  if (opts.hasSeatToken) return canTurnOnGithubSync(opts.role, Boolean(opts.joe))
+  return canTurnOnGithubSync(opts.role, false)
 }
 
 export function prettyStorageBytes(n: number): string {
