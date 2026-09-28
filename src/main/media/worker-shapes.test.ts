@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  MEDIA_BRAINS_PATH,
   MEDIA_CODES_EMAIL_PATH,
   MEDIA_INVITES_PATH,
   MEDIA_INVITES_REDEEM_PATH,
@@ -28,6 +29,7 @@ test('Slice 5 worker error body is { error: device_revoked }', () => {
 
 test('Slice 6 reclaim and pms_ paths match the worker', () => {
   assert.equal(MEDIA_CODES_EMAIL_PATH, '/v1/media/codes/email')
+  assert.equal(MEDIA_BRAINS_PATH, '/v1/media/brains')
   assert.equal(MEDIA_INVITES_PATH, '/v1/media/invites')
   assert.equal(MEDIA_INVITES_REDEEM_PATH, '/v1/media/invites/redeem')
   assert.equal(MEDIA_RECLAIM_START_PATH, '/v1/media/reclaim/start')

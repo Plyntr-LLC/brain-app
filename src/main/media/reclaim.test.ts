@@ -8,7 +8,7 @@ import {
   wrapBrainKeyWithPassphrase,
   wrapBrainKeyWithRecovery
 } from './keys.ts'
-import { resetMediaCodeRate, postMediaEmailCode, postReclaimFinish, postReclaimStart } from './reclaim.ts'
+import { resetMediaCodeRate, postMediaBrainsClaim, postMediaEmailCode, postMediaInvite, postMediaInviteRedeem, postReclaimFinish, postReclaimStart } from './reclaim.ts'
 import { memoryMediaStore, resetMemoryMediaStore } from './store.ts'
 
 test('reclaim/start is 403 with no wrap for project, team, revoked, and stranger', () => {
@@ -169,4 +169,123 @@ test('reclaim/finish refuses a brain-key signature and token reuse', () => {
     devicePublicKey: pub
   })
   assert.equal(reuse.status, 403)
+})
+
+test('POST /v1/media/brains {email,code} mints pms_ and refuses a used code', () => {
+  process.env.BRAIN_APP_DRY_RUN = '1'
+  resetMemoryMediaStore()
+  resetMediaCodeRate()
+  const userData = '/tmp/brains-claim'
+  const minted = postMediaEmailCode({ userData, email: 'keyless@example.test' })
+  const claim = postMediaBrainsClaim({
+    userData,
+    email: 'keyless@example.test',
+    code: String(minted.code || '')
+  })
+  assert.equal(claim.status, 200)
+  assert.equal(String(claim.seatToken || '').startsWith('pms_'), true)
+  const reuse = postMediaBrainsClaim({
+    userData,
+    email: 'keyless@example.test',
+    code: String(minted.code || '')
+  })
+  assert.equal(reuse.status, 401)
+  const bad = postMediaBrainsClaim({ userData, email: 'keyless@example.test', code: 'NOPE' })
+  assert.equal(bad.status, 401)
+})
+
+test('brains claim is 409 exists when that email already has a media brain', () => {
+  process.env.BRAIN_APP_DRY_RUN = '1'
+  resetMemoryMediaStore()
+  resetMediaCodeRate()
+  const userData = '/tmp/brains-exists'
+  const mem = memoryMediaStore(userData)
+  mem.brains.push({
+    id: 'brainid01brainid01brainid',
+    plyntr_brain_id: 'brain-owner',
+    hq_repo: 'plyntr/alpha-brain',
+    folder: '/tmp/brain',
+    bucket: 'bm-x',
+    bucket_status: 'on',
+    cap_bytes: 10,
+    used_bytes: 0,
+    reserved_bytes: 0,
+    brain_key_version: 1,
+    brain_rotation_pending: '',
+    recovery_wrap: 'aa',
+    passphrase_wrap: 'bb',
+    passphrase_salt: 'cc',
+    passphrase_proof: 'dd',
+    recovery_proof: 'ee',
+    created_by_email: 'owner@example.test',
+    status: 'on',
+    user_data: userData
+  })
+  const minted = postMediaEmailCode({ userData, email: 'owner@example.test' })
+  const claim = postMediaBrainsClaim({
+    userData,
+    email: 'owner@example.test',
+    code: String(minted.code || '')
+  })
+  assert.equal(claim.status, 409)
+  assert.equal(claim.body.media_brain_id, 'brainid01brainid01brainid')
+  assert.equal(claim.seatToken, undefined)
+})
+
+test('media invites and redeem are pms_ only', () => {
+  process.env.BRAIN_APP_DRY_RUN = '1'
+  resetMemoryMediaStore()
+  resetMediaCodeRate()
+  const userData = '/tmp/media-invites'
+  const mem = memoryMediaStore(userData)
+  mem.brains.push({
+    id: 'brainid01brainid01brainid',
+    plyntr_brain_id: 'brain-owner',
+    hq_repo: 'plyntr/alpha-brain',
+    folder: '/tmp/brain',
+    bucket: 'bm-x',
+    bucket_status: 'on',
+    cap_bytes: 10,
+    used_bytes: 0,
+    reserved_bytes: 0,
+    brain_key_version: 1,
+    brain_rotation_pending: '',
+    recovery_wrap: 'aa',
+    passphrase_wrap: 'bb',
+    passphrase_salt: 'cc',
+    passphrase_proof: 'dd',
+    recovery_proof: 'ee',
+    created_by_email: 'owner@example.test',
+    status: 'on',
+    user_data: userData
+  })
+  const refused = postMediaInvite({
+    userData,
+    mediaBrainId: 'brainid01brainid01brainid',
+    email: 'friend@example.test',
+    builderRole: 'owner',
+    pmsBrain: false
+  })
+  assert.equal(refused.status, 403)
+  const minted = postMediaInvite({
+    userData,
+    mediaBrainId: 'brainid01brainid01brainid',
+    email: 'friend@example.test',
+    builderRole: 'owner',
+    pmsBrain: true
+  })
+  assert.equal(minted.status, 200)
+  const redeemed = postMediaInviteRedeem({
+    userData,
+    email: 'friend@example.test',
+    code: String(minted.code || '')
+  })
+  assert.equal(redeemed.status, 200)
+  assert.equal(String(redeemed.seatToken || '').startsWith('pms_'), true)
+  const reuse = postMediaInviteRedeem({
+    userData,
+    email: 'friend@example.test',
+    code: String(minted.code || '')
+  })
+  assert.equal(reuse.status, 410)
 })

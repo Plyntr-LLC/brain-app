@@ -1,4 +1,4 @@
-/** HTTP bodies that match brain-sync media-v1 Slice 5–6 (codes, pms_ seats, reclaim). */
+/** HTTP bodies that match brain-sync media-v1 Slice 6 (tip MEDIA_V1_TIP in transport.ts). */
 
 export const MEDIA_STATE_PATH = '/v1/media/state'
 export const MEDIA_WRAPS_PATH = '/v1/media/wraps'
