@@ -10,10 +10,15 @@ import { writeCipherCache } from './cache.ts'
 import { enableDirectoryBucket, putDryObject } from './dry-worker.ts'
 import {
   DRY_ONLY,
+  MEDIA_V1_TIP,
   R2_REFUSE,
+  SLICE6_MEDIA_PATHS,
   assertNotR2Url,
   loadMediaV1,
   loadR2Admin,
+  mediaSyncRoot,
+  mediaV1SourceHasSlice6,
+  resolveMediaSyncRoot,
   startDryMedia
 } from './transport.ts'
 
@@ -89,5 +94,47 @@ test('media-v1 load refuses when dry-run is off', async () => {
     await assert.rejects(loadMediaV1('/tmp'), (err: Error) => err.message === DRY_ONLY)
   } finally {
     if (prev !== undefined) process.env.BRAIN_APP_DRY_RUN = prev
+  }
+})
+
+test('MEDIA_V1_TIP is the Slice 6 worker merge', () => {
+  assert.equal(MEDIA_V1_TIP, 'cb25c2b0a58cc5553497cf8f50b1f010f8ba2e62')
+  assert.deepEqual([...SLICE6_MEDIA_PATHS], [
+    '/v1/media/codes/email',
+    '/v1/media/brains',
+    '/v1/media/invites',
+    '/v1/media/invites/redeem',
+    '/v1/media/reclaim/start',
+    '/v1/media/reclaim/finish'
+  ])
+  const src = SLICE6_MEDIA_PATHS.join('\n')
+  assert.equal(mediaV1SourceHasSlice6(src), true)
+  assert.equal(mediaV1SourceHasSlice6(src.replace('/v1/media/brains', '')), false)
+})
+
+test('loadMediaV1 prefers BRAIN_SYNC_ROOT over vendor when media-v1.js is there', async () => {
+  const prevDry = process.env.BRAIN_APP_DRY_RUN
+  const prevRoot = process.env.BRAIN_SYNC_ROOT
+  process.env.BRAIN_APP_DRY_RUN = '1'
+  const root = mkdtempSync(join(tmpdir(), 'media-sync-tip-'))
+  try {
+    mkdirSync(join(root, 'src'), { recursive: true })
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ type: 'module' }))
+    writeFileSync(
+      join(root, 'src', 'media-v1.js'),
+      `${SLICE6_MEDIA_PATHS.map((p) => `export const p_${p.replace(/\W/g, '_')} = ${JSON.stringify(p)}`).join('\n')}\nexport const kind = "media-v1"\n`
+    )
+    process.env.BRAIN_SYNC_ROOT = root
+    assert.equal(mediaSyncRoot(), root)
+    assert.equal(await resolveMediaSyncRoot(), root)
+    const loaded = (await loadMediaV1()) as { kind: string }
+    assert.equal(loaded.kind, 'media-v1')
+    assert.equal(mediaV1SourceHasSlice6(readFileSync(join(root, 'src', 'media-v1.js'), 'utf8')), true)
+  } finally {
+    if (prevDry === undefined) delete process.env.BRAIN_APP_DRY_RUN
+    else process.env.BRAIN_APP_DRY_RUN = prevDry
+    if (prevRoot === undefined) delete process.env.BRAIN_SYNC_ROOT
+    else process.env.BRAIN_SYNC_ROOT = prevRoot
+    rmSync(root, { recursive: true, force: true })
   }
 })

@@ -85,8 +85,9 @@ import { assertPassphrase, generatePassphrase } from './passphrase.ts'
 import { isMediaDryRun } from './transport.ts'
 import { dumpMemoryMediaStore, memoryMediaStore, type MediaBrainRow, type MediaDeviceRow } from './store.ts'
 import { readMediaConfig, writeMediaConfig } from './media-config.ts'
-import { dropPmsSeat, mintPmsToken, readAnyPmsSeat, readPmsSeat, writePmsSeat } from './pms-seats.ts'
+import { dropPmsSeat, readAnyPmsSeat, readPmsSeat, writePmsSeat } from './pms-seats.ts'
 import {
+  postMediaBrainsClaim,
   postMediaEmailCode,
   postMediaInvite,
   postReclaimFinish,
@@ -203,6 +204,7 @@ function canTurnOnStorage(who: MediaActor, folder: string): boolean {
   return Boolean(who.email)
 }
 
+/** HMAC / Ads2AI project seats resolve through media_brains.hq_repo only. Do not re-read the worker HqRepo binding. */
 function brainForHqRepo(hqRepo: string): MediaBrainRow | undefined {
   const want = String(hqRepo || '').trim().toLowerCase()
   if (!want) return undefined
@@ -445,14 +447,22 @@ export async function mediaEnable(opts: { folder: string; passphrase?: string; e
     return { ok: true, fingerprint: st.fingerprint, detail: 'Plyntr storage is on.' }
   }
   const email = String(opts.email || who.email || '').trim().toLowerCase()
-  let claimed = Boolean(who.token && who.token.startsWith('pbt_'))
-  if (!claimed) {
+  const pbt = Boolean(who.token && who.token.startsWith('pbt_'))
+  let claimedToken = who.token
+  if (!pbt) {
     if (!email) throw new Error(NO_SEAT)
-    const minted = postMediaEmailCode({ userData: userData(), email })
-    if (minted.status !== 200 || !minted.code) throw new Error('Could not send a storage code.')
-    const code = String(opts.code || minted.code)
-    if (!code) throw new Error('Type the email code.')
-    claimed = true
+    let code = String(opts.code || '').trim()
+    if (!code) {
+      const minted = postMediaEmailCode({ userData: userData(), email })
+      if (minted.status !== 200 || !minted.code) throw new Error('Could not send a storage code.')
+      code = minted.code
+    }
+    const claim = postMediaBrainsClaim({ userData: userData(), email, code })
+    if (claim.status === 409) throw new Error('Plyntr storage is already on. Use reclaim on this Mac.')
+    if (claim.status !== 200 || !claim.seatToken || !claim.seatToken.startsWith('pms_')) {
+      throw new Error('Could not claim storage with that email code.')
+    }
+    claimedToken = claim.seatToken
   }
   const mediaBrainId = randomBytes(12).toString('hex')
   const live = ensureDeviceKey(userData(), mediaBrainId, safe())
@@ -478,8 +488,8 @@ export async function mediaEnable(opts: { folder: string; passphrase?: string; e
     hqRepo = DRY_HQ_REPO
   }
   const mem = store()
-  const pms = !who.token || !who.token.startsWith('pbt_')
-  const seatToken = pms ? mintPmsToken() : who.token
+  const pms = !pbt
+  const seatToken = pms ? claimedToken : who.token
   mem.brains.push({
     id: mediaBrainId,
     plyntr_brain_id: who.brainId || mediaBrainId,
@@ -558,7 +568,6 @@ export async function mediaEnable(opts: { folder: string; passphrase?: string; e
   held.recovery = recovery.display
   recovery.raw.fill(0)
   markMediaAsked(folder)
-  void claimed
   return { ok: true, fingerprint: live.fingerprint, detail: 'Plyntr storage is on.' }
 }
 

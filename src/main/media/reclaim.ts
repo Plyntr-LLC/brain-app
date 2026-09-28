@@ -127,6 +127,22 @@ export function postMediaEmailCode(opts: { userData: string; email: string }): H
   return { status: 200, body: { ok: true }, code }
 }
 
+export function postMediaBrainsClaim(opts: {
+  userData: string
+  email: string
+  code: string
+}): HttpResult & { seatToken?: string } {
+  const email = normalizeEmail(opts.email)
+  const store = mem(opts.userData)
+  const codeRow = consumeCode(store, email, opts.code)
+  if (!codeRow) return { status: 401, body: { error: BAD_CODE } }
+  const existing = findBrainForEmail(store, email)
+  if (existing) {
+    return { status: 409, body: { error: 'exists', media_brain_id: existing.id } }
+  }
+  return { status: 200, body: { ok: true }, seatToken: mintPmsToken() }
+}
+
 function forbiddenNoWrap(): HttpResult {
   return { status: 403, body: { error: FORBIDDEN } }
 }

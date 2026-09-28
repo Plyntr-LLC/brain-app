@@ -328,6 +328,15 @@ const sessionSrc = readFileSync(join(rootRepo, 'src/main/media/session.ts'), 'ut
 if (sessionSrc.includes('startBrainSync') || sessionSrc.includes('chooseWatcher')) {
   fail('B', 'media session must not start watchers')
 }
+if (!sessionSrc.includes('postMediaBrainsClaim')) {
+  fail('B', 'mediaEnable must consume POST /v1/media/brains {email,code}')
+}
+if (!sessionSrc.includes('brainForHqRepo')) {
+  fail('B', 'project seats must resolve via media_brains.hq_repo')
+}
+if (/new DurableObject|idFromName\(/.test(sessionSrc)) {
+  fail('B', 'media session invented a second project ACL')
+}
 if (!sessionSrc.includes('export async function mediaShouldAsk')) {
   fail('B', 'mediaShouldAsk must be async so it can read media status routes')
 }
@@ -699,6 +708,19 @@ for (const seat of [seatB, seatF, seatC]) {
   if (verified.payload?.hq_repo !== 'plyntr/alpha-brain') fail('5', 'HMAC hq_repo did not match the dry-run brain')
 }
 const loadedV1 = await transport.loadMediaV1()
+if (transport.MEDIA_V1_TIP !== 'cb25c2b0a58cc5553497cf8f50b1f010f8ba2e62') {
+  fail('5', 'MEDIA_V1_TIP is not the Slice 6 worker merge')
+}
+const liveRoot = await transport.resolveMediaSyncRoot()
+const liveSource = transport.readMediaV1Source(liveRoot)
+if (liveSource) {
+  if (!transport.mediaV1SourceHasSlice6(liveSource)) {
+    fail('5', 'media-v1.js is missing Slice 6 routes at ' + liveRoot)
+  }
+  if (/DurableObject|idFromName\(/.test(liveSource) && /HqRepo/.test(liveSource)) {
+    fail('5', 'media-v1.js re-reads HqRepo DO; keep media_brains.hq_repo')
+  }
+}
 if (loadedV1 && typeof loadedV1 === 'object') {
   const v1 = loadedV1 as { handleMediaV1?: unknown; markMediaRevoked?: unknown }
   const names = Object.keys(v1)
