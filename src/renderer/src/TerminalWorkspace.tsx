@@ -2102,7 +2102,9 @@ export function TerminalWorkspace({
   const tab = tabs.find((t) => t.id === active) || tabs[0]
   const chatId = tab?.type === 'chat' ? tab.id : lastChatId
   const chatTab = tabs.find((t) => t.id === chatId)
-  const hits = filesByTab[chatId] || []
+  // A Factory tab shows its own run's files; Chat tabs (and everything else) show the last chat's.
+  const filesId = tab?.type === 'factory' ? tab.id : chatId
+  const hits = filesByTab[filesId] || []
   const awayGroups = (() => {
     const map = new Map<string, FileHit[]>()
     for (const h of hits) {
@@ -2833,6 +2835,7 @@ export function TerminalWorkspace({
                 runId={t.runId}
                 cwd={cwd}
                 active={t.id === active}
+                onFiles={onFiles}
                 onRun={(runId, title) =>
                   setTabs((all) =>
                     all.map((x) => (x.id === t.id ? { ...x, runId, title: title.length > 24 ? title.slice(0, 22) + '...' : title } : x))
@@ -2881,7 +2884,7 @@ export function TerminalWorkspace({
           ) : null}
           <h2>In use</h2>
           <ul className="looking looking-log" ref={refsList}>
-            {hits.length === 0 && <li className="tiny">Nothing for this chat yet.</li>}
+            {hits.length === 0 && <li className="tiny">{tab?.type === 'factory' ? 'Nothing for this run yet.' : 'Nothing for this chat yet.'}</li>}
             {hits.map((h) => (
               <li key={h.path} className={h.live ? 'live' : ''}>
                 {outsideProject(cwd, h.path) ? (

@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { opusArgs, REVIEW_MAX, reviewAccept, runOpus, STRICT_SKILL_PATH, strictNeeded, strictPrompt, verdict } from './opus.ts'
+import { opusArgs, opusBuildArgs, REVIEW_MAX, reviewAccept, runOpus, STRICT_SKILL_PATH, strictNeeded, strictPrompt, verdict } from './opus.ts'
 
 test('strict is needed for T2, elevated, critical, and MyPuppies paths only', () => {
   assert.equal(strictNeeded({ tier: 'T2', risk: 'none', workRepo: '/x/site' }), true)
@@ -127,4 +127,13 @@ test('reviewAccept: gaps are never a PASS', () => {
   assert.equal(reviewAccept('bug\nGAPS: 0\nFAIL').why, 'FAIL')
   assert.equal(reviewAccept('GAPS: 0\nPASS\nbut wait').status, 'fail')
   assert.equal(reviewAccept('').status, 'fail')
+})
+
+test('opusBuildArgs is opusArgs with bypassPermissions; plan and review stay plan mode', () => {
+  const plan = opusArgs('x')
+  const build = opusBuildArgs('x')
+  assert.equal(plan[plan.indexOf('--permission-mode') + 1], 'plan')
+  assert.equal(build[build.indexOf('--permission-mode') + 1], 'bypassPermissions')
+  assert.deepEqual(build.filter((a) => a !== 'bypassPermissions'), plan.filter((a) => a !== 'plan'))
+  assert.ok(!build.includes('--bare'))
 })

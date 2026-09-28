@@ -113,6 +113,8 @@ const profiles = (await import(src('factory/profile.ts'))) as typeof import('../
 const aicli = (await import(src('ai-cli.ts'))) as typeof import('../src/main/ai-cli.ts')
 const resolver = (await import(src('factory/resolve-repo.ts'))) as typeof import('../src/main/factory/resolve-repo.ts')
 const tripwire = (await import(src('factory/tripwire.ts'))) as typeof import('../src/main/factory/tripwire.ts')
+const fallback = (await import(src('factory/fallback.ts'))) as typeof import('../src/main/factory/fallback.ts')
+const shared = (await import(pathToFileURL(join(rootRepo, 'src', 'shared', 'factory.ts')).href)) as typeof import('../src/shared/factory.ts')
 store.setUserDataDir(() => userData)
 
 const results: { name: string; ok: boolean; detail: string }[] = []
@@ -201,6 +203,94 @@ const outcome = (s: Sent | undefined) => (s?.result as { outcome?: { outcome?: s
   check('8 factory session/new has no yoloMode', !JSON.stringify(fp).includes('yoloMode'), JSON.stringify(fp))
   check('8 chat session/new keeps yoloMode', (cp._meta as { yoloMode?: boolean }).yoloMode === true)
   check('8 grokFactoryAcpArgs has no --always-approve and its own socket', !gargs.grokFactoryAcpArgs(brainA, true).includes('--always-approve') && gargs.grokFactoryAcpArgs(brainA, true).includes(gargs.grokFactorySocket()) && gargs.grokFactorySocket() !== gargs.grokLeaderSocket())
+}
+
+// FB 1-3: Factory Cursor (the grunt when Grok cannot run) is not Chat Cursor.
+{
+  let argv: string[] = []
+  let threw = ''
+  try {
+    argv = await acp.spawnArgs('cursor', brainA, 'factory', work)
+  } catch (e) {
+    threw = String((e as Error).message || e)
+  }
+  const at = (flag: string) => argv[argv.indexOf(flag) + 1]
+  check(
+    'FB 1 spawnArgs cursor factory: --trust, --workspace brain, --add-dir work repo, acp; no --always-approve, no --sandbox disabled, no home add-dir',
+    !threw && argv.includes('--trust') && at('--workspace') === brainA && at('--add-dir') === work && argv.at(-1) === 'acp' && !argv.includes('--always-approve') && !argv.includes('--sandbox') && !argv.includes('disabled') && !argv.includes(home) && !argv.includes(realHome) && argv.filter((a) => a === '--add-dir').length === 1,
+    threw || JSON.stringify(argv)
+  )
+  const same = await acp.spawnArgs('cursor', brainA, 'factory', brainA)
+  check('FB 1 no --add-dir when the work repo is the brain', !same.includes('--add-dir'), JSON.stringify(same))
+  check('FB 1 factory cursor pool key is its own', acp.poolKey('cursor', brainA, 'factory') === 'factory:cursor:' + brainA)
+  check('FB 1 factory cursor session/new sends no Grok-only _meta (no yoloMode, no rules)', JSON.stringify(acp.sessionNewParams('cursor', brainA, 'factory')) === JSON.stringify({ cwd: brainA, mcpServers: [] }))
+
+  const g = fallback.grokUsageBlocked
+  check(
+    'FB 2 grokUsageBlocked: true for a weekly-usage error and 100% credits; false for cancelled and a write-block sentence',
+    g(new Error('You have hit your weekly usage limit for Grok. It resets Monday.')) && g({ creditUsagePercent: 100 }) && !g(new Error('cancelled')) && !g(new Error(gates.BRAIN_WRITE_REFUSAL)) && !g(new Error(gates.OTHER_REPO_WRITE_REFUSAL))
+  )
+
+  const reqs: { method: string; params: Record<string, unknown> }[] = []
+  const tab = {
+    tabId: 'factory-fb3',
+    sessionId: 'cur-sess-fb3',
+    promptId: null,
+    appTools: [],
+    text: '',
+    alwaysApprove: false,
+    model: 'composer-2.5[fast=true]',
+    models: [
+      { id: 'composer-2.5[fast=true]', label: 'Composer 2.5' },
+      { id: 'cursor-grok-4.7[effort=high]', label: 'Cursor Grok 4.7' }
+    ],
+    factory: { brainPath: brainB, workRepo: work }
+  }
+  const pool = {
+    kind: 'cursor' as const,
+    lane: 'factory' as const,
+    cwd: brainB,
+    boot: Promise.resolve(),
+    tabs: new Map([[tab.tabId, tab]]),
+    bySid: new Map([[tab.sessionId, tab.tabId]]),
+    rpc: {
+      dead: false,
+      request: async (method: string, params: Record<string, unknown>) => {
+        reqs.push({ method, params })
+        return {}
+      },
+      notify: () => {},
+      kill: () => {}
+    }
+  }
+  acp.registerPoolForCheck(pool as never)
+  let err = ''
+  try {
+    await acp.factorySetEffort(tab.tabId, 'xhigh')
+    await acp.factorySetEffort(tab.tabId, 'high')
+  } catch (e) {
+    err = String((e as Error).message || e)
+  }
+  const models = reqs.map((r) => String(r.params.value || r.params.modelId || ''))
+  check(
+    'FB 3 Factory Cursor factorySetEffort extra high does not throw and pins Cursor Grok extra high (high too)',
+    !err && models[0] === 'cursor-grok-4.7[effort=xhigh]' && tab.model === 'cursor-grok-4.7[effort=xhigh]' && !reqs.some((r) => r.params.configId === 'reasoning_effort'),
+    err || JSON.stringify(reqs)
+  )
+  acp.factoryClose(tab.tabId)
+}
+
+// IN 1: Factory files live on the right In use rail, not as cards in the Factory body.
+{
+  const pane = readFileSync(join(rootRepo, 'src', 'renderer', 'src', 'FactoryPane.tsx'), 'utf8')
+  const ws = readFileSync(join(rootRepo, 'src', 'renderer', 'src', 'TerminalWorkspace.tsx'), 'utf8')
+  const at = ws.indexOf('<FactoryPane')
+  const tag = at < 0 ? '' : ws.slice(at, ws.indexOf('/>', ws.indexOf('onRun=', at)) + 2)
+  check(
+    'IN 1 FactoryPane has no factory-files cards; TerminalWorkspace passes onFiles to the Factory tab; In use reads the Factory tab id',
+    !pane.includes('factory-files') && /onFilesRef\.current\(id, files\)/.test(pane) && /onFilesRef\.current\(id, \[\]\)/.test(pane) && /onFiles=\{onFiles\}/.test(tag) && /tab\?\.type === 'factory' \? tab\.id : chatId/.test(ws) && ws.includes('Nothing for this run yet.') && ws.includes('Nothing for this chat yet.'),
+    tag.slice(0, 200)
+  )
 }
 
 // 9. Factory permission asks are never auto-answered.
@@ -435,6 +525,13 @@ ctl.configureFactory(fakeDeps)
   const head1 = git(work, ['rev-parse', 'HEAD']).trim()
   const left = ctl.startRun({ task: 'fix typo in footer text', workRepo: work, brainPath: brainA })
   const lid = left.ok ? left.run.id : ''
+  const tn = turns()
+  const noted = ctl.guideRun(lid, 'Keep the footer short')
+  check(
+    'ACK 2 Guide while waiting on dirty prep stores "Just noted." and starts nothing',
+    noted.needsPrep === 'dirty' && noted.guide?.at(-1)?.ack === 'Just noted.' && noted.guide.at(-1)?.sent !== true && turns() === tn && store.loadRun(lid)?.guide?.at(-1)?.ack === shared.ACK_NOTED,
+    JSON.stringify({ prep: noted.needsPrep, guide: noted.guide })
+  )
   const gone = ctl.abandonRun(lid)
   check('Abandon from the dirty wait releases the lock, no commit, no stash', gone.phase === 'abandoned' && store.activeRunFor(work) === null && git(work, ['rev-parse', 'HEAD']).trim() === head1 && stashes() === s0 && existsSync(join(work, 'scratch3.txt')))
   execFileSync('/bin/rm', ['-f', join(work, 'scratch3.txt')])
@@ -467,6 +564,8 @@ const fs = require('fs')
 let n = 0
 try { n = fs.readFileSync(0).length } catch { n = 0 }
 fs.appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ argv: process.argv.slice(2), pid: process.pid, stdinBytes: n, cwd: process.cwd(), anthropic: 'ANTHROPIC_API_KEY' in process.env, translator: 'ANTHROPIC_TRANSLATOR_API_KEY' in process.env }) + '\\n')
+// The Opus builder (bypassPermissions) never takes a planner or reviewer line from the queue.
+if (process.argv.includes('bypassPermissions')) { process.stdout.write('Opus built it.\\n'); process.exit(0) }
 let plan = []
 try { plan = JSON.parse(fs.readFileSync(process.env.FAKE_CLAUDE_PLAN, 'utf8')) } catch {}
 const next = plan.shift()
@@ -481,6 +580,9 @@ installClaude()
 type ClaudeRow = { argv: string[]; pid: number; stdinBytes: number; cwd: string; anthropic: boolean; translator: boolean }
 const claudeRows = (): ClaudeRow[] => (existsSync(claudeLog) ? readFileSync(claudeLog, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l) as ClaudeRow) : [])
 const claudeSays = (lines: string[]) => writeFileSync(claudePlan, JSON.stringify(lines))
+const modeOf = (row: ClaudeRow) => row.argv[row.argv.indexOf('--permission-mode') + 1]
+const opusBuilds = (rows: ClaudeRow[]) => rows.filter((x) => modeOf(x) === 'bypassPermissions')
+const opusReviews = (rows: ClaudeRow[]) => rows.filter((x) => modeOf(x) === 'plan')
 check('S2 resolveBin finds the fake claude under the tmp HOME only', aicli.resolveBin('claude') === claudeBin)
 
 const pkg2 = JSON.stringify({ name: 'work2', private: true, scripts: { typecheck: 'x', test: 'x', 'test:e2e': 'x' } })
@@ -586,11 +688,29 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   check('S2 3 approve-plan starts build with the Approved plan path line', /Phase: build\./.test(after[0] || '') && (after[0] || '').includes(`Approved plan: ${store.runTextPath(id, 'plan')}. Read it first.`), after[0])
   check('S2 3 build after an Opus plan runs at Grok xhigh', effortsFrom(e3).includes('xhigh'), JSON.stringify(effortsFrom(e3)))
   check('S2 5 T2 verify runs typecheck, test and the profile e2e', scriptRuns.slice(0, 3).join(',') === 'typecheck,test,test:e2e' && r?.verify?.some((v) => v.script === 'test:e2e' && v.status === 'pass') === true, JSON.stringify(scriptRuns))
-  const fixes = after.filter((t) => /Phase: fix\./.test(t))
+  // Grok makes the first two review fixes; the third and fourth are the Opus builder.
+  const grokFixes = after.filter((t) => /Phase: fix\./.test(t))
+  const builds = opusBuilds(claudeRows().slice(c1))
+  const fixes = [...grokFixes, ...builds.map((x) => x.argv[1])]
   check('S2 8 T2 has no self-check turn', !after.some((t) => /Role: self-check/.test(t)))
-  check('S2 8 five fails send four auto fix turns with the Reviewer notes path', fixes.length === 4 && fixes.every((f) => f.includes(`Reviewer notes: ${store.runTextPath(id, 'review')}. Fix what it names.`)), JSON.stringify(fixes.length))
+  check(
+    'S2 8 five fails send four auto fix turns (two Grok, then two Opus) with the Reviewer notes path',
+    grokFixes.length === 2 && builds.length === 2 && fixes.every((f) => /Phase: fix\./.test(f) && f.includes(`Reviewer notes: ${store.runTextPath(id, 'review')}. Fix what it names.`)),
+    JSON.stringify({ grok: grokFixes.length, opus: builds.length })
+  )
   check('S2 8 a PASS without GAPS and a PASS naming a nit are fails', fixes.some((f) => f.includes('PASS without GAPS: 0')) && fixes.some((f) => f.includes('PASS named gaps')), JSON.stringify(fixes.map((f) => f.split('\n').find((l) => l.startsWith('Note:')))))
-  const reviews = claudeRows().slice(c1)
+  const reviews = opusReviews(claudeRows().slice(c1))
+  const buildPids = builds.map((x) => x.pid)
+  check(
+    'FB 4 after two Grok review fixes (reviewCycles 3) the next fix spawns claude --permission-mode bypassPermissions; plan and review stay plan mode; distinct pids',
+    builds.length === 2 &&
+      builds.every((x) => x.argv.includes('--model') && x.argv[x.argv.indexOf('--effort') + 1] === 'medium' && realish(x.cwd) === realish(work2) && x.stdinBytes === 0 && !x.anthropic && !x.argv.includes('--bare')) &&
+      [planner1, planner2, row, ...reviews].every((x) => !!x && modeOf(x) === 'plan') &&
+      new Set([...buildPids, ...reviews.map((x) => x.pid), planner1?.pid, planner2?.pid, row?.pid]).size === buildPids.length + reviews.length + 3 &&
+      after.filter((t) => /Phase: fix\./.test(t)).length === 2,
+    JSON.stringify({ builds: builds.map((x) => ({ pid: x.pid, mode: modeOf(x) })), reviews: reviews.map((x) => x.pid) })
+  )
+  check('FB 4 the Opus builder never became the run builder (Grok still the grunt)', (r?.builder || 'grok') === 'grok', String(r?.builder))
   const plannerPids = [planner1?.pid, planner2?.pid, row?.pid]
   check('S2 8 reviewers are never the planner process', reviews.length === 5 && reviews.every((x) => !plannerPids.includes(x.pid)), JSON.stringify({ planners: plannerPids, reviewers: reviews.map((x) => x.pid) }))
   check(
@@ -600,15 +720,15 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   )
   check('S2 8 the fifth fail holds in review with the FAIL text and reviewCycles 5, no auto-commit', r?.phase === 'review' && !!r.diff && r.reviewCycles === 5 && r.strict?.status === 'fail' && r.strict.text.includes('a.ts:9') && store.loadRun(id)?.reviewCycles === 5 && !r.commitSha, JSON.stringify({ phase: r?.phase, cycles: r?.reviewCycles, strict: r?.strict, error: r?.error }))
   check('S2 8 no Joe guide reached a reviewer', reviews.every((x) => !x.argv[1].includes('Joe says')))
-  // Keep fixing after the hold: one builder fix turn, then a sixth fresh reviewer; still held (cycles past 5).
+  // Keep fixing after the hold: one Opus builder fix (past two review fixes), then a sixth fresh reviewer; still held (cycles past 5).
   claudeSays(['a.ts:9 still\nGAPS: 1\nFAIL'])
   const p4 = promptCount()
   const c4 = claudeRows().length
   ctl.decideRun(id, 'keep-fix')
   r = await ctl.settle(id)
-  const kf = promptsFrom(p4)
-  const r6 = claudeRows().slice(c4)
-  check('S2 8 keep-fix: one fix turn, then another fresh Opus review, held again at 6', kf.length === 1 && /Phase: fix\./.test(kf[0]) && r6.length === 1 && !reviews.some((x) => x.pid === r6[0].pid) && r?.phase === 'review' && r.reviewCycles === 6 && r.strict?.status === 'fail', JSON.stringify({ turns: kf.length, spawns: r6.length, phase: r?.phase, cycles: r?.reviewCycles }))
+  const kf = opusBuilds(claudeRows().slice(c4))
+  const r6 = opusReviews(claudeRows().slice(c4))
+  check('S2 8 keep-fix: one Opus fix turn, then another fresh Opus review, held again at 6', promptCount() === p4 && kf.length === 1 && /Phase: fix\./.test(kf[0].argv[1]) && r6.length === 1 && !reviews.some((x) => x.pid === r6[0].pid) && r?.phase === 'review' && r.reviewCycles === 6 && r.strict?.status === 'fail', JSON.stringify({ turns: kf.length, spawns: r6.length, phase: r?.phase, cycles: r?.reviewCycles }))
   // Re-review: a fresh Opus only, no builder turn.
   claudeSays(['a.ts:9 still\nGAPS: 1\nFAIL'])
   const p5 = promptCount()
@@ -951,6 +1071,7 @@ ctl.configureFactory(fakeDeps)
   claudeSays([nit, nit, nit, nit, nit])
   const head5 = git(work2, ['rev-parse', 'HEAD']).trim()
   const p5 = promptCount()
+  const cu5 = claudeRows().length
   const res5 = ctl.startRun({ task: APITASK, workRepo: work2, brainPath: brainA, runThrough: true, shipThrough: true })
   const id5 = res5.ok ? res5.run.id : ''
   let r5 = await ctl.settle(id5)
@@ -959,7 +1080,7 @@ ctl.configureFactory(fakeDeps)
     r5?.phase === 'review' && !!r5.diff && r5.reviewCycles === 5 && r5.strict?.status === 'fail' && r5.strict.text.startsWith('PASS named gaps') && !r5.commitSha && git(work2, ['rev-parse', 'HEAD']).trim() === head5 && pushCalls === push1,
     JSON.stringify({ phase: r5?.phase, cycles: r5?.reviewCycles, strict: r5?.strict?.text.slice(0, 40), sha: r5?.commitSha })
   )
-  check('UX 9 four auto fix turns before the hold', promptsFrom(p5).filter((t) => /Phase: fix\./.test(t)).length === 4)
+  check('UX 9 four auto fix turns before the hold (two Grok, two Opus)', promptsFrom(p5).filter((t) => /Phase: fix\./.test(t)).length === 2 && opusBuilds(claudeRows().slice(cu5)).length === 2)
 
   // UX 6: Guide on a held reject is Keep fixing with that note, then a fresh reviewer that never sees the note.
   claudeSays(['Checked it.\nGAPS: 0\nPASS'])
@@ -1042,6 +1163,7 @@ ctl.configureFactory(fakeDeps)
   const sent = ctl.guideRun(id, 'Keep the label lowercase')
   const cancel = calls.slice(c0).find((c) => c.fn === 'cancel' && c.o?.tabId === `factory-${id}`)
   check('UX 6 guide while busy cancels the live turn and does not pause', !!cancel && cancel.o?.mid === true && sent.phase !== 'paused', JSON.stringify({ phase: sent.phase, cancel }))
+  check('ACK 1 Guide during a busy build stores the filed ack', sent.guide?.at(-1)?.ack === "Okay, we're filing that with the other work that's already in progress." && shared.ACK_FILED === sent.guide?.at(-1)?.ack && store.loadRun(id)?.guide?.at(-1)?.ack === shared.ACK_FILED, JSON.stringify(sent.guide))
   for (let i = 0; i < 100 && promptCount() < p0 + 2; i++) await new Promise((r) => setTimeout(r, 10))
   check('UX 6 the follow-up turn with the note starts before the hung turn is released', followUpBeforeRelease && promptCount() === p0 + 2, JSON.stringify({ followUpBeforeRelease, prompts: promptCount() - p0 }))
   const r = await ctl.settle(id)
@@ -1053,9 +1175,36 @@ ctl.configureFactory(fakeDeps)
     turns.length === 2 && /Phase: build\./.test(turns[1]) && turns[1].includes('Joe says: Keep the label lowercase') && scriptsAtFollowUp === 0 && scriptRuns.filter((x) => x === 'typecheck').length === 1 && r?.phase === 'review' && r.guide?.[0]?.sent === true,
     JSON.stringify({ turns: turns.length, scriptsAtFollowUp, scriptRuns, phase: r?.phase, error: r?.error })
   )
+  check('ACK 1 the ack survives the follow-up turn', r?.guide?.[0]?.ack === shared.ACK_FILED && r.guide[0].sent === true, JSON.stringify(r?.guide))
   check('UX 6 the interrupted run never paused', store.loadRun(id)?.phase === 'review' && events.filter((e) => e.runId === id && e.run?.phase === 'paused').length === 0)
   ctl.abandonRun(id)
   reset2()
+}
+
+// FB 5: Grok and Cursor both unusable mid-turn: the run is not failed; Opus builds (bypassPermissions) and the run stays on Opus.
+{
+  promptPlan = async () => {
+    writeFileSync(join(work2, 'src', 'app.ts'), 'export const app = "label"\n')
+    throw fallback.needOpusError('Cursor could not run: weekly usage limit')
+  }
+  const c0 = claudeRows().length
+  const p0 = promptCount()
+  const res = ctl.startRun({ task: 'fix typo in the app label', workRepo: work2, brainPath: brainA })
+  const id = res.ok ? res.run.id : ''
+  let r = await ctl.settle(id)
+  const built = opusBuilds(claudeRows().slice(c0))
+  check(
+    'FB 5 FACTORY_NEED_OPUS from the grunt: never failed, the same brief goes to an Opus bypassPermissions builder, builder opus persists',
+    r?.phase === 'review' && r.builder === 'opus' && store.loadRun(id)?.builder === 'opus' && built.length === 1 && /Phase: build\./.test(built[0].argv[1]) && promptCount() === p0 + 1 && events.filter((e) => e.runId === id && e.run?.phase === 'failed').length === 0,
+    JSON.stringify({ phase: r?.phase, builder: r?.builder, error: r?.error, builds: built.length })
+  )
+  const p1 = promptCount()
+  ctl.guideRun(id, 'Keep the label lowercase')
+  r = await ctl.settle(id)
+  check('FB 5 once on Opus, a Guide fix is Opus too (no flap back to Grok)', promptCount() === p1 && opusBuilds(claudeRows().slice(c0)).length === 2 && r?.builder === 'opus', JSON.stringify({ phase: r?.phase, prompts: promptCount() - p1 }))
+  ctl.abandonRun(id)
+  reset2()
+  promptPlan = async () => {}
 }
 
 // S3 3. runThrough false T2: still waits in plan until Approve.

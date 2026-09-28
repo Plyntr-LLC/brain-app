@@ -21,6 +21,14 @@ export function opusArgs(prompt: string): string[] {
   return ['-p', prompt, '--model', 'opus', '--effort', 'medium', '--permission-mode', 'plan', '--output-format', 'text']
 }
 
+/**
+ * Opus as the builder (Grok and Cursor could not run, or the third review fix): same as opusArgs but
+ * bypassPermissions so it can edit. Never used for plan or strict review.
+ */
+export function opusBuildArgs(prompt: string): string[] {
+  return ['-p', prompt, '--model', 'opus', '--effort', 'medium', '--permission-mode', 'bypassPermissions', '--output-format', 'text']
+}
+
 export function opusEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base }
   delete env.ANTHROPIC_API_KEY
@@ -45,6 +53,10 @@ export function runOpus(o: {
   spawnFn?: SpawnFn
   /** Pause or abandon kills the process. */
   signal?: AbortSignal
+  /** Builder turn: opusBuildArgs (can edit). Plan and review never set this. */
+  build?: boolean
+  /** Stdout as it arrives. */
+  onText?: (chunk: string) => void
 }): Promise<OpusResult> {
   if (!o.bin) return Promise.resolve({ found: false, code: 127, text: '', last: '' })
   return new Promise((resolve) => {
@@ -59,7 +71,7 @@ export function runOpus(o: {
     }
     let child: ChildProcess
     try {
-      child = (o.spawnFn || spawn)(o.bin as string, opusArgs(o.prompt), {
+      child = (o.spawnFn || spawn)(o.bin as string, o.build ? opusBuildArgs(o.prompt) : opusArgs(o.prompt), {
         cwd: o.cwd,
         env: opusEnv(o.env),
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -71,6 +83,7 @@ export function runOpus(o: {
     }
     child.stdout?.on('data', (d: Buffer) => {
       text = (text + String(d)).slice(-400_000)
+      o.onText?.(String(d))
     })
     child.stderr?.on('data', (d: Buffer) => {
       err = (err + String(d)).slice(-8000)

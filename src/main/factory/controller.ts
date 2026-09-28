@@ -3,8 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseGrokLine, resolveBin, type StreamEvent } from '../ai-cli'
-import type { GuideNote, Slice, Tier } from '../../shared/factory.ts'
+import { ACK_FILED, ACK_NOTED, BUILDER_FIX_MAX, type Builder, type GuideNote, type Slice, type Tier } from '../../shared/factory.ts'
 import { buildBrief, type BriefPhase } from './brief.ts'
+import { isNeedOpus } from './fallback.ts'
 import { deploy as gitDeploy, deployBlock, publish as gitPublish, publishBlock, type PublishTarget } from './gates.ts'
 import { auditTurn, commitRun, currentBranch, diffText, dirtyPaths, gitTop, headSha, isClean, isGitRepo, numstat, porcelain, stashAll } from './git-audit.ts'
 import { OPUS_PLAN_TIMEOUT_MS, OPUS_REVIEW_TIMEOUT_MS, planPrompt, REVIEW_MAX, reviewAccept, runOpus, strictNeeded, strictPrompt, type SpawnFn } from './opus.ts'
@@ -39,9 +40,20 @@ import { runVoice } from './voice.ts'
 
 export type FactoryEvent = { runId: string; kind: 'run'; run: RunRecord } | { runId: string; kind: 'stream'; ev: StreamEvent }
 
+/**
+ * builder on warm: 'cursor' keeps a run that fell back on Factory Cursor. The warm answer says which
+ * ACP grunt it got. Either may throw FACTORY_NEED_OPUS (Grok and Cursor both unusable): the controller
+ * then builds with Opus. onBuilder: a Grok turn hopped to Cursor mid-turn.
+ */
 export type Driver = {
-  warm: (o: { tabId: string; brainPath: string; workRepo: string; resumeId?: string; runThrough?: boolean }) => Promise<{ sessionId: string }>
-  prompt: (o: { tabId: string; brainPath: string; text: string; onEvent: (ev: StreamEvent) => void }) => Promise<string>
+  warm: (o: { tabId: string; brainPath: string; workRepo: string; resumeId?: string; runThrough?: boolean; builder?: 'grok' | 'cursor' }) => Promise<{ sessionId: string; builder?: 'grok' | 'cursor' }>
+  prompt: (o: {
+    tabId: string
+    brainPath: string
+    text: string
+    onEvent: (ev: StreamEvent) => void
+    onBuilder?: (builder: 'cursor', sessionId: string) => void
+  }) => Promise<string>
   cancel: (tabId: string) => void
   close: (tabId: string) => void
   /** Grok reasoning effort on the Factory session (T2 build xhigh after an Opus plan, high otherwise; T3 xhigh). */
@@ -135,6 +147,12 @@ function track(state: Live, work: Promise<void>): void {
   const p = work.catch((e) => {
     if (stale(state, gen)) return
     if (state.run.phase === 'paused' || TERMINAL_PHASES.includes(state.run.phase)) return
+    // Grok and Cursor both unusable is a builder hop, never a failed run: the next turn is Opus.
+    if (isNeedOpus(e)) {
+      const at = state.run.phase === 'failed' ? state.run.resumePhase || 'build' : state.run.phase
+      setPhase(state, 'paused', { builder: 'opus', error: 'Grok and Cursor could not run. Resume builds with Opus.', resumePhase: at === 'review' ? 'review' : 'build' })
+      return
+    }
     setPhase(state, 'failed', { error: String((e as Error)?.message || e).slice(0, 400), resumePhase: state.run.resumePhase || 'build' })
   })
   const busy: Promise<void> = p.finally(() => {
@@ -349,12 +367,45 @@ async function afterTriage(state: Live): Promise<void> {
 async function ensureWarm(state: Live, gen: number): Promise<boolean> {
   if (state.warm) return true
   const run = state.run
-  const w = await need().driver.warm({ tabId: run.acpTab, brainPath: run.brainPath, workRepo: run.workRepo, resumeId: run.grokSessionId, runThrough: run.runThrough })
+  const w = await need().driver.warm({
+    tabId: run.acpTab,
+    brainPath: run.brainPath,
+    workRepo: run.workRepo,
+    resumeId: run.grokSessionId,
+    runThrough: run.runThrough,
+    ...(run.builder === 'cursor' ? { builder: 'cursor' as const } : {})
+  })
   if (stale(state, gen)) return false
   state.warm = true
-  state.run = { ...state.run, grokSessionId: w.sessionId }
+  state.run = { ...state.run, grokSessionId: w.sessionId, ...(w.builder === 'cursor' ? { builder: 'cursor' as const } : {}) }
   persist(state)
   return true
+}
+
+function setBuilder(state: Live, builder: Builder, sessionId?: string): void {
+  if (state.run.builder === builder && !sessionId) return
+  state.run = { ...state.run, builder, ...(sessionId ? { grokSessionId: sessionId } : {}) }
+  persist(state)
+}
+
+/** Opus builds this turn: Grok and Cursor could not run, or this is the third review fix (or later). */
+function opusBuilds(state: Live, viaOpus?: boolean): boolean {
+  return !!viaOpus || state.run.builder === 'opus'
+}
+
+/**
+ * Warms the run's ACP grunt. 'opus': both grunts are unusable, so the run builds with Opus from now
+ * on. False: the run moved on while warming.
+ */
+async function warmGrunt(state: Live, gen: number): Promise<boolean | 'opus'> {
+  try {
+    return await ensureWarm(state, gen)
+  } catch (e) {
+    if (!isNeedOpus(e)) throw e
+    if (stale(state, gen)) return false
+    setBuilder(state, 'opus')
+    return 'opus'
+  }
 }
 
 async function setEffort(state: Live, effort: string, tabId = state.run.acpTab): Promise<void> {
@@ -435,7 +486,7 @@ async function opusPlan(state: Live): Promise<void> {
         : ''
   if (why) {
     // The notes did not reach a plan: they wait for the Resume.
-    const guide = state.run.guide?.map((g) => (notes.includes(g.text) && g.sent ? { at: g.at, text: g.text } : g))
+    const guide = state.run.guide?.map((g) => (notes.includes(g.text) && g.sent ? { at: g.at, text: g.text, ...(g.ack ? { ack: g.ack } : {}) } : g))
     setPhase(state, 'paused', { plan: prev, resumePhase: 'plan', error: `${why} Paused.`, guide })
     return
   }
@@ -447,7 +498,8 @@ async function opusPlan(state: Live): Promise<void> {
   if (state.run.runThrough) await approvePlan(state)
 }
 
-async function buildStep(state: Live, phase: BriefPhase, note?: string): Promise<void> {
+/** viaOpus: this turn is the Opus builder (a review fix from BUILDER_FIX_MAX on). Every other turn is the grunt. */
+async function buildStep(state: Live, phase: BriefPhase, note?: string, viaOpus?: boolean): Promise<void> {
   const d = need()
   const gen = state.gen
   const inReview = phase === 'review' || phase === 'fix'
@@ -469,29 +521,32 @@ async function buildStep(state: Live, phase: BriefPhase, note?: string): Promise
   })
   const brainBefore = snap(run.brainPath)
   // T3 with more than one slice from the plan: parallel builders. Resume, fix, and Joe's notes use one builder.
-  if (phase === 'build' && !note && !openNotes(state.run).length && state.run.tier === 'T3' && (state.run.slices?.length || 0) > 1) {
+  if (phase === 'build' && !note && !openNotes(state.run).length && state.run.tier === 'T3' && (state.run.slices?.length || 0) > 1 && !opusBuilds(state, viaOpus)) {
     await buildSlices(state, gen, brainBefore)
     return
   }
   const notes = openNotes(state.run)
   markSent(state)
   if (notes.length) persist(state)
-  if (!(await ensureWarm(state, gen))) return
-  if (state.run.tier === 'T3') {
-    await setEffort(state, 'xhigh')
-    if (stale(state, gen)) return
-  } else if (state.run.tier === 'T2') {
-    await setEffort(state, state.run.plan?.status === 'approved' && state.run.plan.by === 'opus' ? 'xhigh' : 'high')
-    if (stale(state, gen)) return
+  if (!opusBuilds(state, viaOpus)) {
+    const warm = await warmGrunt(state, gen)
+    if (!warm) return
+    if (warm === true && state.run.tier === 'T3') {
+      await setEffort(state, 'xhigh')
+      if (stale(state, gen)) return
+    } else if (warm === true && state.run.tier === 'T2') {
+      await setEffort(state, state.run.plan?.status === 'approved' && state.run.plan.by === 'opus' ? 'xhigh' : 'high')
+      if (stale(state, gen)) return
+    }
   }
-  await builderTurn(state, gen, phase, withGuide(note, notes))
+  await builderTurn(state, gen, phase, withGuide(note, notes), viaOpus)
   if (stale(state, gen)) return
   if (!(await drainGuide(state, gen, phase))) return
   await afterTurn(state, phase, brainBefore)
 }
 
-/** One prompt on the run's own Grok tab with the phase brief. */
-async function builderTurn(state: Live, gen: number, phase: BriefPhase, note?: string): Promise<void> {
+/** One builder turn with the phase brief: the run's own Grok or Cursor tab, or the Opus builder. */
+async function builderTurn(state: Live, gen: number, phase: BriefPhase, note?: string, viaOpus?: boolean): Promise<void> {
   const d = need()
   const run = state.run
   const brief = buildBrief({
@@ -505,14 +560,54 @@ async function builderTurn(state: Live, gen: number, phase: BriefPhase, note?: s
     planPath: run.plan?.status === 'approved' && phase === 'build' ? runTextPath(run.id, 'plan') : undefined,
     reviewPath: phase === 'fix' && run.reviewCycles ? runTextPath(run.id, 'review') : undefined
   })
-  await d.driver.prompt({
-    tabId: run.acpTab,
-    brainPath: run.brainPath,
-    text: brief,
-    onEvent: (ev) => {
-      if (!stale(state, gen)) d.emit({ runId: run.id, kind: 'stream', ev })
-    }
+  if (opusBuilds(state, viaOpus)) return opusBuildTurn(state, gen, brief)
+  try {
+    await d.driver.prompt({
+      tabId: run.acpTab,
+      brainPath: run.brainPath,
+      text: brief,
+      onEvent: (ev) => {
+        if (!stale(state, gen)) d.emit({ runId: run.id, kind: 'stream', ev })
+      },
+      onBuilder: (b, sid) => {
+        if (!stale(state, gen)) setBuilder(state, b, sid)
+      }
+    })
+  } catch (e) {
+    if (!isNeedOpus(e) || stale(state, gen)) throw e
+    setBuilder(state, 'opus')
+    await opusBuildTurn(state, gen, brief)
+  }
+}
+
+/**
+ * Opus 5.5 medium as the builder: a fresh `claude -p` in bypassPermissions (can edit), cwd = work repo,
+ * Factory env, no Anthropic keys. Stdout streams as text. Pause, abandon, and Guide kill it.
+ */
+async function opusBuildTurn(state: Live, gen: number, brief: string): Promise<void> {
+  const d = need()
+  const run = state.run
+  const say = (ev: StreamEvent) => {
+    if (!stale(state, gen)) d.emit({ runId: run.id, kind: 'stream', ev })
+  }
+  say({ kind: 'status', data: 'work:Opus is building' })
+  const abort = new AbortController()
+  state.abort = abort
+  const res = await runOpus({
+    cwd: run.workRepo,
+    prompt: brief,
+    env: d.env(run.workRepo),
+    bin: (d.claudeBin || (() => resolveBin('claude')))(),
+    timeoutMs: OPUS_REVIEW_TIMEOUT_MS,
+    spawnFn: d.spawnOpus,
+    signal: abort.signal,
+    build: true,
+    onText: (t) => say({ kind: 'text', data: t })
   })
+  if (state.abort === abort) state.abort = undefined
+  if (stale(state, gen)) return
+  if (!res.found) throw new Error('Opus builder not found (claude CLI).')
+  if (res.code !== 0) throw new Error(`Opus build did not finish (exit ${res.code}).`)
 }
 
 /** Notes Joe sent while a turn ran: one follow-up turn with them before verify. False: the run moved. */
@@ -522,7 +617,7 @@ async function drainGuide(state: Live, gen: number, phase: BriefPhase): Promise<
     if (!notes.length) return true
     markSent(state)
     persist(state)
-    if (!(await ensureWarm(state, gen))) return false
+    if (!opusBuilds(state) && !(await warmGrunt(state, gen))) return false
     await builderTurn(state, gen, phase === 'fix' ? 'fix' : 'build', withGuide(undefined, notes))
     if (stale(state, gen)) return false
   }
@@ -553,6 +648,7 @@ async function buildSlices(state: Live, gen: number, brainBefore: Record<string,
   const slices = state.run.slices || []
   const waves = scheduleSlices(slices)
   let n = 0
+  let needOpus = false
   // Every exit (done, stale, tripwire stop, a failed builder) closes the worker tabs.
   try {
     for (let w = 0; w < waves.length; w++) {
@@ -564,7 +660,14 @@ async function buildSlices(state: Live, gen: number, brainBefore: Record<string,
       await Promise.allSettled(
         wave.map(async (job) => {
           try {
-            await d.driver.warm({ tabId: job.tabId, brainPath: run.brainPath, workRepo: run.workRepo, runThrough: run.runThrough })
+            const w = await d.driver.warm({
+              tabId: job.tabId,
+              brainPath: run.brainPath,
+              workRepo: run.workRepo,
+              runThrough: run.runThrough,
+              ...(state.run.builder === 'cursor' ? { builder: 'cursor' as const } : {})
+            })
+            if (w.builder === 'cursor' && !stale(state, gen)) setBuilder(state, 'cursor')
             if (stale(state, gen)) return
             await setEffort(state, 'xhigh', job.tabId)
             if (stale(state, gen)) return
@@ -584,6 +687,9 @@ async function buildSlices(state: Live, gen: number, brainBefore: Record<string,
               text: brief,
               onEvent: (ev) => {
                 if (!stale(state, gen)) d.emit({ runId: run.id, kind: 'stream', ev })
+              },
+              onBuilder: (b) => {
+                if (!stale(state, gen)) setBuilder(state, b)
               }
             })
           } catch (e) {
@@ -603,6 +709,11 @@ async function buildSlices(state: Live, gen: number, brainBefore: Record<string,
         })
       )
       const first = failed as { e: unknown } | null
+      // Grok and Cursor both unusable: the workers stop and one Opus builder does the whole plan.
+      if (first && isNeedOpus(first.e) && !stale(state, gen)) {
+        needOpus = true
+        break
+      }
       if (first) throw first.e
       if (stale(state, gen)) return
       if (w === waves.length - 1) break
@@ -616,6 +727,11 @@ async function buildSlices(state: Live, gen: number, brainBefore: Record<string,
     }
   } finally {
     closeWorkers(state)
+  }
+  if (needOpus) {
+    setBuilder(state, 'opus')
+    await builderTurn(state, gen, 'build')
+    if (stale(state, gen)) return
   }
   if (!(await drainGuide(state, gen, 'build'))) return
   await afterTurn(state, 'build', brainBefore)
@@ -820,8 +936,10 @@ async function strictStep(state: Live): Promise<boolean> {
   state.run = { ...state.run, reviewCycles: cycles, strict: { status: 'fail', text: text.slice(-8000) } }
   persist(state)
   // Auto fix + a fresh independent review until REVIEW_MAX; the last fail holds for Joe.
+  // Grok/Cursor make the first two review fixes; from the third on, Claude makes the fix.
   if (cycles < REVIEW_MAX) {
-    await buildStep(state, 'fix', acc.why === 'FAIL' ? 'The strict reviewer said FAIL.' : `The strict reviewer did not approve: ${acc.why}. Every gap counts.`)
+    const why = acc.why === 'FAIL' ? 'The strict reviewer said FAIL.' : `The strict reviewer did not approve: ${acc.why}. Every gap counts.`
+    await buildStep(state, 'fix', why, cycles >= BUILDER_FIX_MAX)
     return false
   }
   return true
@@ -1049,7 +1167,7 @@ export function decideRun(id: string, choice: Decision, opts: { reason?: string 
     if (!held(run)) throw new Error('Opus has not held this run.')
     state.gen++
     // Cycles keep counting past REVIEW_MAX; each review is a fresh Opus process.
-    if (choice === 'keep-fix') track(state, buildStep(state, 'fix', String(opts.reason || '').trim().slice(0, GUIDE_CHARS) || HELD_LINE))
+    if (choice === 'keep-fix') track(state, buildStep(state, 'fix', String(opts.reason || '').trim().slice(0, GUIDE_CHARS) || HELD_LINE, (run.reviewCycles || 0) >= BUILDER_FIX_MAX))
     else if (choice === 'trim') track(state, buildStep(state, 'trim', `${HELD_LINE} Cut the change down to what the task needs.`))
     else {
       state.run = { ...run, strict: undefined, diff: undefined, error: undefined }
@@ -1099,55 +1217,66 @@ function interrupt(state: Live): void {
  * A failed or paused run: this Send is Resume with the note. Triage in flight, prep, Proceed, and
  * tier cards keep it unsent for the next brief. A follow-up it starts marks the note sent before
  * this returns (opusPlan / buildStep mark it before their first await).
+ * Every Send gets an ack bubble on the note (ACK_FILED or ACK_NOTED), no model call.
  */
 export function guideRun(id: string, text: string): RunRecord {
   const state = liveFor(id)
   const body = String(text || '').trim().slice(0, GUIDE_CHARS)
   if (!body) throw new Error('Type a note first.')
   if (TERMINAL_PHASES.includes(state.run.phase)) throw new Error('This run is over. Start a new run.')
-  state.run = { ...state.run, guide: [...(state.run.guide || []), { at: Date.now(), text: body }].slice(-GUIDE_MAX) }
+  const at = Date.now()
+  state.run = { ...state.run, guide: [...(state.run.guide || []), { at, text: body }].slice(-GUIDE_MAX) }
   persist(state)
+  // The reply bubble, no model call: filed with work in flight, or just noted for the next brief.
+  const ack = guideRoute(state) ? ACK_FILED : ACK_NOTED
+  state.run = { ...state.run, guide: state.run.guide?.map((g) => (g.at === at && g.text === body && !g.ack ? { ...g, ack } : g)) }
+  return persist(state)
+}
+
+/** Routes a note guideRun just stored. True: work was in flight and this note interrupted it or started a follow-up now. */
+function guideRoute(state: Live): boolean {
   // A note that names another repo moves the run there before any follow-up turn.
   if (reconcileWorkRepo(state) === 'stop') {
     // The new repo waits on Commit/Stash first: the turn still running in the old repo stops.
     if (state.run.needsPrep && state.busy) interrupt(state)
-    return state.run
+    return false
   }
   const run = state.run
   // Failed or paused is not a dead end: Send resumes with the note at once. Tier cards, Proceed, and prep wait.
   if (run.phase === 'failed' || run.phase === 'paused') {
     const target: RunPhase = run.resumePhase || 'build'
-    if (target === 'upgrade' || run.needsPrep || run.needsProceed) return run
+    if (target === 'upgrade' || run.needsPrep || run.needsProceed) return false
     state.gen++
     // Verify never carries a note: a run paused in verify (or review with no diff) gets a builder turn with it.
-    return resumeTo(state, target === 'verify' || (target === 'review' && !run.diff) ? 'build' : target)
+    resumeTo(state, target === 'verify' || (target === 'review' && !run.diff) ? 'build' : target)
+    return true
   }
   if (state.busy) {
-    if (!INTERRUPTIBLE.includes(run.phase) || run.needsPrep || run.needsProceed) return run
+    if (!INTERRUPTIBLE.includes(run.phase) || run.needsPrep || run.needsProceed) return false
     interrupt(state)
     if (run.phase === 'plan') {
       // The killed planner never answered: its notes go to the fresh one with the new note.
       const carried = state.planNotes || []
       state.planNotes = undefined
-      if (carried.length) state.run = { ...state.run, guide: state.run.guide?.map((g) => (carried.includes(g.text) && g.sent ? { at: g.at, text: g.text, repo: g.repo } : g)) }
+      if (carried.length) state.run = { ...state.run, guide: state.run.guide?.map((g) => (carried.includes(g.text) && g.sent ? { at: g.at, text: g.text, repo: g.repo, ...(g.ack ? { ack: g.ack } : {}) } : g)) }
       track(state, opusPlan(state))
     }
     // Built or under review: a fix turn on the work. Otherwise one builder (T3 slices are not restarted).
     else track(state, buildStep(state, run.diff || run.phase === 'review' ? 'fix' : 'build'))
-    return state.run
+    return true
   }
   if (run.phase === 'plan' && run.plan?.status === 'waiting' && run.plan.text) {
     state.gen++
     track(state, opusPlan(state))
-    return state.run
+    return false
   }
   // A diff exists: one builder fix turn with the note, never a fresh (T3: sliced) build.
   if (run.phase === 'review' && run.diff) {
     state.gen++
     track(state, buildStep(state, 'fix'))
-    return state.run
+    return false
   }
-  return run
+  return false
 }
 
 export function commitRunNow(id: string): RunRecord {

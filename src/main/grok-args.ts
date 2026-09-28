@@ -30,3 +30,13 @@ export function grokFactoryAcpArgs(cwd: string, useLeader: boolean): string[] {
   if (useLeader) return [...base, '--leader', '--leader-socket', grokFactorySocket(), 'stdio']
   return [...base, '--no-leader', 'stdio']
 }
+
+/**
+ * Factory Cursor ACP (the grunt when Grok cannot run). Never Chat's reach: no --sandbox disabled,
+ * no --add-dir $HOME, no --always-approve. Workspace is the brain; the work repo is the only extra dir.
+ */
+export function factoryCursorAcpArgs(brainPath: string, workRepo?: string): string[] {
+  const args = ['--trust', '--workspace', brainPath]
+  if (workRepo && workRepo !== brainPath) args.push('--add-dir', workRepo)
+  return [...args, 'acp']
+}

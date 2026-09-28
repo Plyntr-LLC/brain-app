@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { grokAcpArgs, grokFactoryAcpArgs, grokFactorySocket, grokLeaderSocket, grokTuiArgs } from './grok-args.ts'
+import { factoryCursorAcpArgs, grokAcpArgs, grokFactoryAcpArgs, grokFactorySocket, grokLeaderSocket, grokTuiArgs } from './grok-args.ts'
 
 test('isolated socket is not the default grok leader.sock', () => {
   const sock = grokLeaderSocket()
@@ -77,4 +77,12 @@ test('Factory ACP args: brain cwd, no --always-approve, factory socket', () => {
 
 test('Chat ACP args keep --always-approve', () => {
   assert.ok(grokAcpArgs('/tmp/lab', true).includes('--always-approve'))
+})
+
+test('Factory Cursor ACP args: brain workspace, work repo add-dir, never Chat reach', () => {
+  const args = factoryCursorAcpArgs('/tmp/brain', '/tmp/work')
+  assert.deepEqual(args, ['--trust', '--workspace', '/tmp/brain', '--add-dir', '/tmp/work', 'acp'])
+  assert.equal(args.includes('--always-approve'), false)
+  assert.equal(args.includes('--sandbox'), false)
+  assert.deepEqual(factoryCursorAcpArgs('/tmp/brain', '/tmp/brain'), ['--trust', '--workspace', '/tmp/brain', 'acp'])
 })

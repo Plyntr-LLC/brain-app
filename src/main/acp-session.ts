@@ -22,6 +22,8 @@ import {
   setGrokFactoryLeaderEnv
 } from './grok-leader'
 import { ensureShims, factoryEnv, factoryWriteBlock, filterFactoryPermission } from './factory/gates'
+import { cursorGrokModel, grokUsageBlocked, needOpusError } from './factory/fallback'
+import { factoryCursorAcpArgs } from './grok-args'
 import { realish } from './factory/paths'
 import { factoryShimDir } from './factory/run-store'
 import type { GrokAccountRaw } from './grok-usage'
@@ -94,6 +96,8 @@ export type Pool = {
   boot: Promise<void>
   tabs: Map<string, Tab>
   bySid: Map<string, string>
+  /** Factory Cursor only: the --add-dir it was spawned with. */
+  workRepo?: string
 }
 
 const pools = new Map<string, Pool>()
@@ -288,9 +292,12 @@ export function poolKey(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat
   return lane === 'factory' ? 'factory:' + kind + ':' + cwd : kind + ':' + cwd
 }
 
-/** session/new params. Chat Grok keeps yoloMode; Factory never sends it. Exported for the fixture check. */
+/**
+ * session/new params. Chat Grok keeps yoloMode; Factory never sends it. `_meta` is Grok-only: Cursor
+ * (Chat or Factory) never gets it; Factory Cursor's rules lead each brief instead. Exported for the fixture check.
+ */
 export function sessionNewParams(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat'): Record<string, unknown> {
-  if (lane === 'factory') return { cwd, mcpServers: [], _meta: { rules: FACTORY_RULES } }
+  if (lane === 'factory') return kind === 'grok' ? { cwd, mcpServers: [], _meta: { rules: FACTORY_RULES } } : { cwd, mcpServers: [] }
   return kind === 'grok'
     ? { cwd, mcpServers: [], _meta: { yoloMode: true, rules: RULES } }
     : { cwd, mcpServers: [] }
@@ -307,9 +314,10 @@ setGrokFactoryLeaderEnv(() => {
   return env
 })
 
-export async function spawnArgs(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat'): Promise<string[]> {
+/** workRepo: Factory Cursor only, its one --add-dir. Factory Cursor never gets Chat's reach. */
+export async function spawnArgs(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat', workRepo?: string): Promise<string[]> {
   if (lane === 'factory') {
-    if (kind !== 'grok') throw new Error('Factory runs on Grok only in this version.')
+    if (kind === 'cursor') return factoryCursorAcpArgs(cwd, workRepo)
     const useLeader = await ensureGrokFactoryLeader()
     return grokFactoryAcpArgs(cwd, useLeader)
   }
@@ -744,13 +752,13 @@ async function acpAuthenticate(rpc: LineRpc, methods: unknown[], kind: 'grok' | 
   if (last && /auth/i.test(last)) throw new Error(last)
 }
 
-async function bootPool(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat'): Promise<Pool> {
+async function bootPool(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat', workRepo?: string): Promise<Pool> {
   const key = poolKey(kind, cwd, lane)
   const existing = pools.get(key)
   if (existing && !existing.rpc.dead) return existing
   const pending = booting.get(key)
   if (pending) return pending
-  const work = bootPoolNow(kind, cwd, key, lane)
+  const work = bootPoolNow(kind, cwd, key, lane, workRepo)
   booting.set(key, work)
   try {
     return await work
@@ -759,17 +767,19 @@ async function bootPool(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat
   }
 }
 
-async function bootPoolNow(kind: 'grok' | 'cursor', cwd: string, key: string, lane: Lane = 'chat'): Promise<Pool> {
+async function bootPoolNow(kind: 'grok' | 'cursor', cwd: string, key: string, lane: Lane = 'chat', workRepo?: string): Promise<Pool> {
   const again = pools.get(key)
   if (again && !again.rpc.dead) return again
   const bin = resolveBin(kind)
   if (!bin) throw new Error(`${kind} is not installed on this computer`)
   const env = lane === 'factory' ? factoryChildEnv(cwd) : binEnv()
-  const proc = spawnBin(bin, await spawnArgs(kind, cwd, lane), cwd, env)
+  const factoryDir = lane === 'factory' && kind === 'cursor' ? workRepo : undefined
+  const proc = spawnBin(bin, await spawnArgs(kind, cwd, lane, factoryDir), cwd, env)
   const pool: Pool = {
     kind,
     lane,
     cwd,
+    workRepo: factoryDir,
     rpc: null as unknown as LineRpc,
     boot: Promise.resolve(),
     tabs: new Map(),
@@ -1386,8 +1396,11 @@ export function prewarmProcess(kind: 'grok' | 'cursor', cwd: string): void {
 }
 
 /**
- * Factory lane: a separate Grok pool per brain (own leader socket, no --always-approve, shims first).
+ * Factory lane: a separate pool per brain (own leader socket for Grok, no --always-approve, shims first).
  * cwd is the brain so hooks, AGENTS.md, and skills load; edits land in workRepo by absolute path.
+ * Grok first. Grok unusable (usage, credits, missing, auth): Factory Cursor Grok at extra high.
+ * Cursor unusable too: FACTORY_NEED_OPUS, and the controller builds with Opus. builder 'cursor' keeps
+ * a run on Cursor (no flapping back to Grok).
  */
 export async function factoryWarm(opts: {
   tabId: string
@@ -1395,65 +1408,187 @@ export async function factoryWarm(opts: {
   workRepo: string
   resumeId?: string
   runThrough?: boolean
-}): Promise<{ sessionId: string; loaded: boolean }> {
+  builder?: 'grok' | 'cursor'
+}): Promise<{ sessionId: string; loaded: boolean; builder: 'grok' | 'cursor' }> {
   return withTabLock(opts.tabId, async () => {
-    const pool = await bootPool('grok', opts.brainPath, 'factory')
-    tabPool.set(opts.tabId, poolKey('grok', opts.brainPath, 'factory'))
-    const factory = { brainPath: opts.brainPath, workRepo: opts.workRepo, runThrough: opts.runThrough === true }
-    const have = pool.tabs.get(opts.tabId)
-    if (have && (!opts.resumeId || opts.resumeId === have.sessionId)) {
-      have.factory = factory
-      have.alwaysApprove = false
-      return { sessionId: have.sessionId, loaded: false }
-    }
-    let sid = ''
-    let loaded = false
-    let live: LiveRun = {}
-    if (opts.resumeId) {
+    let grokModel: string | undefined
+    if (opts.builder !== 'cursor') {
       try {
-        const res = asRecord(
-          await pool.rpc.request('session/load', { sessionId: opts.resumeId, cwd: opts.brainPath, mcpServers: [] }, 0)
-        )
-        sid = String(res.sessionId || opts.resumeId || '')
-        live = readLive(res)
-        loaded = Boolean(sid)
-      } catch {
-        sid = ''
+        return { ...(await warmFactoryGrok(opts)), builder: 'grok' as const }
+      } catch (e) {
+        if (!grokUsageBlocked(e)) throw e
+        grokModel = dropFactoryTab(opts.tabId)
       }
     }
-    if (!sid) {
-      const res = asRecord(await pool.rpc.request('session/new', sessionNewParams('grok', opts.brainPath, 'factory'), 0))
-      sid = String(res.sessionId || '')
-      live = readLive(res)
+    try {
+      const resumeId = opts.builder === 'cursor' ? opts.resumeId : undefined
+      return { ...(await warmFactoryCursor({ ...opts, resumeId, grokModel })), builder: 'cursor' as const }
+    } catch (e) {
+      dropFactoryTab(opts.tabId)
+      throw needOpusError(`Cursor could not run: ${String((e as Error)?.message || e)}`)
     }
-    if (!sid) throw new Error('Grok did not return a session.')
-    const tab: Tab = have || { tabId: opts.tabId, sessionId: sid, promptId: null, appTools: [], text: '' }
-    tab.factory = factory
-    tab.alwaysApprove = false
-    adoptLoadedSession(pool, tab, sid, live)
-    return { sessionId: sid, loaded }
   })
 }
 
-/** One Factory turn. The brief is wrapped with the brain's hooks (cwd = brainPath) by deliverAcpPrompt. */
-export async function factoryPrompt(opts: {
+/** Closes this Factory tab wherever it lives. Returns its model (the Grok family for the Cursor pick). */
+function dropFactoryTab(tabId: string): string | undefined {
+  const key = tabPool.get(tabId)
+  const model = key ? pools.get(key)?.tabs.get(tabId)?.model : undefined
+  acpClose(tabId)
+  return model
+}
+
+async function warmFactoryGrok(opts: {
   tabId: string
   brainPath: string
-  text: string
-  onEvent: (ev: StreamEvent) => void
-}): Promise<string> {
-  const pool = pools.get(poolKey('grok', opts.brainPath, 'factory'))
-  const tab = pool?.tabs.get(opts.tabId)
-  if (!pool || !tab) throw new Error('Factory session is not ready.')
+  workRepo: string
+  resumeId?: string
+  runThrough?: boolean
+}): Promise<{ sessionId: string; loaded: boolean }> {
+  const pool = await bootPool('grok', opts.brainPath, 'factory')
+  tabPool.set(opts.tabId, poolKey('grok', opts.brainPath, 'factory'))
+  const factory = { brainPath: opts.brainPath, workRepo: opts.workRepo, runThrough: opts.runThrough === true }
+  const have = pool.tabs.get(opts.tabId)
+  if (have && (!opts.resumeId || opts.resumeId === have.sessionId)) {
+    have.factory = factory
+    have.alwaysApprove = false
+    return { sessionId: have.sessionId, loaded: false }
+  }
+  let sid = ''
+  let loaded = false
+  let live: LiveRun = {}
+  if (opts.resumeId) {
+    try {
+      const res = asRecord(await pool.rpc.request('session/load', { sessionId: opts.resumeId, cwd: opts.brainPath, mcpServers: [] }, 0))
+      sid = String(res.sessionId || opts.resumeId || '')
+      live = readLive(res)
+      loaded = Boolean(sid)
+    } catch {
+      sid = ''
+    }
+  }
+  if (!sid) {
+    // A new Grok session on a spent account: the credit meter says so before a turn is wasted.
+    const billing = await pool.rpc.request('_x.ai/billing', {}, 5_000).catch(() => null)
+    if (grokUsageBlocked(asRecord(billing))) throw new Error('Grok credits are used up for this period.')
+    const res = asRecord(await pool.rpc.request('session/new', sessionNewParams('grok', opts.brainPath, 'factory'), 0))
+    sid = String(res.sessionId || '')
+    live = readLive(res)
+  }
+  if (!sid) throw new Error('Grok did not return a session.')
+  const tab: Tab = have || { tabId: opts.tabId, sessionId: sid, promptId: null, appTools: [], text: '' }
+  tab.factory = factory
   tab.alwaysApprove = false
-  if (tab.promptId != null) acpCancel(opts.tabId)
+  adoptLoadedSession(pool, tab, sid, live)
+  return { sessionId: sid, loaded }
+}
+
+/** Factory Cursor: own pool key factory:cursor:<brain>, Factory argv and env, Cursor Grok pinned extra high, agent mode. */
+async function warmFactoryCursor(opts: {
+  tabId: string
+  brainPath: string
+  workRepo: string
+  resumeId?: string
+  runThrough?: boolean
+  grokModel?: string
+}): Promise<{ sessionId: string; loaded: boolean }> {
+  const key = poolKey('cursor', opts.brainPath, 'factory')
+  let pool = await bootPool('cursor', opts.brainPath, 'factory', opts.workRepo)
+  // Spawned for another work repo and nobody else is on it: respawn with this --add-dir.
+  if (pool.workRepo !== opts.workRepo && [...pool.tabs.keys()].every((id) => id === opts.tabId)) {
+    for (const id of [...pool.tabs.keys()]) tabPool.delete(id)
+    // Emptied first: the old process's exit (onPoolExit) must not unmap this tab from the new pool.
+    pool.tabs.clear()
+    pool.bySid.clear()
+    pool.rpc.kill()
+    if (pools.get(key) === pool) pools.delete(key)
+    pool = await bootPool('cursor', opts.brainPath, 'factory', opts.workRepo)
+  }
+  tabPool.set(opts.tabId, key)
+  const factory = { brainPath: opts.brainPath, workRepo: opts.workRepo, runThrough: opts.runThrough === true }
+  const have = pool.tabs.get(opts.tabId)
+  if (have && (!opts.resumeId || opts.resumeId === have.sessionId)) {
+    have.factory = factory
+    have.alwaysApprove = false
+    return { sessionId: have.sessionId, loaded: false }
+  }
+  let sid = ''
+  let loaded = false
+  let live: LiveRun = {}
+  if (opts.resumeId) {
+    try {
+      const res = asRecord(await pool.rpc.request('session/load', { sessionId: opts.resumeId, cwd: opts.brainPath, mcpServers: [] }, 0))
+      sid = String(res.sessionId || opts.resumeId || '')
+      live = readLive(res)
+      loaded = Boolean(sid)
+    } catch {
+      sid = ''
+    }
+  }
+  if (!sid) {
+    const res = asRecord(await pool.rpc.request('session/new', sessionNewParams('cursor', opts.brainPath, 'factory'), 0))
+    sid = String(res.sessionId || '')
+    live = readLive(res)
+  }
+  if (!sid) throw new Error('Cursor did not return a session.')
+  const tab: Tab = have || { tabId: opts.tabId, sessionId: sid, promptId: null, appTools: [], text: '' }
+  tab.factory = factory
+  tab.alwaysApprove = false
+  adoptLoadedSession(pool, tab, sid, live)
+  if (!(await pinCursorGrok(pool, tab, opts.grokModel))) throw new Error('Cursor has no Grok model.')
+  if (tab.agentMode !== 'agent' && tab.agentModes?.some((m) => m.id === 'agent')) {
+    try {
+      await pool.rpc.request('session/set_mode', { sessionId: tab.sessionId, modeId: 'agent' }, 10_000)
+      tab.agentMode = 'agent'
+    } catch {
+      /* stays in its mode */
+    }
+  }
+  return { sessionId: sid, loaded }
+}
+
+/** Cursor Grok for the Grok family at extra high. T2 high and T3 xhigh both pin extra high here. False: no Cursor Grok. */
+async function pinCursorGrok(pool: Pool, tab: Tab, grokModel?: string): Promise<boolean> {
+  const base = cursorGrokModel(tab.models, grokModel || tab.model)
+  if (!base) return false
+  const want = withCursorEffort(base, 'xhigh')
+  if (tab.model === want) return true
+  for (const id of want === base ? [base] : [want, base]) {
+    try {
+      const next = readLive(await setOption(pool.rpc, tab.sessionId, 'model', id))
+      tab.model = next.model || id
+      tab.effort = 'xhigh'
+      return true
+    } catch {
+      /* try the advertised id as is */
+    }
+  }
+  // The session keeps its model; the brief still carries the phase.
+  return true
+}
+
+/** Fixture check only: puts a fake pool (and its tabs) where Factory lookups find it. */
+export function registerPoolForCheck(pool: Pool): void {
+  const key = poolKey(pool.kind, pool.cwd, pool.lane || 'chat')
+  pools.set(key, pool)
+  for (const id of pool.tabs.keys()) tabPool.set(id, key)
+}
+
+async function factoryPromptOn(
+  pool: Pool,
+  tab: Tab,
+  opts: { brainPath: string; text: string; onEvent: (ev: StreamEvent) => void }
+): Promise<string> {
+  tab.alwaysApprove = false
+  if (tab.promptId != null) acpCancel(tab.tabId)
   const gen = Date.now()
   tab.onEvent = opts.onEvent
   tab.text = ''
   tab.promptId = gen
   try {
     let raw: unknown = null
-    await deliverAcpPrompt('grok', opts.brainPath, tab.sessionId, opts.text, [], {
+    const text = pool.kind === 'cursor' ? `${FACTORY_RULES}\n\n${opts.text}` : opts.text
+    await deliverAcpPrompt(pool.kind, opts.brainPath, tab.sessionId, text, [], {
       request: async (method, params, timeout) => {
         raw = await pool.rpc.request(method, params as never, timeout)
         return raw
@@ -1471,12 +1606,63 @@ export async function factoryPrompt(opts: {
   return tab.text.trim()
 }
 
-/** Factory only: set the Grok reasoning effort on a Factory session (plan high, xhigh after an Opus plan). */
+/**
+ * One Factory turn on the tab's own pool (Grok or Cursor). The brief is wrapped with the brain's hooks
+ * (cwd = brainPath) by deliverAcpPrompt. A Grok turn that dies unusable hops to Cursor once and sends
+ * the same brief (onBuilder says so). Cursor unusable: FACTORY_NEED_OPUS.
+ */
+export async function factoryPrompt(opts: {
+  tabId: string
+  brainPath: string
+  text: string
+  onEvent: (ev: StreamEvent) => void
+  onBuilder?: (builder: 'cursor', sessionId: string) => void
+}): Promise<string> {
+  const key = tabPool.get(opts.tabId)
+  const pool = key ? pools.get(key) : undefined
+  const tab = pool?.tabs.get(opts.tabId)
+  if (!pool || !tab || pool.lane !== 'factory') throw new Error('Factory session is not ready.')
+  try {
+    return await factoryPromptOn(pool, tab, opts)
+  } catch (e) {
+    if (!grokUsageBlocked(e)) throw e
+    if (pool.kind === 'cursor') throw needOpusError(`Cursor could not run: ${String((e as Error)?.message || e)}`)
+  }
+  const ctx = tab.factory || { brainPath: opts.brainPath, workRepo: '' }
+  const next = await withTabLock(opts.tabId, async () => {
+    const grokModel = dropFactoryTab(opts.tabId)
+    try {
+      return await warmFactoryCursor({ tabId: opts.tabId, brainPath: opts.brainPath, workRepo: ctx.workRepo, runThrough: ctx.runThrough, grokModel })
+    } catch (e) {
+      dropFactoryTab(opts.tabId)
+      throw needOpusError(`Cursor could not run: ${String((e as Error)?.message || e)}`)
+    }
+  })
+  opts.onBuilder?.('cursor', next.sessionId)
+  const cpool = pools.get(poolKey('cursor', opts.brainPath, 'factory'))
+  const ctab = cpool?.tabs.get(opts.tabId)
+  if (!cpool || !ctab) throw needOpusError('Cursor session is not ready.')
+  try {
+    return await factoryPromptOn(cpool, ctab, opts)
+  } catch (e) {
+    if (/^cancelled$/.test(String((e as Error)?.message || e))) throw e
+    throw needOpusError(`Cursor could not run: ${String((e as Error)?.message || e)}`)
+  }
+}
+
+/**
+ * Factory only: effort on a Factory session. Grok: reasoning_effort (plan high, xhigh after an Opus
+ * plan). Cursor: Cursor Grok pinned extra high whatever was asked.
+ */
 export async function factorySetEffort(tabId: string, effort: string): Promise<void> {
   const key = tabPool.get(tabId)
   const pool = key ? pools.get(key) : undefined
   const tab = pool?.tabs.get(tabId)
-  if (!pool || !tab || pool.lane !== 'factory' || pool.kind === 'cursor') throw new Error('Factory session is not ready.')
+  if (!pool || !tab || pool.lane !== 'factory') throw new Error('Factory session is not ready.')
+  if (pool.kind === 'cursor') {
+    await pinCursorGrok(pool, tab)
+    return
+  }
   if (tab.effort === effort) return
   await setOption(pool.rpc, tab.sessionId, 'reasoning_effort', effort)
   tab.effort = effort

@@ -22,9 +22,19 @@ export type RunPhase =
 /** Opus strict reviews that may fail before the run holds for Joe (auto fix + fresh review until then). */
 export const REVIEW_MAX = 5
 
+/** From this strict-review cycle on, the review fix is made by the Opus builder, not Grok or Cursor (they get the first two). */
+export const BUILDER_FIX_MAX = 3
+
+/** Who makes the edits: Grok ACP first, Cursor Grok when Grok cannot run, Opus when neither can. */
+export type Builder = 'grok' | 'cursor' | 'opus'
+
+export const ACK_FILED = "Okay, we're filing that with the other work that's already in progress."
+export const ACK_NOTED = 'Just noted.'
+
 /** One note Joe sent from the Factory composer. `sent` once a builder or planner brief carried it. */
 /** repo: what this note named when it was first read ('' for nothing), so a later move never re-reads it. */
-export type GuideNote = { at: number; text: string; sent?: boolean; repo?: string }
+/** ack: the reply bubble shown under the note (no model call). */
+export type GuideNote = { at: number; text: string; sent?: boolean; repo?: string; ack?: string }
 
 export type VerifyRow = { script: string; status: 'pass' | 'fail' | 'skipped'; tail?: string }
 
@@ -74,7 +84,10 @@ export type RunRecord = {
   resumePhase?: RunPhase
   base: string
   acpTab: string
+  /** The builder's ACP session (Grok or Cursor, see builder). */
   grokSessionId?: string
+  /** Who builds this run. Set once a run falls back; it never flips back. Missing means Grok. */
+  builder?: Builder
   /** T2: the plan Joe approves before any build. Full text sits beside the run record. */
   plan?: {
     text: string

@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { REVIEW_MAX, type FactoryTriage, type RunPhase, type RunRecord } from '../../shared/factory'
 
 type Perm = { title?: string; path?: string; detail?: string; options?: { id: string; label: string }[] }
 type FileHit = { path: string; tool?: string; live: boolean }
 
-/** Live file cards per run, same cap for every tier. */
+const BUILDER_NAME = { grok: 'Grok', cursor: 'Cursor Grok', opus: 'Opus' } as const
+
+/** Live file list per run on the In use rail, same cap for every tier. */
 const FILE_CAP = 40
 
 function baseName(p: string): string {
@@ -43,8 +45,10 @@ export function FactoryPane(props: {
   cwd: string
   active: boolean
   onRun: (runId: string, title: string) => void
+  /** This run's files go to the right In use rail, keyed by the Factory tab id. */
+  onFiles: (id: string, files: FileHit[]) => void
 }) {
-  const { runId, cwd, active, onRun } = props
+  const { id, runId, cwd, active, onRun, onFiles } = props
   const [run, setRun] = useState<RunRecord | null>(null)
   const [task, setTask] = useState('')
   const [runThrough, setRunThrough] = useState(true)
@@ -68,6 +72,14 @@ export function FactoryPane(props: {
   const [files, setFiles] = useState<FileHit[]>([])
   const runRef = useRef<string>(runId || '')
   const noteRef = useRef<HTMLTextAreaElement>(null)
+  const onFilesRef = useRef(onFiles)
+  onFilesRef.current = onFiles
+
+  // In use follows this list; a closed tab leaves nothing behind.
+  useEffect(() => {
+    onFilesRef.current(id, files)
+  }, [id, files])
+  useEffect(() => () => onFilesRef.current(id, []), [id])
 
   useEffect(() => {
     runRef.current = runId || ''
@@ -275,9 +287,9 @@ export function FactoryPane(props: {
       : run.phase === 'plan' && !planWaiting
         ? 'Opus is writing the plan'
         : run.phase === 'review' && !run.diff && run.note
-          ? `Grok is fixing: ${run.note.split('\n')[0].slice(0, 140)}`
+          ? `${BUILDER_NAME[run.builder || 'grok']} is fixing: ${run.note.split('\n')[0].slice(0, 140)}`
           : run.phase === 'review' && !run.diff && run.tier === 'T1' && !run.selfChecked
-            ? 'Grok is re-reading its diff'
+            ? `${BUILDER_NAME[run.builder || 'grok']} is re-reading its diff`
             : run.phase === 'review' && !run.diff && (run.tier === 'T2' || run.tier === 'T3' || run.risk !== 'none') && !run.strict
           ? 'Opus strict review running'
           : ''
@@ -309,6 +321,7 @@ export function FactoryPane(props: {
           <h3 className="factory-h">{run.title}</h3>
           <p className="tiny">
             Work repo: <strong>{baseName(run.workRepo)}</strong> {run.workRepo}
+            {run.builder ? ` · Builder: ${BUILDER_NAME[run.builder]}` : ''}
           </p>
           <div className="phaserail">
             {RAIL.map((r, i) => (
@@ -389,16 +402,6 @@ export function FactoryPane(props: {
               {waitLine ? <p className="tiny">{waitLine}</p> : null}
               {work ? <p className="tiny">{work}</p> : null}
               {activity ? <pre>{activity}</pre> : null}
-            </div>
-          ) : null}
-          {files.length ? (
-            <div className="factory-files">
-              {files.map((f) => (
-                <div key={f.path} className={`skin-tool${f.live ? ' live' : ''}`} title={f.path}>
-                  <span className="k">{f.tool || 'file'}</span>
-                  <span className="p">{baseName(f.path)}</span>
-                </div>
-              ))}
             </div>
           ) : null}
           {prepWaiting ? (
@@ -637,10 +640,13 @@ export function FactoryPane(props: {
           {run.guide?.length ? (
             <div className="thread factory-guide">
               {run.guide.map((g, i) => (
-                <div key={`${i}-${g.at}`} className="bubble me">
-                  {g.text}
-                  {g.sent ? null : <p className="tiny">Queued until this step finishes.</p>}
-                </div>
+                <Fragment key={`${i}-${g.at}`}>
+                  <div className="bubble me">
+                    {g.text}
+                    {g.sent ? null : <p className="tiny">Queued until this step finishes.</p>}
+                  </div>
+                  {g.ack ? <div className="bubble">{g.ack}</div> : null}
+                </Fragment>
               ))}
             </div>
           ) : null}
