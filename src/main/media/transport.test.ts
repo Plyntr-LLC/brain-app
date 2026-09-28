@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -67,6 +68,12 @@ test('dry-run loads media-v1 in process and never loads r2-admin', async () => {
     assert.equal((globalThis as { __R2_ADMIN_LOADED?: boolean }).__R2_ADMIN_LOADED, undefined)
     await assert.rejects(loadR2Admin(root), (err: Error) => err.message === 'Dry-run never loads r2-admin.')
     assert.equal((globalThis as { __R2_ADMIN_LOADED?: boolean }).__R2_ADMIN_LOADED, undefined)
+    const req = createRequire(import.meta.url)
+    const registry = [
+      ...Object.keys(req.cache || {}),
+      ...Object.keys((req('node:module') as { _cache?: Record<string, unknown> })._cache || {})
+    ]
+    assert.equal(registry.some((k) => /r2-admin/.test(k)), false)
   } finally {
     if (prev === undefined) delete process.env.BRAIN_APP_DRY_RUN
     else process.env.BRAIN_APP_DRY_RUN = prev

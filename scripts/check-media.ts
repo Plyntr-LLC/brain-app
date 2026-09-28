@@ -268,6 +268,31 @@ for (const needle of [
 ]) {
   if (!settingsSrc.includes(needle)) fail('B', 'Settings mediaStorageOffer insertion missing')
 }
+{
+  const underPack = (settingsSrc.match(/\) : null\}\n          \{storageAdmin\(\)\}\n          \{localSyncOffer\(\)\}/g) || []).length
+  if (underPack !== 2) fail('B', 'storageAdmin must sit under PackSelect on both biz current branches')
+  if (!settingsSrc.includes('function storageAdmin()')) fail('B', 'storageAdmin helper missing')
+  const adminStart = settingsSrc.indexOf('function storageAdmin()')
+  const adminEnd = settingsSrc.indexOf('const currentIndex', adminStart)
+  const adminBody = adminStart >= 0 && adminEnd > adminStart ? settingsSrc.slice(adminStart, adminEnd) : ''
+  if (!adminBody.includes('if (!joe || !superAdmin || !window.brain.media) return null')) {
+    fail('B', 'storageAdmin must stay joe+superAdmin only')
+  }
+  const adminUi = readFileSync(join(rootRepo, 'src/renderer/src/MediaStoragePanel.tsx'), 'utf8')
+  if (!adminUi.includes('Storage limit (GB)') || !adminUi.includes('Turn on storage for this brain')) {
+    fail('B', 'MediaAdminFields copy missing')
+  }
+  const transportSrc = readFileSync(join(rootRepo, 'src/main/media/transport.ts'), 'utf8')
+  if (!transportSrc.includes('export function assertNotR2Url') || !transportSrc.includes('export async function startDryMedia')) {
+    fail('B', 'assertNotR2Url or startDryMedia missing')
+  }
+  if (!transportSrc.includes("throw new Error('Dry-run never loads r2-admin.')")) {
+    fail('B', 'loadR2Admin must still refuse in dry-run')
+  }
+  if (/import\(.*r2-admin/.test(transportSrc) || transportSrc.includes("import(pathToFileURL(r2AdminPath")) {
+    fail('B', 'transport.ts must not import r2-admin.js')
+  }
+}
 if (shouldShowStorageAsk({ role: 'team', joe: false, storageOn: false, mediaAsked: false, hasSeatToken: true, routes: true })) {
   fail('B', 'storage-ask would show for team')
 }
@@ -595,21 +620,79 @@ if (!rendererChecks.includes('media:enable') || !rendererChecks.includes('media:
   fail('10', 'expected media IPC returns to pass assertRendererSafe')
 }
 
-if (loadedUrls.some((u) => /r2-admin/.test(u))) fail('11', 'r2-admin.js was loaded')
-try {
-  const cacheKeys = Object.keys(req.cache || {})
-  if (cacheKeys.some((k) => /r2-admin/.test(k))) fail('11', 'r2-admin.js was in the module registry')
-} catch {
-  /* */
+function moduleRegistryKeys(): string[] {
+  const keys: string[] = loadedUrls.slice()
+  const cjs = req.cache
+  if (cjs) keys.push(...Object.keys(cjs))
+  const Module = req('node:module') as { _cache?: Record<string, unknown> }
+  if (Module._cache) keys.push(...Object.keys(Module._cache))
+  return keys
 }
-steps['11'] = { network: 0, sockets: 0, r2Admin: false }
 
-const SLICE3_OWN = ['A', 'B', '1', '2', '3', '4', '6', '8', '9', '10', '11', '12', '13']
-const SLICE3_LATER = ['5', '7', '14', '15', '16', '17', '18', '19', '20', '21', '22']
-for (const s of SLICE3_OWN) {
-  if (!(s in steps)) fail(s, 'slice 3 must claim this step')
+function assertR2AdminAbsent(where: string): void {
+  const hits = moduleRegistryKeys().filter((k) => /r2-admin/.test(k))
+  if (hits.length) fail('11', `${where}: r2-admin was in the module registry ${JSON.stringify(hits)}`)
 }
-for (const s of SLICE3_LATER) {
+
+assertR2AdminAbsent('after playback')
+
+const transport = await import('../src/main/media/transport.ts')
+const probeRoot = mkdtempSync(join(tmpdir(), 'media-r2-probe-'))
+const probeUd = mkdtempSync(join(tmpdir(), 'media-r2-ud-'))
+mkdirSync(join(probeRoot, 'src'), { recursive: true })
+writeFileSync(join(probeRoot, 'package.json'), JSON.stringify({ type: 'module' }))
+writeFileSync(join(probeRoot, 'src', 'media-v1.js'), 'export const kind = "media-v1"\n')
+writeFileSync(
+  join(probeRoot, 'src', 'r2-admin.js'),
+  'globalThis.__R2_ADMIN_LOADED = true\nexport const kind = "r2-admin"\n'
+)
+const started = await transport.startDryMedia({
+  userData: probeUd,
+  bucket: 'bm-slice4dryyyyyyyyyyyyyyyy',
+  syncRoot: probeRoot
+})
+if (started.bucket.bucket_status !== 'on') fail('11', 'startDryMedia did not use the directory bucket')
+if (!existsSync(join(probeUd, 'media-dry-bucket', started.bucket.bucket))) {
+  fail('11', 'startDryMedia did not write the in-process directory bucket')
+}
+if ((started.mediaV1 as { kind?: string } | null)?.kind !== 'media-v1') fail('11', 'startDryMedia did not load media-v1 in process')
+if ((globalThis as { __R2_ADMIN_LOADED?: boolean }).__R2_ADMIN_LOADED) fail('11', 'startDryMedia loaded r2-admin.js')
+let loadMsg = ''
+try {
+  await transport.loadR2Admin(probeRoot)
+  fail('11', 'loadR2Admin did not throw')
+} catch (err) {
+  loadMsg = String((err as Error).message || err)
+}
+if (loadMsg !== 'Dry-run never loads r2-admin.') fail('11', 'loadR2Admin said ' + JSON.stringify(loadMsg))
+if ((globalThis as { __R2_ADMIN_LOADED?: boolean }).__R2_ADMIN_LOADED) fail('11', 'loadR2Admin loaded r2-admin.js')
+try {
+  transport.assertNotR2Url('https://acct.r2.cloudflarestorage.com/o/x')
+  fail('11', 'assertNotR2Url allowed an R2 URL')
+} catch (err) {
+  if (String((err as Error).message || err) !== transport.R2_REFUSE) {
+    fail('11', 'assertNotR2Url said ' + String((err as Error).message || err))
+  }
+}
+transport.assertNotR2Url('brain-media://3f9a1c2b-7d41-4c1e-9a0b-2f5e8c6d1a90')
+assertR2AdminAbsent('after startDryMedia probe')
+rmSync(probeRoot, { recursive: true, force: true })
+rmSync(probeUd, { recursive: true, force: true })
+steps['11'] = {
+  network: 0,
+  sockets: 0,
+  r2Admin: false,
+  r2AdminInRegistry: false,
+  loadR2AdminThrows: true,
+  startDryMediaDirectoryBucket: true
+}
+
+const SLICE4_OWN = ['A', 'B', '1', '2', '3', '4', '6', '8', '9', '10', '11', '12', '13']
+const SLICE4_LATER = ['5', '7', '14', '15', '16', '17', '18', '19', '20', '21', '22']
+for (const s of SLICE4_OWN) {
+  if (!(s in steps)) fail(s, 'slice 4 must still claim this step')
+}
+for (const s of SLICE4_LATER) {
   if (s in steps) fail(s, 'later-slice step claimed early')
 }
 
