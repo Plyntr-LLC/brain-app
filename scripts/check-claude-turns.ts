@@ -45,16 +45,20 @@ export default { app, BrowserWindow }`
 })
 
 
-type Sent = { tabId: string; kind: string; data?: string }
+type Sent = { tabId: string; kind: string; data?: string; busy?: boolean }
 const sent: Sent[] = []
-;(globalThis as { __brainWindows?: unknown }).__brainWindows = [
-  { isDestroyed: () => false, webContents: { send: (_ch: string, p: Sent) => sent.push(p) } }
-]
 const src = (rel: string) => pathToFileURL(join(rootRepo, 'src', 'main', rel)).href
+const fan = (await import(src('chat-fan.ts'))) as typeof import('../src/main/chat-fan.ts')
+;(globalThis as { __brainWindows?: unknown }).__brainWindows = [
+  { isDestroyed: () => false, webContents: { send: (_ch: string, p: Sent) => sent.push({ ...p, busy: fan.isChatBusy(p.tabId) }) } }
+]
 const cs = (await import(src('claude-stream.ts'))) as typeof import('../src/main/claude-stream.ts')
 
 const results: { name: string; ok: boolean; detail: string }[] = []
-const check = (name: string, ok: boolean, detail = '') => results.push({ name, ok, detail })
+const check = (name: string, ok: boolean, detail = '') => {
+  results.push({ name, ok, detail })
+  console.error(`[live] ${ok ? 'PASS' : 'FAIL'} ${name}${ok ? '' : '  ' + detail}`)
+}
 const cwd = mkdtempSync(join(tmpdir(), 'brain-claude-cwd-'))
 const tabId = 'check-claude-turns'
 const base = { tabId, cwd, model: 'haiku', effort: 'low' }
@@ -104,6 +108,78 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 {
   const c = await cs.claudePrompt({ ...base, text: 'Reply with exactly the word KIWI and nothing else.', onEvent: () => {} })
   check('3 the next prompt after a self-started turn still answers', /KIWI/.test(c), c.slice(0, 80))
+}
+
+// Like chat:send in ipc-stubs: a prompt's events go to the chat through emitChat.
+const appEvent = (ev: { kind: string; data?: string }) => fan.emitChat({ tabId, cli: 'claude', ev: ev as never })
+const bgStart = (tag: string, secs: number) =>
+  cs.claudePrompt({
+    ...base,
+    text: `Use the Bash tool with run_in_background set to true to run exactly: sleep ${secs} && echo ${tag} . Then say "started" and end your turn. When you are told it finished, read its output and reply with the line it printed.`,
+    onEvent: appEvent
+  })
+const autoWith = (from: number, tag: string) => {
+  const at = sent.findIndex((p, i) => i >= from && p.tabId === tabId && p.data === 'turn:auto')
+  if (at < 0) return { at, text: '', closed: false }
+  const rest = sent.slice(at)
+  const end = rest.findIndex((p) => p.tabId === tabId && (p.kind === 'done' || p.data === 'turn:auto-done'))
+  const text = rest.slice(0, end < 0 ? undefined : end).filter((p) => p.kind === 'text').map((p) => p.data).join('')
+  return { at, text, closed: end >= 0 && text.includes(tag) }
+}
+
+console.error('[live] starting 4a')
+// 4a. Send while a background task still runs: the prompt gets its own answer, the wake turn comes after.
+{
+  const from = sent.length
+  await bgStart('BGDONE-4A', 14)
+  const b = await cs.claudePrompt({ ...base, text: 'Reply with exactly the word BANANA and nothing else.', onEvent: appEvent })
+  for (let i = 0; i < 600 && !autoWith(from, 'BGDONE-4A').closed; i++) await wait(100)
+  const w = autoWith(from, 'BGDONE-4A')
+  const shown = sent.slice(from).filter((p) => p.tabId === tabId && p.kind === 'text').map((p) => p.data).join('')
+  check('4a a prompt sent while background work runs gets its own answer; the task result still reaches the chat', /BANANA/.test(b) && (w.closed || /BGDONE-4A/.test(b)) && shown.includes('BGDONE-4A'), JSON.stringify({ b: b.slice(0, 80), w }))
+}
+
+console.error('[live] starting 4b')
+// 4b. The background task finishes during a longer prompt: that prompt keeps its answer; the wake comes after.
+{
+  const from = sent.length
+  await bgStart('BGDONE-4B', 6)
+  const b = await cs.claudePrompt({ ...base, text: 'Count from 1 to 120, one number per line, then write DONE-COUNT on the last line.', onEvent: appEvent })
+  for (let i = 0; i < 600 && !autoWith(from, 'BGDONE-4B').closed; i++) await wait(100)
+  const w = autoWith(from, 'BGDONE-4B')
+  const shown = sent.slice(from).filter((p) => p.tabId === tabId && p.kind === 'text').map((p) => p.data).join('')
+  // Claude may fold the finished task into the running reply or answer it in its own turn; either way nothing is lost.
+  check('4b a task that finishes during a prompt: the prompt keeps its answer and the task result still shows', /DONE-COUNT/.test(b) && (w.closed || /BGDONE-4B/.test(b)) && shown.includes('BGDONE-4B'), JSON.stringify({ tail: b.slice(-60), w }))
+}
+
+console.error('[live] starting 4c')
+// 4c. Send during Claude's own wake turn: the wake closes with turn:auto-done (tab stays busy), then the prompt answers.
+{
+  const from = sent.length
+  // Let the earlier cases' turns finish first, so the only turn:auto after this point is 4C's.
+  await wait(3000)
+  await bgStart('BGDONE-4C', 5)
+  const mark = sent.length
+  const wakeOpen = () => sent.some((p, k) => k >= mark && p.tabId === tabId && p.data === 'turn:auto')
+  for (let i = 0; i < 600 && !wakeOpen(); i++) await wait(50)
+  const c = await cs.claudePrompt({ ...base, text: 'Reply with exactly the word KIWI and nothing else.', onEvent: appEvent })
+  const shownC = () => sent.slice(mark).filter((p) => p.tabId === tabId && p.kind === 'text').map((p) => p.data).join('')
+  for (let i = 0; i < 300 && !shownC().includes('BGDONE-4C'); i++) await wait(100)
+  const late = sent.slice(from).filter((p) => p.tabId === tabId && (p.data === 'turn:auto-done' || (p.kind === 'done' && sent.slice(from).some((q) => q.data === 'turn:auto'))))
+  const autoDone = sent.slice(from).find((p) => p.tabId === tabId && p.data === 'turn:auto-done')
+  const w = autoWith(from, 'BGDONE-4C')
+  check(
+    '4c a prompt sent during Claude\'s own turn: no hang, the tab stays busy until one done, the prompt is answered in the chat',
+    (() => {
+      const trail = sent.slice(mark).filter((p) => p.tabId === tabId && p.kind !== 'thought')
+      const doneAt = trail.findIndex((p) => p.kind === 'done')
+      // Claude may fold the new message into its own turn and answer only that: what it says is its call.
+      // What the app owns: no hang, the tab busy from turn:auto until one done, the prompt answered in the chat.
+      return wakeOpen() && /KIWI/.test(c) && shownC().includes('KIWI') && doneAt >= 0 && trail.filter((p) => p.kind === 'done').length === 1 &&
+        trail.slice(trail.findIndex((p) => p.data === 'turn:auto'), doneAt).every((p) => p.busy === true) && (!autoDone || autoDone.busy === true)
+    })(),
+    JSON.stringify({ c: c.slice(0, 60), wake: wakeOpen(), shown: shownC().slice(0, 200), autoDone, trail: sent.slice(mark).filter((p) => p.tabId === tabId && p.kind !== 'thought').map((p) => `${p.kind}:${String(p.data || '').slice(0, 30)}:${p.busy ? 'B' : '-'}`).slice(0, 40) })
+  )
 }
 
 cs.claudeKillAll()

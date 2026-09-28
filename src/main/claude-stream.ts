@@ -3,7 +3,7 @@ import type { StreamEvent } from './ai-cli'
 import { CHAT_RULES, claudeChatMode, claudeChatPermissionArgs } from '../shared/chat-reach'
 import { binEnv, resolveBin } from './ai-cli'
 import { claudeContent, type Attach } from './attach'
-import { emitChat } from './chat-fan'
+import { emitChat, markChatBusy } from './chat-fan'
 import { controlAnswered, controlTimedOut, newPlanControls, type PlanControls } from './claude-plan'
 import { asRecord, asText, fileHits, spawnBin } from './line-rpc'
 import { captureToolHook, wrapPromptWithHooks } from './project-hooks'
@@ -28,12 +28,19 @@ type Sess = {
   controls?: PlanControls
   /** Text of the turn Claude started on its own, so a result-only answer is not shown twice. */
   autoText?: string
+  /** Claude's own turn has been announced to the chat (turn:auto). */
+  autoLive?: boolean
   /**
-   * Who owns each turn Claude will finish, oldest first. Claude ends every turn with one `result`,
-   * in order: an interrupted turn still sends its own, and a background task Claude hears back
-   * about starts a turn nobody sent ('auto'). A number is the promptGen that sent it.
+   * Prompts written to Claude that it has not taken yet, oldest first. `--replay-user-messages` echoes
+   * each one back the moment Claude takes it, in the turn that will answer it.
    */
-  owners: (number | 'auto')[]
+  unacked: number[]
+  /** Prompts Claude took while an interrupted turn was closing: they belong to the next turn. */
+  carry: number[]
+  /** The turn Claude is running (init to result). gens: prompts it took. auto: it started with none. */
+  turn: { gens: number[]; auto: boolean } | null
+  /** An interrupt was sent: the open turn is ending, and what Claude takes now is for the next one. */
+  closing: boolean
   /** The prompt claudePrompt is waiting on (0: none). An interrupted prompt is no longer active. */
   active: number
   /** Background tasks Claude reported (system background_tasks_changed), with a label and start time. */
@@ -47,18 +54,48 @@ const sessions = new Map<string, Sess>()
 const planTabs = new Set<string>()
 const booting = new Map<string, Promise<void>>()
 
-/** Where this turn's events go: the waiting prompt, the chat (a turn Claude started), or nowhere (interrupted). */
+/** Announce the turn Claude started on its own (a background task it waited on finished). */
+function startAuto(s: Sess): void {
+  if (s.autoLive) return
+  s.autoLive = true
+  s.autoText = ''
+  markChatBusy(s.tabId, true)
+  emitChat({ tabId: s.tabId, cli: 'claude', ev: { kind: 'status', data: 'turn:auto' } })
+}
+
+/** Close that turn. A prompt still waiting keeps the tab busy, so its own answer is not cut off. */
+function endAuto(s: Sess, result: string): void {
+  // A wake that sent only a result still shows as its own turn.
+  if (!s.autoLive) startAuto(s)
+  const chat = (ev: StreamEvent) => emitChat({ tabId: s.tabId, cli: 'claude', ev })
+  if (result && !s.autoText) chat({ kind: 'text', data: result })
+  s.autoText = ''
+  s.autoLive = false
+  if (s.active) chat({ kind: 'status', data: 'turn:auto-done' })
+  else chat({ kind: 'done' })
+}
+
+function openTurn(s: Sess): NonNullable<Sess['turn']> {
+  const gens = s.carry
+  s.carry = []
+  // A turn with no prompt waiting to be taken is Claude's own (a background task finished).
+  const auto = !gens.length && !s.unacked.length && s.promptGen > 0
+  s.turn = { gens, auto }
+  if (auto) startAuto(s)
+  return s.turn
+}
+
+/**
+ * Where this turn's events go: the waiting prompt, the chat (Claude's own turn), or nowhere (a turn
+ * that only answers interrupted prompts). Both live sinks reach the same chat; the turn's prompts
+ * decide which one ends.
+ */
 function sink(s: Sess): ((ev: StreamEvent) => void) | undefined {
-  const owner = s.owners[0]
-  if (owner === 'auto') return (ev) => emitChat({ tabId: s.tabId, cli: 'claude', ev })
-  if (owner !== undefined && owner === s.active) return s.onEvent
-  // Output with no owner: Claude started a turn on its own (a background task finished).
-  if (owner === undefined) {
-    s.owners.push('auto')
-    s.autoText = ''
-    emitChat({ tabId: s.tabId, cli: 'claude', ev: { kind: 'status', data: 'turn:auto' } })
-    return (ev) => emitChat({ tabId: s.tabId, cli: 'claude', ev })
-  }
+  const t = s.turn || openTurn(s)
+  if (s.active && t.gens.includes(s.active)) return s.onEvent
+  // Ours before Claude's echo lands: a prompt is waiting to be taken and this turn did not start as Claude's own.
+  if (!t.auto && !t.gens.length && s.active && s.unacked.includes(s.active)) return s.onEvent
+  if (t.auto) return (ev) => emitChat({ tabId: s.tabId, cli: 'claude', ev })
   return undefined
 }
 
@@ -79,6 +116,11 @@ function handleClaude(s: Sess, line: string): void {
   const type = String(o.type || '')
   if (type === 'system') {
     const sub = String(o.subtype || '')
+    // Every turn opens with init.
+    if (sub === 'init' && s.promptGen > 0) {
+      s.closing = false
+      openTurn(s)
+    }
     if (sub === 'task_started') {
       const id = String(o.task_id || '')
       const label = s.toolLabels.get(String(o.tool_use_id || '')) || String(o.description || 'A background task')
@@ -120,10 +162,18 @@ function handleClaude(s: Sess, line: string): void {
     if (!out) return
     if (dType === 'thinking_delta' || dType === 'thought_delta') out({ kind: 'thought', data: bit })
     else if (dType === 'text_delta') {
-      if (s.owners[0] === 'auto') s.autoText += bit
+      if (s.turn?.auto && !(s.active && s.turn.gens.includes(s.active))) s.autoText += bit
       else s.text += bit
       out({ kind: 'text', data: bit })
     }
+    return
+  }
+  if (type === 'user' && o.isReplay === true) {
+    // Claude took a prompt we wrote (FIFO). It is answered by the turn running now, or the next one.
+    const gen = s.unacked.shift()
+    if (gen === undefined) return
+    if (s.turn && !s.closing) s.turn.gens.push(gen)
+    else s.carry.push(gen)
     return
   }
   if (type === 'user') {
@@ -152,7 +202,7 @@ function handleClaude(s: Sess, line: string): void {
     const msg = asRecord(o.message)
     const content = Array.isArray(msg.content) ? msg.content : []
     const out = sink(s)
-    const auto = s.owners[0] === 'auto'
+    const auto = !!s.turn?.auto && !(s.active && s.turn.gens.includes(s.active))
     for (const block of content) {
       const b = asRecord(block)
       const bt = String(b.type || '')
@@ -177,16 +227,29 @@ function handleClaude(s: Sess, line: string): void {
   }
   if (type === 'result') {
     const result = typeof o.result === 'string' ? o.result : ''
-    const owner = s.owners.shift()
-    if (owner === 'auto') {
-      const chat = (ev: StreamEvent) => emitChat({ tabId: s.tabId, cli: 'claude', ev })
-      if (result && !s.autoText) chat({ kind: 'text', data: result })
-      s.autoText = ''
-      chat({ kind: 'done' })
-      return
+    // A result with no turn open and nothing to say (an interrupt while idle) shows nothing.
+    if (!s.turn && !result && !s.unacked.length) return
+    const t = s.turn || { gens: [], auto: s.unacked.length === 0 }
+    s.turn = null
+    s.closing = false
+    if (!t.gens.length) {
+      // Claude's own turn (no prompt taken). A result-only turn still shows.
+      if (t.auto || !s.unacked.length) {
+        endAuto(s, result)
+        return
+      }
+      // Ours, but Claude never echoed the prompt: take the oldest waiting one.
+      const gen = s.unacked.shift()
+      if (gen !== undefined) t.gens.push(gen)
     }
-    // An interrupted turn's own result (or one with no owner) never ends the prompt that replaced it.
-    if (owner === undefined || owner !== s.active) return
+    if (t.auto) {
+      // You wrote during Claude's own turn and it answered you in that same turn: the prompt ends it.
+      s.text = s.text || s.autoText || ''
+      s.autoLive = false
+      s.autoText = ''
+    }
+    // A turn that only answers interrupted prompts never ends the prompt sent after them.
+    if (!s.active || !t.gens.includes(s.active)) return
     if (result && !s.text && s.onEvent) {
       s.text = result
       s.onEvent({ kind: 'text', data: result })
@@ -274,6 +337,8 @@ async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string;
     'stream-json',
     '--verbose',
     '--include-partial-messages',
+    // Claude echoes each prompt when it takes it, so a reply is matched to the turn that answers it.
+    '--replay-user-messages',
     ...claudeChatPermissionArgs(planTabs.has(opts.tabId)),
     '--permission-prompts',
     'none',
@@ -297,7 +362,10 @@ async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string;
     dead: false,
     n: 0,
     promptGen: 0,
-    owners: [],
+    unacked: [],
+    carry: [],
+    turn: null,
+    closing: false,
     active: 0,
     bg: new Map(),
     toolLabels: new Map()
@@ -328,7 +396,10 @@ export async function claudePrompt(opts: {
         dead: false,
         n: 0,
         promptGen: 0,
-        owners: [],
+        unacked: [],
+        carry: [],
+        turn: null,
+        closing: false,
         active: 0,
         bg: new Map(),
         toolLabels: new Map()
@@ -352,8 +423,8 @@ export async function claudePrompt(opts: {
     wrapPromptWithHooks({ cwd: opts.cwd, kind: 'claude', sessionId: s.tabId, text: opts.text }),
     opts.attachments || []
   )
-  // Claude answers turns in order: this prompt's result comes after every turn already owed.
-  s.owners.push(gen)
+  // Claude echoes this prompt when it takes it (--replay-user-messages); that turn answers it.
+  s.unacked.push(gen)
   s.active = gen
   await new Promise<void>((resolve) => {
     s.waiting = { resolve }
@@ -382,7 +453,9 @@ export function claudeCancel(tabId: string): boolean {
   } catch {
     return false
   }
-  // The interrupted turn still sends a result; with no active prompt it ends nothing.
+  // The interrupted turn still sends a result; with no active prompt it ends nothing. A prompt Claude
+  // takes before that result is for the next turn.
+  if (s.turn) s.closing = true
   s.active = 0
   s.waiting?.resolve()
   s.waiting = null

@@ -695,6 +695,11 @@ function ChatPane({
         setWaitLabel('Picking up background results')
         turn.current = { think: false, answer: false }
       }
+      // Claude's own turn ended while your message still waits: your answer starts a fresh bubble.
+      if (ev.kind === 'status' && ev.data === 'turn:auto-done') {
+        setWaitLabel('Working')
+        turn.current = { think: false, answer: false }
+      }
       if (ev.kind === 'status' && ev.data && ev.data.startsWith('bg:')) {
         try {
           const list = JSON.parse(ev.data.slice(3)) as { label: string; at: number }[]
