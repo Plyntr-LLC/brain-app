@@ -17,6 +17,7 @@ import { registerUpdateIpc, startAutoUpdate, recordLaunchVersion, isInstallingUp
 import { registerSkinIpc } from './skin/ipc'
 import { registerFactoryIpc } from './factory/ipc'
 import { registerPhoneIpc, restorePhoneIfWanted, stopPhone } from './phone'
+import { registerMediaIpc } from './media/ipc'
 import { refreshTray, startTray } from './tray'
 
 registerStubIpc()
@@ -25,6 +26,7 @@ registerUpdateIpc()
 registerSkinIpc()
 registerFactoryIpc()
 registerPhoneIpc()
+registerMediaIpc()
 
 process.on('uncaughtException', (err) => {
   const msg = String((err as NodeJS.ErrnoException).message || err)

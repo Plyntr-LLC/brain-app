@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AiKind } from '../shared/contracts'
 import type { FactoryTriage, RepoProfile, RunRecord as FactoryRun } from '../shared/factory'
+import type { MediaAddResult, MediaEnableResult, MediaStatus } from '../shared/media'
 
 type FactoryResult = { ok: true; run: FactoryRun | null } | { ok: false; error: string }
 
@@ -1063,6 +1064,26 @@ const brain = {
     ) => {
       ipcRenderer.send('phone:reportQueue', tabId, items)
     }
+  },
+  media: {
+    status: (folder?: string) => ipcRenderer.invoke('media:status', folder) as Promise<MediaStatus>,
+    shouldAsk: (opts: { folder: string; role?: string }) =>
+      ipcRenderer.invoke('media:shouldAsk', opts) as Promise<boolean>,
+    skip: (folder: string) => ipcRenderer.invoke('media:skip', folder) as Promise<{ ok: true }>,
+    enable: (opts: { folder: string; passphrase?: string }) =>
+      ipcRenderer.invoke('media:enable', opts) as Promise<MediaEnableResult>,
+    setPassphrase: (opts: { folder: string; passphrase: string }) =>
+      ipcRenderer.invoke('media:setPassphrase', opts) as Promise<{ ok: true }>,
+    takePassphrase: (folder: string) => ipcRenderer.invoke('media:takePassphrase', folder) as Promise<string | null>,
+    takeRecoveryKey: (folder: string) => ipcRenderer.invoke('media:takeRecoveryKey', folder) as Promise<string | null>,
+    add: (opts: { folder: string; root: string; path?: string }) =>
+      ipcRenderer.invoke('media:add', opts) as Promise<MediaAddResult>,
+    setCap: (opts: { folder: string; capBytes: number }) =>
+      ipcRenderer.invoke('media:setCap', opts) as Promise<{ ok: true; capBytes: number }>,
+    turnOnBucket: (folder: string) =>
+      ipcRenderer.invoke('media:turnOnBucket', folder) as Promise<{ ok: true; bucket: string }>,
+    allow: (opts: { folder: string; deviceId: string }) =>
+      ipcRenderer.invoke('media:allow', opts) as Promise<{ ok: true; detail: string }>
   }
 }
 

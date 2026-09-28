@@ -7,6 +7,7 @@ import { displayPlyntrCode } from '@shared/plyntr-invite'
 import { canOfferPlyntrTransfer, onePerPerson } from '@shared/plyntr-transfer'
 import { allowedFolders, isJoeSuperAdmin, showBrainSwitch, switchOption } from '@shared/shell-switch'
 import { LocalSyncPanel } from './LocalSyncPanel'
+import { MediaAdminFields, MediaStoragePanel } from './MediaStoragePanel'
 import { PlyntrCompanyScreen } from './PlyntrPath'
 
 type Person = {
@@ -536,6 +537,24 @@ export function SettingsPanel({
     )
   }
 
+  function mediaStorageOffer() {
+    if (!window.brain.media) return null
+    return (
+      <MediaStoragePanel
+        folder={brainPath}
+        role={plyntrRole || seat || role}
+        joe={joe}
+        onDone={(detail) => setNote(detail)}
+      />
+    )
+  }
+
+  function storageAdmin() {
+    if (!joe || !superAdmin || !window.brain.media) return null
+    if (!(brains.find((b) => b.current)?.brainId || plyntrBrainId)) return null
+    return <MediaAdminFields folder={brainPath} onDone={(detail) => setNote(detail)} />
+  }
+
   const currentIndex = brains.findIndex((b) => b.current)
   const brainsBefore = currentIndex < 0 ? [] : brains.slice(0, currentIndex)
   const brainsAfter = currentIndex < 0 ? brains : brains.slice(currentIndex + 1)
@@ -702,7 +721,9 @@ export function SettingsPanel({
               }}
             />
           ) : null}
+          {storageAdmin()}
           {localSyncOffer()}
+          {mediaStorageOffer()}
           <div className="set-block">
             <FoldHead title="Project-only people" open={projectFold} onToggle={() => setProjectFold((v) => !v)} />
             {projectFold ? (
@@ -1262,7 +1283,9 @@ export function SettingsPanel({
               }}
             />
           ) : null}
+          {storageAdmin()}
           {localSyncOffer()}
+          {mediaStorageOffer()}
           <p>You are {seatLabel(seat || role)} in {here}. The owner adds people.</p>
           {(rosters[brainPath] || []).map((p) => (
             <div className="set-row" key={p.email}>
