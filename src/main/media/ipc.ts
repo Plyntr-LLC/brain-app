@@ -28,8 +28,8 @@ export function registerMediaIpc(): void {
   ipcMain.handle('media:status', async (_e, folder?: string) => {
     return assertRendererSafe(await mediaStatus(String(folder || '')))
   })
-  ipcMain.handle('media:shouldAsk', (_e, opts?: { folder?: string; role?: string }) => {
-    return assertRendererSafe(mediaShouldAsk({ folder: String(opts?.folder || ''), role: opts?.role }))
+  ipcMain.handle('media:shouldAsk', async (_e, opts?: { folder?: string; role?: string }) => {
+    return assertRendererSafe(await mediaShouldAsk({ folder: String(opts?.folder || ''), role: opts?.role }))
   })
   ipcMain.handle('media:skip', (_e, folder?: string) => {
     return assertRendererSafe(mediaSkip(String(folder || '')))

@@ -243,30 +243,110 @@ for (const needle of [
 ]) {
   if (!settingsSrc.includes(needle)) fail('B', 'Settings mediaStorageOffer insertion missing')
 }
-if (shouldShowStorageAsk({ role: 'team', joe: false, storageOn: false, mediaAsked: false, hasSeatToken: true })) {
+if (shouldShowStorageAsk({ role: 'team', joe: false, storageOn: false, mediaAsked: false, hasSeatToken: true, routes: true })) {
   fail('B', 'storage-ask would show for team')
 }
-if (shouldShowStorageAsk({ role: 'project', joe: false, storageOn: false, mediaAsked: false, hasSeatToken: true })) {
+if (shouldShowStorageAsk({ role: 'project', joe: false, storageOn: false, mediaAsked: false, hasSeatToken: true, routes: true })) {
   fail('B', 'storage-ask would show for project')
 }
-if (!shouldShowStorageAsk({ role: 'owner', joe: false, storageOn: false, mediaAsked: false, hasSeatToken: true })) {
+if (!shouldShowStorageAsk({ role: 'owner', joe: false, storageOn: false, mediaAsked: false, hasSeatToken: true, routes: true })) {
   fail('B', 'storage-ask would hide for owner')
 }
-if (shouldShowStorageAsk({ role: 'owner', joe: false, storageOn: false, mediaAsked: false, hasSeatToken: false })) {
+if (shouldShowStorageAsk({ role: 'owner', joe: false, storageOn: false, mediaAsked: false, hasSeatToken: false, routes: true })) {
   fail('B', 'storage-ask would show without a seat token')
 }
-if (shouldShowStorageAsk({ role: 'owner', joe: true, storageOn: false, mediaAsked: false, hasSeatToken: false })) {
+if (shouldShowStorageAsk({ role: 'owner', joe: true, storageOn: false, mediaAsked: false, hasSeatToken: false, routes: true })) {
   fail('B', 'storage-ask would show for keyless Joe')
+}
+if (shouldShowStorageAsk({ role: 'owner', joe: false, storageOn: false, mediaAsked: false, hasSeatToken: true, routes: false })) {
+  fail('B', 'storage-ask would show when media routes are down')
+}
+if (!firstRun.includes('media?.shouldAsk') && !firstRun.includes('media.shouldAsk')) {
+  fail('B', 'goChat must call media.shouldAsk before storage-ask')
 }
 const sessionSrc = readFileSync(join(rootRepo, 'src/main/media/session.ts'), 'utf8')
 if (sessionSrc.includes('startBrainSync') || sessionSrc.includes('chooseWatcher')) {
   fail('B', 'media session must not start watchers')
+}
+if (!sessionSrc.includes('export async function mediaShouldAsk')) {
+  fail('B', 'mediaShouldAsk must be async so it can read media status routes')
+}
+{
+  const start = sessionSrc.indexOf('export async function mediaShouldAsk')
+  const end = sessionSrc.indexOf('export function mediaSkip', start)
+  const body = start >= 0 && end > start ? sessionSrc.slice(start, end) : ''
+  if (!body.includes('mediaStatus(') || !body.includes('routes: st.routes')) {
+    fail('B', 'mediaShouldAsk must reuse mediaStatus routes the same way Settings hides')
+  }
 }
 const watchOff = watcher.chooseWatcher({ mode: 'local', abInstalled: false, abWatchingPath: false, mini: false })
 const watchOn = watcher.chooseWatcher({ mode: 'local', abInstalled: false, abWatchingPath: false, mini: false })
 if (watchOff !== watchOn || watchOff !== 'none') fail('B', 'chooseWatcher changed with storage')
 steps.B = { forkButtons: buttons.length, watcherDelta: 0 }
 ipc.registerMediaIpc()
+
+async function withPackedHealth(status: number, fn: () => Promise<void>): Promise<void> {
+  const prevDry = process.env.BRAIN_APP_DRY_RUN
+  const prevFetch = g.fetch
+  delete process.env.BRAIN_APP_DRY_RUN
+  g.fetch = (async (input: string | URL | Request) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    if (url.includes('/v1/media/health')) {
+      mediaCalls.push(url)
+      return new Response(status === 200 ? '{"ok":true}' : 'not found', { status })
+    }
+    mediaCalls.push(url)
+    throw new Error('check-media forbids network: ' + url)
+  }) as typeof fetch
+  try {
+    await fn()
+  } finally {
+    if (prevDry === undefined) delete process.env.BRAIN_APP_DRY_RUN
+    else process.env.BRAIN_APP_DRY_RUN = prevDry
+    g.fetch = prevFetch
+  }
+}
+
+async function runPackedAskGate(): Promise<void> {
+  await withPackedHealth(404, async () => {
+    const ud = mkdtempSync(join(tmpdir(), 'media-packed-hide-'))
+    const folder = mkdtempSync(join(tmpdir(), 'media-packed-hide-brain-'))
+    setupFolder(ud, folder, 'brain-packed-hide')
+    const st = (await invoke('media:status', folder)) as { routes: boolean }
+    if (st.routes) fail('B', 'packed 404 still reported media routes live')
+    const ask = await invoke('media:shouldAsk', { folder, role: 'owner' })
+    if (ask) fail('B', 'packed no-routes still opened storage-ask for an owner with a pbt_ seat')
+    if (existsSync(join(ud, session.ASKED_FILE))) fail('B', 'packed hide spent media-asked.json')
+    if (session.mediaAskedFor(folder)) fail('B', 'packed hide marked the path as asked')
+    rmSync(ud, { recursive: true, force: true })
+    rmSync(folder, { recursive: true, force: true })
+  })
+  await withPackedHealth(200, async () => {
+    const ud = mkdtempSync(join(tmpdir(), 'media-packed-live-'))
+    const folder = mkdtempSync(join(tmpdir(), 'media-packed-live-brain-'))
+    setupFolder(ud, folder, 'brain-packed-live')
+    const st = (await invoke('media:status', folder)) as { routes: boolean }
+    if (!st.routes) fail('B', 'packed health 200 hid media routes')
+    const ownerAsk = await invoke('media:shouldAsk', { folder, role: 'owner' })
+    if (!ownerAsk) fail('B', 'storage-ask hid for owner when routes were live')
+    const scoutAsk = await invoke('media:shouldAsk', { folder, role: 'scout' })
+    if (!scoutAsk) fail('B', 'storage-ask hid for scout when routes were live')
+    const teamAsk = await invoke('media:shouldAsk', { folder, role: 'team' })
+    if (teamAsk) fail('B', 'storage-ask showed for team when routes were live')
+    const keyless = await invoke('media:shouldAsk', {
+      folder: mkdtempSync(join(tmpdir(), 'media-keyless-')),
+      role: 'owner'
+    })
+    if (keyless) fail('B', 'storage-ask showed without a seat token when routes were live')
+    if (existsSync(join(ud, session.ASKED_FILE))) fail('B', 'routes-live ask spent media-asked.json before an answer')
+    await invoke('media:skip', folder)
+    if (!session.mediaAskedFor(folder)) fail('B', 'Keep on this computer did not write media-asked when routes were live')
+    const afterSkip = await invoke('media:shouldAsk', { folder, role: 'owner' })
+    if (afterSkip) fail('B', 'storage-ask still showed after Keep on this computer')
+    rmSync(ud, { recursive: true, force: true })
+    rmSync(folder, { recursive: true, force: true })
+  })
+}
 
 async function runKeepNever(): Promise<void> {
   const keepUd = mkdtempSync(join(tmpdir(), 'media-keep-'))
@@ -287,8 +367,9 @@ async function runKeepNever(): Promise<void> {
   rmSync(neverFolder, { recursive: true, force: true })
 }
 
+await runPackedAskGate()
 await runKeepNever()
-steps.A = { keep: true, never: true, mediaCalls: mediaCalls.length }
+steps.A = { keep: true, never: true, packedHide: true, packedLive: true, mediaCalls: mediaCalls.length }
 
 const userData = mkdtempSync(join(tmpdir(), 'media-a-'))
 const folder = mkdtempSync(join(tmpdir(), 'media-brain-'))

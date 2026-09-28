@@ -36,7 +36,9 @@ export function shouldShowStorageAsk(opts: {
   storageOn: boolean
   mediaAsked: boolean
   hasSeatToken: boolean
+  routes: boolean
 }): boolean {
+  if (!opts.routes) return false
   if (opts.storageOn || opts.mediaAsked) return false
   if (!opts.hasSeatToken) return false
   return canTurnOnGithubSync(opts.role, Boolean(opts.joe))
