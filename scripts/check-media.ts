@@ -1065,13 +1065,13 @@ if (reuse.status !== 403) fail('17', 'token reuse was ' + reuse.status)
 steps['17'] = { brainKeySignature: 403, tokenReuse: 403 }
 
 asDevice(userDataD)
-const opened = session.reclaimOnThisMac({
+const reclaimedD = session.reclaimOnThisMac({
   folder,
   email: 'owner@example.test',
   code: String(session.requestMediaEmailCode('owner@example.test').code || ''),
   passphrase: String(pass1)
 })
-if (!opened.ok) fail('18', 'passphrase reclaim/finish failed: ' + opened.detail)
+if (!reclaimedD.ok) fail('18', 'passphrase reclaim/finish failed: ' + reclaimedD.detail)
 session.runMediaCheckIn(folder)
 const playedD = play.playMedia({ folder, mediaId })
 if (createHash('sha256').update(playedD.bytes).digest('hex') !== plaintextSha256) {
@@ -1187,8 +1187,8 @@ const stolenWrap = session.mediaWrapPassphrase({
 })
 const stolenRevoke = session.revokeMediaDevice({
   folder,
-  deviceId: opened.fingerprint,
-  signature: keys.signWithSeed(brainKeyE, session.signedPayload('revoke', rowNow, opened.fingerprint)).toString('hex')
+  deviceId: reclaimedD.fingerprint,
+  signature: keys.signWithSeed(brainKeyE, session.signedPayload('revoke', rowNow, reclaimedD.fingerprint)).toString('hex')
 })
 if (stolenRotate.status !== 403) fail('20', 'stolen rotate was ' + stolenRotate.status)
 if (stolenWrap.status !== 403) fail('20', 'stolen wrap replace was ' + stolenWrap.status)
