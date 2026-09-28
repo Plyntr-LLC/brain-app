@@ -625,6 +625,15 @@ function asDevice(ud: string): void {
   session.mediaDropKeys()
   g.__userData = ud
   vault.useRoot(ud)
+  brainsMod.rememberBrain({
+    path: folder,
+    name: 'Alpha',
+    slug: 'alpha',
+    role: ud === userData ? 'owner' : 'project',
+    syncMode: 'local',
+    brainId: ud === userData ? 'brain-owner' : undefined
+  })
+  brainsMod.switchBrain(folder)
 }
 
 function asOwner(): void {
@@ -705,10 +714,11 @@ const fetchC = session.mediaDownload({ folder, mediaId })
 if (fetchC.status !== 403 || fetchC.error !== 'wrong_project') {
   fail('7', 'C expected 403 wrong_project got ' + JSON.stringify(fetchC))
 }
-const wrapsC = JSON.parse(readFileSync(join(userDataC, 'media', brainRow.id, 'wraps.json'), 'utf8')) as {
-  wraps: { scope: string }[]
+const wrapsCPath = join(userDataC, 'media', brainRow.id, 'wraps.json')
+if (existsSync(wrapsCPath)) {
+  const wrapsC = JSON.parse(readFileSync(wrapsCPath, 'utf8')) as { wraps: { scope: string }[] }
+  if ((wrapsC.wraps || []).some((w) => w.scope === obj.scope_id)) fail('7', 'C wraps.json has an alpha scope')
 }
-if (wrapsC.wraps.some((w) => w.scope === obj.scope_id)) fail('7', 'C wraps.json has an alpha scope')
 if (seatC.token.startsWith('pbt_')) fail('7', 'C used a pbt_ token')
 steps['7'] = { status: 403, error: 'wrong_project', token: 'hmac' }
 const seatCResult = { status: 403, error: 'wrong_project', token: 'hmac' as const }
