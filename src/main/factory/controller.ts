@@ -606,6 +606,7 @@ async function buildStep(state: Live, phase: BriefPhase, note?: string, viaOpus?
     diff: inReview ? undefined : run.diff,
     strict: undefined,
     followUps: undefined,
+    moved: undefined,
     voice: undefined,
     resumePhase: inReview ? 'review' : 'build'
   })

@@ -226,7 +226,8 @@ const OUTSIDE_CHARS = 300
 
 /**
  * The OUTSIDE block cut out of a review: `OUTSIDE:` then `- ` bullets. The first line that is not a
- * bullet (a defect, a GAPS line, a verdict) ends the block and stays in the review. Every block counts.
+ * bullet (a blank line, a defect, a GAPS line, a verdict) ends the block and stays in the review.
+ * Every block counts.
  */
 export function splitOutside(text: string): { review: string; outside: string[] } {
   const lines = String(text || '').split('\n')
@@ -245,7 +246,9 @@ export function splitOutside(text: string): { review: string; outside: string[] 
         outside.push(m[1].trim().slice(0, OUTSIDE_CHARS))
         continue
       }
-      if (!line.trim()) continue
+      // A blank line before any bullet is spacing; after one it ends the block, so a defect bullet
+      // further down is never swept into follow-ups.
+      if (!line.trim() && !outside.length) continue
       inBlock = false
     }
     keep.push(line)

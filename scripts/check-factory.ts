@@ -1879,7 +1879,7 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
     const r2 = await ctl.settle(idE1)
     const dbg = { mid: r?.phase, gs: gS.phase, after: r2?.phase, err: r2?.error }
     // The heal sets warm=false: the builder's next warm (self-check or this note's turn) is in mail-desk.
-    check('EH 1 after a heal, a note with no repo words stays on mail-desk and the builder re-warms there', same(r2?.workRepo, mailDesk) && holds(mailDesk, idE1) && same(lastWarm(w0), mailDesk), JSON.stringify({ now: r2?.workRepo, warm: lastWarm(w0), dbg }))
+    check('EH 1 after a heal, a note with no repo words stays on mail-desk, the builder re-warms there, and the moved line clears', same(r2?.workRepo, mailDesk) && holds(mailDesk, idE1) && same(lastWarm(w0), mailDesk) && !r2?.moved, JSON.stringify({ now: r2?.workRepo, warm: lastWarm(w0), dbg }))
     if (idE1) ctl.abandonRun(idE1)
     cleanMail()
   }
@@ -2052,6 +2052,19 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
       (r2?.reviewCycles || 0) - cyc0 === 2 && h2.includes('nit: rename x') && /GAPS: 1\s*\nFAIL/.test(h2) && !h2.includes('Split changes') && r2?.strict?.status === 'pass' && !r2.followUps,
       JSON.stringify({ cycles: (r2?.reviewCycles || 0) - cyc0, strict: r2?.strict?.status, h2: h2.slice(0, 300), followUps: r2?.followUps })
     )
+    // RV 2c: a blank line after the bullets ends the block: a `- nit:` bullet under GAPS: 0 PASS still fails.
+    const cyc1 = r2?.reviewCycles || 0
+    claudeSays(['OUTSIDE:\n- Split changes\n\n- nit: rename x\nGAPS: 0\nPASS', 'GAPS: 0\nPASS'])
+    ctl.guideRun(idR, 'reword once more')
+    const r2c = await ctl.settle(idR)
+    // From review 3 on Opus makes the fix (no promptPlan), so read what was saved for it; a pass never overwrites it.
+    const h3 = existsSync(store.runTextPath(idR, 'review')) ? readFileSync(store.runTextPath(idR, 'review'), 'utf8') : ''
+    check(
+      'RV 2c a defect bullet after a blank line is a gap, not a follow-up: one fail, the saved review for the fix names the nit',
+      (r2c?.reviewCycles || 0) - cyc1 === 1 && h3.includes('- nit: rename x') && !h3.includes('Split changes') && r2c?.strict?.status === 'pass',
+      JSON.stringify({ cycles: (r2c?.reviewCycles || 0) - cyc1, h3: h3.slice(0, 200), strict: r2c?.strict?.status })
+    )
+    // The moved line is per turn: gone once a later builder turn starts.
     // RV 3b: no reviewer at all -> followUps empty.
     execFileSync('/bin/rm', ['-f', claudeBin])
     claudeSays([])

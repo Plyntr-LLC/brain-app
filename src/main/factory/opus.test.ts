@@ -179,3 +179,15 @@ test('strictPrompt tells the reviewer where OUTSIDE items go', () => {
   assert.match(p, /OUTSIDE:/)
   assert.match(p, /never OUTSIDE/)
 })
+
+test('splitOutside: a blank line after the bullets ends the block; a defect bullet below stays a gap', () => {
+  const { review, outside } = splitOutside('OUTSIDE:\n- Split changes\n\n- src/a.ts:12 missing null check\nGAPS: 1\nFAIL')
+  assert.deepEqual(outside, ['Split changes'])
+  assert.match(review, /- src\/a\.ts:12 missing null check/)
+  const nit = splitOutside('OUTSIDE:\n- Split changes\n\n- nit: rename x\nGAPS: 0\nPASS')
+  assert.deepEqual(nit.outside, ['Split changes'])
+  assert.match(nit.review, /nit: rename x/)
+  assert.equal(reviewAccept(nit.review).status, 'fail')
+  // A blank line right under the heading is spacing, not the end.
+  assert.deepEqual(splitOutside('OUTSIDE:\n\n- Split changes\nGAPS: 0\nPASS').outside, ['Split changes'])
+})
