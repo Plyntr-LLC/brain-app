@@ -19,12 +19,34 @@ export type DeviceWrapBody = {
   ciphertext: string
 }
 
+/** POST /v1/media/rotate-scope. Worker reads camelCase (objectId or id). */
+export type RotateDekWrap = {
+  objectId: string
+  dekWrap: string
+  dekVersion: number
+}
+
+export type RotateDeviceWrap = {
+  deviceId: string
+  ephPub: string
+  nonce: string
+  ciphertext: string
+}
+
 export type RotateScopeBody = {
-  scope_id: string
-  from_version: number
-  to_version: number
-  dek_wraps: Array<{ object_id: string; dek_wrap: string; dek_version: number }>
-  wraps: DeviceWrapBody[]
+  scopeId: string
+  keyVersion: number
+  dekWraps: RotateDekWrap[]
+  wraps: RotateDeviceWrap[]
+}
+
+export function rotateDeviceWrap(body: DeviceWrapBody): RotateDeviceWrap {
+  return {
+    deviceId: body.device_id,
+    ephPub: body.eph_pub,
+    nonce: body.nonce,
+    ciphertext: body.ciphertext
+  }
 }
 
 export type MediaStateOk = {

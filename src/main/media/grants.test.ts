@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { generateKeyPairSync } from 'node:crypto'
 import test from 'node:test'
 import {
   BUCKET_OFF,
@@ -9,9 +10,11 @@ import {
   ROTATION_PENDING,
   markMediaRevoked,
   markMediaRevokedWorker,
+  rotateProjectScope,
   tryReserve,
   workerStateForDevice
 } from './grants.ts'
+import { createScopeKey, exportX25519Public, unwrapDek, wrapDek } from './keys.ts'
 import { memoryMediaStore, resetMemoryMediaStore, type MediaBrainRow, type MediaDeviceRow } from './store.ts'
 
 function brain(): MediaBrainRow {
@@ -197,6 +200,127 @@ test('worker-shaped markMediaRevoked(email, brain, roots, proof) matches 410', (
     assert.equal(workerStateForDevice(device).status, 410)
     assert.equal(workerStateForDevice(device).body?.error, DEVICE_REVOKED)
     assert.equal(row.brain_key_version, 1)
+  } finally {
+    resetMemoryMediaStore()
+    if (prev === undefined) delete process.env.BRAIN_APP_DRY_RUN
+    else process.env.BRAIN_APP_DRY_RUN = prev
+  }
+})
+
+test('rotateProjectScope POST body is worker camelCase and rewraps in-process', () => {
+  const prev = process.env.BRAIN_APP_DRY_RUN
+  process.env.BRAIN_APP_DRY_RUN = '1'
+  resetMemoryMediaStore()
+  try {
+    const mem = memoryMediaStore('/tmp/a')
+    const row = brain()
+    mem.brains.push(row)
+    const scope = {
+      id: 'scope-alpha',
+      media_brain_id: row.id,
+      root: 'projects/alpha/',
+      key_version: 1,
+      escrow_wrap: '00',
+      needs_rotation: true
+    }
+    mem.scopes.push(scope)
+    const oldKey = createScopeKey()
+    const newKey = createScopeKey()
+    const dek = Buffer.alloc(32, 7)
+    const objectId = '3f9a1c2b-7d41-4c1e-9a0b-2f5e8c6d1a90'
+    mem.objects.push({
+      id: objectId,
+      media_brain_id: row.id,
+      scope_id: scope.id,
+      object_key: 'obj/1',
+      bytes: 64,
+      cipher_bytes: 64,
+      mime: 'video/mp4',
+      dek_wrap: wrapDek({
+        dek,
+        projectKey: oldKey,
+        mediaId: objectId,
+        scopeId: scope.id,
+        keyVersion: 1
+      }).toString('hex'),
+      dek_version: 1,
+      status: 'ready',
+      upload_id: '',
+      part_count: 1,
+      created_by_email: 'owner@example.test'
+    })
+    const pair = generateKeyPairSync('x25519')
+    const pub = exportX25519Public(pair.publicKey).toString('hex')
+    const keep: MediaDeviceRow = {
+      id: 'KEEP-MAC1',
+      media_brain_id: row.id,
+      email: 'owner@example.test',
+      fingerprint: 'KEEP-MAC1',
+      public_key: pub,
+      seat_kind: 'full',
+      seat_id: 'seat-owner',
+      roots: [],
+      status: 'approved'
+    }
+    mem.devices.push(keep)
+    mem.wraps.push({
+      id: 'old-wrap',
+      media_brain_id: row.id,
+      scope: scope.id,
+      key_version: 1,
+      target: 'device',
+      device_id: keep.id,
+      eph_pub: '11',
+      nonce: '22',
+      ciphertext: '33'
+    })
+    const out = rotateProjectScope({
+      mem,
+      row,
+      scope,
+      oldKey,
+      newKey,
+      keepDevices: [keep]
+    })
+    assert.equal(out.to_version, 2)
+    assert.equal(scope.key_version, 2)
+    assert.equal(scope.needs_rotation, false)
+    assert.equal(mem.objects[0].dek_version, 2)
+    const opened = unwrapDek({
+      wrap: Buffer.from(mem.objects[0].dek_wrap, 'hex'),
+      projectKey: newKey,
+      mediaId: objectId,
+      scopeId: scope.id,
+      keyVersion: 2
+    })
+    assert.equal(Buffer.compare(opened, dek), 0)
+    assert.deepEqual(Object.keys(out.post).sort(), ['dekWraps', 'keyVersion', 'scopeId', 'wraps'])
+    assert.equal(out.post.scopeId, scope.id)
+    assert.equal(out.post.keyVersion, 1)
+    assert.equal(out.post.dekWraps[0].objectId, objectId)
+    assert.equal(out.post.dekWraps[0].dekVersion, 2)
+    assert.equal(out.post.dekWraps[0].dekWrap, mem.objects[0].dek_wrap)
+    assert.deepEqual(Object.keys(out.post.dekWraps[0]).sort(), ['dekVersion', 'dekWrap', 'objectId'])
+    assert.equal(out.post.wraps.length, 1)
+    assert.deepEqual(Object.keys(out.post.wraps[0]).sort(), ['ciphertext', 'deviceId', 'ephPub', 'nonce'])
+    assert.equal(out.post.wraps[0].deviceId, keep.id)
+    const json = JSON.stringify(out.post)
+    for (const snake of [
+      'scope_id',
+      'from_version',
+      'to_version',
+      'dek_wraps',
+      'object_id',
+      'dek_wrap',
+      'dek_version',
+      'device_id',
+      'eph_pub',
+      'key_version'
+    ]) {
+      assert.equal(json.includes(`"${snake}"`), false, snake)
+    }
+    assert.equal(mem.wraps.some((w) => w.key_version === 1), false)
+    assert.equal(mem.wraps.some((w) => w.device_id === keep.id && w.key_version === 2), true)
   } finally {
     resetMemoryMediaStore()
     if (prev === undefined) delete process.env.BRAIN_APP_DRY_RUN
