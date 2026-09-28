@@ -220,23 +220,27 @@ export function FactoryPane(props: {
             {workRepo ? ` ${workRepo}` : ''}
           </p>
           {workRepo && repoFrom === 'last' ? <p className="tiny">Last Factory repo. Name the folder in the task if this is wrong.</p> : null}
-          {repoLine ? (
-            <div className="factory-repo-line">
-              <span className="tiny">{repoLine}</span>
-              <label className="tiny">
-                <input type="checkbox" checked={voiceOn} onChange={(e) => void toggleVoice(e.target.checked)} /> Voice check
-              </label>
-            </div>
-          ) : null}
+          {repoLine ? <p className="tiny factory-repo-line">{repoLine}</p> : null}
           <p className="tiny">Brain: {cwd}</p>
-          <label className="tiny">
-            <input type="checkbox" checked={runThrough} onChange={(e) => setRunThrough(e.target.checked)} /> Approve in advance (plan, asks, and a clean
-            Commit go ahead; never deploys)
-          </label>
-          <label className="tiny">
-            <input type="checkbox" checked={shipThrough} onChange={(e) => setShipThrough(e.target.checked)} /> Ship in advance (if Opus finds no gaps,
-            commit and push; never deploys; never pushes main, master, staging, prod, or production)
-          </label>
+          <div className="factory-checks">
+            {repoLine ? (
+              <label className="tiny">
+                <input type="checkbox" checked={voiceOn} onChange={(e) => void toggleVoice(e.target.checked)} />
+                <span>Voice check</span>
+              </label>
+            ) : null}
+            <label className="tiny">
+              <input type="checkbox" checked={runThrough} onChange={(e) => setRunThrough(e.target.checked)} />
+              <span>Approve in advance (plan, asks, and a clean Commit go ahead; never deploys)</span>
+            </label>
+            <label className="tiny">
+              <input type="checkbox" checked={shipThrough} onChange={(e) => setShipThrough(e.target.checked)} />
+              <span>
+                Ship in advance (if Opus finds no gaps, commit and push; never deploys; never pushes main, master, staging, prod, or
+                production)
+              </span>
+            </label>
+          </div>
           {error ? <p className="factory-err">{error}</p> : null}
           <div className="factory-actions">
             {critical || needsProceed ? (

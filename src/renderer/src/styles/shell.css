@@ -1922,8 +1922,17 @@ button.runmeta-v:hover { color: var(--orange-deep); }
 .factory-plan { margin: 0.6rem 0; padding: 0.6rem 0.75rem; border: 1px solid var(--line); background: var(--paper); font-size: 0.85rem; }
 .factory-plan pre { max-height: 24rem; overflow: auto; margin: 0.4rem 0; white-space: pre-wrap; font-size: 0.8rem; }
 .factory-plan input { width: 100%; box-sizing: border-box; margin-top: 0.3rem; }
-.factory-repo-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.8rem; margin: -0.3rem 0 0.5rem; }
-.factory-repo-line label { display: inline-flex; align-items: center; gap: 0.3rem; }
+.factory-repo-line { margin: -0.3rem 0 0.5rem; }
+.factory-checks {
+  display: grid;
+  grid-template-columns: 1rem 1fr;
+  column-gap: 0.45rem;
+  row-gap: 0.4rem;
+  margin: 0.45rem 0 0.15rem;
+  align-items: start;
+}
+.factory-checks label { display: contents; }
+.factory-checks input[type='checkbox'] { margin: 0.18rem 0 0; width: 1rem; height: 1rem; }
 .factory-warn { color: var(--warn); margin: 0.3rem 0; font-size: 0.85rem; }
 .factory-files { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0; }
 .factory-guide { flex: none; overflow: visible; margin-top: 0.8rem; padding-bottom: 0; }

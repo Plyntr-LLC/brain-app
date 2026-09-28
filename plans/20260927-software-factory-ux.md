@@ -1,6 +1,6 @@
 # Software factory UX: dirty start, named repos, live files, Opus plans
 
-Joe 2026-09-27. Packed **0.1.83**. Existing FactoryPane layout stays (WP13). Chat/Skin/`chat-reach.ts` untouched. Factory stays gated (no `--always-approve`, shims, `factoryWriteBlock`). Kennel `staging`/`main` still never auto-pushes.
+Joe 2026-09-27. Packed **0.1.84**. Existing FactoryPane layout stays (WP13). Chat/Skin/`chat-reach.ts` untouched. Factory stays gated (no `--always-approve`, shims, `factoryWriteBlock`). Kennel `staging`/`main` still never auto-pushes.
 
 Joe: the factory needs to work better. (a) Dirty work repo must not refuse Start. (b) A project name or one of its names finds the repo, shown up front so it can be corrected. (c) Show files being referenced like Chat. (d) Plans, review, and approval route to Opus 5.5; the reviewer is always an independent session. Then: guide the run after Start (chat-like composer); a Ship in advance checkbox so a clean Opus approval commits and pushes without another click; never treat a review with gaps as PASS, even if Opus calls them non-blockers; at least 5 auto fix+review cycles before a held reject; after a held reject, more than Commit anyway / Abandon.
 
