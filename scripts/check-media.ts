@@ -176,6 +176,7 @@ const safe = await import('../src/main/media/renderer-safe.ts')
 const watcher = await import('../src/main/watcher-choice.ts')
 const deviceKey = await import('../src/main/media/device-key.ts')
 const hmacSeat = await import('../src/main/media/hmac-seat.ts')
+const transport = await import('../src/main/media/transport.ts')
 const statePoll = await import('../src/main/media/state-poll.ts')
 const { shouldShowStorageAsk, MEDIA_OPEN_FAIL, MEDIA_PLAY_NOTES } = await import('../src/shared/media.ts')
 
@@ -677,6 +678,27 @@ for (const seat of [seatB, seatF, seatC]) {
     fail('5', 'project seat used a pbt_ token')
   }
 }
+const tokensJs = (await import(pathToFileURL(join(rootRepo, 'vendor/brain-sync/src/tokens.js')).href)) as {
+  verifySeatToken: (
+    token: string,
+    secret: string
+  ) => Promise<{ ok: boolean; payload?: { kind?: string; hq_repo?: string; roots?: string[] } }>
+}
+for (const seat of [seatB, seatF, seatC]) {
+  const verified = await tokensJs.verifySeatToken(seat.token, String(process.env.BRAIN_SYNC_SEAT_TOKEN_KEY || ''))
+  if (!verified.ok) fail('5', 'HMAC token failed brain-sync verifySeatToken')
+  if (verified.payload?.kind !== 'client-project') fail('5', 'HMAC kind was not client-project')
+  if (verified.payload?.hq_repo !== 'plyntr/alpha-brain') fail('5', 'HMAC hq_repo did not match the dry-run brain')
+}
+const loadedV1 = await transport.loadMediaV1()
+if (loadedV1 && typeof loadedV1 === 'object') {
+  const v1 = loadedV1 as { handleMediaV1?: unknown; markMediaRevoked?: unknown }
+  const names = Object.keys(v1)
+  if (names.includes('handleMediaV1') || names.includes('markMediaRevoked')) {
+    if (typeof v1.handleMediaV1 !== 'function') fail('5', 'media-v1.js missing handleMediaV1')
+    if (typeof v1.markMediaRevoked !== 'function') fail('5', 'media-v1.js missing markMediaRevoked')
+  }
+}
 asDevice(userDataB)
 const regB = session.registerMediaDevice({ folder, token: seatB.token })
 asDevice(userDataF)
@@ -870,7 +892,6 @@ function assertR2AdminAbsent(where: string): void {
 
 assertR2AdminAbsent('after playback')
 
-const transport = await import('../src/main/media/transport.ts')
 const probeRoot = mkdtempSync(join(tmpdir(), 'media-r2-probe-'))
 const probeUd = mkdtempSync(join(tmpdir(), 'media-r2-ud-'))
 mkdirSync(join(probeRoot, 'src'), { recursive: true })

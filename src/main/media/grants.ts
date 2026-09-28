@@ -10,6 +10,7 @@ import {
   type MemoryMediaStore
 } from './store.ts'
 import { upsertWrap } from './wraps-file.ts'
+import { mediaErrorBody, type DeviceWrapBody, type RotateScopeBody } from './worker-shapes.ts'
 
 export const NO_CAP = 'no_cap'
 export const OVER_CAP = 'over_cap'
@@ -72,6 +73,24 @@ function wrapToHex(w: DeviceKeyWrap): { eph_pub: string; nonce: string; cipherte
   }
 }
 
+export function wrapPostBody(opts: {
+  deviceId: string
+  scope: string
+  keyVersion: number
+  eph_pub: string
+  nonce: string
+  ciphertext: string
+}): DeviceWrapBody {
+  return {
+    device_id: opts.deviceId,
+    scope: opts.scope,
+    key_version: opts.keyVersion,
+    eph_pub: opts.eph_pub,
+    nonce: opts.nonce,
+    ciphertext: opts.ciphertext
+  }
+}
+
 function deviceCoversScope(device: MediaDeviceRow, scope: MediaScopeRow): boolean {
   if (device.seat_kind !== 'project') return true
   return rootsOverlap(device.roots || [], scope.root)
@@ -85,9 +104,9 @@ export function pushDeviceWrap(opts: {
   version: number
   key: Buffer
   userData?: string
-}): void {
+}): DeviceWrapBody | null {
   const pub = Buffer.from(String(opts.device.public_key || ''), 'hex')
-  if (pub.length !== 32) return
+  if (pub.length !== 32) return null
   const packed = wrapToHex(
     wrapKeyToDevice({
       key: opts.key,
@@ -126,6 +145,14 @@ export function pushDeviceWrap(opts: {
       ciphertext: packed.ciphertext
     })
   }
+  return wrapPostBody({
+    deviceId: opts.device.id,
+    scope: opts.scope,
+    keyVersion: opts.version,
+    eph_pub: packed.eph_pub,
+    nonce: packed.nonce,
+    ciphertext: packed.ciphertext
+  })
 }
 
 export function wrapScopesToDevice(opts: {
@@ -201,9 +228,10 @@ export function rotateProjectScope(opts: {
   keepDevices: MediaDeviceRow[]
   ownerUserData?: string
   ownerDeviceId?: string
-}): number {
+}): { to_version: number; post: RotateScopeBody } {
   const oldVersion = opts.scope.key_version
   const next = oldVersion + 1
+  const dek_wraps: RotateScopeBody['dek_wraps'] = []
   for (const object of opts.mem.objects.filter(
     (o) => o.media_brain_id === opts.row.id && o.scope_id === opts.scope.id && o.status !== 'deleted'
   )) {
@@ -222,6 +250,7 @@ export function rotateProjectScope(opts: {
       keyVersion: next
     }).toString('hex')
     object.dek_version = next
+    dek_wraps.push({ object_id: object.id, dek_wrap: object.dek_wrap, dek_version: next })
     dek.fill(0)
   }
   opts.scope.key_version = next
@@ -229,11 +258,12 @@ export function rotateProjectScope(opts: {
   opts.mem.wraps = opts.mem.wraps.filter(
     (w) => !(w.media_brain_id === opts.row.id && w.scope === opts.scope.id && w.key_version === oldVersion)
   )
+  const wraps: DeviceWrapBody[] = []
   for (const device of opts.keepDevices) {
     if (device.status !== 'approved') continue
     if (!deviceCoversScope(device, opts.scope)) continue
     const local = opts.ownerUserData && device.id === opts.ownerDeviceId ? opts.ownerUserData : undefined
-    pushDeviceWrap({
+    const body = pushDeviceWrap({
       mem: opts.mem,
       row: opts.row,
       device,
@@ -242,8 +272,18 @@ export function rotateProjectScope(opts: {
       key: opts.newKey,
       userData: local
     })
+    if (body) wraps.push(body)
   }
-  return next
+  return {
+    to_version: next,
+    post: {
+      scope_id: opts.scope.id,
+      from_version: oldVersion,
+      to_version: next,
+      dek_wraps,
+      wraps
+    }
+  }
 }
 
 export function markMediaRevoked(opts: {
@@ -294,12 +334,32 @@ export function markMediaRevoked(opts: {
   return { kind: 'wiped', detail: revokeCopy(email) }
 }
 
+/** Worker contract: markMediaRevoked(email, brain, roots?, proof) in media-v1.js */
+export function markMediaRevokedWorker(
+  email: string,
+  brain: MediaBrainRow,
+  roots?: string[],
+  proof?: boolean
+): { kind: 'project' | 'blocked' | 'wiped'; detail: string } {
+  return markMediaRevoked({
+    mem: memoryMediaStore(brain.user_data || ''),
+    mediaBrainId: brain.id,
+    email,
+    roots,
+    proof
+  })
+}
+
 export function workerStateForDevice(device: MediaDeviceRow | undefined): {
   status: number
   error?: string
+  body?: { error: string }
 } {
   if (!device) return { status: 204 }
-  if (device.status === 'revoked') return { status: 410, error: DEVICE_REVOKED }
+  if (device.status === 'revoked') {
+    const body = mediaErrorBody(DEVICE_REVOKED)
+    return { status: 410, error: body.error, body }
+  }
   if (device.status === 'blocked') return { status: 401 }
   return { status: 200 }
 }

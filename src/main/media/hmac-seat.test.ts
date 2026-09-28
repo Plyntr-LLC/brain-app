@@ -63,3 +63,36 @@ test('normalizeMediaRoot and overlap', () => {
   assert.equal(rootsOverlap(['projects/alpha/'], 'projects/alpha/'), true)
   assert.equal(rootsOverlap(['projects/beta/'], 'projects/alpha/'), false)
 })
+
+test('brain-sync tokens.js verifySeatToken accepts minted HMAC tokens', async () => {
+  const prev = process.env.BRAIN_SYNC_SEAT_TOKEN_KEY
+  process.env.BRAIN_SYNC_SEAT_TOKEN_KEY = 'check-media-seat-key'
+  try {
+    const token = mintProjectHmacToken({
+      seat_id: 'seat-b',
+      email: 'alpha-person@example.test',
+      hq_repo: 'plyntr/alpha-brain',
+      device_id: 'devb',
+      roots: ['projects/alpha/']
+    })
+    const { pathToFileURL } = await import('node:url')
+    const { join } = await import('node:path')
+    const tokens = (await import(
+      pathToFileURL(join(process.cwd(), 'vendor/brain-sync/src/tokens.js')).href
+    )) as {
+      verifySeatToken: (
+        token: string,
+        secret: string
+      ) => Promise<{ ok: boolean; payload?: { kind?: string; email?: string; hq_repo?: string; roots?: string[] } }>
+    }
+    const verified = await tokens.verifySeatToken(token, 'check-media-seat-key')
+    assert.equal(verified.ok, true)
+    assert.equal(verified.payload?.kind, HMAC_KIND)
+    assert.equal(verified.payload?.email, 'alpha-person@example.test')
+    assert.equal(verified.payload?.hq_repo, 'plyntr/alpha-brain')
+    assert.deepEqual(verified.payload?.roots, ['projects/alpha/'])
+  } finally {
+    if (prev === undefined) delete process.env.BRAIN_SYNC_SEAT_TOKEN_KEY
+    else process.env.BRAIN_SYNC_SEAT_TOKEN_KEY = prev
+  }
+})

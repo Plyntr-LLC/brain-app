@@ -54,6 +54,7 @@ export function mintProjectHmacToken(opts: {
   now?: number
 }): string {
   const iat = Math.floor((opts.now || Date.now()) / 1000)
+  // Same fields as brain-sync tokens.js issueSeatPayload, plus roots (plan §17).
   const payload: ProjectHmacPayload = {
     seat_id: String(opts.seat_id || ''),
     email: String(opts.email || '').trim().toLowerCase(),

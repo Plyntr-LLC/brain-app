@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { enableDirectoryBucket, type DirectoryBucket } from './dry-worker.ts'
@@ -15,19 +16,35 @@ export function assertNotR2Url(url: string): void {
   if (/r2\.cloudflarestorage\.com/i.test(String(url || ''))) throw new Error(R2_REFUSE)
 }
 
+function envSyncRoot(): string {
+  return String(process.env.BRAIN_SYNC_ROOT || '').trim()
+}
+
+function homeSyncRoot(): string {
+  return join(homedir(), 'Projects', 'brain-sync')
+}
+
 export function mediaSyncRoot(override?: string): string {
   if (override) return override
+  const env = envSyncRoot()
+  if (env && existsSync(mediaV1Path(env))) return env
+  const home = homeSyncRoot()
+  if (existsSync(mediaV1Path(home))) return home
   return join(process.cwd(), 'vendor', 'brain-sync')
 }
 
 export async function resolveMediaSyncRoot(override?: string): Promise<string> {
   if (override) return override
+  const env = envSyncRoot()
+  if (env && existsSync(mediaV1Path(env))) return env
   try {
     const hq = await import('../hq-sync.ts')
-    return hq.syncRoot()
+    const root = hq.syncRoot()
+    if (existsSync(mediaV1Path(root))) return root
   } catch {
-    return mediaSyncRoot()
+    /* vendor copy has no media-v1 until Joe's tree is on this Mac */
   }
+  return mediaSyncRoot()
 }
 
 export function r2AdminPath(syncRoot: string): string {
@@ -57,6 +74,7 @@ export async function startDryMedia(opts: {
   syncRoot?: string
 }): Promise<{ mediaV1: unknown | null; bucket: DirectoryBucket; syncRoot: string }> {
   if (!isMediaDryRun()) throw new Error(DRY_ONLY)
+  assertNotR2Url('brain-media://dry-run')
   const root = await resolveMediaSyncRoot(opts.syncRoot)
   const mediaV1 = await loadMediaV1(root)
   const bucket = enableDirectoryBucket(opts.userData, opts.bucket)
