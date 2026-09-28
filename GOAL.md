@@ -103,6 +103,8 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Inbox
 
+- [x] 2026-09-28 Joe: Encrypted Plyntr storage Slice 5 REJECT-fix open #3 (Mac rotate-scope camelCase). `RotateScopeBody` / `rotateProjectScope` POST body is worker camelCase: `scopeId`, `keyVersion` (current), `dekWraps` (`objectId`, `dekWrap`, `dekVersion`), `wraps` (`deviceId`, `ephPub`, `nonce`, `ciphertext`). Dry-run check-in still rotates in-process without HTTP. Open #1 (hq revoke) stayed on brain-sync. ForkScreen still three buttons. Version **0.1.97** (package.json only). Rollback tag `pre-media-storage-20260928` left in place.
+
 - [x] 2026-09-28 Joe: Encrypted Plyntr storage Slice 5 follow-up (brain-sync worker tip `5c978b68`). Dry-run HMAC tokens verify with `vendor/brain-sync/src/tokens.js` `verifySeatToken`. Media brains store `hq_repo` so project auth resolves the way media-v1 does. Mac revoke hooks call worker-shaped `markMediaRevoked(email, brain, roots, proof)`. Check-in rotation builds a `/v1/media/rotate-scope` body. `loadMediaV1` prefers `BRAIN_SYNC_ROOT` or `~/Projects/brain-sync` when `media-v1.js` is there. ForkScreen still three buttons. Version **0.1.96** (package.json only). Rollback tag `pre-media-storage-20260928` left in place.
 
 - [x] 2026-09-28 Joe: Encrypted Plyntr storage Slice 5 (grants, revoke, rotation). Plan: `plans/20260928-media-storage.md` §14.5 / §11 / §17 / §18. Auto-wrap from `minted.json` for invites minted on this Mac; Settings Allow rows call real grant IPC; four Mac-side revoke hooks after `plyntr:revokeSeat`, `hqSync:revoke`, `media:revokeSeat`, and `media:revokeDevice`; 410 `device_revoked` wipes `userData/media/<id>/` and 401 does not; owner check-in rotates the project key only and wraps remaining members. Harness claims A, B, and 1–15 (`MEDIA_PASS`). ForkScreen still three buttons. Version **0.1.95** (package.json only). Rollback tag `pre-media-storage-20260928` left in place.
@@ -190,7 +192,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-- [ ] 2026-09-28 Joe: Encrypted Plyntr storage remaining slices (Ads2AI reclaim). Slice 5 grants/revoke/rotation is on main, aligned with brain-sync `5c978b68`. Plan: `plans/20260928-media-storage.md` §14.6. Do not change ForkScreen's three choices.
+- [ ] 2026-09-28 Joe: Encrypted Plyntr storage remaining slices (Ads2AI reclaim). Slice 5 grants/revoke/rotation is on main, aligned with brain-sync `5c978b68`. Open #3 rotate-scope camelCase is on main (0.1.97). Plan: `plans/20260928-media-storage.md` §14.6. Do not change ForkScreen's three choices.
 
 - [ ] 2026-09-28 Joe: Factory click-check on packed 0.1.87. `+` → Factory, type “the email system that we're doing for Plyntr” and see Work repo **mail-desk**. A Guide that complains about mykennel or Gutter IQ must not move the run there. An unrelated red test (a file this turn did not change) must not stop the run. Also: Guide Send during a running plan/build/review cuts in; phase row stays at the top, Guide box at the bottom. Dirty Start shows Commit first / Stash first; T2 shows Opus plan then Plan by Opus.
 

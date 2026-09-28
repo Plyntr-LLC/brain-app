@@ -10,7 +10,14 @@ import {
   type MemoryMediaStore
 } from './store.ts'
 import { upsertWrap } from './wraps-file.ts'
-import { mediaErrorBody, type DeviceWrapBody, type RotateScopeBody } from './worker-shapes.ts'
+import {
+  mediaErrorBody,
+  rotateDeviceWrap,
+  type DeviceWrapBody,
+  type RotateDekWrap,
+  type RotateDeviceWrap,
+  type RotateScopeBody
+} from './worker-shapes.ts'
 
 export const NO_CAP = 'no_cap'
 export const OVER_CAP = 'over_cap'
@@ -231,7 +238,7 @@ export function rotateProjectScope(opts: {
 }): { to_version: number; post: RotateScopeBody } {
   const oldVersion = opts.scope.key_version
   const next = oldVersion + 1
-  const dek_wraps: RotateScopeBody['dek_wraps'] = []
+  const dekWraps: RotateDekWrap[] = []
   for (const object of opts.mem.objects.filter(
     (o) => o.media_brain_id === opts.row.id && o.scope_id === opts.scope.id && o.status !== 'deleted'
   )) {
@@ -250,7 +257,7 @@ export function rotateProjectScope(opts: {
       keyVersion: next
     }).toString('hex')
     object.dek_version = next
-    dek_wraps.push({ object_id: object.id, dek_wrap: object.dek_wrap, dek_version: next })
+    dekWraps.push({ objectId: object.id, dekWrap: object.dek_wrap, dekVersion: next })
     dek.fill(0)
   }
   opts.scope.key_version = next
@@ -258,7 +265,7 @@ export function rotateProjectScope(opts: {
   opts.mem.wraps = opts.mem.wraps.filter(
     (w) => !(w.media_brain_id === opts.row.id && w.scope === opts.scope.id && w.key_version === oldVersion)
   )
-  const wraps: DeviceWrapBody[] = []
+  const wraps: RotateDeviceWrap[] = []
   for (const device of opts.keepDevices) {
     if (device.status !== 'approved') continue
     if (!deviceCoversScope(device, opts.scope)) continue
@@ -272,15 +279,14 @@ export function rotateProjectScope(opts: {
       key: opts.newKey,
       userData: local
     })
-    if (body) wraps.push(body)
+    if (body) wraps.push(rotateDeviceWrap(body))
   }
   return {
     to_version: next,
     post: {
-      scope_id: opts.scope.id,
-      from_version: oldVersion,
-      to_version: next,
-      dek_wraps,
+      scopeId: opts.scope.id,
+      keyVersion: oldVersion,
+      dekWraps,
       wraps
     }
   }
