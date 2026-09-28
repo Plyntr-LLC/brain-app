@@ -43,6 +43,7 @@
     "src/main/plyntr-invite.test.ts",
     "src/main/join-folder-ui.test.ts",
     "src/main/watcher-choice.test.ts",
+    "src/main/files.test.ts",
     "src/main/media/*.test.ts"
   ]
 }

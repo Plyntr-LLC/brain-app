@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join, relative, resolve, sep } from 'node:path'
+import { parsePointer } from './media/pointer.ts'
 
 const SKIP = new Set([
   '.git',
@@ -97,11 +98,31 @@ export function underRoot(root: string, abs: string): boolean {
   return p === base || p.startsWith(base + sep)
 }
 
-export function readSafe(root: string, abs: string): { text: string; kind: 'md' | 'html' | 'text'; name: string } {
+export type FileRead =
+  | { text: string; kind: 'md' | 'html' | 'text'; name: string }
+  | { text: string; kind: 'media'; name: string; mediaId: string; title: string; mime: string; bytes: number }
+
+export function readSafe(root: string, abs: string): FileRead {
   if (!underRoot(root, abs) || !existsSync(abs)) throw new Error('That file is not in this brain.')
   const name = basename(abs)
   const lower = name.toLowerCase()
   const text = readFileSync(abs, 'utf8')
+  if (lower.endsWith('.media.md')) {
+    try {
+      const fields = parsePointer(text)
+      return {
+        text,
+        kind: 'media',
+        name,
+        mediaId: fields.media_id,
+        title: fields.title,
+        mime: fields.mime,
+        bytes: fields.bytes
+      }
+    } catch {
+      /* fall through to markdown */
+    }
+  }
   const kind = lower.endsWith('.html') || lower.endsWith('.htm') ? 'html' : lower.endsWith('.md') ? 'md' : 'text'
   return { text, kind, name }
 }

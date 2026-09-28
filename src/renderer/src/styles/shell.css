@@ -1422,6 +1422,18 @@ button.runmeta-v:hover { color: var(--orange-deep); }
   font-size: 0.82rem;
   font-weight: 600;
 }
+.filemedia {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.8rem 1rem;
+}
+.filemedia video,
+.filemedia img {
+  max-width: 100%;
+  max-height: 100%;
+}
+.filetab .note { margin: 0.8rem 1rem; }
 .filetab .mdview { margin: 0; }
 .mdview h1:first-child,
 .mdview h2:first-child,

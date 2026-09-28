@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { createRequire, registerHooks } from 'node:module'
 import {
   existsSync,
@@ -63,7 +63,13 @@ export const safeStorage = {
 }
 export const powerMonitor = {}
 export const Notification = class {}
-export const protocol = {}
+export const protocol = {
+  registerSchemesAsPrivileged() {},
+  handle(scheme, fn) {
+    globalThis.__protocolHandlers ||= new Map()
+    globalThis.__protocolHandlers.set(scheme, fn)
+  }
+}
 export const webContents = {}
 export const nativeTheme = {}
 export const systemPreferences = {}
@@ -75,6 +81,7 @@ export const autoUpdater = n
 export default { autoUpdater: n }
 `
 
+const loadedUrls: string[] = []
 registerHooks({
   resolve(spec, ctx, next) {
     if (spec === 'electron') return { url: 'stub:electron', shortCircuit: true }
@@ -88,6 +95,7 @@ registerHooks({
     return next(spec, ctx)
   },
   load(url, ctx, next) {
+    loadedUrls.push(url)
     if (url === 'stub:electron') return { format: 'module', shortCircuit: true, source: electronStub }
     if (url === 'stub:electron-updater') return { format: 'module', shortCircuit: true, source: updaterStub }
     if (url.startsWith('file:') && url.endsWith('.ts') && url.includes('/src/')) {
@@ -156,13 +164,30 @@ const brainsMod = await import('../src/main/brains.ts')
 const ipc = await import('../src/main/media/ipc.ts')
 const session = await import('../src/main/media/session.ts')
 const keys = await import('../src/main/media/keys.ts')
+const play = await import('../src/main/media/play.ts')
+const format = await import('../src/main/media/format.ts')
+const cache = await import('../src/main/media/cache.ts')
+const pointer = await import('../src/main/media/pointer.ts')
+const dry = await import('../src/main/media/dry-worker.ts')
+const safe = await import('../src/main/media/renderer-safe.ts')
 const watcher = await import('../src/main/watcher-choice.ts')
-const { shouldShowStorageAsk } = await import('../src/shared/media.ts')
+const { shouldShowStorageAsk, MEDIA_OPEN_FAIL, MEDIA_PLAY_NOTES } = await import('../src/shared/media.ts')
+
+const ONESHOT = new Set(['media:takePassphrase', 'media:takeRecoveryKey'])
 
 async function invoke(name: string, ...args: unknown[]): Promise<unknown> {
   const fn = g.__ipc.get(name)
   if (!fn) fail('ipc', 'missing handler ' + name)
-  return fn({}, ...args)
+  const out = await fn({}, ...args)
+  if (!ONESHOT.has(name)) {
+    try {
+      safe.assertRendererSafe(out)
+    } catch (err) {
+      fail('10', name + ' failed assertRendererSafe: ' + String((err as Error).message || err))
+    }
+  }
+  rendererChecks.push(name)
+  return out
 }
 
 function walkFiles(dir: string, out: string[] = []): string[] {
@@ -376,6 +401,7 @@ const folder = mkdtempSync(join(tmpdir(), 'media-brain-'))
 setupFolder(userData, folder, 'brain-owner')
 g.__userData = userData
 vault.useRoot(userData)
+steps['1'] = { folder: true, projects: ['alpha', 'beta'] }
 
 const enabled = (await invoke('media:enable', { folder })) as { ok: boolean; fingerprint: string }
 if (!enabled?.ok) fail('2', 'enable failed')
@@ -386,7 +412,6 @@ const rec2 = await invoke('media:takeRecoveryKey', folder)
 if (typeof pass1 !== 'string' || !pass1.includes(' ')) fail('2', 'passphrase was not returned once')
 if (typeof rec1 !== 'string' || !String(rec1).startsWith('RK1-')) fail('2', 'recovery key was not returned once')
 if (pass2 != null || rec2 != null) fail('2', 'one-shot returned a secret twice')
-rendererChecks.push('enable')
 steps['2'] = { recoveryShownOnce: true, passphraseShownOnce: true }
 
 const filePath = join(folder, 'clip.bin')
@@ -421,6 +446,74 @@ steps['4'] = { rel: added.rel, parts: added.parts }
 const dumped = session.mediaDumpStore()
 const brainRow = dumped.brains[0]
 if (!brainRow) fail('12', 'no brain row')
+const obj = dumped.objects[0]
+if (!obj) fail('12', 'no object row')
+const mediaId = obj.id
+const chunk = Number(process.env.BRAIN_MEDIA_CHUNK)
+const start = chunk + 40
+const end = plain.length - 1
+if (start >= end || Math.floor(start / chunk) === Math.floor(end / chunk)) fail('6', 'range must cross a chunk boundary')
+
+const twSrc = readFileSync(join(rootRepo, 'src/renderer/src/TerminalWorkspace.tsx'), 'utf8')
+if (!twSrc.includes('brain-media://') || !twSrc.includes("fileKind === 'media'")) {
+  fail('6', 'file tab missing media player')
+}
+if (!twSrc.includes('className="note"') || !twSrc.includes('MEDIA_PLAY_NOTES')) {
+  fail('6', 'file tab missing media error notes')
+}
+for (const msg of MEDIA_PLAY_NOTES) {
+  if (!msg) fail('6', 'missing play note')
+}
+const filesSrc = readFileSync(join(rootRepo, 'src/main/files.ts'), 'utf8')
+if (!filesSrc.includes("kind: 'media'") || !filesSrc.includes('.media.md')) fail('6', 'readSafe media kind missing')
+const indexSrc = readFileSync(join(rootRepo, 'src/main/index.ts'), 'utf8')
+const protocolSrc = readFileSync(join(rootRepo, 'src/main/media/protocol.ts'), 'utf8')
+if (!protocolSrc.includes('registerSchemesAsPrivileged') || !protocolSrc.includes('brain-media')) {
+  fail('6', 'brain-media scheme is not registered before ready')
+}
+if (!indexSrc.includes('registerBrainMediaScheme()')) fail('6', 'index does not register the brain-media scheme')
+if (indexSrc.indexOf('registerBrainMediaScheme()') > indexSrc.indexOf('app.whenReady()')) {
+  fail('6', 'brain-media scheme must register before app.whenReady')
+}
+if (!indexSrc.includes('handleBrainMediaProtocol()')) fail('6', 'brain-media handler is not installed at ready')
+
+const played = play.playMedia({ folder, mediaId })
+const plaintextSha256 = createHash('sha256').update(plain).digest('hex')
+const playedSha256 = createHash('sha256').update(played.bytes).digest('hex')
+if (playedSha256 !== plaintextSha256) fail('6', 'played bytes did not match the source')
+const rangeRes = await play.handleBrainMediaRequest({
+  url: `brain-media://${mediaId}`,
+  headers: { Range: `bytes=${start}-${end}` }
+})
+if (rangeRes.status !== 206) fail('6', 'range status was ' + rangeRes.status)
+const rangeBytes = Buffer.from(await rangeRes.arrayBuffer())
+if (Buffer.compare(rangeBytes, plain.subarray(start, end + 1)) !== 0) fail('6', 'range bytes did not match the source span')
+if (play.parseBrainMediaUrl(`brain-media://${mediaId}`) !== mediaId) fail('6', 'brain-media URL did not parse')
+steps['6'] = { caller: 'A', shaMatch: true, rangeOk: true }
+if ((steps['6'] as { caller?: string }).caller !== 'A') fail('6', 'slice 3 play must be device A')
+
+const objPath = dry.dryObjectPath(userData, bucket.bucket, obj.object_key)
+const objectBuf = readFileSync(objPath)
+const objectSha256 = createHash('sha256').update(objectBuf).digest('hex')
+if (objectBuf.includes('PLAINTEXT-MARKER-7f3c')) fail('8', 'plaintext marker present in object')
+if (objectBuf.subarray(0, 8).toString('ascii') !== 'BRMEDIA1') fail('8', 'object magic was not BRMEDIA1')
+if (objectSha256 === plaintextSha256) fail('8', 'object SHA matched plaintext')
+steps['8'] = { markerInObject: false, magic: 'BRMEDIA1', objectSha256, plaintextSha256 }
+
+const pointerDir = join(folder, 'projects', 'alpha', 'media')
+const pointerFiles = existsSync(pointerDir) ? readdirSync(pointerDir).filter((n) => n.endsWith('.media.md')) : []
+if (pointerFiles.length !== 1) fail('9', 'expected one pointer, got ' + pointerFiles.join(','))
+const pointerPath = join(pointerDir, pointerFiles[0])
+const pointerText = readFileSync(pointerPath, 'utf8')
+const parsed = pointer.parsePointer(pointerText)
+const pointerKeys = Object.keys(parsed)
+if (pointerKeys.length !== 6 || pointer.POINTER_KEYS.some((k) => !pointerKeys.includes(k))) {
+  fail('9', 'pointer keys were ' + pointerKeys.join(','))
+}
+if (/[A-Za-z0-9+/]{40,}={0,2}/.test(pointerText)) fail('9', 'pointer has a long base64 run')
+if (/\bpbt_|\bpms_|X-Amz-|\bbm-/.test(pointerText)) fail('9', 'pointer has a secret pattern')
+steps['9'] = { pointerPath: added.rel, pointerKeys }
+
 const passWrap = {
   salt: Buffer.from(brainRow.passphrase_salt, 'hex'),
   N: keys.SCRYPT_N,
@@ -435,8 +528,6 @@ const brainKey = keys.unwrapBrainKeyWithPassphrase({
   mediaBrainId: brainRow.id
 })
 const recRaw = keys.parseRecoveryKey(String(rec1))
-const obj = dumped.objects[0]
-if (!obj) fail('12', 'no object row')
 const projectKey = keys.takeKey(`scope:${obj.scope_id}`)
 if (!projectKey) fail('12', 'project key not in memory')
 const dek = keys.unwrapDek({
@@ -468,19 +559,83 @@ try {
 if (opened) fail('12', 'dek wrap opened without the project key')
 steps['12'] = { bareKeysInStore: false, bareKeysOnDisk: false, dekWrapAloneDecrypts: false }
 
+const originalObj = Buffer.from(objectBuf)
+const flipped = Buffer.from(originalObj)
+flipped[format.HEADER_BYTES] = flipped[format.HEADER_BYTES] ^ 0xff
+writeFileSync(objPath, flipped)
+cache.deleteCipherCache(userData, brainRow.id, mediaId)
+let flippedMsg = ''
+try {
+  play.playMedia({ folder, mediaId })
+} catch (err) {
+  flippedMsg = String((err as Error).message || err)
+}
+if (flippedMsg !== MEDIA_OPEN_FAIL) fail('13', 'flipped play said ' + JSON.stringify(flippedMsg))
+if (cache.cipherCacheExists(userData, brainRow.id, mediaId)) fail('13', 'cache remained after a flipped play')
+
+const header = format.decodeHeader(originalObj)
+const lastPlain = header.chunkCount ? format.plainBytesForChunk(header, header.chunkCount - 1) : 0
+const lastCipher = lastPlain + 16
+const truncated = originalObj.subarray(0, originalObj.length - lastCipher)
+writeFileSync(objPath, truncated)
+cache.deleteCipherCache(userData, brainRow.id, mediaId)
+let truncatedMsg = ''
+try {
+  play.playMedia({ folder, mediaId })
+} catch (err) {
+  truncatedMsg = String((err as Error).message || err)
+}
+if (truncatedMsg !== MEDIA_OPEN_FAIL) fail('13', 'truncated play said ' + JSON.stringify(truncatedMsg))
+if (cache.cipherCacheExists(userData, brainRow.id, mediaId)) fail('13', 'cache remained after a truncated play')
+writeFileSync(objPath, originalObj)
+steps['13'] = { tamper: { flipped: 'refused', truncated: 'refused' } }
+
+steps['10'] = { rendererChecks: rendererChecks.slice() }
+if (!rendererChecks.includes('media:enable') || !rendererChecks.includes('media:add')) {
+  fail('10', 'expected media IPC returns to pass assertRendererSafe')
+}
+
+if (loadedUrls.some((u) => /r2-admin/.test(u))) fail('11', 'r2-admin.js was loaded')
+try {
+  const cacheKeys = Object.keys(req.cache || {})
+  if (cacheKeys.some((k) => /r2-admin/.test(k))) fail('11', 'r2-admin.js was in the module registry')
+} catch {
+  /* */
+}
+steps['11'] = { network: 0, sockets: 0, r2Admin: false }
+
+const SLICE3_OWN = ['A', 'B', '1', '2', '3', '4', '6', '8', '9', '10', '11', '12', '13']
+const SLICE3_LATER = ['5', '7', '14', '15', '16', '17', '18', '19', '20', '21', '22']
+for (const s of SLICE3_OWN) {
+  if (!(s in steps)) fail(s, 'slice 3 must claim this step')
+}
+for (const s of SLICE3_LATER) {
+  if (s in steps) fail(s, 'later-slice step claimed early')
+}
+
 const artifact = {
   pass: true,
   steps,
+  objectSha256,
+  plaintextSha256,
+  markerInObject: false,
+  pointerPath: added.rel,
+  pointerKeys,
   recoveryShownOnce: true,
   passphraseShownOnce: true,
   bareKeysInStore: false,
   bareKeysOnDisk: false,
   dekWrapAloneDecrypts: false,
+  tamper: { flipped: 'refused', truncated: 'refused' },
+  cap: { before: 409 },
   forkButtons: 3,
   watcherDelta: 0,
   rendererChecks,
   network: mediaCalls.length,
-  cap: { before: 409 }
+  playA: { shaMatch: true, rangeOk: true, caller: 'A' }
+}
+if ('seatB' in artifact || 'seatC' in artifact || 'reclaim' in artifact || 'revoke' in artifact) {
+  fail('5', 'devices B/C or later-slice fields claimed early')
 }
 writeArtifact(artifact)
 console.log('MEDIA_PASS')

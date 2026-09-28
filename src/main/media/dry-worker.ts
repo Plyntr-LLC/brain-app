@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 export type DirectoryBucket = {
@@ -31,4 +31,10 @@ export function putDryObject(userData: string, bucket: string, objectKey: string
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, bytes)
   return path
+}
+
+export function readDryObject(userData: string, bucket: string, objectKey: string): Buffer {
+  const path = dryObjectPath(userData, bucket, objectKey)
+  if (!existsSync(path)) throw new Error('missing object')
+  return readFileSync(path)
 }

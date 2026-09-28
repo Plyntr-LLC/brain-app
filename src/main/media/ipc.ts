@@ -2,6 +2,7 @@ import { app, ipcMain } from 'electron'
 import type { MediaAddResult } from '../../shared/media.ts'
 import { initShellVault } from '../shell-vault.ts'
 import { assertRendererSafe } from './renderer-safe.ts'
+import { pollMediaState } from './state-poll.ts'
 import {
   MediaErr,
   mediaAdd,
@@ -26,7 +27,9 @@ function folderOf(raw: unknown): string {
 export function registerMediaIpc(): void {
   initShellVault(app.getPath('userData'))
   ipcMain.handle('media:status', async (_e, folder?: string) => {
-    return assertRendererSafe(await mediaStatus(String(folder || '')))
+    const path = String(folder || '')
+    if (path) await pollMediaState(path)
+    return assertRendererSafe(await mediaStatus(path))
   })
   ipcMain.handle('media:shouldAsk', async (_e, opts?: { folder?: string; role?: string }) => {
     return assertRendererSafe(await mediaShouldAsk({ folder: String(opts?.folder || ''), role: opts?.role }))

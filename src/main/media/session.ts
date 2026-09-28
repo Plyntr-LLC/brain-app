@@ -1,9 +1,14 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { app, dialog, safeStorage } from 'electron'
 import { canTurnOnGithubSync } from '../../shared/contracts.ts'
 import {
+  MEDIA_NEEDS_NET,
+  MEDIA_NOT_APPROVED,
+  MEDIA_OPEN_FAIL,
+  MEDIA_REMOVED,
+  MEDIA_WRONG_PROJECT,
   mediaUsedLine,
   shouldShowStorageAsk,
   type MediaAddResult,
@@ -14,9 +19,10 @@ import { brainIdForFolder, seatForBrain, seatTokenForFolder } from '../plyntr-se
 import { getAccount, loadAccount } from '../session-token.ts'
 import { getSettings } from '../settings-store.ts'
 import { isJoeSuperAdmin } from '../super-admin.ts'
-import { CHUNK_SIZE_DEFAULT, CHUNK_SIZE_MIN, newDek } from './crypto.ts'
+import { cachePath, cipherCacheExists, touchCipherCache, writeCipherCache } from './cache.ts'
+import { assertMediaId, CHUNK_SIZE_DEFAULT, CHUNK_SIZE_MIN, newDek } from './crypto.ts'
 import { ensureDeviceKey, type SafeStorageApi } from './device-key.ts'
-import { enableDirectoryBucket, putDryObject } from './dry-worker.ts'
+import { dryObjectPath, enableDirectoryBucket, putDryObject } from './dry-worker.ts'
 import { encryptMedia } from './format.ts'
 import {
   createBrainKey,
@@ -25,6 +31,8 @@ import {
   dropKeys,
   holdKey,
   takeKey,
+  unwrapDek,
+  unwrapKeyFromDevice,
   wrapBrainKeyWithPassphrase,
   wrapBrainKeyWithRecovery,
   wrapDek,
@@ -32,6 +40,7 @@ import {
   type DeviceKeyWrap
 } from './keys.ts'
 import { writePointer } from './pointer.ts'
+import { readWrapsFile, upsertWrap } from './wraps-file.ts'
 import { assertPassphrase, generatePassphrase } from './passphrase.ts'
 import { isMediaDryRun } from './transport.ts'
 import { dumpMemoryMediaStore, memoryMediaStore, type MediaBrainRow } from './store.ts'
@@ -356,6 +365,13 @@ export async function mediaEnable(opts: { folder: string; passphrase?: string })
     nonce: packed.nonce,
     ciphertext: packed.ciphertext
   })
+  upsertWrap(userData(), mediaBrainId, {
+    scope: 'brain',
+    key_version: 1,
+    eph_pub: packed.eph_pub,
+    nonce: packed.nonce,
+    ciphertext: packed.ciphertext
+  })
   mem.devices.push({
     id: live.fingerprint,
     media_brain_id: mediaBrainId,
@@ -434,6 +450,13 @@ function ensureScope(row: MediaBrainRow, root: string): { id: string; version: n
     key_version: 1,
     target: 'device',
     device_id: ensureDeviceKey(userData(), row.id, safe()).fingerprint,
+    eph_pub: packed.eph_pub,
+    nonce: packed.nonce,
+    ciphertext: packed.ciphertext
+  })
+  upsertWrap(userData(), row.id, {
+    scope: id,
+    key_version: 1,
     eph_pub: packed.eph_pub,
     nonce: packed.nonce,
     ciphertext: packed.ciphertext
@@ -546,4 +569,138 @@ export function mediaDumpStore(): ReturnType<typeof dumpMemoryMediaStore> {
 
 export function mediaDropKeys(): void {
   dropKeys()
+}
+
+export function mediaDeviceState(folder: string): { mediaBrainId: string; status: string } | null {
+  const row = brainForFolder(folder)
+  if (!row) return null
+  let fingerprint = ''
+  try {
+    fingerprint = ensureDeviceKey(userData(), row.id, safe()).fingerprint
+  } catch {
+    return { mediaBrainId: row.id, status: 'pending' }
+  }
+  const device = store().devices.find((d) => d.media_brain_id === row.id && d.fingerprint === fingerprint)
+  if (!device) return { mediaBrainId: row.id, status: 'pending' }
+  return { mediaBrainId: row.id, status: device.status }
+}
+
+export function mediaWipeBrain(mediaBrainId: string, userDataDir?: string): void {
+  const id = String(mediaBrainId || '')
+  if (!/^[A-Za-z0-9_-]{8,80}$/.test(id)) return
+  const root = userDataDir || userData()
+  rmSync(join(root, 'media', id), { recursive: true, force: true })
+  dropKeys(brainKeyId(id))
+  for (const s of store().scopes.filter((s) => s.media_brain_id === id)) {
+    dropKeys(scopeKeyId(s.id))
+  }
+  const seatsPath = join(root, 'media', 'seats.json')
+  if (!existsSync(seatsPath)) return
+  try {
+    const raw = JSON.parse(readFileSync(seatsPath, 'utf8')) as Record<string, unknown>
+    if (raw && typeof raw === 'object' && id in raw) {
+      delete raw[id]
+      writeFileSync(seatsPath, JSON.stringify(raw))
+    }
+  } catch {
+    /* */
+  }
+}
+
+function mediaAccessRoots(folder: string): 'full' | string[] {
+  const who = actor(folder)
+  if (who.role === 'project') return []
+  return 'full'
+}
+
+function projectKeyFor(brainId: string, scopeId: string, keyVersion: number): Buffer {
+  const held = takeKey(scopeKeyId(scopeId))
+  if (held) return held
+  const row = readWrapsFile(userData(), brainId).find((w) => w.scope === scopeId && w.key_version === keyVersion)
+  if (!row) throw new Error(MEDIA_NOT_APPROVED)
+  const live = ensureDeviceKey(userData(), brainId, safe())
+  try {
+    const key = unwrapKeyFromDevice({
+      wrap: {
+        ephPub: Buffer.from(row.eph_pub, 'hex'),
+        nonce: Buffer.from(row.nonce, 'hex'),
+        ciphertext: Buffer.from(row.ciphertext, 'hex')
+      },
+      devicePrivateKey: live.privateKey,
+      mediaBrainId: brainId,
+      scope: scopeId,
+      version: keyVersion
+    })
+    holdKey(scopeKeyId(scopeId), key)
+    return key
+  } catch {
+    throw new Error(MEDIA_NOT_APPROVED)
+  }
+}
+
+function ensureObjectCached(brain: MediaBrainRow, objectId: string, objectKey: string): string {
+  if (cipherCacheExists(userData(), brain.id, objectId)) {
+    touchCipherCache(userData(), brain.id, objectId)
+    return cachePath(userData(), brain.id, objectId)
+  }
+  const src = dryObjectPath(userData(), brain.bucket, objectKey)
+  if (!existsSync(src)) throw new Error(MEDIA_NEEDS_NET)
+  try {
+    return writeCipherCache(userData(), brain.id, objectId, readFileSync(src))
+  } catch (err) {
+    const msg = String((err as Error).message || err)
+    if (msg === MEDIA_NEEDS_NET) throw err
+    throw new Error(MEDIA_OPEN_FAIL)
+  }
+}
+
+export function prepareMediaPlay(opts: { folder: string; mediaId: string }): {
+  cacheFile: string
+  dek: Buffer
+  mime: string
+  plainLen: number
+  mediaBrainId: string
+} {
+  const folder = String(opts.folder || '')
+  const mediaId = assertMediaId(opts.mediaId)
+  const brain = brainForFolder(folder)
+  if (!brain) throw new Error(MEDIA_OPEN_FAIL)
+  const mem = store()
+  const object = mem.objects.find((o) => o.id === mediaId)
+  if (!object) throw new Error(MEDIA_OPEN_FAIL)
+  if (object.status === 'deleted') throw new Error(MEDIA_REMOVED)
+  if (object.media_brain_id !== brain.id) throw new Error(MEDIA_WRONG_PROJECT)
+  if (object.status !== 'ready') throw new Error(MEDIA_OPEN_FAIL)
+  let fingerprint = ''
+  try {
+    fingerprint = ensureDeviceKey(userData(), brain.id, safe()).fingerprint
+  } catch {
+    throw new Error(MEDIA_NOT_APPROVED)
+  }
+  const device = mem.devices.find((d) => d.media_brain_id === brain.id && d.fingerprint === fingerprint)
+  if (!device || device.status === 'pending') throw new Error(MEDIA_NOT_APPROVED)
+  if (device.status === 'blocked' || device.status === 'revoked') throw new Error(MEDIA_OPEN_FAIL)
+  const scope = mem.scopes.find((s) => s.id === object.scope_id)
+  if (!scope) throw new Error(MEDIA_OPEN_FAIL)
+  const roots = mediaAccessRoots(folder)
+  if (roots !== 'full') {
+    const ok = roots.some((r) => scope.root === r || scope.root.startsWith(r))
+    if (!ok) throw new Error(MEDIA_WRONG_PROJECT)
+  }
+  const projectKey = projectKeyFor(brain.id, scope.id, object.dek_version)
+  const dek = unwrapDek({
+    wrap: Buffer.from(object.dek_wrap, 'hex'),
+    projectKey,
+    mediaId: object.id,
+    scopeId: scope.id,
+    keyVersion: object.dek_version
+  })
+  const cacheFile = ensureObjectCached(brain, object.id, object.object_key)
+  return {
+    cacheFile,
+    dek,
+    mime: object.mime,
+    plainLen: object.bytes,
+    mediaBrainId: brain.id
+  }
 }

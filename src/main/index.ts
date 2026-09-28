@@ -18,8 +18,11 @@ import { registerSkinIpc } from './skin/ipc'
 import { registerFactoryIpc } from './factory/ipc'
 import { registerPhoneIpc, restorePhoneIfWanted, stopPhone } from './phone'
 import { registerMediaIpc } from './media/ipc'
+import { handleBrainMediaProtocol, registerBrainMediaScheme } from './media/protocol'
+import { startMediaStatePoll } from './media/state-poll'
 import { refreshTray, startTray } from './tray'
 
+registerBrainMediaScheme()
 registerStubIpc()
 registerPtyIpc()
 registerUpdateIpc()
@@ -109,6 +112,7 @@ function pushHealth(): void {
 }
 
 app.whenReady().then(() => {
+  handleBrainMediaProtocol()
   if (process.env.BRAIN_CHECK_WINDOW === '1') return
   if (process.env.BRAIN_APP_SETUP_DRIVE === '1') {
     const win = createWindow()
@@ -141,11 +145,15 @@ app.whenReady().then(() => {
     prewarm('grok', folder)
   }
   restorePhoneIfWanted()
+  startMediaStatePoll()
   app.on('activate', () => {
     if (!mainWin || mainWin.isDestroyed()) createWindow()
     else mainWin.show()
   })
-  app.on('browser-window-focus', () => notifySetupBack())
+  app.on('browser-window-focus', () => {
+    notifySetupBack()
+    void import('./media/state-poll').then((mod) => mod.pollMediaState())
+  })
 })
 
 let quitFlushed = false
