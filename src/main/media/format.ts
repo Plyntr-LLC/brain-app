@@ -1,3 +1,4 @@
+import { closeSync, openSync, readSync } from 'node:fs'
 import {
   CHUNK_SIZE_DEFAULT,
   MEDIA_OPEN_FAIL,
@@ -138,4 +139,110 @@ export function decryptMedia(opts: { object: Buffer; mediaId: string; dek: Buffe
   const plain = Buffer.concat(out)
   if (plain.length !== header.plainLen) throw new Error(MEDIA_OPEN_FAIL)
   return plain
+}
+
+export function cipherChunkOffset(header: MediaHeader, chunkIndex: number): number {
+  if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= header.chunkCount) {
+    throw new Error(MEDIA_OPEN_FAIL)
+  }
+  return HEADER_BYTES + chunkIndex * cipherChunkSize(header.chunkSize)
+}
+
+export function plainBytesForChunk(header: MediaHeader, chunkIndex: number): number {
+  if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= header.chunkCount) {
+    throw new Error(MEDIA_OPEN_FAIL)
+  }
+  const isLast = chunkIndex === header.chunkCount - 1
+  return isLast ? lastPlainSize(header.plainLen, header.chunkSize, header.chunkCount) : header.chunkSize
+}
+
+function decryptRangeWithRead(opts: {
+  read: (offset: number, size: number) => Buffer
+  mediaId: string
+  dek: Buffer
+  start: number
+  end: number
+}): Buffer {
+  const mediaId = assertMediaId(opts.mediaId)
+  const head = opts.read(0, HEADER_BYTES)
+  const header = decodeHeader(head)
+  if (!Number.isInteger(opts.start) || !Number.isInteger(opts.end) || opts.start < 0 || opts.end < opts.start) {
+    throw new Error(MEDIA_OPEN_FAIL)
+  }
+  if (header.plainLen === 0) {
+    if (opts.start === 0 && opts.end === -1) return Buffer.alloc(0)
+    throw new Error(MEDIA_OPEN_FAIL)
+  }
+  if (opts.start >= header.plainLen) throw new Error(MEDIA_OPEN_FAIL)
+  const end = Math.min(opts.end, header.plainLen - 1)
+  const first = Math.floor(opts.start / header.chunkSize)
+  const last = Math.floor(end / header.chunkSize)
+  const parts: Buffer[] = []
+  for (let i = first; i <= last; i++) {
+    const isLast = i === header.chunkCount - 1
+    const take = cipherChunkSize(plainBytesForChunk(header, i))
+    const cipher = opts.read(cipherChunkOffset(header, i), take)
+    if (!Buffer.isBuffer(cipher) || cipher.length !== take) throw new Error(MEDIA_OPEN_FAIL)
+    parts.push(
+      decryptChunk({
+        dek: opts.dek,
+        prefix: header.noncePrefix,
+        mediaId,
+        chunkIndex: i,
+        isLast,
+        ciphertext: cipher
+      })
+    )
+  }
+  const joined = Buffer.concat(parts)
+  const sliceStart = opts.start - first * header.chunkSize
+  const sliceEnd = sliceStart + (end - opts.start + 1)
+  return joined.subarray(sliceStart, sliceEnd)
+}
+
+export function decryptRangeFromBuffer(opts: {
+  object: Buffer
+  mediaId: string
+  dek: Buffer
+  start: number
+  end: number
+}): Buffer {
+  const object = opts.object
+  if (!Buffer.isBuffer(object)) throw new Error(MEDIA_OPEN_FAIL)
+  return decryptRangeWithRead({
+    mediaId: opts.mediaId,
+    dek: opts.dek,
+    start: opts.start,
+    end: opts.end,
+    read: (offset, size) => {
+      if (offset < 0 || size < 0 || offset + size > object.length) throw new Error(MEDIA_OPEN_FAIL)
+      return object.subarray(offset, offset + size)
+    }
+  })
+}
+
+export function decryptRangeFromPath(opts: {
+  path: string
+  mediaId: string
+  dek: Buffer
+  start: number
+  end: number
+}): Buffer {
+  const fd = openSync(opts.path, 'r')
+  try {
+    return decryptRangeWithRead({
+      mediaId: opts.mediaId,
+      dek: opts.dek,
+      start: opts.start,
+      end: opts.end,
+      read: (offset, size) => {
+        const buf = Buffer.alloc(size)
+        const n = readSync(fd, buf, 0, size, offset)
+        if (n !== size) throw new Error(MEDIA_OPEN_FAIL)
+        return buf
+      }
+    })
+  } finally {
+    closeSync(fd)
+  }
 }

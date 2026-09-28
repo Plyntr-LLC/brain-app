@@ -50,7 +50,7 @@ export type MediaDeviceRow = {
   media_brain_id: string
   email: string
   fingerprint: string
-  status: 'approved' | 'pending' | 'blocked'
+  status: 'approved' | 'pending' | 'blocked' | 'revoked'
 }
 
 export type MediaScopeRow = {

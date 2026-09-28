@@ -21,6 +21,10 @@ import { isHiddenStreamKind, isProtocolNoise } from '../../shared/skin/hidden-ki
 import { isSkinComponent } from '../../shared/skin/catalog'
 import { appendThought, collapseAdjacentThinks, paintsThreadSpec } from '../../shared/think-run'
 import { CHAT_RULES } from '../../shared/chat-reach'
+import {
+  MEDIA_OPEN_FAIL,
+  MEDIA_PLAY_NOTES
+} from '../../shared/media'
 
 type Mode = 'chat' | 'term'
 type Attach = { path: string; name: string; mime: string; preview?: string }
@@ -194,8 +198,71 @@ type Tab = {
   text?: string
   dirty?: boolean
   modelsLive?: boolean
+  mediaId?: string
+  mediaTitle?: string
+  mediaMime?: string
+  mediaBytes?: number
+  mediaNote?: string
   /** Factory tabs: the run this tab shows. */
   runId?: string
+}
+
+function MediaFilePane({
+  tab,
+  setNote
+}: {
+  tab: Tab
+  setNote: (note: string) => void
+}) {
+  const src = tab.mediaId ? `brain-media://${tab.mediaId}` : ''
+  const note = tab.mediaNote
+  useEffect(() => {
+    if (!src) {
+      setNote(MEDIA_OPEN_FAIL)
+      return
+    }
+    let dead = false
+    void fetch(src, { headers: { Range: 'bytes=0-0' } })
+      .then(async (r) => {
+        if (dead || r.ok || r.status === 206) return
+        const text = (await r.text()).trim()
+        setNote((MEDIA_PLAY_NOTES as readonly string[]).includes(text) ? text : MEDIA_OPEN_FAIL)
+      })
+      .catch(() => {
+        if (!dead) setNote(MEDIA_OPEN_FAIL)
+      })
+    return () => {
+      dead = true
+    }
+  }, [src])
+  return (
+    <>
+      <div className="filetab-head">{tab.mediaTitle || tab.title}</div>
+      {note ? (
+        <p className="note">{note}</p>
+      ) : tab.mediaMime && tab.mediaMime.startsWith('image/') ? (
+        <div className="filemedia">
+          <img
+            src={src}
+            alt={tab.mediaTitle || tab.title}
+            onError={() => {
+              if (!note) setNote(MEDIA_OPEN_FAIL)
+            }}
+          />
+        </div>
+      ) : (
+        <div className="filemedia">
+          <video
+            controls
+            src={src}
+            onError={() => {
+              if (!note) setNote(MEDIA_OPEN_FAIL)
+            }}
+          />
+        </div>
+      )}
+    </>
+  )
 }
 
 function widthPref(key: string, fallback: number): number {
@@ -2429,6 +2496,25 @@ export function TerminalWorkspace({
     const title = abs.split('/').pop() || 'file'
     try {
       const r = await window.brain.files.read(cwd, abs)
+      if (r.kind === 'media') {
+        setTabs((t) => [
+          ...t,
+          {
+            id,
+            type: 'file',
+            title: r.title || r.name,
+            path: abs,
+            fileKind: 'media',
+            mediaId: r.mediaId,
+            mediaTitle: r.title,
+            mediaMime: r.mime,
+            mediaBytes: r.bytes,
+            text: r.text
+          }
+        ])
+        setActive(id)
+        return
+      }
       let html = ''
       let url = ''
       if (r.kind === 'html') url = await window.brain.files.fileUrl(cwd, abs)
@@ -2892,28 +2978,39 @@ export function TerminalWorkspace({
             .filter((t) => t.type === 'file' && t.id === active)
             .map((t) => (
               <div key={t.id} className="filetab">
-                <div className="filetab-head">{t.title}</div>
-                {t.fileKind === 'html' && t.url ? (
-                  <webview className="fileweb" src={t.url} allowpopups />
+                {t.fileKind === 'media' ? (
+                  <MediaFilePane
+                    tab={t}
+                    setNote={(note) =>
+                      setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, mediaNote: note } : x)))
+                    }
+                  />
                 ) : (
-                  <div className="fileedit">
-                    <div className="fileedit-bar">
-                      <button type="button" className="ghost" disabled={!t.dirty} onClick={() => void saveOpenFile(t)}>
-                        Save
-                      </button>
-                      <span className="tiny">{t.dirty ? 'Unsaved' : 'Saved'}</span>
-                    </div>
-                    <textarea
-                      className="fileedit-box"
-                      value={t.text || ''}
-                      spellCheck={false}
-                      onChange={(e) =>
-                        setTabs((all) =>
-                          all.map((x) => (x.id === t.id ? { ...x, text: e.target.value, dirty: true } : x))
-                        )
-                      }
-                    />
-                  </div>
+                  <>
+                    <div className="filetab-head">{t.title}</div>
+                    {t.fileKind === 'html' && t.url ? (
+                      <webview className="fileweb" src={t.url} allowpopups />
+                    ) : (
+                      <div className="fileedit">
+                        <div className="fileedit-bar">
+                          <button type="button" className="ghost" disabled={!t.dirty} onClick={() => void saveOpenFile(t)}>
+                            Save
+                          </button>
+                          <span className="tiny">{t.dirty ? 'Unsaved' : 'Saved'}</span>
+                        </div>
+                        <textarea
+                          className="fileedit-box"
+                          value={t.text || ''}
+                          spellCheck={false}
+                          onChange={(e) =>
+                            setTabs((all) =>
+                              all.map((x) => (x.id === t.id ? { ...x, text: e.target.value, dirty: true } : x))
+                            )
+                          }
+                        />
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             ))}

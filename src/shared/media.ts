@@ -36,7 +36,9 @@ export function shouldShowStorageAsk(opts: {
   storageOn: boolean
   mediaAsked: boolean
   hasSeatToken: boolean
+  routes: boolean
 }): boolean {
+  if (!opts.routes) return false
   if (opts.storageOn || opts.mediaAsked) return false
   if (!opts.hasSeatToken) return false
   return canTurnOnGithubSync(opts.role, Boolean(opts.joe))
@@ -74,3 +76,23 @@ export const MEDIA_PROJECT_WATCH = 'You can watch videos in the projects you are
 export const MEDIA_ASK_H1 = 'Where should big videos and pictures live?'
 export const MEDIA_ASK_BODY =
   'Your notes stay in this folder either way. Big files can stay on this computer, or go to Plyntr storage so the people on each project can watch them.'
+
+export const MEDIA_WRONG_PROJECT = 'You are not on this project.'
+export const MEDIA_NOT_APPROVED = 'This Mac is not approved yet. Ask your owner.'
+export const MEDIA_NEEDS_NET = 'Needs the internet the first time.'
+export const MEDIA_OPEN_FAIL = 'This file could not be opened.'
+export const MEDIA_REMOVED = 'This file was removed from storage.'
+
+export const MEDIA_PLAY_NOTES = [
+  MEDIA_WRONG_PROJECT,
+  MEDIA_NOT_APPROVED,
+  MEDIA_NEEDS_NET,
+  MEDIA_OPEN_FAIL
+] as const
+
+export function mediaPlayStatus(message: string): number {
+  if (message === MEDIA_WRONG_PROJECT || message === MEDIA_NOT_APPROVED) return 403
+  if (message === MEDIA_NEEDS_NET) return 503
+  if (message === MEDIA_REMOVED) return 404
+  return 400
+}

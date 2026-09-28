@@ -700,7 +700,15 @@ const brain = {
     match: (cwd: string, text: string) =>
       ipcRenderer.invoke('files:match', cwd, text) as Promise<{ path: string; live?: boolean }[]>,
     read: (root: string, abs: string) =>
-      ipcRenderer.invoke('files:read', root, abs) as Promise<{ text: string; kind: 'md' | 'html' | 'text'; name: string }>,
+      ipcRenderer.invoke('files:read', root, abs) as Promise<{
+        text: string
+        kind: 'md' | 'html' | 'text' | 'media'
+        name: string
+        mediaId?: string
+        title?: string
+        mime?: string
+        bytes?: number
+      }>,
     write: (root: string, abs: string, text: string) =>
       ipcRenderer.invoke('files:write', root, abs, text) as Promise<{ ok: true }>,
     browse: (root?: string) =>
