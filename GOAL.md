@@ -103,6 +103,10 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Inbox
 
+- [x] 2026-09-28 Joe: Encrypted Plyntr storage Slice 5 (grants, revoke, rotation). Plan: `plans/20260928-media-storage.md` §14.5 / §11 / §17 / §18. Auto-wrap from `minted.json` for invites minted on this Mac; Settings Allow rows call real grant IPC; four Mac-side revoke hooks after `plyntr:revokeSeat`, `hqSync:revoke`, `media:revokeSeat`, and `media:revokeDevice`; 410 `device_revoked` wipes `userData/media/<id>/` and 401 does not; owner check-in rotates the project key only and wraps remaining members. Harness claims A, B, and 1–15 (`MEDIA_PASS`). ForkScreen still three buttons. Version **0.1.95** (package.json only). Rollback tag `pre-media-storage-20260928` left in place.
+
+- [x] 2026-09-28 Joe: Encrypted Plyntr storage Slice 4 (brain-app superadmin cap field). Plan: `plans/20260928-media-storage.md` §14.4 / §18. Settings `storageAdmin()` / `MediaAdminFields` sit under `PackSelect` on both `biz current` branches, `joe && superAdmin` only. Dry-run still never loads `r2-admin.js` or `r2.cloudflarestorage.com` (assertNotR2Url / startDryMedia, directory bucket only). Harness claims A, B, 1–4, 6-as-A, 8–13 and asserts r2-admin is absent from the module registry. ForkScreen still three buttons. Version **0.1.94** (package.json only). Rollback tag `pre-media-storage-20260928` left in place.
+
 - [x] 2026-09-28 Joe: Encrypted Plyntr storage Slice 3 (playback). Plan: `plans/20260928-media-storage.md` §7c/§14.3. Privileged `brain-media` scheme before `app.ready`; Range decrypt from ciphertext cache only; `readSafe` `kind: 'media'`; file tab `<video>` / `<img>` with `brain-media://<mediaId>`; LRU ~20 GB; state poll on Settings, focus, and 10 minutes. Harness claims A, B, 1–4, 6-as-A, 8–11, 12, 13. Devices B/C and steps 5/7/14/15 wait for later slices. ForkScreen still three buttons. Version **0.1.93** (package.json only). Rollback tag `pre-media-storage-20260928` left in place.
 
 - [x] 2026-09-28 Joe: Slice 2 follow-up: packed setup question hidden unless media health routes are live. `shouldShowStorageAsk` and `mediaShouldAsk` now require `media.status` `routes` (health 200), the same gate Settings uses. Packed + no-routes never opens `storage-ask` and never writes `media-asked.json`. Eligible seats still get the ask when routes are live. ForkScreen still three buttons. Version **0.1.92** (package.json only). Rollback tag `pre-media-storage-20260928` left in place.
@@ -184,7 +188,7 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
-- [ ] 2026-09-28 Joe: Encrypted Plyntr storage remaining slices (worker, grants/revoke, Ads2AI reclaim). Slice 3 playback is in code. Plan: `plans/20260928-media-storage.md`. Do not change ForkScreen's three choices.
+- [ ] 2026-09-28 Joe: Encrypted Plyntr storage remaining slices (Ads2AI reclaim). Slice 5 grants/revoke/rotation is in code. Plan: `plans/20260928-media-storage.md` §14.6. Do not change ForkScreen's three choices.
 
 - [ ] 2026-09-28 Joe: Factory click-check on packed 0.1.87. `+` → Factory, type “the email system that we're doing for Plyntr” and see Work repo **mail-desk**. A Guide that complains about mykennel or Gutter IQ must not move the run there. An unrelated red test (a file this turn did not change) must not stop the run. Also: Guide Send during a running plan/build/review cuts in; phase row stays at the top, Guide box at the bottom. Dirty Start shows Commit first / Stash first; T2 shows Opus plan then Plan by Opus.
 

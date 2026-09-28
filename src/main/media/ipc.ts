@@ -14,6 +14,7 @@ import {
   mediaSkip,
   mediaStatus,
   mediaTurnOnBucket,
+  revokeMediaDevice,
   takePassphrase,
   takeRecoveryKey
 } from './session.ts'
@@ -73,5 +74,17 @@ export function registerMediaIpc(): void {
   })
   ipcMain.handle('media:allow', (_e, opts?: { folder?: string; deviceId?: string }) => {
     return assertRendererSafe(mediaAllow({ folder: folderOf(opts), deviceId: String(opts?.deviceId || '') }))
+  })
+  ipcMain.handle('media:revokeDevice', (_e, opts?: { folder?: string; deviceId?: string; seatId?: string }) => {
+    return assertRendererSafe(
+      revokeMediaDevice({
+        folder: folderOf(opts),
+        deviceId: opts?.deviceId,
+        seatId: opts?.seatId
+      })
+    )
+  })
+  ipcMain.handle('media:revokeSeat', (_e, opts?: { folder?: string; seatId?: string }) => {
+    return assertRendererSafe(revokeMediaDevice({ folder: folderOf(opts), seatId: String(opts?.seatId || '') }))
   })
 }
