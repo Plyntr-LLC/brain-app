@@ -182,6 +182,22 @@ console.error('[live] starting 4c')
   )
 }
 
+console.error('[live] starting 4d')
+// 4d. Wake first: send the moment the background task ends, so Claude's own turn can open before it
+// takes the prompt. The prompt must end on its own answer, never on the wake's result.
+{
+  await wait(3000)
+  await bgStart('BGDONE-4D', 6)
+  const mark = sent.length
+  const ended = () => sent.some((p, k) => k >= mark && p.tabId === tabId && p.data === 'bg:[]')
+  for (let i = 0; i < 400 && !ended(); i++) await wait(25)
+  const d = await cs.claudePrompt({ ...base, text: 'Reply with exactly the word MANGO and nothing else.', onEvent: appEvent })
+  const shown = () => sent.slice(mark).filter((p) => p.tabId === tabId && p.kind === 'text').map((p) => p.data).join('')
+  for (let i = 0; i < 300 && !shown().includes('BGDONE-4D') && !/BGDONE-4D/.test(d); i++) await wait(100)
+  const trail = sent.slice(mark).filter((p) => p.tabId === tabId && p.kind !== 'thought').map((p) => `${p.kind}:${String(p.data || '').slice(0, 24)}`)
+  check('4d a prompt sent as the wake opens ends on its own answer (MANGO), not the wake\'s result', ended() && /MANGO/.test(d) && shown().includes('MANGO'), JSON.stringify({ d: d.slice(0, 80), trail: trail.slice(0, 30) }))
+}
+
 cs.claudeKillAll()
 for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'} ${r.name}${r.ok ? '' : `  ${r.detail}`}`)
 console.log(results.every((r) => r.ok) ? '\nCLAUDE_TURNS_PASS' : '\nCLAUDE_TURNS_FAIL')

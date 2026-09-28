@@ -232,9 +232,16 @@ function handleClaude(s: Sess, line: string): void {
     const t = s.turn || { gens: [], auto: s.unacked.length === 0 }
     s.turn = null
     s.closing = false
+    // Claude marks a turn it started for a finished background task. One that took none of our prompts
+    // is its own, even when a prompt was waiting: the prompt keeps waiting for its real answer.
+    const wake = String(asRecord(o.origin).kind || '') === 'task-notification'
     if (!t.gens.length) {
-      // Claude's own turn (no prompt taken). A result-only turn still shows.
-      if (t.auto || !s.unacked.length) {
+      if (t.auto || wake || !s.unacked.length) {
+        // A wake that streamed before Claude's echo went out as the waiting prompt's text: it was the wake's.
+        if (!t.auto && s.text) {
+          s.autoText = s.text
+          s.text = ''
+        }
         endAuto(s, result)
         return
       }

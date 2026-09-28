@@ -23,3 +23,13 @@ FAIL 2 background strip / turn:auto / clear: no events
 
 ## Unit: ℹ pass 194 of 195; project-hooks.test.ts fails on 0.1.89 too (runner cannot resolve ./ai-cli)
 ## check-factory FACTORY_PASS, check-chat-reach ok, check-slash-skills ok, typecheck ok, build ok
+
+## Replay: scripts/check-claude-replay.ts (fake claude, wake-first interleaving live runs cannot force)
+PASS R0 the fake answers a plain prompt
+PASS R1 wake first: the prompt ends on its own answer (MANGO), not the wake result
+PASS R1 the wake shows as its own turn: turn:auto, its text, then turn:auto-done (tab still busy), then MANGO and one done
+CLAUDE_REPLAY_PASS
+Against 0627888 (no origin read): FAIL R1 got BGDONE-R1 (the wake's result ended the prompt)
+
+## Live 4d (wake-first attempt) passes on both commits: Claude took the prompt first in both runs, hence the replay.
+PASS 4d a prompt sent as the wake opens ends on its own answer (MANGO), not the wake's result
