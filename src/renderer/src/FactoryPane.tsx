@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { REVIEW_MAX, type FactoryTriage, type RunPhase, type RunRecord } from '../../shared/factory'
+import { modelsLine, REVIEW_MAX, type FactoryTriage, type LiveCall, type RunPhase, type RunRecord } from '../../shared/factory'
 
 type Perm = { title?: string; path?: string; detail?: string; options?: { id: string; label: string }[] }
 type FileHit = { path: string; tool?: string; live: boolean }
@@ -39,6 +39,12 @@ function railIndex(run: RunRecord): number {
   return i < 0 ? 0 : i
 }
 
+/** "review · opus medium · 0:42" for a call in flight. */
+function nowLine(c: LiveCall): string {
+  const secs = Math.max(0, Math.floor((Date.now() - c.since) / 1000))
+  return `Now: ${c.phase} · ${c.model}${c.effort ? ` ${c.effort}` : ''} · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
+}
+
 /** "4 model calls, 182k tokens, 3m 10s" for the run header. */
 function usageLine(rows: NonNullable<RunRecord['usage']>): string {
   const tokens = rows.reduce((n, r) => n + r.inTokens + r.outTokens + r.cacheRead + r.cacheWrite, 0)
@@ -76,6 +82,13 @@ export function FactoryPane(props: {
   const [repoLine, setRepoLine] = useState('')
   const [voiceOn, setVoiceOn] = useState(false)
   const [reason, setReason] = useState('')
+  const calls = run?.live || []
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    if (!calls.length) return
+    const t = setInterval(() => setTick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [calls.length])
   const [pushBlock, setPushBlock] = useState<string | null>(null)
   const [deployBlock, setDeployBlock] = useState<string | null>(null)
   const [files, setFiles] = useState<FileHit[]>([])
@@ -332,6 +345,8 @@ export function FactoryPane(props: {
             Work repo: <strong>{baseName(run.workRepo)}</strong> {run.workRepo}
             {run.builder ? ` · Builder: ${BUILDER_NAME[run.builder]}` : ''}
             {run.usage?.length ? ` · ${usageLine(run.usage)}` : ''}
+            {calls.map((c) => ` · ${nowLine(c)}`).join('')}
+            {modelsLine(run.usage) ? ` · Models: ${modelsLine(run.usage)}` : ''}
           </p>
           <div className="phaserail">
             {RAIL.map((r, i) => (

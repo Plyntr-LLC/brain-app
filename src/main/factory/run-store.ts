@@ -158,7 +158,8 @@ export function loadRun(id: string): RunRecord | null {
   }
   const dir = repoStoreDir(meta.workRepo, safeId(meta.id))
   if (dir) repoOf.set(meta.id, meta.workRepo)
-  return joinCode(meta, readCode(dir))
+  const { live: _live, ...run } = joinCode(meta, readCode(dir))
+  return run
 }
 
 export function listRuns(): RunRecord[] {

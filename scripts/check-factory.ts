@@ -569,7 +569,10 @@ const json = process.argv[process.argv.indexOf('--output-format') + 1] === 'json
 const envelope = (text) => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, total_cost_usd: 0.0123, usage: { input_tokens: 111, output_tokens: 22, cache_read_input_tokens: 3333, cache_creation_input_tokens: 444 }, modelUsage: { 'claude-fake-served': { costUSD: 0.0123 } } })
 const say = (text) => process.stdout.write(json ? envelope(text) : text + '\\n')
 // The Opus builder (bypassPermissions) never takes a planner or reviewer line from the queue.
-if (process.argv.includes('bypassPermissions')) { say('Opus built it.'); process.exit(0) }
+if (process.argv.includes('bypassPermissions')) {
+  setTimeout(() => { say('Opus built it.'); process.exit(0) }, Number(process.env.FAKE_CLAUDE_BUILD_SLEEP || 0))
+} else setTimeout(answer, Number(process.env.FAKE_CLAUDE_DELAY || 0))
+function answer() {
 let plan = []
 try { plan = JSON.parse(fs.readFileSync(process.env.FAKE_CLAUDE_PLAN, 'utf8')) } catch {}
 const next = plan.shift()
@@ -581,7 +584,8 @@ if (!m) say(line)
 else if (m[1] === 'raw') process.stdout.write(m[3] + '\\n')
 else if (m[1] === 'pad') say('x'.repeat(Number(m[2])) + '\\n' + m[3])
 else if (m[1] === 'exit') { say(m[3]); process.exit(Number(m[2])) }
-else if (m[1] === 'sleep') { setTimeout(() => say('late'), Number(m[3])) }
+else if (m[1] === 'sleep') { setTimeout(() => say(m[2] ? m[3] : 'late'), Number(m[2] || m[3])) }
+}
 `
 const installClaude = () => {
   writeFileSync(claudeBin, claudeSource)
@@ -2758,6 +2762,249 @@ process.stdout.write(JSON.stringify({ type: 'end', stopReason: 'end_turn', usage
     const moved = !existsSync(join(runsDir, `${mid}.review.md`)) && !readFileSync(join(runsDir, `${mid}.json`), 'utf8').includes('CODEMARK_MIGFAIL') && hits(storeOf(evM, mid), 'CODEMARK_MIGFAIL').length === 2
     check('EV e a failed migration copy keeps userData as it was; the next load moves it', !!first?.diff?.includes('CODEMARK_MIGFAIL') && kept && !!second?.diff?.includes('CODEMARK_MIGFAIL') && moved, JSON.stringify({ first: !!first?.diff, kept, moved }))
   }
+  // LV. Live model display: every call type shows while it runs and clears however it ends.
+  {
+    type LC = NonNullable<ReturnType<typeof ctl.getRun>>['live']
+    const waitFor = async (pred: () => boolean, ms = 20000) => {
+      const end = Date.now() + ms
+      while (Date.now() < end) {
+        if (pred()) return true
+        await new Promise((r) => setTimeout(r, 20))
+      }
+      return pred()
+    }
+    const liveOf = (id: string): NonNullable<LC> => ctl.getRun(id)?.live || []
+    const tuple = (c: NonNullable<LC>[number]) => `${c.phase}|${c.cli}|${c.model}|${c.effort}`
+    const one = async (id: string, want: string) => {
+      const ok = await waitFor(() => liveOf(id).length === 1 && tuple(liveOf(id)[0]) === want)
+      return { ok, id: liveOf(id)[0]?.id || '', got: liveOf(id).map(tuple) }
+    }
+    const withInfo = (info?: (tab: string) => { model?: string; effort?: string }) => use({ driver: { ...evDeps.driver, ...(info ? { info } : {}) } })
+    const slowGrok = join(temp, 'fake-grok-slow')
+    writeFileSync(
+      slowGrok,
+      `#!/usr/bin/env node
+setTimeout(() => {
+  process.stdout.write(JSON.stringify({ type: 'text', data: JSON.stringify({ size: 'T2', risk: 'elevated', reason: 'fake' }) }) + '\\n')
+  process.stdout.write(JSON.stringify({ type: 'end', usage: { input_tokens: 9, output_tokens: 1 }, num_turns: 1, total_cost_usd: 0.001, modelUsage: { 'grok-fake-served': { costUSD: 0.001 } } }) + '\\n')
+}, 1500)
+`
+    )
+    chmodSync(slowGrok, 0o755)
+    const releases: (() => void)[] = []
+    const blockOn = (r: string, re = /Phase: (build|fix)\./, then?: () => void) => {
+      let n = 0
+      promptPlan = async (o) => {
+        if (!re.test(o.text)) return
+        writeFileSync(join(r, 'src', 'a.ts'), `export const a = ${200 + ++n}\n`)
+        await new Promise<void>((res) => releases.push(res))
+        then?.()
+      }
+    }
+    const releaseAll = () => {
+      while (releases.length) releases.shift()?.()
+    }
+
+    // a. In flight, each call type, one row at a time.
+    const evL = evRepo('ev-live')
+    withInfo(() => ({ model: 'grok-acp-fake', effort: 'high' }))
+    triageBin = slowGrok
+    process.env.FAKE_CLAUDE_DELAY = '1500'
+    blockOn(evL, /Phase: build\./)
+    claudeSays(['Plan: small, one file.', 'GAPS: 0\nPASS'])
+    const ev0 = events.length
+    const aRes = ctl.startRun({ task: 'Add a new API endpoint for team settings with shared types', workRepo: evL, brainPath: brainEv, runThrough: true })
+    const aId = aRes.ok ? aRes.run.id : ''
+    const t = await one(aId, 'triage|grok|grok (CLI default)|low')
+    const p = await one(aId, 'plan|claude|opus|medium')
+    const b = await one(aId, 'build|grok|grok-acp-fake|high')
+    const before = events.length
+    await new Promise((r) => setTimeout(r, 2000))
+    const quiet = events.length === before
+    releaseAll()
+    const rv = await one(aId, 'review|claude|opus|medium')
+    const aEnd = await ctl.settle(aId)
+    triageBin = null
+    process.env.FAKE_CLAUDE_DELAY = '0'
+    check('LV a triage, plan, ACP build, and review each show as the only live row while they run', [t, p, b, rv].every((x) => x.ok) && new Set([t.id, p.id, b.id, rv.id]).size === 4, JSON.stringify([t, p, b, rv]))
+    check('LV a live is empty after the run', aEnd?.phase === 'done' && !aEnd.live?.length, JSON.stringify({ phase: aEnd?.phase, live: aEnd?.live }))
+    const flips = (() => {
+      let had = false
+      let n = 0
+      for (const e of events.slice(ev0) as { runId: string; run?: { live?: { id: string }[] } }[]) {
+        if (e.runId !== aId || !e.run) continue
+        const has = !!e.run.live?.some((c) => c.id === b.id)
+        if (has !== had) n++
+        had = has
+      }
+      return n
+    })()
+    check('LV f one ACP call flips live twice (set, clear); a 2 s wait while blocked emits nothing', flips === 2 && quiet, JSON.stringify({ flips, quiet }))
+    const aDone = store.loadRun(aId)
+    check('LV f Models line comes from served models, each phase/model/effort once', shared.modelsLine(aDone?.usage).includes('review claude-fake-served medium') && shared.modelsLine(aDone?.usage).includes('triage grok-fake-served low'), shared.modelsLine(aDone?.usage))
+    const row = (phase: 'review' | 'build', model: string, effort: string) => ({ phase, cli: 'claude' as const, model, effort, inTokens: 0, outTokens: 0, cacheRead: 0, cacheWrite: 0, costEq: 0, ms: 0, turns: 1, ok: true, at: 0 })
+    check('LV f modelsLine dedupes the same triple', shared.modelsLine([row('review', 'm1', 'medium'), row('review', 'm1', 'medium'), row('build', 'm2', 'high')]) === 'review m1 medium; build m2 high')
+
+    // a (cont). The Opus builder turn.
+    const evO = evRepo('ev-live-opus')
+    writer(evO)
+    process.env.FAKE_CLAUDE_BUILD_SLEEP = '1500'
+    claudeSays(['a\nGAPS: 1\nFAIL', 'b\nGAPS: 1\nFAIL', 'c\nGAPS: 1\nFAIL', 'GAPS: 0\nPASS'])
+    const oRes = ctl.startRun({ task: EVTASK, workRepo: evO, brainPath: brainEv, runThrough: true })
+    const oId = oRes.ok ? oRes.run.id : ''
+    const ob = await one(oId, 'build|claude|opus|medium')
+    const oEnd = await ctl.settle(oId)
+    process.env.FAKE_CLAUDE_BUILD_SLEEP = '0'
+    check('LV a the Opus builder turn shows as the only live row, then clears', ob.ok && oEnd?.phase === 'done' && !oEnd.live?.length, JSON.stringify({ ob, phase: oEnd?.phase, live: oEnd?.live }))
+
+    // b. Every ending: present while blocked, empty after.
+    const ending = async (name: string, o: { repoName: string; says: string[]; delay?: string; want: string; act: (id: string) => Promise<void> | void; over?: Partial<typeof fakeDeps>; build?: boolean; info?: boolean }) => {
+      const r = evRepo(o.repoName)
+      if (o.build) blockOn(r)
+      else writer(r)
+      if (o.info === false) use(o.over || {})
+      else use({ ...(o.over || {}), driver: { ...evDeps.driver, info: () => ({ model: 'grok-acp-fake', effort: 'high' }) } })
+      process.env.FAKE_CLAUDE_DELAY = o.delay || '0'
+      claudeSays(o.says)
+      const res = ctl.startRun({ task: EVTASK, workRepo: r, brainPath: brainEv, runThrough: true })
+      const id = res.ok ? res.run.id : ''
+      const seen = o.want ? await one(id, o.want) : { ok: true, id: '', got: [] }
+      process.env.FAKE_CLAUDE_DELAY = '0'
+      await o.act(id)
+      const end = await ctl.settle(id)
+      check(`LV b ${name}: live while blocked, empty after`, seen.ok && !end?.live?.length, JSON.stringify({ seen, phase: end?.phase, live: end?.live }))
+      releaseAll()
+      if (end && !['done', 'abandoned'].includes(end.phase)) ctl.abandonRun(id)
+      use()
+      return { id, end, seen }
+    }
+    await ending('claude timeout', { repoName: 'ev-lv-timeout', says: ['GAPS: 0\nPASS', 'GAPS: 0\nPASS'], delay: '4000', want: 'review|claude|opus|medium', over: { opusTimeoutMs: 800 }, act: () => {} })
+    await ending('claude exit 3', { repoName: 'ev-lv-exit', says: ['@@exit:3:GAPS: 0\nPASS', 'GAPS: 0\nPASS'], delay: '1200', want: 'review|claude|opus|medium', act: () => {} })
+    await ending('missing claude binary', { repoName: 'ev-lv-missing', says: [], want: '', over: { claudeBin: () => join(temp, 'no-such-claude') }, act: () => {} })
+    const thrower = evRepo('ev-lv-throw')
+    promptPlan = async (o) => {
+      if (!/Phase: build\./.test(o.text)) return
+      writeFileSync(join(thrower, 'src', 'a.ts'), 'export const a = 9\n')
+      await new Promise<void>((res) => releases.push(res))
+      throw new Error('ACP turn broke')
+    }
+    use()
+    claudeSays([])
+    const thRes = ctl.startRun({ task: EVTASK, workRepo: thrower, brainPath: brainEv, runThrough: true })
+    const thId = thRes.ok ? thRes.run.id : ''
+    const th = await one(thId, 'build|grok|grok|')
+    releaseAll()
+    const thEnd = await ctl.settle(thId)
+    check('LV b ACP turn that throws: live while blocked, empty after', th.ok && thEnd?.phase === 'failed' && !thEnd.live?.length, JSON.stringify({ th, phase: thEnd?.phase, live: thEnd?.live }))
+    check('LV e no driver.info: the row falls back to the builder name, no throw', th.ok, JSON.stringify(th))
+    ctl.abandonRun(thId)
+    const ab = await ending('Abandon during a blocked build', {
+      repoName: 'ev-lv-abandon',
+      says: [],
+      want: 'build|grok|grok-acp-fake|high',
+      build: true,
+      act: async (id) => {
+        // d. While blocked, every in-memory read carries the row; the disk file has it; loadRun does not.
+        const file = join(store.factoryDir(), 'runs', `${id}.json`)
+        const disk = readFileSync(file, 'utf8')
+        check(
+          'LV d in-memory reads keep live mid-call; the file has it; loadRun drops it',
+          liveOf(id).length === 1 &&
+            (ctl.restoreRun(id)?.live?.length || 0) === 1 &&
+            (ctl.listFactoryRuns().find((x) => x.id === id)?.live?.length || 0) === 1 &&
+            disk.includes('"live"') &&
+            !store.loadRun(id)?.live,
+          JSON.stringify({ mem: liveOf(id).length, disk: disk.includes('"live"'), load: store.loadRun(id)?.live })
+        )
+        ctl.abandonRun(id)
+      }
+    })
+    check('LV b Abandon ends abandoned', ab.end?.phase === 'abandoned')
+    await ending('Pause during a sleeping review', {
+      repoName: 'ev-lv-pause',
+      says: ['GAPS: 0\nPASS'],
+      delay: '4000',
+      want: 'review|claude|opus|medium',
+      act: (id) => {
+        ctl.pauseRun(id)
+      }
+    })
+    {
+      const r = evRepo('ev-lv-guide')
+      blockOn(r)
+      withInfo(() => ({ model: 'grok-acp-fake', effort: 'high' }))
+      claudeSays(['GAPS: 0\nPASS'])
+      const res = ctl.startRun({ task: EVTASK, workRepo: r, brainPath: brainEv, runThrough: true })
+      const id = res.ok ? res.run.id : ''
+      const first = await one(id, 'build|grok|grok-acp-fake|high')
+      const tab = liveOf(id)[0]?.tab
+      ctl.guideRun(id, 'Also keep the old wording in the log line.')
+      const second = await waitFor(() => liveOf(id).length === 1 && liveOf(id)[0].id !== first.id && liveOf(id)[0].tab === tab)
+      releaseAll()
+      await waitFor(() => !liveOf(id).length || releases.length > 0)
+      releaseAll()
+      const end = await ctl.settle(id)
+      releaseAll()
+      check('LV b Guide Send during a blocked build: the follow-up turn has its own row on the same tab, empty after', first.ok && second && !end?.live?.length, JSON.stringify({ first, live: end?.live, phase: end?.phase }))
+      if (end && !['done', 'abandoned'].includes(end.phase)) ctl.abandonRun(id)
+      use()
+    }
+
+    // c. T3: two workers blocked at once, each its own row; one release leaves the other.
+    {
+      const r = evRepo('ev-lv-t3')
+      const byTab = new Map<string, () => void>()
+      promptPlan = async (o) => {
+        const m = /Your slice (\d+) of \d+: [^.]+\. Edit only these files; other builders own the rest: (.+)/.exec(o.text)
+        if (!m) return
+        for (const rel of m[2].split(', ').map((x) => x.trim()).filter(Boolean)) writeFileSync(join(r, rel), 'export const v = 1\n')
+        await new Promise<void>((res) => byTab.set(String(o.tabId), res))
+      }
+      withInfo((tab) => ({ model: `grok-${tab.endsWith('w1') ? 'one' : 'two'}`, effort: 'xhigh' }))
+      t3Says([{ title: 'x', files: ['src/x.ts'] }, { title: 'y', files: ['src/y.ts'] }], 'GAPS: 0\nPASS')
+      const res = ctl.startRun({ task: T3TASK, workRepo: r, brainPath: brainEv, runThrough: true })
+      const id = res.ok ? res.run.id : ''
+      const two = await waitFor(() => liveOf(id).filter((c) => c.phase === 'build').length === 2)
+      const rows = liveOf(id)
+      const w1 = rows.find((c) => c.tab?.endsWith('-w1'))
+      byTab.get(String(w1?.tab))?.()
+      const left = await waitFor(() => liveOf(id).length === 1 && !!liveOf(id)[0].tab?.endsWith('-w2'))
+      for (const f of byTab.values()) f()
+      const end = await ctl.settle(id)
+      check('LV c T3: two worker rows with their own ids; releasing one leaves exactly the other; empty after', two && rows.length === 2 && rows[0].id !== rows[1].id && w1?.model === 'grok-one' && left && !end?.live?.length, JSON.stringify({ rows: rows.map((c) => [c.tab, c.model]), end: end?.phase }))
+      use()
+    }
+
+    // d (cont). After a restart a stale live row never shows.
+    {
+      const file = join(store.factoryDir(), 'runs', `${oId}.json`)
+      const raw = JSON.parse(readFileSync(file, 'utf8'))
+      raw.live = [{ id: 'stale', phase: 'review', cli: 'claude', model: 'opus', effort: 'medium', since: 1 }]
+      writeFileSync(file, JSON.stringify(raw))
+      ctl.dropMemory()
+      check('LV d after dropMemory, restoreRun and getRun show no stale live', !ctl.restoreRun(oId)?.live && !ctl.getRun(oId)?.live)
+    }
+
+    // e (cont). The real factoryInfo reads the ACP tab.
+    {
+      const mk = (tabId: string, model: string, effort: string) => ({ tabId, sessionId: `s-${tabId}`, promptId: null, appTools: [], text: '', alwaysApprove: false, model, effort })
+      const tabA = mk('factory-run-lvinfo', 'grok-4.7-build', 'xhigh')
+      const tabW = mk('factory-run-lvinfo-w1', 'grok-4.6-build', 'high')
+      acp.registerPoolForCheck({ kind: 'grok', lane: 'factory', cwd: join(temp, 'lv-info-brain'), boot: Promise.resolve(), tabs: new Map([[tabA.tabId, tabA], [tabW.tabId, tabW]]), bySid: new Map(), rpc: { dead: false, request: async () => ({}), notify: () => {}, kill: () => {} } } as never)
+      const a = acp.factoryInfo(tabA.tabId)
+      const w = acp.factoryInfo(tabW.tabId)
+      check('LV e factoryInfo returns the ACP tab model and effort (run tab and worker), {} for an unknown tab', a.model === 'grok-4.7-build' && a.effort === 'xhigh' && w.model === 'grok-4.6-build' && w.effort === 'high' && JSON.stringify(acp.factoryInfo('nope')) === '{}', JSON.stringify({ a, w }))
+    }
+
+    // g. Pane: the existing header line holds the new text; nothing else moved.
+    {
+      const pane = readFileSync(join(rootRepo, 'src', 'renderer', 'src', 'FactoryPane.tsx'), 'utf8')
+      const head = pane.slice(pane.indexOf('Work repo: <strong>'), pane.indexOf('</p>', pane.indexOf('Work repo: <strong>')))
+      check('LV g Now and Models sit inside the existing Work repo header line', head.includes('nowLine(c)') && head.includes('Models: ${modelsLine(run.usage)}') && pane.includes("const live = run.phase !== 'done' && run.phase !== 'abandoned'"), head)
+    }
+    use()
+  }
+
   // h. Argv pins.
   {
     check('EV h opusArgs pin', JSON.stringify(opusMod.opusArgs('p')) === JSON.stringify(['-p', 'p', '--model', 'opus', '--effort', 'medium', '--permission-mode', 'plan', '--output-format', 'json']))

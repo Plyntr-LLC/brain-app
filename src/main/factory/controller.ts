@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseGrokLine, resolveBin, type StreamEvent } from '../ai-cli'
-import { ACK_FILED, ACK_NOTED, BUILDER_FIX_MAX, type Builder, type GuideNote, type Slice, type Tier, type UsageRow } from '../../shared/factory.ts'
+import { ACK_FILED, ACK_NOTED, BUILDER_FIX_MAX, type Builder, type GuideNote, type LiveCall, type Slice, type Tier, type UsageRow } from '../../shared/factory.ts'
 import { upsertLog } from './brain-log.ts'
 import { buildBrief, type BriefPhase } from './brief.ts'
 import { isNeedOpus } from './fallback.ts'
@@ -29,7 +29,7 @@ import {
   type VerifyRow
 } from './run-store.ts'
 import { triage, type Size } from './triage.ts'
-import { llmTriage, mergeTriage } from './triage-llm.ts'
+import { llmTriage, mergeTriage, TRIAGE_EFFORT, TRIAGE_MODEL } from './triage-llm.ts'
 import { parseSlices, scheduleSlices } from './slices.ts'
 import { gateFor, gateOpen, withAuto, withGate, withJudgment } from './shadow.ts'
 import { checkTripwire, type Tripwire } from './tripwire.ts'
@@ -61,6 +61,8 @@ export type Driver = {
   }) => Promise<string>
   cancel: (tabId: string) => void
   close: (tabId: string) => void
+  /** The ACP tab's current model and effort, for the live row. */
+  info?: (tabId: string) => { model?: string; effort?: string }
   /** Grok reasoning effort on the Factory session (T2 build xhigh after an Opus plan, high otherwise; T3 xhigh). */
   setEffort?: (tabId: string, effort: string) => Promise<void>
 }
@@ -165,13 +167,37 @@ function addUsage(state: Live, row: UsageRow): void {
   state.run = { ...state.run, usage: withUsage(state.run.usage, row) }
 }
 
+/** The call's row sits on the run while it runs; its own id comes off when it ends, however it ends. */
+async function withLive<T>(state: Live, entry: Omit<LiveCall, 'id' | 'since'>, fn: () => Promise<T>): Promise<T> {
+  const id = randomUUID()
+  state.run = { ...state.run, live: [...(state.run.live || []), { ...entry, id, since: Date.now() }] }
+  persist(state)
+  try {
+    return await fn()
+  } finally {
+    const rest = (state.run.live || []).filter((c) => c.id !== id)
+    state.run = { ...state.run, live: rest.length ? rest : undefined }
+    persist(state)
+  }
+}
+
+const OPUS_LIVE = { cli: 'claude' as const, model: 'opus', effort: 'medium' }
+
 /** One ACP builder turn with its usage row, whatever way it ends. */
 async function acpTurn(state: Live, o: Parameters<Driver['prompt']>[0]): Promise<void> {
   const started = Date.now()
   let got: TurnUsage = {}
   let ok = false
+  const d = need()
+  let info: { model?: string; effort?: string } = {}
   try {
-    await need().driver.prompt({ ...o, onUsage: (u) => (got = u) })
+    info = d.driver.info?.(o.tabId) || {}
+  } catch {
+    /* no info: the builder name stands in */
+  }
+  const cli = state.run.builder === 'cursor' ? 'cursor' : 'grok'
+  try {
+    await withLive(state, { phase: 'build', cli, model: info.model || cli, effort: info.effort || '', tab: o.tabId }, () => d.driver.prompt({ ...o, onUsage: (u) => (got = u) }))
     ok = true
   } finally {
     const cli = state.run.builder === 'cursor' ? 'cursor' : 'grok'
@@ -462,7 +488,7 @@ async function triageStep(state: Live): Promise<void> {
   const run = state.run
   setPhase(state, 'triage', { resumePhase: 'triage', error: undefined })
   const rules = triage(run.task)
-  const res = await llmTriage({
+  const res = await withLive(state, { phase: 'triage', cli: 'grok', model: TRIAGE_MODEL || 'grok (CLI default)', effort: TRIAGE_EFFORT }, () => llmTriage({
     task: run.task,
     rules,
     cwd: run.brainPath,
@@ -470,7 +496,7 @@ async function triageStep(state: Live): Promise<void> {
     bin: (d.grokBin || (() => resolveBin('grok')))(),
     parseLine: parseGrokLine,
     spawnFn: d.spawnTriage
-  })
+  }))
   addUsage(state, res.usage)
   if (stale(state, gen)) {
     persist(state)
@@ -604,17 +630,19 @@ async function opusPlan(state: Live): Promise<void> {
   const earlier = (prev.rejects > 0 || notes.length) && existsSync(runTextPath(run.id, 'plan')) ? [runTextPath(run.id, 'plan')] : []
   const abort = new AbortController()
   state.abort = abort
-  const res = await runOpus({
-    cwd: run.workRepo,
-    prompt: planPrompt({ task: run.task, workRepo: run.workRepo, plans: earlier, reasons: prev.reasons, tier: run.tier === 'T3' ? 'T3' : 'T2', guide: notes }),
-    env: d.env(run.workRepo),
-    bin: (d.claudeBin || (() => resolveBin('claude')))(),
-    timeoutMs: OPUS_PLAN_TIMEOUT_MS,
-    spawnFn: d.spawnOpus,
-    signal: abort.signal,
-    phase: 'plan',
-    maxBytes: d.opusMax
-  })
+  const res = await withLive(state, { phase: 'plan', ...OPUS_LIVE }, () =>
+    runOpus({
+      cwd: run.workRepo,
+      prompt: planPrompt({ task: run.task, workRepo: run.workRepo, plans: earlier, reasons: prev.reasons, tier: run.tier === 'T3' ? 'T3' : 'T2', guide: notes }),
+      env: d.env(run.workRepo),
+      bin: (d.claudeBin || (() => resolveBin('claude')))(),
+      timeoutMs: OPUS_PLAN_TIMEOUT_MS,
+      spawnFn: d.spawnOpus,
+      signal: abort.signal,
+      phase: 'plan',
+      maxBytes: d.opusMax
+    })
+  )
   if (state.abort === abort) state.abort = undefined
   addUsage(state, res.usage)
   if (stale(state, gen)) {
@@ -743,18 +771,20 @@ async function opusBuildTurn(state: Live, gen: number, brief: string): Promise<v
   say({ kind: 'status', data: 'work:Opus is building' })
   const abort = new AbortController()
   state.abort = abort
-  const res = await runOpus({
-    cwd: run.workRepo,
-    prompt: brief,
-    env: d.env(run.workRepo),
-    bin: (d.claudeBin || (() => resolveBin('claude')))(),
-    timeoutMs: OPUS_REVIEW_TIMEOUT_MS,
-    spawnFn: d.spawnOpus,
-    signal: abort.signal,
-    build: true,
-    phase: 'build',
-    maxBytes: d.opusMax
-  })
+  const res = await withLive(state, { phase: 'build', ...OPUS_LIVE }, () =>
+    runOpus({
+      cwd: run.workRepo,
+      prompt: brief,
+      env: d.env(run.workRepo),
+      bin: (d.claudeBin || (() => resolveBin('claude')))(),
+      timeoutMs: OPUS_REVIEW_TIMEOUT_MS,
+      spawnFn: d.spawnOpus,
+      signal: abort.signal,
+      build: true,
+      phase: 'build',
+      maxBytes: d.opusMax
+    })
+  )
   if (state.abort === abort) state.abort = undefined
   addUsage(state, res.usage)
   persist(state)
@@ -1073,17 +1103,19 @@ async function strictStep(state: Live): Promise<boolean> {
   const run = state.run
   const abort = new AbortController()
   state.abort = abort
-  const res = await runOpus({
-    cwd: run.workRepo,
-    prompt: strictPrompt({ task: run.task, tier: run.tier, risk: run.risk, base: run.base, diff: safeDiff(run.workRepo, run.base), workRepo: run.workRepo, verify: run.verify }),
-    env: d.env(run.workRepo),
-    bin: (d.claudeBin || (() => resolveBin('claude')))(),
-    timeoutMs: d.opusTimeoutMs ?? OPUS_REVIEW_TIMEOUT_MS,
-    spawnFn: d.spawnOpus,
-    signal: abort.signal,
-    phase: 'review',
-    maxBytes: d.opusMax
-  })
+  const res = await withLive(state, { phase: 'review', ...OPUS_LIVE }, () =>
+    runOpus({
+      cwd: run.workRepo,
+      prompt: strictPrompt({ task: run.task, tier: run.tier, risk: run.risk, base: run.base, diff: safeDiff(run.workRepo, run.base), workRepo: run.workRepo, verify: run.verify }),
+      env: d.env(run.workRepo),
+      bin: (d.claudeBin || (() => resolveBin('claude')))(),
+      timeoutMs: d.opusTimeoutMs ?? OPUS_REVIEW_TIMEOUT_MS,
+      spawnFn: d.spawnOpus,
+      signal: abort.signal,
+      phase: 'review',
+      maxBytes: d.opusMax
+    })
+  )
   if (state.abort === abort) state.abort = undefined
   addUsage(state, res.usage)
   if (stale(state, gen)) {

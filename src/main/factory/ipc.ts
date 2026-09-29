@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { projectBinEnv } from '../ai-cli'
-import { factoryCancel, factoryClose, factoryPrompt, factorySetEffort, factoryWarm } from '../acp-session'
+import { factoryCancel, factoryInfo, factoryClose, factoryPrompt, factorySetEffort, factoryWarm } from '../acp-session'
 import {
   abandonRun,
   commitRunNow,
@@ -57,7 +57,8 @@ export function registerFactoryIpc(): void {
       prompt: (o) => factoryPrompt(o),
       cancel: (tabId) => void factoryCancel(tabId),
       close: (tabId) => factoryClose(tabId),
-      setEffort: (tabId, effort) => factorySetEffort(tabId, effort)
+      setEffort: (tabId, effort) => factorySetEffort(tabId, effort),
+      info: (tabId) => factoryInfo(tabId)
     },
     emit,
     env: (repo) => opusEnv(factoryEnv(projectBinEnv(repo), ensureShims(factoryShimDir())))

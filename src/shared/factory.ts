@@ -56,6 +56,20 @@ export type UsageRow = {
   at: number
 }
 
+/** A model call in flight. id is per call, so a new turn on the same tab never loses its row. */
+export type LiveCall = { id: string; phase: UsageRow['phase']; cli: UsageRow['cli']; model: string; effort: string; since: number; tab?: string }
+
+/** "triage grok-4.6-build low; review claude-opus-5-5 medium": each served phase/model/effort once, in order. */
+export function modelsLine(rows: UsageRow[] | undefined): string {
+  const seen: string[] = []
+  for (const r of rows || []) {
+    if (!r.model) continue
+    const t = `${r.phase} ${r.model}${r.effort ? ` ${r.effort}` : ''}`
+    if (!seen.includes(t)) seen.push(t)
+  }
+  return seen.join('; ')
+}
+
 /** The loop's own ship call at the last finishReview, whatever the checkboxes say. */
 export type ShadowGate = { id: string; wouldShip: boolean; strict: 'pass' | 'held' | 'missing' | 'none'; model: string; at: number }
 
@@ -162,6 +176,8 @@ export type RunRecord = {
   error?: string
   /** Every model call this run made (last 200). */
   usage?: UsageRow[]
+  /** Model calls running right now. Memory and disk for the UI; loadRun drops it (no call survives a restart). */
+  live?: LiveCall[]
   shadow?: Shadow
   createdAt: number
   updatedAt: number

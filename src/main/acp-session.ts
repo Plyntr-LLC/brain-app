@@ -1676,6 +1676,14 @@ export async function factorySetEffort(tabId: string, effort: string): Promise<v
   tab.effort = effort
 }
 
+/** The Factory tab's current model and effort, or {} for a tab this process does not hold. */
+export function factoryInfo(tabId: string): { model?: string; effort?: string } {
+  const key = tabPool.get(tabId)
+  const tab = key ? pools.get(key)?.tabs.get(tabId) : undefined
+  if (!tab) return {}
+  return { ...(tab.model ? { model: tab.model } : {}), ...(tab.effort ? { effort: tab.effort } : {}) }
+}
+
 export function factoryCancel(tabId: string): boolean {
   return acpCancel(tabId)
 }
