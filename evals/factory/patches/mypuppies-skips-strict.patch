@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/opus.ts b/src/main/factory/opus.ts
+index d01c06b..a2e0309 100644
+--- a/src/main/factory/opus.ts
++++ b/src/main/factory/opus.ts
+@@ -148,7 +148,7 @@ export function runOpus(o: {
+ 
+ /** Strict review is required for T2 and T3, elevated or critical risk, and any MyPuppies path. */
+ export function strictNeeded(run: Pick<RunRecord, 'tier' | 'risk' | 'workRepo'>): boolean {
+-  return run.tier === 'T2' || run.tier === 'T3' || run.risk === 'elevated' || run.risk === 'critical' || /mypuppies/i.test(run.workRepo)
++  return run.tier === 'T2' || run.tier === 'T3' || run.risk === 'elevated' || run.risk === 'critical'
+ }
+ 
+ export function strictPrompt(o: { task: string; tier: string; risk: string; base: string; diff: string; workRepo: string; verify?: VerifyRow[] }): string {

@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/run-store.ts b/src/main/factory/run-store.ts
+index 683cfa8..67b5440 100644
+--- a/src/main/factory/run-store.ts
++++ b/src/main/factory/run-store.ts
+@@ -217,7 +217,7 @@ export function acquireLock(repo: string, run: { runId: string; title: string })
+       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
+       const held = readLock(repo)
+       if (held && held.runId === run.runId) return { ok: true }
+-      if (held && activeRunFor(repo)) return { ok: false, runId: held.runId, title: held.title }
++      if (held && activeRunFor(repo) && held.runId === run.runId) return { ok: false, runId: held.runId, title: held.title }
+       try {
+         unlinkSync(path)
+       } catch {

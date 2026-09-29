@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/shadow.ts b/src/main/factory/shadow.ts
+index 515ab69..538fcc0 100644
+--- a/src/main/factory/shadow.ts
++++ b/src/main/factory/shadow.ts
+@@ -33,7 +33,7 @@ export function withAuto(shadow: Shadow | undefined): Shadow {
+ const judged = (s: Shadow, id: string): boolean => s.judgments.some((j) => j.gate === id)
+ 
+ export function agrees(wouldShip: boolean, action: JudgmentAction): boolean {
+-  return wouldShip ? action === 'commit' || action === 'push' : action === 'guide' || action === 'abandon'
++  return wouldShip ? action !== 'abandon' : action === 'guide' || action === 'abandon'
+ }
+ 
+ /** Joe's click on the current gate. No gate, or a gate he already judged, adds nothing. */

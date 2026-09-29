@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/triage-llm.ts b/src/main/factory/triage-llm.ts
+index 3572d8b..29c9e1d 100644
+--- a/src/main/factory/triage-llm.ts
++++ b/src/main/factory/triage-llm.ts
+@@ -65,7 +65,7 @@ export function parseLlmTriage(text: string): LlmTriage | null {
+ export function mergeTriage(rules: Triage, llm: LlmTriage | null, why?: string): Triage {
+   if (!llm) return { ...rules, reasons: [...rules.reasons, `Model triage skipped: ${why || 'no answer'}.`] }
+   const reasons = [...rules.reasons]
+-  const original = RANK[llm.size] > RANK[rules.original] ? llm.size : rules.original
++  const original = llm.size
+   const risk = RISK_RANK[llm.risk] > RISK_RANK[rules.risk] ? llm.risk : rules.risk
+   if (original !== rules.original || risk !== rules.risk) {
+     reasons.push(`Grok raised this to ${original} · risk ${risk}${llm.reason ? `: ${llm.reason}` : '.'}`)

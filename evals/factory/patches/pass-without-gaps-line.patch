@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/opus.ts b/src/main/factory/opus.ts
+index d01c06b..fe59881 100644
+--- a/src/main/factory/opus.ts
++++ b/src/main/factory/opus.ts
+@@ -306,7 +306,7 @@ export function reviewAccept(text: string): ReviewAccept {
+   }
+   if (v === null) return { status: 'fail', gaps, why: 'Reviewer did not end with PASS or FAIL.' }
+   if (v === 'FAIL') return { status: 'fail', gaps, why: 'FAIL' }
+-  if (gaps === null) return { status: 'fail', gaps, why: 'PASS without GAPS: 0' }
++  if (gaps === null) return { status: 'pass', gaps: 0, why: '' }
+   if (gaps > 0) return { status: 'fail', gaps, why: 'PASS named gaps' }
+   const body = lines.filter((_, i) => !gapsAt.has(i) && i !== lines.length - 1).join('\n')
+   if (LEFTOVER.test(stripNones(body))) return { status: 'fail', gaps, why: 'PASS named gaps' }

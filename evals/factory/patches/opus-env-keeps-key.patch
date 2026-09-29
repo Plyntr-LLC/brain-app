@@ -1,8 +1,8 @@
 diff --git a/src/main/factory/opus.ts b/src/main/factory/opus.ts
-index 5599e43..f046dcb 100644
+index d01c06b..a2a1407 100644
 --- a/src/main/factory/opus.ts
 +++ b/src/main/factory/opus.ts
-@@ -31,7 +31,6 @@ export function opusBuildArgs(prompt: string): string[] {
+@@ -42,7 +42,6 @@ export function opusBuildArgs(prompt: string, o: OpusRun = {}): string[] {
  
  export function opusEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
    const env: NodeJS.ProcessEnv = { ...base }

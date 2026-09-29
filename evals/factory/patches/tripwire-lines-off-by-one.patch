@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/tripwire.ts b/src/main/factory/tripwire.ts
+index df7ce57..79d5deb 100644
+--- a/src/main/factory/tripwire.ts
++++ b/src/main/factory/tripwire.ts
+@@ -48,7 +48,7 @@ export function checkTripwire(tier: Tier, rows: NumstatRow[]): Tripwire {
+   const reasons: string[] = []
+   const lim = TIER_LIMITS[tier]
+   if (files > lim.files) reasons.push(`${files} files changed. ${tier} allows ${lim.files}.`)
+-  if (lines > lim.lines) reasons.push(`${lines} lines changed. ${tier} allows ${lim.lines}.`)
++  if (lines > lim.lines + 1) reasons.push(`${lines} lines changed. ${tier} allows ${lim.lines}.`)
+   const locks = rows.filter((r) => LOCKFILES.has(base(r.path))).map((r) => r.path)
+   if (locks.length) reasons.push(`Lockfile changed: ${locks.join(', ')}.`)
+   const schema = rows.filter((r) => SCHEMA_RE.test(r.path)).map((r) => r.path)

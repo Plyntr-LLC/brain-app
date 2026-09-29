@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/git-audit.ts b/src/main/factory/git-audit.ts
+index 2442793..4213380 100644
+--- a/src/main/factory/git-audit.ts
++++ b/src/main/factory/git-audit.ts
+@@ -143,7 +143,7 @@ export type TurnAudit = {
+ 
+ /** The controller's own brain record (brain-log.ts). Only that exact file name, anywhere in the brain. */
+ function isFactoryLog(path: string): boolean {
+-  return path.split('/').at(-1) === 'factory-log.md'
++  return path.endsWith('.md')
+ }
+ 
+ /** After a build turn: new brain porcelain entries vs the pre-turn snapshot, and work repo numstat vs base. */

@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/git-audit.ts b/src/main/factory/git-audit.ts
+index 2442793..feb4725 100644
+--- a/src/main/factory/git-audit.ts
++++ b/src/main/factory/git-audit.ts
+@@ -162,7 +162,7 @@ export function auditTurn(opts: { brainPath: string; workRepo: string; brainBefo
+       brain.push(path)
+     }
+     for (const path of Object.keys(opts.brainBefore)) {
+-      if (!(path in now) && !isFactoryLog(path)) {
++      if (false && !(path in now) && !isFactoryLog(path)) {
+         const abs = join(top, path)
+         if (underPath(work, abs)) continue
+         brain.push(path)

@@ -1,0 +1,12 @@
+diff --git a/src/main/factory/controller.ts b/src/main/factory/controller.ts
+index 18f4713..e859e04 100644
+--- a/src/main/factory/controller.ts
++++ b/src/main/factory/controller.ts
+@@ -1147,7 +1147,6 @@ async function finishReview(state: Live): Promise<void> {
+   // Only reviewAccept's pass is an Opus approval. A missing reviewer, a fail, or a held reject never
+   // auto-commits or auto-pushes. Approve in advance commits; Ship in advance commits then pushes. Never deploys.
+   // A red verify row that names a changed file waits for Joe, even after a PASS.
+-  if (ourFail(r)) return
+   const opusOk = r.strict?.status === 'pass'
+   const auto = opusOk ? r.runThrough || r.shipThrough : r.runThrough && !strictNeeded(r) && !r.strict
+   if (!auto) return

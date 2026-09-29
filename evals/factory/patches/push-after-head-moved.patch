@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/gates.ts b/src/main/factory/gates.ts
+index a28759f..3e410fc 100644
+--- a/src/main/factory/gates.ts
++++ b/src/main/factory/gates.ts
+@@ -179,7 +179,7 @@ export function publishBlock(o: { repo: string } & Partial<PublishTarget>): stri
+   if (PROTECTED_BRANCHES.has(branch)) return `Brain does not push to ${branch}. Push it from Terminal after review.`
+   const now = currentBranch(o.repo)
+   if (!now) return 'This repo is on a detached HEAD. Push it from Terminal.'
+-  if (now !== branch || headSha(o.repo) !== o.sha) return 'This branch moved since Factory committed. Push from Terminal.'
++  if (now !== branch) return 'This branch moved since Factory committed. Push from Terminal.'
+   if (!remote || !hasRemote(o.repo, remote)) return `This repo has no remote named ${remote || 'origin'}.`
+   if (o.sha && remoteRef(o.repo, remote, branch) === o.sha) return `Already pushed to ${remote}/${branch}.`
+   return null

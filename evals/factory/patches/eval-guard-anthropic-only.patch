@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/eval/runner.ts b/src/main/factory/eval/runner.ts
+index 1b7900c..eaa3c50 100644
+--- a/src/main/factory/eval/runner.ts
++++ b/src/main/factory/eval/runner.ts
+@@ -23,7 +23,7 @@ export const GUARDED_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_TRANSLATOR_API_KEY'
+ 
+ /** A key in the env means the calls could bill an API instead of the login. */
+ export function keyGuard(env: NodeJS.ProcessEnv): string | null {
+-  const set = GUARDED_KEYS.filter((k) => String(env[k] || '').trim())
++  const set = GUARDED_KEYS.slice(0, 1).filter((k) => String(env[k] || '').trim())
+   if (!set.length) return null
+   return `${set.join(', ')} is set. Evals run on your CLI logins only. Run this outside \`doppler run\` (or unset the key) and try again.`
+ }

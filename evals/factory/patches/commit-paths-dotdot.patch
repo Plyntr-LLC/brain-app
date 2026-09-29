@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/git-audit.ts b/src/main/factory/git-audit.ts
+index 2442793..0255556 100644
+--- a/src/main/factory/git-audit.ts
++++ b/src/main/factory/git-audit.ts
+@@ -195,7 +195,7 @@ export function diffText(repo: string, base: string, max = 60_000): string {
+ 
+ /** Stages exactly the run's paths and commits with the real git. Never pushes. Returns the new sha. */
+ export function commitRun(workRepo: string, paths: string[], message: string): string {
+-  const clean = paths.filter((p) => p && !p.split('/').includes('..') && !p.startsWith('/'))
++  const clean = paths.filter((p) => p && !p.startsWith('/'))
+   if (!clean.length) throw new Error('Nothing to commit. This run changed no files in the work repo.')
+   git(workRepo, ['add', '-A', '--', ...clean])
+   git(workRepo, ['commit', '-q', '-F', '-', '--', ...clean], message)

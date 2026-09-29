@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/brain-log.ts b/src/main/factory/brain-log.ts
+index 1ec17a4..a78126d 100644
+--- a/src/main/factory/brain-log.ts
++++ b/src/main/factory/brain-log.ts
+@@ -24,7 +24,7 @@ export function safeBrainFolder(brainPath: string, folder: string | undefined):
+   const f = String(folder || '').trim()
+   if (!f || isAbsolute(f)) return null
+   const norm = normalize(f)
+-  if (norm === '.' || norm.split(sep).includes('..')) return null
++  if (norm === '.') return null
+   const root = realish(brainPath)
+   const target = realish(join(brainPath, norm))
+   if (target === root || !underPath(root, target)) return null

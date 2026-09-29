@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/opus.ts b/src/main/factory/opus.ts
+index d01c06b..50bd034 100644
+--- a/src/main/factory/opus.ts
++++ b/src/main/factory/opus.ts
+@@ -87,7 +87,7 @@ export function runOpus(o: {
+       if (settled) return
+       settled = true
+       clearTimeout(timer)
+-      const env = over || code !== 0 ? null : parseClaudeEnvelope(text)
++      const env = code !== 0 ? null : parseClaudeEnvelope(text)
+       const raw = text.slice(-RAW_TAIL).trim() || err.trim()
+       const body = env ? String(env.result || '').trim() : raw
+       resolve({ found: true, code, text: body, last: lastLine(body), parsed: !!env, usage: claudeRow(base(), env) })

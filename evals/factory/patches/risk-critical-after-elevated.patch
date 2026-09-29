@@ -1,0 +1,14 @@
+diff --git a/src/main/factory/eval/cases.ts b/src/main/factory/eval/cases.ts
+index 4d4fdda..a136f44 100644
+--- a/src/main/factory/eval/cases.ts
++++ b/src/main/factory/eval/cases.ts
+@@ -52,8 +52,8 @@ export function sizeFromStats(rows: Stat[]): Size {
+ }
+ 
+ export function riskFromPaths(paths: string[]): Risk {
+-  if (paths.some((p) => CRITICAL_PATH.test(p))) return 'critical'
+   if (paths.some((p) => ELEVATED_PATH.test(p))) return 'elevated'
++  if (paths.some((p) => CRITICAL_PATH.test(p))) return 'critical'
+   return 'none'
+ }
+ 

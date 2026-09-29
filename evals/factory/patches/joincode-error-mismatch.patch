@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/repo-store.ts b/src/main/factory/repo-store.ts
+index 0a2c96c..7b7244a 100644
+--- a/src/main/factory/repo-store.ts
++++ b/src/main/factory/repo-store.ts
+@@ -104,7 +104,7 @@ export function joinCode(meta: RunRecord, code: RunCode | null): RunRecord {
+   if (code.voiceTail && run.voice) run.voice = { ...run.voice, tail: code.voiceTail }
+   if (code.note != null) run.note = code.note
+   for (const k of ['error', 'pushError', 'deployError'] as const) {
+-    if (code[k] != null && run[k] != null && String(code[k]).startsWith(String(run[k]))) run[k] = code[k]
++    if (code[k] != null && run[k] != null && String(run[k]).startsWith(String(code[k]))) run[k] = code[k]
+   }
+   return run
+ }

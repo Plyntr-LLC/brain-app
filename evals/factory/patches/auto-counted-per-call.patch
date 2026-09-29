@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/shadow.ts b/src/main/factory/shadow.ts
+index 515ab69..b2a2af7 100644
+--- a/src/main/factory/shadow.ts
++++ b/src/main/factory/shadow.ts
+@@ -26,7 +26,7 @@ export function withGate(shadow: Shadow | undefined, gate: ShadowGate): Shadow {
+ export function withAuto(shadow: Shadow | undefined): Shadow {
+   const s = shadow || empty()
+   const id = s.gate?.id
+-  if (!id || s.autoGates?.includes(id)) return s
++  if (!id) return s
+   return { ...s, auto: s.auto + 1, autoGates: [...(s.autoGates || []), id].slice(-20) }
+ }
+ 

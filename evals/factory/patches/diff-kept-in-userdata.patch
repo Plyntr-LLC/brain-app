@@ -1,0 +1,12 @@
+diff --git a/src/main/factory/repo-store.ts b/src/main/factory/repo-store.ts
+index 0a2c96c..6a1e7ce 100644
+--- a/src/main/factory/repo-store.ts
++++ b/src/main/factory/repo-store.ts
+@@ -60,7 +60,6 @@ export function splitCode(run: RunRecord): { meta: RunRecord; code: RunCode } {
+   const meta: RunRecord = { ...run }
+   if (run.diff != null) {
+     code.diff = run.diff
+-    delete meta.diff
+   }
+   if (run.strict?.text) {
+     code.strictText = run.strict.text
