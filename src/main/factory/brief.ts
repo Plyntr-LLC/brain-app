@@ -24,6 +24,8 @@ export type BriefInput = {
   previousPlanPath?: string
   /** Last strict reviewer FAIL text beside the run record. */
   reviewPath?: string
+  /** Voice check notes (checked copy, reasons, what each means) in the repo store. */
+  voicePath?: string
   /** T3 worker: the slice this builder owns. */
   slice?: { title: string; files: string[]; n: number; of: number }
 }
@@ -76,6 +78,7 @@ export function buildBrief(input: BriefInput): string {
   if (input.planPath) lines.push(`Approved plan: ${input.planPath}. Read it first.`)
   if (input.previousPlanPath) lines.push(`Previous plan: ${input.previousPlanPath}`)
   if (input.reviewPath) lines.push(`Reviewer notes: ${input.reviewPath}. Fix what it names.`)
+  if (input.voicePath) lines.push(`Voice notes: ${input.voicePath}. Rewrite only the copy it names; keep the meaning.`)
   const rules = lines.join('\n')
   let room = BRIEF_MAX - rules.length - '\n\nTask: '.length
   const noteRaw = String(input.note || '').trim()

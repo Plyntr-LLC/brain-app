@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseGrokLine, resolveBin, type StreamEvent } from '../ai-cli'
-import { ACK_FILED, ACK_NOTED, BUILDER_FIX_MAX, type Builder, type GuideNote, type LiveCall, type Slice, type Tier, type UsageRow } from '../../shared/factory.ts'
+import { ACK_FILED, ACK_NOTED, BUILDER_FIX_MAX, VOICE_MAX, type Builder, type GuideNote, type LiveCall, type Slice, type Tier, type UsageRow } from '../../shared/factory.ts'
 import { upsertLog } from './brain-log.ts'
 import { buildBrief, type BriefPhase } from './brief.ts'
 import { isNeedOpus } from './fallback.ts'
@@ -34,7 +34,7 @@ import { parseSlices, scheduleSlices } from './slices.ts'
 import { gateFor, gateOpen, withAuto, withGate, withJudgment } from './shadow.ts'
 import { checkTripwire, type Tripwire } from './tripwire.ts'
 import { acpRow, withUsage } from './usage.ts'
-import { runVoice } from './voice.ts'
+import { copyAdds, runVoice, voiceNotes } from './voice.ts'
 
 /**
  * Factory run controller. Owns triage, phases, verify, review, and commit. The model only does
@@ -106,6 +106,8 @@ type Live = {
   planNotes?: string[]
   /** gen that already had its one auto fix turn for a verify fail naming a changed file. */
   verifyFix?: number
+  /** This fix turn answers a voice REJECT: its brief carries the voice notes. */
+  voiceFix?: boolean
   /** gen that already had its one retry after a turn that changed no files. */
   emptyRetry?: number
   /** Porcelain of the other repos this run could have written, taken before the turn (see healCandidates). */
@@ -115,7 +117,8 @@ type Live = {
 export const STRICT_MISSING = 'Opus reviewer not found (claude CLI). Commit is your call.'
 export const VOICE_HOLD = 'Voice check said REJECT. Fix the copy before Commit.'
 const NO_VERDICT = 'Reviewer did not end with PASS or FAIL.'
-export const HELD_LINE = `Opus has not approved after ${REVIEW_MAX} reviews. Gaps still count.`
+export const HELD_LINE = `Opus has not approved after ${REVIEW_MAX - 1} fixes. Gaps still count.`
+export const VOICE_HELD_LINE = `Voice has not approved after ${VOICE_MAX} fixes.`
 const GUIDE_MAX = 20
 const GUIDE_CHARS = 800
 
@@ -674,7 +677,8 @@ async function opusPlan(state: Live): Promise<void> {
 }
 
 /** viaOpus: this turn is the Opus builder (a review fix from BUILDER_FIX_MAX on). Every other turn is the grunt. */
-async function buildStep(state: Live, phase: BriefPhase, note?: string, viaOpus?: boolean): Promise<void> {
+async function buildStep(state: Live, phase: BriefPhase, note?: string, viaOpus?: boolean, o: { voice?: boolean } = {}): Promise<void> {
+  state.voiceFix = !!o.voice
   const d = need()
   const gen = state.gen
   const inReview = phase === 'review' || phase === 'fix'
@@ -736,7 +740,8 @@ async function builderTurn(state: Live, gen: number, phase: BriefPhase, note?: s
     task: run.task,
     note,
     planPath: run.plan?.status === 'approved' && phase === 'build' ? runTextPath(run.id, 'plan') : undefined,
-    reviewPath: phase === 'fix' && run.reviewCycles ? runTextPath(run.id, 'review') : undefined
+    reviewPath: phase === 'fix' && run.reviewCycles && !state.voiceFix ? runTextPath(run.id, 'review') : undefined,
+    voicePath: phase === 'fix' && state.voiceFix && existsSync(runTextPath(run.id, 'voice')) ? runTextPath(run.id, 'voice') : undefined
   })
   if (opusBuilds(state, viaOpus)) return opusBuildTurn(state, gen, brief)
   try {
@@ -1071,9 +1076,10 @@ async function reviewStep(state: Live): Promise<void> {
   }
   if (state.run.profile?.voice.on && !state.run.voice) {
     setPhase(state, 'review', { diff: undefined, note: undefined, resumePhase: 'review' })
+    const voiceDiff = safeDiff(state.run.workRepo, state.run.base)
     const row = await runVoice({
       runId: state.run.id,
-      diff: safeDiff(state.run.workRepo, state.run.base),
+      diff: voiceDiff,
       profile: state.run.profile,
       env: d.env(state.run.workRepo),
       spawnFn: d.spawnVoice,
@@ -1082,6 +1088,17 @@ async function reviewStep(state: Live): Promise<void> {
     if (stale(state, gen)) return
     state.run = { ...state.run, voice: row }
     persist(state)
+    // A REJECT fixes itself up to VOICE_MAX times, always on the grunt; after that it holds for Joe.
+    if (row.status === 'fail') {
+      const used = state.run.voiceCycles || 0
+      saveRunText(state.run.id, 'voice', voiceNotes({ copy: copyAdds(voiceDiff), out: row.tail || '', attempt: Math.min(used + 1, VOICE_MAX), max: VOICE_MAX }))
+      if (used < VOICE_MAX) {
+        state.run = { ...state.run, voiceCycles: used + 1 }
+        persist(state)
+        await buildStep(state, 'fix', `Voice check said REJECT (attempt ${used + 1} of ${VOICE_MAX}).`, false, { voice: true })
+        return
+      }
+    }
   }
   await finishReview(state)
 }
@@ -1159,7 +1176,7 @@ async function finishReview(state: Live): Promise<void> {
   // Joe guided during verify or review: that note gets a turn before anything commits.
   // The work is built by now: one builder fix turn carries the note, never a fresh (T3: sliced) build.
   if (openNotes(state.run).length) {
-    await buildStep(state, 'fix')
+    await buildStep(state, 'fix', undefined, false, { voice: state.run.voice?.status === 'fail' })
     return
   }
   let diff = ''
@@ -1302,7 +1319,7 @@ function resumeTo(state: Live, target: RunPhase): RunRecord {
     return state.run
   }
   if (target === 'review' && run.diff && openNotes(run).length) {
-    track(state, buildStep(state, 'fix'))
+    track(state, buildStep(state, 'fix', undefined, false, { voice: run.voice?.status === 'fail' }))
     return state.run
   }
   if (target === 'review' && run.diff) return setPhase(state, 'review')
@@ -1377,7 +1394,9 @@ export function decideRun(id: string, choice: Decision, opts: { reason?: string 
   if (choice === 'fix-copy') {
     if (run.phase !== 'review' || run.voice?.status !== 'fail') throw new Error('The voice check did not hold this run.')
     state.gen++
-    track(state, buildStep(state, 'fix', `Voice check said REJECT. Fix the copy.\n${tail(run.voice.tail || '', 8)}`))
+    state.run = { ...state.run, voiceCycles: 0 }
+    persist(state)
+    track(state, buildStep(state, 'fix', `Voice check said REJECT. Fix the copy.\n${tail(run.voice.tail || '', 8)}`, false, { voice: true }))
     return state.run
   }
   if (choice === 'keep-fix' || choice === 're-review' || (choice === 'trim' && held(run))) {
@@ -1494,7 +1513,7 @@ function guideRoute(state: Live): boolean {
   if (run.phase === 'review' && run.diff) {
     state.gen++
     judgeGuide(state)
-    track(state, buildStep(state, 'fix'))
+    track(state, buildStep(state, 'fix', undefined, false, { voice: run.voice?.status === 'fail' }))
     return false
   }
   return false

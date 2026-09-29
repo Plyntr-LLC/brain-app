@@ -93,7 +93,7 @@ test('opus effort is always medium; never high or xhigh', () => {
 })
 
 test('reviewAccept: gaps are never a PASS', () => {
-  assert.equal(REVIEW_MAX, 5)
+  assert.equal(REVIEW_MAX, 6)
   assert.deepEqual(reviewAccept('Looks right.\nGAPS: 0\nPASS'), { status: 'pass', gaps: 0, why: '' })
   assert.equal(reviewAccept('**GAPS: 0**\n**PASS**').status, 'pass')
   assert.deepEqual(reviewAccept('ok\nPASS'), { status: 'fail', gaps: null, why: 'PASS without GAPS: 0' })

@@ -32,9 +32,76 @@ export function copyAdds(diff: string): string {
       file = line.slice('new file '.length).trim()
       continue
     }
-    if (line.startsWith('+') && !line.startsWith('+++') && COPY_RE.test(file)) out.push(line.slice(1))
+    if (!line.startsWith('+') || line.startsWith('+++') || !COPY_RE.test(file)) continue
+    const text = HTML_RE.test(file) ? visibleText(line.slice(1)) : line.slice(1)
+    if (text || !HTML_RE.test(file)) out.push(text)
   }
   return out.join('\n').trim()
+}
+
+const HTML_RE = /\.html?$/i
+
+/** The words a person sees on an HTML line: tags and attributes out, common entities decoded. */
+export function visibleText(line: string): string {
+  return String(line || '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** What each voice-check reason asks for, in plain words, for the builder's fix turn. */
+export const VOICE_HINTS: [RegExp, string][] = [
+  [/contrast framing/i, "contrast framing: state the positive claim; drop 'not X but Y' / 'no X, just Y' / 'instead of X'."],
+  [/staccato negation|No X\. No Y/i, 'staccato negation: drop runs of short negations; say what it is.'],
+  [/performing sincerity/i, "performing sincerity: cut 'honestly', 'to be clear', 'I want to be transparent'."],
+  [/commenting on the writing/i, "commenting on the writing: cut lines about the text itself ('here's the thing')."],
+  [/trailing participle/i, "trailing participle: end on the point, not an '-ing' tail (', making it easier')."],
+  [/AI as the mechanism/i, 'AI as the mechanism: say what the person gets, not that AI does it.'],
+  [/fear selling/i, 'fear selling: remove urgency or fear; state the benefit plainly.'],
+  [/unearned absolute/i, "unearned absolute: drop 'always', 'never', 'guaranteed' unless literally true."],
+  [/punch-line/i, 'punch-line commentary: remove jokes or verdicts about people.'],
+  [/opening/i, 'opening: lead with the point in the first line.'],
+  [/register match/i, 'register match: plain, direct, short sentences; sound like Joe for this kind of copy.'],
+  [/rhythm|read-aloud/i, 'rhythm / read-aloud: read it aloud; vary sentence length; cut filler.'],
+  [/Gate 2: length/i, 'length: cut padding; say it in fewer words.'],
+  [/would not ship unchanged/i, 'would not ship unchanged: rewrite until each line would ship as is.'],
+  [/em dash/i, 'em dash: use a period or a comma instead.'],
+  [/banned word/i, 'banned word: replace the word it names with a plain one.'],
+  [/clich/i, 'cliché: replace it with a plain statement.'],
+  [/over 400 characters/i, 'too long for a text: keep it under 400 characters.']
+]
+
+export const VOICE_RULES = '/Users/joewine/Projects/agency-brain/context/business/voice/anti-patterns.md'
+
+/** The notes file a voice fix turn reads: the copy that was checked, every reason, and what each asks. */
+export function voiceNotes(o: { copy: string; out: string; attempt: number; max: number }): string {
+  const reasons = String(o.out || '')
+    .split('\n')
+    .map((l) => l.replace(/^\s*\d+\.\s*/, '').trim())
+    .filter((l) => /^Gate \d/i.test(l))
+  const hints = [...new Set(reasons.flatMap((r) => VOICE_HINTS.filter(([re]) => re.test(r)).map(([, h]) => h)))]
+  return [
+    `# Voice check said REJECT (attempt ${o.attempt} of ${o.max})`,
+    '',
+    '## Copy that was checked',
+    '',
+    o.copy || '(no copy)',
+    '',
+    '## Reasons',
+    '',
+    ...(reasons.length ? reasons.map((r) => `- ${r}`) : [`- ${String(o.out || '').trim().split('\n').slice(-6).join(' ')}`]),
+    '',
+    '## What to change',
+    '',
+    ...(hints.length ? hints.map((h) => `- ${h}`) : ['- Rewrite the copy plainly and directly.']),
+    '',
+    `House rules: ${VOICE_RULES}`
+  ].join('\n')
 }
 
 export function voiceArgs(file: string, register: string, audience: string): string[] {

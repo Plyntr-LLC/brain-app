@@ -91,7 +91,7 @@ export function saveRun(run: RunRecord): RunRecord {
 }
 
 /** Plan text and the last strict FAIL text sit beside the run's code, in the work repo's store. */
-export type RunTextKind = 'plan' | 'review' | 'verify'
+export type RunTextKind = 'plan' | 'review' | 'verify' | 'voice'
 
 const TEXT_KINDS: RunTextKind[] = ['plan', 'review', 'verify']
 

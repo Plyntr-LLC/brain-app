@@ -40,6 +40,11 @@ function stub(code: number, calls: Call[]) {
   }
 }
 
+test('copyAdds gives the voice check visible words from HTML, not tags', () => {
+  const d = 'diff --git a/page.html b/page.html\n+++ b/page.html\n+<button class="x">Start &amp; go</button>\n+<div>\ndiff --git a/n.md b/n.md\n+++ b/n.md\n+Plain md line\n'
+  assert.equal(copyAdds(d), 'Start & go\nPlain md line')
+})
+
 test('copyAdds keeps only added lines of copy files', () => {
   assert.equal(copyAdds(diff), 'We build fast sites for vets.')
   assert.equal(copyAdds('new file docs/a.mdx\n+Hi there\n+Second\n'), 'Hi there\nSecond')

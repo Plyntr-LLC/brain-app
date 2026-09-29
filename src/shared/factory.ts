@@ -19,8 +19,11 @@ export type RunPhase =
   | 'failed'
   | 'abandoned'
 
-/** Opus strict reviews that may fail before the run holds for Joe (auto fix + fresh review until then). */
-export const REVIEW_MAX = 5
+/** Opus strict reviews that may fail before the run holds for Joe: the first 5 fails each get an automatic fix (Joe 2026-09-29). */
+export const REVIEW_MAX = 6
+
+/** Automatic voice fixes before a voice REJECT holds for Joe (Joe 2026-09-29). */
+export const VOICE_MAX = 5
 
 /** From this strict-review cycle on, the review fix is made by the Opus builder, not Grok or Cursor (they get the first two). */
 export const BUILDER_FIX_MAX = 3
@@ -160,6 +163,8 @@ export type RunRecord = {
   selfChecked?: boolean
   /** Opus strict rejects (FAIL, or a PASS with gaps) for this run. REVIEW_MAX holds for Joe. */
   reviewCycles?: number
+  /** Automatic voice fixes used since the last Fix copy. VOICE_MAX holds for Joe. */
+  voiceCycles?: number
   strict?: { status: 'pass' | 'fail' | 'missing'; text: string }
   /** The reviewer's OUTSIDE items: things no edit in this repo can close. Not gaps. Cleared with strict. */
   followUps?: string[]

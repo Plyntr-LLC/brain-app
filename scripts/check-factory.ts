@@ -354,6 +354,8 @@ type VoiceCall = { bin: string; args: string[]; body: string }
 const voiceCalls: VoiceCall[] = []
 let voiceCode = 0
 let voiceText = ''
+/** Scripted voice answers, one per call, before voiceCode/voiceText take over. */
+const voiceSays: { code: number; out: string }[] = []
 // A hung prompt settles when its tab is cancelled, like an ACP session/cancel.
 const pendingPrompts = new Map<string, () => void>()
 const fakeDeps: Parameters<typeof ctl.configureFactory>[0] = {
@@ -397,9 +399,11 @@ const fakeDeps: Parameters<typeof ctl.configureFactory>[0] = {
     child.stdout = new EventEmitter()
     child.stderr = new EventEmitter()
     child.kill = () => true
+    const said = voiceSays.shift()
+    const code = said ? said.code : voiceCode
     setTimeout(() => {
-      child.stdout.emit('data', Buffer.from(voiceText || (voiceCode === 0 ? 'APPROVE\n' : 'REJECT: reads like an ad\n')))
-      child.emit('close', voiceCode)
+      child.stdout.emit('data', Buffer.from(said ? said.out : voiceText || (voiceCode === 0 ? 'APPROVE\n' : 'REJECT: reads like an ad\n')))
+      child.emit('close', code)
     }, 5)
     return child as never
   }) as never,
@@ -691,8 +695,8 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   check('S2 4 Opus stdin empty, no Anthropic keys, cwd is the work repo', row?.stdinBytes === 0 && row.anthropic === false && row.translator === false && realish(row.cwd) === realish(work2), JSON.stringify({ ...row, argv: undefined }))
   check('S2 4 plan by Opus waits for Approve', r?.phase === 'plan' && r.plan?.by === 'opus' && r.plan.status === 'waiting' && r.plan.text.startsWith('Opus plan') && r.plan.rejects === 2, JSON.stringify({ phase: r?.phase, plan: r?.plan, error: r?.error }))
 
-  // Approve: build with the plan path line at Grok xhigh (Opus plan), verify with e2e, strict FAIL five times (a PASS with gaps is a FAIL).
-  claudeSays(['a.ts:1 is wrong\nGAPS: 1\nFAIL', 'still wrong at a.ts:1\nFAIL', 'ok\nPASS', 'One nit: rename x.\nGAPS: 0\nPASS', 'still wrong at a.ts:9\nGAPS: 1\nFAIL'])
+  // Approve: build with the plan path line at Grok xhigh (Opus plan), verify with e2e, strict FAIL six times (a PASS with gaps is a FAIL): five automatic fixes, then the hold.
+  claudeSays(['a.ts:1 is wrong\nGAPS: 1\nFAIL', 'still wrong at a.ts:1\nFAIL', 'ok\nPASS', 'One nit: rename x.\nGAPS: 0\nPASS', 'a.ts:5 wrong\nGAPS: 1\nFAIL', 'still wrong at a.ts:9\nGAPS: 1\nFAIL'])
   const p3 = promptCount()
   const e3 = effortCount()
   const c1 = claudeRows().length
@@ -709,8 +713,8 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   const fixes = [...grokFixes, ...builds.map((x) => x.argv[1])]
   check('S2 8 T2 has no self-check turn', !after.some((t) => /Role: self-check/.test(t)))
   check(
-    'S2 8 five fails send four auto fix turns (two Grok, then two Opus) with the Reviewer notes path',
-    grokFixes.length === 2 && builds.length === 2 && fixes.every((f) => /Phase: fix\./.test(f) && f.includes(`Reviewer notes: ${store.runTextPath(id, 'review')}. Fix what it names.`)),
+    'S2 8 six fails send five auto fix turns (two Grok, then three Opus) with the Reviewer notes path',
+    grokFixes.length === 2 && builds.length === 3 && fixes.every((f) => /Phase: fix\./.test(f) && f.includes(`Reviewer notes: ${store.runTextPath(id, 'review')}. Fix what it names.`)),
     JSON.stringify({ grok: grokFixes.length, opus: builds.length })
   )
   check('S2 8 a PASS without GAPS and a PASS naming a nit are fails', fixes.some((f) => f.includes('PASS without GAPS: 0')) && fixes.some((f) => f.includes('PASS named gaps')), JSON.stringify(fixes.map((f) => f.split('\n').find((l) => l.startsWith('Note:')))))
@@ -722,15 +726,15 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
     const strict = block.filter((x) => modeOf(x) === 'plan' && x.argv[1].includes('strict code review skill'))
     const builders = block.filter((x) => modeOf(x) === 'bypassPermissions')
     check(
-      'STRICT LOW 3 planners at medium, 5 strict reviews at low, 2 Opus builders at medium',
-      planners.length === 3 && planners.every((x) => eff(x) === 'medium') && strict.length === 5 && strict.every((x) => eff(x) === 'low') && builders.length === 2 && builders.every((x) => eff(x) === 'medium'),
+      'STRICT LOW 3 planners at medium, 6 strict reviews at low, 3 Opus builders at medium',
+      planners.length === 3 && planners.every((x) => eff(x) === 'medium') && strict.length === 6 && strict.every((x) => eff(x) === 'low') && builders.length === 3 && builders.every((x) => eff(x) === 'medium'),
       JSON.stringify({ planners: planners.map(eff), strict: strict.map(eff), builders: builders.map(eff) })
     )
   }
   const buildPids = builds.map((x) => x.pid)
   check(
     'FB 4 after two Grok review fixes (reviewCycles 3) the next fix spawns claude --permission-mode bypassPermissions; plan and review stay plan mode; distinct pids',
-    builds.length === 2 &&
+    builds.length === 3 &&
       builds.every((x) => x.argv.includes('--model') && x.argv[x.argv.indexOf('--effort') + 1] === 'medium' && realish(x.cwd) === realish(work2) && x.stdinBytes === 0 && !x.anthropic && !x.argv.includes('--bare')) &&
       [planner1, planner2, row, ...reviews].every((x) => !!x && modeOf(x) === 'plan') &&
       new Set([...buildPids, ...reviews.map((x) => x.pid), planner1?.pid, planner2?.pid, row?.pid]).size === buildPids.length + reviews.length + 3 &&
@@ -739,13 +743,13 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   )
   check('FB 4 the Opus builder never became the run builder (Grok still the grunt)', (r?.builder || 'grok') === 'grok', String(r?.builder))
   const plannerPids = [planner1?.pid, planner2?.pid, row?.pid]
-  check('S2 8 reviewers are never the planner process', reviews.length === 5 && reviews.every((x) => !plannerPids.includes(x.pid)), JSON.stringify({ planners: plannerPids, reviewers: reviews.map((x) => x.pid) }))
+  check('S2 8 reviewers are never the planner process', reviews.length === 6 && reviews.every((x) => !plannerPids.includes(x.pid)), JSON.stringify({ planners: plannerPids, reviewers: reviews.map((x) => x.pid) }))
   check(
-    'S2 8 exactly 5 claude review spawns, each a new process, prompt asks for GAPS then PASS/FAIL',
-    reviews.length === 5 && new Set(reviews.map((x) => x.pid)).size === 5 && reviews.every((x) => x.argv[1].includes('strict-code-review/SKILL.md') && x.argv[1].trimEnd().endsWith('PASS only with GAPS: 0.')),
+    'S2 8 exactly 6 claude review spawns, each a new process, prompt asks for GAPS then PASS/FAIL',
+    reviews.length === 6 && new Set(reviews.map((x) => x.pid)).size === 6 && reviews.every((x) => x.argv[1].includes('strict-code-review/SKILL.md') && x.argv[1].trimEnd().endsWith('PASS only with GAPS: 0.')),
     JSON.stringify(reviews.map((x) => x.pid))
   )
-  check('S2 8 the fifth fail holds in review with the FAIL text and reviewCycles 5, no auto-commit', r?.phase === 'review' && !!r.diff && r.reviewCycles === 5 && r.strict?.status === 'fail' && r.strict.text.includes('a.ts:9') && store.loadRun(id)?.reviewCycles === 5 && !r.commitSha, JSON.stringify({ phase: r?.phase, cycles: r?.reviewCycles, strict: r?.strict, error: r?.error }))
+  check('S2 8 the sixth fail holds in review with the FAIL text and reviewCycles 6, no auto-commit', r?.phase === 'review' && !!r.diff && r.reviewCycles === 6 && r.strict?.status === 'fail' && r.strict.text.includes('a.ts:9') && store.loadRun(id)?.reviewCycles === 6 && !r.commitSha, JSON.stringify({ phase: r?.phase, cycles: r?.reviewCycles, strict: r?.strict, error: r?.error }))
   check('S2 8 no Joe guide reached a reviewer', reviews.every((x) => !x.argv[1].includes('Joe says')))
   // Keep fixing after the hold: one Opus builder fix (past two review fixes), then a sixth fresh reviewer; still held (cycles past 5).
   claudeSays(['a.ts:9 still\nGAPS: 1\nFAIL'])
@@ -755,14 +759,14 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   r = await ctl.settle(id)
   const kf = opusBuilds(claudeRows().slice(c4))
   const r6 = opusReviews(claudeRows().slice(c4))
-  check('S2 8 keep-fix: one Opus fix turn, then another fresh Opus review, held again at 6', promptCount() === p4 && kf.length === 1 && /Phase: fix\./.test(kf[0].argv[1]) && r6.length === 1 && !reviews.some((x) => x.pid === r6[0].pid) && r?.phase === 'review' && r.reviewCycles === 6 && r.strict?.status === 'fail', JSON.stringify({ turns: kf.length, spawns: r6.length, phase: r?.phase, cycles: r?.reviewCycles }))
+  check('S2 8 keep-fix: one Opus fix turn, then another fresh Opus review, held again at 7', promptCount() === p4 && kf.length === 1 && /Phase: fix\./.test(kf[0].argv[1]) && r6.length === 1 && !reviews.some((x) => x.pid === r6[0].pid) && r?.phase === 'review' && r.reviewCycles === 7 && r.strict?.status === 'fail', JSON.stringify({ turns: kf.length, spawns: r6.length, phase: r?.phase, cycles: r?.reviewCycles }))
   // Re-review: a fresh Opus only, no builder turn.
   claudeSays(['a.ts:9 still\nGAPS: 1\nFAIL'])
   const p5 = promptCount()
   const c5 = claudeRows().length
   ctl.decideRun(id, 're-review')
   r = await ctl.settle(id)
-  check('S2 8 re-review: no builder turn, one new claude, held at 7', promptCount() === p5 && claudeRows().length === c5 + 1 && r?.phase === 'review' && r.reviewCycles === 7 && !!r.diff, JSON.stringify({ phase: r?.phase, cycles: r?.reviewCycles }))
+  check('S2 8 re-review: no builder turn, one new claude, held at 8', promptCount() === p5 && claudeRows().length === c5 + 1 && r?.phase === 'review' && r.reviewCycles === 8 && !!r.diff, JSON.stringify({ phase: r?.phase, cycles: r?.reviewCycles }))
   const done = ctl.commitRunNow(id)
   check('S2 8 Commit anyway commits and records the branch', done.phase === 'done' && done.branch === 'main' && git(work2, ['rev-parse', 'HEAD']).trim() === done.commitSha)
   const before = git(bare, ['for-each-ref']).trim()
@@ -914,7 +918,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   const call = voiceCalls[0]
   check('S2 10 voice stub called with doppler team-brain dev and the check script', !!call && call.bin === 'doppler' && call.args.slice(0, 7).join(' ') === 'run -p team-brain -c dev -- node' && call.args.some((a) => a.startsWith('--file=')) && call.args.includes('--register=email') && call.args.includes('--audience=client'), JSON.stringify(call?.args))
   check('S2 10 only added copy lines go in, tmp file deleted', call?.body.trim() === 'Best sites ever, buy now!' && !existsSync(String(call?.args.find((a) => a.startsWith('--file='))).slice(7)))
-  check('S2 10 REJECT holds in review', r?.phase === 'review' && r.voice?.status === 'fail', JSON.stringify({ phase: r?.phase, voice: r?.voice, error: r?.error }))
+  check('S2 10 REJECT fixes itself 5 times, then holds in review', r?.phase === 'review' && r.voice?.status === 'fail' && r.voiceCycles === 5 && voiceCalls.length === 6, JSON.stringify({ phase: r?.phase, voice: r?.voice, cycles: r?.voiceCycles, calls: voiceCalls.length, error: r?.error }))
   let hold = ''
   try {
     ctl.commitRunNow(id)
@@ -925,7 +929,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   voiceCode = 0
   ctl.decideRun(id, 'fix-copy')
   r = await ctl.settle(id)
-  check('S2 10 Fix copy then APPROVE passes', r?.phase === 'review' && r.voice?.status === 'pass' && voiceCalls.length === 2, JSON.stringify({ phase: r?.phase, voice: r?.voice }))
+  check('S2 10 Fix copy then APPROVE passes', r?.phase === 'review' && r.voice?.status === 'pass' && voiceCalls.length === 7, JSON.stringify({ phase: r?.phase, voice: r?.voice }))
   fakeDeps.voiceCheckPath = join(temp, 'no-such-check.cjs')
   ctl.configureFactory(fakeDeps)
   ctl.abandonRun(id)
@@ -933,7 +937,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   const res2 = ctl.startRun({ task: 'fix typo in README.md', workRepo: work2, brainPath: brainA })
   const id2 = res2.ok ? res2.run.id : ''
   const r2 = await ctl.settle(id2)
-  check('S2 10 missing VOICE_CHECK gives skipped, not a fail', r2?.phase === 'review' && r2.voice?.status === 'skipped' && voiceCalls.length === 2, JSON.stringify({ phase: r2?.phase, voice: r2?.voice }))
+  check('S2 10 missing VOICE_CHECK gives skipped, not a fail', r2?.phase === 'review' && r2.voice?.status === 'skipped' && voiceCalls.length === 7, JSON.stringify({ phase: r2?.phase, voice: r2?.voice }))
   ctl.abandonRun(id2)
   reset2()
   profiles.saveProfile(work2, { voice: { on: false } })
@@ -1093,9 +1097,9 @@ ctl.configureFactory(fakeDeps)
   ctl.abandonRun(id4)
   reset2()
 
-  // UX 8 + 9: every review names a nit under PASS: never a pass; four auto fixes, held at 5, no commit, no push.
+  // UX 8 + 9: every review names a nit under PASS: never a pass; five auto fixes, held at 6, no commit, no push.
   const nit = 'Looks fine. One nit: rename x, a non-blocker.\nGAPS: 0\nPASS'
-  claudeSays([nit, nit, nit, nit, nit])
+  claudeSays([nit, nit, nit, nit, nit, nit])
   const head5 = git(work2, ['rev-parse', 'HEAD']).trim()
   const p5 = promptCount()
   const cu5 = claudeRows().length
@@ -1103,11 +1107,11 @@ ctl.configureFactory(fakeDeps)
   const id5 = res5.ok ? res5.run.id : ''
   let r5 = await ctl.settle(id5)
   check(
-    'UX 8 PASS naming nits never auto-commits: held at 5 with both boxes on',
-    r5?.phase === 'review' && !!r5.diff && r5.reviewCycles === 5 && r5.strict?.status === 'fail' && r5.strict.text.startsWith('PASS named gaps') && !r5.commitSha && git(work2, ['rev-parse', 'HEAD']).trim() === head5 && pushCalls === push1,
+    'UX 8 PASS naming nits never auto-commits: held at 6 with both boxes on',
+    r5?.phase === 'review' && !!r5.diff && r5.reviewCycles === 6 && r5.strict?.status === 'fail' && r5.strict.text.startsWith('PASS named gaps') && !r5.commitSha && git(work2, ['rev-parse', 'HEAD']).trim() === head5 && pushCalls === push1,
     JSON.stringify({ phase: r5?.phase, cycles: r5?.reviewCycles, strict: r5?.strict?.text.slice(0, 40), sha: r5?.commitSha })
   )
-  check('UX 9 four auto fix turns before the hold (two Grok, two Opus)', promptsFrom(p5).filter((t) => /Phase: fix\./.test(t)).length === 2 && opusBuilds(claudeRows().slice(cu5)).length === 2)
+  check('UX 9 five auto fix turns before the hold (two Grok, three Opus)', promptsFrom(p5).filter((t) => /Phase: fix\./.test(t)).length === 2 && opusBuilds(claudeRows().slice(cu5)).length === 3)
 
   // UX 6: Guide on a held reject is Keep fixing with that note, then a fresh reviewer that never sees the note.
   claudeSays(['Checked it.\nGAPS: 0\nPASS'])
@@ -2456,12 +2460,12 @@ process.stdout.write(JSON.stringify({ type: 'end', stopReason: 'end_turn', usage
         writeFileSync(join(evB, 'NOTES.md'), `Release note ${n}\n`)
       }
     }
-    claudeSays(['CODEMARK_STRICT at src/a.ts:1\nGAPS: 1\nFAIL', 'GAPS: 0\nPASS'])
+    claudeSays(['CODEMARK_STRICT at src/a.ts:1\nGAPS: 1\nFAIL', ...Array(7).fill('GAPS: 0\nPASS')])
     const res = ctl.startRun({ task: EVTASK, workRepo: evB, brainPath: brainEv, runThrough: false, shipThrough: false })
     bId = res.ok ? res.run.id : ''
     const r = await ctl.settle(bId)
     const dir = storeOf(evB, bId)
-    check('EV b fix notes carrying the verify tail and the strict text never touch userData; the repo store has them', snaps.length === 2 && snaps.every((x) => x.leak === 0 && x.stored > 0), JSON.stringify(snaps))
+    check('EV b fix notes carrying the verify tail and the strict text never touch userData; the repo store has them', snaps.length >= 2 && ['CODEMARK_TAIL', 'CODEMARK_STRICT'].every((m) => snaps.some((x) => x.mark === m)) && snaps.every((x) => x.leak === 0 && x.stored > 0), JSON.stringify(snaps))
     check('EV b held on the voice REJECT with diff, strict pass, unrelated red row', r?.phase === 'review' && r.voice?.status === 'fail' && !!r.diff?.includes('CODEMARK_DIFF') && r.strict?.status === 'pass' && r.verify?.some((v) => v.status === 'fail' && v.tail?.includes('CODEMARK_TAIL2')) === true, JSON.stringify({ phase: r?.phase, voice: r?.voice, strict: r?.strict?.status, diffHasNotes: r?.diff?.includes('NOTES.md') }))
     check('EV b userData has no CODEMARK after the held review', hits(userData, 'CODEMARK').length === 0, JSON.stringify(hits(userData, 'CODEMARK')))
     check('EV b repo store holds diff, voice tail, verify tail, and the strict FAIL (review.md)', ['CODEMARK_DIFF', 'CODEMARK_VOICE', 'CODEMARK_TAIL2', 'CODEMARK_STRICT'].every((m) => hits(dir, m).length > 0) && existsSync(join(dir, 'review.md')), JSON.stringify(filesUnder(dir)))
@@ -2663,13 +2667,13 @@ process.stdout.write(JSON.stringify({ type: 'end', stopReason: 'end_turn', usage
     await ctl.settle(B.id)
     const bAfter = ctl.getRun(B.id)
     ctl.commitRunNow(B.id, { by: 'joe' })
-    const C = await evStart(evG, Array(5).fill('Bug at src/a.ts:1\nGAPS: 1\nFAIL'))
+    const C = await evStart(evG, Array(6).fill('Bug at src/a.ts:1\nGAPS: 1\nFAIL'))
     gIds.push(C.id)
-    const cHeld = C.r?.reviewCycles === 5 && C.r?.phase === 'review'
+    const cHeld = C.r?.reviewCycles === 6 && C.r?.phase === 'review'
     ctl.commitRunNow(C.id, { by: 'joe' })
     profiles.saveProfile(evG, { voice: { on: true } })
     voiceCode = 2
-    const D = await evStart(evG, ['GAPS: 0\nPASS'])
+    const D = await evStart(evG, Array(7).fill('GAPS: 0\nPASS'))
     gIds.push(D.id)
     ctl.abandonRun(D.id, { by: 'joe' })
     voiceCode = 0
@@ -3015,6 +3019,162 @@ setTimeout(() => {
       check('LV g Now and Models sit inside the existing Work repo header line', head.includes('nowLine(c)') && head.includes('Models: ${modelsLine(run.usage)}') && pane.includes("const live = run.phase !== 'done' && run.phase !== 'abandoned'"), head)
     }
     use()
+  }
+
+  // VL. The voice loop fixes itself: 5 automatic grunt fixes with voice notes, then a hold; Fix copy and Guide keep it going.
+  {
+    const voiceMod = (await import(src('factory/voice.ts'))) as typeof import('../src/main/factory/voice.ts')
+    const REJ = { code: 2, out: '1. Gate 1: contrast framing (noul 0.59)\n2. Gate 2: register match (score 0.61)\nREJECT CODEMARK_VOICEOUT\n' }
+    const APP = { code: 0, out: 'APPROVE\n' }
+    const copyRepo = (name: string) => {
+      const r = evRepo(name)
+      profiles.saveProfile(r, { voice: { on: true } })
+      return r
+    }
+    const copyWriter = (r: string, onFix?: (n: number) => void) => {
+      let n = 0
+      let fixes = 0
+      promptPlan = async (o) => {
+        if (!/Phase: (build|fix)\./.test(o.text)) return
+        if (/Phase: fix\./.test(o.text)) onFix?.(++fixes)
+        n++
+        writeFileSync(join(r, 'page.html'), `<button class="go">Start now ${n}</button>\n`)
+        writeFileSync(join(r, 'NOTES.md'), `Release note ${n}\n`)
+      }
+    }
+    const fixPrompts = (from: number) => promptsFrom(from).filter((t) => /Phase: fix\./.test(t))
+    const TYPO = 'fix typo in NOTES.md'
+    use()
+
+    // VL 1: REJECT, REJECT, APPROVE with Approve in advance: no click, two fixes with voice notes, then commit.
+    {
+      const r = copyRepo('ev-vl1')
+      copyWriter(r)
+      voiceSays.length = 0
+      voiceSays.push(REJ, REJ, APP)
+      const v0 = voiceCalls.length
+      const p0 = promptCount()
+      const res = ctl.startRun({ task: TYPO, workRepo: r, brainPath: brainEv, runThrough: true })
+      const id = res.ok ? res.run.id : ''
+      const end = await ctl.settle(id)
+      const fixes = fixPrompts(p0)
+      const notePaths = fixes.map((t) => /Voice notes: (.+?\.md)\. Rewrite only/.exec(t)?.[1] || '')
+      const notes = notePaths[0] && existsSync(notePaths[0]) ? readFileSync(notePaths[0], 'utf8') : ''
+      const bodies = voiceCalls.slice(v0).map((c) => c.body)
+      check('VL 1 two automatic fix turns, each with a Voice notes path in the repo store', fixes.length === 2 && notePaths.every((p) => !!p && existsSync(p) && underPath(realish(join(r, '.git', 'brain-factory')), realish(p))), JSON.stringify({ n: fixes.length, notePaths }))
+      check('VL 1 voice notes carry the checked copy, the real gate line, the hint, and the house rules', notes.includes('Start now') && notes.includes('Gate 1: contrast framing (noul 0.59)') && notes.includes('contrast framing: state the positive claim') && notes.includes('context/business/voice/anti-patterns.md'), notes.slice(0, 400))
+      check('VL 1 the voice check is fed visible words, never tags', bodies.length === 3 && bodies.every((b) => b.includes('Start now') && !b.includes('<')), JSON.stringify(bodies))
+      check('VL 1 ends committed with voiceCycles 2; no voice output in userData', end?.phase === 'done' && !!end.commitSha && end.voiceCycles === 2 && hits(userData, 'CODEMARK_VOICEOUT').length === 0, JSON.stringify({ phase: end?.phase, cycles: end?.voiceCycles, leaks: hits(userData, 'CODEMARK_VOICEOUT') }))
+    }
+
+    // VL 2 + 2b: six REJECTs hold after five grunt fixes; Fix copy grants a fresh budget.
+    {
+      const r = copyRepo('ev-vl2')
+      copyWriter(r)
+      voiceSays.length = 0
+      for (let i = 0; i < 6; i++) voiceSays.push(REJ)
+      const p0 = promptCount()
+      const c0 = claudeRows().length
+      const res = ctl.startRun({ task: TYPO, workRepo: r, brainPath: brainEv, runThrough: true })
+      const id = res.ok ? res.run.id : ''
+      const held = await ctl.settle(id)
+      const fixes = fixPrompts(p0)
+      check('VL 2 six REJECTs: five automatic fixes, then a hold at voiceCycles 5, no commit', fixes.length === 5 && held?.phase === 'review' && held.voice?.status === 'fail' && held.voiceCycles === 5 && !held.commitSha && /attempt 5 of 5/.test(fixes[4] || ''), JSON.stringify({ n: fixes.length, phase: held?.phase, cycles: held?.voiceCycles }))
+      check('VL 2 voice fixes never spawn the Opus builder', !claudeRows().slice(c0).some((x) => modeOf(x) === 'bypassPermissions'))
+      const pq = promptCount()
+      await ctl.settle(id)
+      check('VL 2 settle is quiet after the hold (no sixth fix)', promptCount() === pq)
+      voiceSays.length = 0
+      voiceSays.push(REJ, APP)
+      const p1 = promptCount()
+      ctl.decideRun(id, 'fix-copy')
+      const end = await ctl.settle(id)
+      check('VL 2b Fix copy: its turn plus one automatic fix, then commit, voiceCycles 1', fixPrompts(p1).length === 2 && end?.phase === 'done' && !!end.commitSha && end.voiceCycles === 1, JSON.stringify({ n: fixPrompts(p1).length, phase: end?.phase, cycles: end?.voiceCycles }))
+    }
+
+    // VL 3a: a Guide under the cap never spends or resets the budget; the loop keeps fixing on its own.
+    {
+      const r = copyRepo('ev-vl3a')
+      let id = ''
+      copyWriter(r, (n) => {
+        if (n === 1 && id) ctl.guideRun(id, 'Keep the button label short.')
+      })
+      voiceSays.length = 0
+      voiceSays.push(REJ, REJ, REJ, APP)
+      const res = ctl.startRun({ task: TYPO, workRepo: r, brainPath: brainEv, runThrough: true })
+      id = res.ok ? res.run.id : ''
+      const end = await ctl.settle(id)
+      check('VL 3a Guide under the cap: REJECTs keep fixing on their own, voiceCycles counts only automatic fixes, then commit', end?.phase === 'done' && !!end.commitSha && end.voiceCycles === 3, JSON.stringify({ phase: end?.phase, cycles: end?.voiceCycles }))
+    }
+
+    // VL 3b: a Guide at the cap is one fix turn; the next REJECT holds again. A restart keeps the count and starts nothing.
+    {
+      const r = copyRepo('ev-vl3b')
+      copyWriter(r)
+      voiceSays.length = 0
+      for (let i = 0; i < 6; i++) voiceSays.push(REJ)
+      const res = ctl.startRun({ task: TYPO, workRepo: r, brainPath: brainEv, runThrough: true })
+      const id = res.ok ? res.run.id : ''
+      await ctl.settle(id)
+      voiceSays.push(REJ)
+      const p1 = promptCount()
+      ctl.guideRun(id, 'Say it plainly.')
+      const again = await ctl.settle(id)
+      check('VL 3b Guide at the cap: exactly one fix turn, the next REJECT holds again at 5', fixPrompts(p1).length === 1 && again?.phase === 'review' && again.voice?.status === 'fail' && again.voiceCycles === 5, JSON.stringify({ n: fixPrompts(p1).length, phase: again?.phase, cycles: again?.voiceCycles }))
+      ctl.dropMemory()
+      const back = ctl.restoreRun(id)
+      const p2 = promptCount()
+      await ctl.settle(id)
+      check('VL 3b after a restart voiceCycles is still 5 and nothing starts', back?.voiceCycles === 5 && promptCount() === p2, JSON.stringify({ cycles: back?.voiceCycles, phase: back?.phase }))
+      voiceSays.push(APP)
+      const p3 = promptCount()
+      ctl.guideRun(id, 'Plainer, please.')
+      const resumed = await ctl.settle(id)
+      const fx = fixPrompts(p3)
+      check('VL 3c a Guide on a restored (paused) voice hold carries the Voice notes path', fx.length === 1 && /Voice notes: .+\.md\. Rewrite only/.test(fx[0]) && resumed?.voice?.status === 'pass', JSON.stringify({ n: fx.length, first: (fx[0] || '').split('\n').filter((l) => l.startsWith('Voice notes') || l.startsWith('Reviewer notes')), voice: resumed?.voice?.status }))
+      ctl.abandonRun(id)
+    }
+
+    // VL 4: Ship in advance never commits or pushes on a REJECT; it ships after the APPROVE.
+    {
+      const r = copyRepo('ev-vl4')
+      const vbare = join(temp, 'ev-vl4-origin.git')
+      mkdirSync(vbare)
+      git(vbare, ['init', '-q', '--bare', '-b', 'main'])
+      git(r, ['remote', 'add', 'origin', vbare])
+      git(r, ['checkout', '-q', '-b', 'factory/voice'])
+      const head0 = git(r, ['rev-parse', 'HEAD']).trim()
+      const atFix: { head: string; refs: string }[] = []
+      copyWriter(r, () => atFix.push({ head: git(r, ['rev-parse', 'HEAD']).trim(), refs: git(vbare, ['for-each-ref']).trim() }))
+      voiceSays.length = 0
+      voiceSays.push(REJ, REJ, APP)
+      claudeSays(Array(3).fill('GAPS: 0\nPASS'))
+      const res = ctl.startRun({ task: EVTASK, workRepo: r, brainPath: brainEv, runThrough: true, shipThrough: true })
+      const id = res.ok ? res.run.id : ''
+      const end = await ctl.settle(id)
+      check('VL 4 on each REJECT: no commit and no push; after the APPROVE: one commit and one push', atFix.length === 2 && atFix.every((x) => x.head === head0 && x.refs === '') && end?.phase === 'done' && !!end.commitSha && !!end.pushed && git(vbare, ['rev-parse', 'refs/heads/factory/voice']).trim() === end.commitSha, JSON.stringify({ atFix, phase: end?.phase, pushed: end?.pushed, err: end?.pushError }))
+    }
+
+    check('VL 5 copyAdds keeps visible HTML words and md lines', voiceMod.copyAdds('diff --git a/p.html b/p.html\n+++ b/p.html\n+<button class="x">Start &amp; go</button>\n+<div>\ndiff --git a/n.md b/n.md\n+++ b/n.md\n+Plain md line\n') === 'Start & go\nPlain md line')
+    {
+      const r = copyRepo('ev-vl6')
+      copyWriter(r)
+      voiceSays.length = 0
+      voiceSays.push(APP)
+      const res = ctl.startRun({ task: TYPO, workRepo: r, brainPath: brainEv })
+      const id = res.ok ? res.run.id : ''
+      await ctl.settle(id)
+      let msg = ''
+      try {
+        ctl.decideRun(id, 'fix-copy')
+      } catch (e) {
+        msg = String((e as Error).message)
+      }
+      check('VL 6 Fix copy when voice did not hold refuses', msg === 'The voice check did not hold this run.', msg)
+      ctl.abandonRun(id)
+    }
+    check('ST 6 the Opus hold line says five fixes', ctl.HELD_LINE === 'Opus has not approved after 5 fixes. Gaps still count.' && shared.REVIEW_MAX === 6, ctl.HELD_LINE)
+    voiceSays.length = 0
   }
 
   // h. Argv pins.

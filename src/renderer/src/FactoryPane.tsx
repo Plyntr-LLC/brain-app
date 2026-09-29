@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { modelsLine, REVIEW_MAX, type FactoryTriage, type LiveCall, type RunPhase, type RunRecord } from '../../shared/factory'
+import { modelsLine, REVIEW_MAX, VOICE_MAX, type FactoryTriage, type LiveCall, type RunPhase, type RunRecord } from '../../shared/factory'
 
 type Perm = { title?: string; path?: string; detail?: string; options?: { id: string; label: string }[] }
 type FileHit = { path: string; tool?: string; live: boolean }
@@ -580,6 +580,13 @@ export function FactoryPane(props: {
                 <div className={`verify-row ${run.voice.status}`}>
                   <span>Voice check</span>
                   <span>{run.voice.status}</span>
+                  {run.voiceCycles ? (
+                    <p className="tiny">
+                      {run.voice.status === 'fail' && run.voiceCycles >= VOICE_MAX
+                        ? `Voice has not approved after ${VOICE_MAX} fixes.`
+                        : `Voice attempts: ${run.voiceCycles} of ${VOICE_MAX}`}
+                    </p>
+                  ) : null}
                   {run.voice.status === 'fail' && run.voice.tail ? <pre>{run.voice.tail}</pre> : null}
                   {run.voice.status === 'skipped' && run.voice.tail ? <p className="tiny">{run.voice.tail}</p> : null}
                 </div>
@@ -590,7 +597,7 @@ export function FactoryPane(props: {
           {run.phase === 'review' && run.diff ? <pre className="factory-diff">{run.diff}</pre> : null}
           {strictHeld ? (
             <div className="factory-trip">
-              <strong>{`Opus has not approved after ${REVIEW_MAX} reviews. Gaps still count.`}</strong>
+              <strong>{`Opus has not approved after ${REVIEW_MAX - 1} fixes. Gaps still count.`}</strong>
               <p className="tiny">
                 Reviews so far: {run.reviewCycles}. Commit anyway is your call, not an Opus approval. Approve in advance and Ship in advance do not
                 commit or push from here.
