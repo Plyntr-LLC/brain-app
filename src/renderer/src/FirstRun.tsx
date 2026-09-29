@@ -315,7 +315,11 @@ export function FirstRun() {
     setStorageBusy(true)
     setStorageAskErr('')
     try {
-      await window.brain.media.enable({ folder })
+      const res = await window.brain.media.enable({ folder })
+      if (!res.ok) {
+        setStorageAskErr(res.detail)
+        return
+      }
       setStorageWords((await window.brain.media.takePassphrase(folder)) || '')
       setStorageRecovery((await window.brain.media.takeRecoveryKey(folder)) || '')
     } catch (e) {

@@ -1,19 +1,30 @@
 import { randomBytes, randomUUID } from 'node:crypto'
+import { hostname } from 'node:os'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { app, dialog, safeStorage } from 'electron'
 import { canTurnOnGithubSync } from '../../shared/contracts.ts'
 import {
+  MEDIA_JOIN_SIGN_IN,
+  MEDIA_JOIN_WAIT,
   MEDIA_NEEDS_NET,
   MEDIA_NOT_APPROVED,
+  MEDIA_OFF_KEYLESS,
+  MEDIA_OFF_OTHER,
+  MEDIA_OFF_OWNER,
+  MEDIA_ON,
   MEDIA_OPEN_FAIL,
   MEDIA_REMOVED,
+  MEDIA_UPLOADS_PAUSED,
   MEDIA_WRONG_PROJECT,
+  macLabel,
+  macLabelFromHostname,
   mediaUsedLine,
   shouldShowStorageAsk,
   type MediaAddResult,
   type MediaEnableResult,
-  type MediaStatus
+  type MediaStatus,
+  type MediaWaiting
 } from '../../shared/media.ts'
 import { brainIdForFolder, roleForKeylessWrite, seatForBrain, seatTokenForFolder } from '../plyntr-seats.ts'
 import { currentBrainFolder } from '../brains.ts'
@@ -57,6 +68,7 @@ import {
   createScopeKey,
   dropKeys,
   holdKey,
+  KEY_UNLOCK_FAIL,
   PASSPHRASE_INFO,
   parseRecoveryKey,
   RECOVERY_INFO,
@@ -78,13 +90,30 @@ import {
   passphraseIkm,
   type DeviceKeyWrap
 } from './keys.ts'
+import { sealedPassphraseWrap, type LivePassphraseWrap } from './passphrase-wrap.ts'
 import { recordMintedInvite as writeMintedInvite, readMintedInvites } from './minted.ts'
 import { writePointer } from './pointer.ts'
 import { readWrapsFile, upsertWrap } from './wraps-file.ts'
 import { assertPassphrase, generatePassphrase } from './passphrase.ts'
 import { isMediaDryRun } from './transport.ts'
+import { hexBuf, mediaLiveGet, mediaLiveJson, mediaLivePut } from './live-client.ts'
+import { liveSnapForFolder, readLiveSnap, rowFromLiveSnap, writeLiveSnap } from './live-state.ts'
+import { isBuilderRole, joinReady, missingWraps, seatWrapPlan, type LiveScope } from './seat-wraps.ts'
+import {
+  MEDIA_BRAINS_PATH,
+  MEDIA_DEVICES_PATH,
+  MEDIA_RECLAIM_FINISH_PATH,
+  MEDIA_RECLAIM_START_PATH,
+  MEDIA_SCOPES_PATH,
+  MEDIA_STATE_PATH,
+  MEDIA_UPLOADS_PATH,
+  MEDIA_WRAP_PASSPHRASE_PATH,
+  MEDIA_WRAPS_PATH,
+  wrapProofMessage
+} from './worker-shapes.ts'
 import { dumpMemoryMediaStore, memoryMediaStore, type MediaBrainRow, type MediaDeviceRow } from './store.ts'
-import { readMediaConfig, writeMediaConfig } from './media-config.ts'
+import { readMediaConfig, removeMediaConfig, writeMediaConfig } from './media-config.ts'
+import { EXISTS_DETAIL, NO_BRAIN_DETAIL, conflictBrainId, reclaimStartOutcome } from './enable-flow.ts'
 import { dropPmsSeat, readAnyPmsSeat, readPmsSeat, writePmsSeat } from './pms-seats.ts'
 import {
   postMediaBrainsClaim,
@@ -109,6 +138,13 @@ export const DRY_HQ_REPO = 'plyntr/alpha-brain'
 const ORIGIN = 'https://brain-sync.joe-84a.workers.dev'
 
 const shots = new Map<string, { passphrase?: string; recovery?: string }>()
+// Proof material for the live passphrase or recovery wrap, so a new passphrase can be signed for. Memory only.
+const proofs = new Map<string, { ikm: Buffer; info: string }>()
+
+function holdProof(mediaBrainId: string, ikm: Buffer, info: string): void {
+  proofs.get(mediaBrainId)?.ikm.fill(0)
+  proofs.set(mediaBrainId, { ikm, info })
+}
 const routesCache = new Map<string, boolean>()
 
 export class MediaErr extends Error {
@@ -188,12 +224,42 @@ function store() {
 }
 
 function brainForFolder(folder: string): MediaBrainRow | undefined {
+  if (!isMediaDryRun()) {
+    const id = readMediaConfig(folder)?.mediaBrainId || liveSnapForFolder(userData(), folder)?.mediaBrainId
+    if (!id) return undefined
+    const snap = readLiveSnap(userData(), id)
+    if (snap) return rowFromLiveSnap({ ...snap, folder }, userData())
+    return rowFromLiveSnap(
+      {
+        mediaBrainId: id,
+        deviceId: '',
+        bucket: '',
+        folder,
+        bucketStatus: 'off',
+        capBytes: null,
+        usedBytes: 0
+      },
+      userData()
+    )
+  }
   const on = store().brains.filter((b) => b.status === 'on')
   const hit = on.find((b) => b.folder === folder)
   if (hit) return hit
   const cfg = readMediaConfig(folder)
   if (cfg) return on.find((b) => b.id === cfg.mediaBrainId)
   return undefined
+}
+
+function liveDeviceId(mediaBrainId: string): string {
+  return readLiveSnap(userData(), mediaBrainId)?.deviceId || ''
+}
+
+function wrapLive(w: { ephPub: Buffer; nonce: Buffer; ciphertext: Buffer }): {
+  ephPub: string
+  nonce: string
+  ciphertext: string
+} {
+  return { ephPub: hexBuf(w.ephPub), nonce: hexBuf(w.nonce), ciphertext: hexBuf(w.ciphertext) }
 }
 
 function canTurnOnStorage(who: MediaActor, folder: string): boolean {
@@ -312,14 +378,48 @@ function mimeFor(path: string): string {
   if (n.endsWith('.webp')) return 'image/webp'
   if (n.endsWith('.mov')) return 'video/quicktime'
   if (n.endsWith('.webm')) return 'video/webm'
-  return 'video/mp4'
+  if (n.endsWith('.mp4') || n.endsWith('.m4v')) return 'video/mp4'
+  if (n.endsWith('.mkv')) return 'video/x-matroska'
+  if (n.endsWith('.avi')) return 'video/x-msvideo'
+  if (n.endsWith('.heic')) return 'image/heic'
+  if (n.endsWith('.heif')) return 'image/heif'
+  if (n.endsWith('.avif')) return 'image/avif'
+  if (n.endsWith('.bmp')) return 'image/bmp'
+  if (n.endsWith('.tif') || n.endsWith('.tiff')) return 'image/tiff'
+  if (n.endsWith('.mp3')) return 'audio/mpeg'
+  if (n.endsWith('.m4a')) return 'audio/mp4'
+  if (n.endsWith('.wav')) return 'audio/wav'
+  if (n.endsWith('.aac')) return 'audio/aac'
+  if (n.endsWith('.flac')) return 'audio/flac'
+  if (n.endsWith('.ogg') || n.endsWith('.oga')) return 'audio/ogg'
+  if (n.endsWith('.opus')) return 'audio/opus'
+  if (n.endsWith('.aif') || n.endsWith('.aiff')) return 'audio/aiff'
+  if (n.endsWith('.pdf')) return 'application/pdf'
+  if (n.endsWith('.zip')) return 'application/zip'
+  return 'application/octet-stream'
+}
+
+/** Live storage is on for this folder and this Mac may add files (owner or scout, not a project seat). */
+export function mediaAutoStoreReady(folder: string): boolean {
+  if (isMediaDryRun()) return false
+  const cfg = readMediaConfig(folder)
+  if (!cfg || !readLiveSnap(userData(), cfg.mediaBrainId)?.deviceId) return false
+  const who = actor(folder)
+  if (!who.token || who.hmac || who.role === 'project') return false
+  return canTurnOnGithubSync(who.role, who.joe)
+}
+
+/** A user turned something on, so skip the one-minute pause a refusal set. */
+function kickAutoStore(folder: string): void {
+  void import('./auto-store.ts').then((m) => m.maybeAutoStore(folder, { force: true })).catch(() => undefined)
 }
 
 export async function mediaStatus(folder: string): Promise<MediaStatus> {
   const routes = await routesLive()
+  if (!isMediaDryRun()) return liveMediaStatus(folder, routes)
   const who = actor(folder)
   const row = brainForFolder(folder)
-  const on = Boolean(row)
+  const on = Boolean(row) && (isMediaDryRun() || Boolean(who.token))
   let fingerprint = ''
   if (row) {
     try {
@@ -334,46 +434,37 @@ export async function mediaStatus(folder: string): Promise<MediaStatus> {
         .map((d) => ({
           deviceId: d.id,
           name: d.email.split('@')[0] || 'Mac',
+          label: d.label || '',
           fingerprint: d.fingerprint,
-          project: projectLabel(d.roots)
+          project: projectLabel(d.roots),
+          mine: false
         }))
     : []
   const others = on
     ? store()
         .devices.filter(
-          (d) =>
-            d.media_brain_id === row?.id &&
-            d.status === 'approved' &&
-            d.fingerprint &&
-            d.fingerprint !== fingerprint
+          (d) => d.media_brain_id === row?.id && d.status === 'approved' && d.fingerprint
         )
         .map((d) => ({
           deviceId: d.id,
           name: d.email.split('@')[0] || 'Mac',
+          label: d.label || (d.fingerprint === fingerprint ? thisMacLabel() : ''),
           fingerprint: d.fingerprint,
-          project: projectLabel(d.roots)
+          project: projectLabel(d.roots),
+          mine: d.fingerprint === fingerprint
         }))
     : []
   const base: MediaStatus = {
     routes,
     on,
+    joining: false,
     hasSeatToken: Boolean(who.token),
     fingerprint,
     usedBytes: row?.used_bytes || 0,
     capBytes: row ? row.cap_bytes : null,
     bucketStatus: row?.bucket_status || 'off',
-    waiting: waiting.map((w) => ({
-      deviceId: w.deviceId,
-      name: w.name,
-      fingerprint: w.fingerprint,
-      project: w.project || 'brain'
-    })),
-    others: others.map((w) => ({
-      deviceId: w.deviceId,
-      name: w.name,
-      fingerprint: w.fingerprint,
-      project: w.project || 'brain'
-    })),
+    waiting: waiting.map((w) => ({ ...w, project: w.project || 'brain' })),
+    others: others.map((w) => ({ ...w, project: w.project || 'brain' })),
     projects: listMediaRoots(folder),
     detail: ''
   }
@@ -388,6 +479,446 @@ export async function mediaStatus(folder: string): Promise<MediaStatus> {
   return base
 }
 
+type LivePhase = 'none' | 'sign_in' | 'waiting' | 'on'
+
+type LiveJoin = {
+  phase: LivePhase
+  /** The token that reached this brain's storage. Empty when none did. */
+  token?: string
+  wiped?: boolean
+  row?: MediaBrainRow
+  state?: Record<string, unknown>
+}
+
+type LiveDevice = {
+  id: string
+  email: string
+  label: string
+  fingerprint: string
+  status: string
+  publicKey: string
+  role: string
+  roots: string[] | null
+  held: { scope: string; keyVersion: number }[]
+}
+
+const joins = new Map<string, Promise<LiveJoin>>()
+const fastJoinPolls = new Set<string>()
+const linkTried = new Set<string>()
+const FAST_JOIN_MS = 2000
+const FAST_JOIN_TICKS = 30
+
+function isBuilderActor(who: MediaActor): boolean {
+  return Boolean(who.token) && !who.hmac && who.role !== 'project' && canTurnOnGithubSync(who.role, who.joe)
+}
+
+function liveScopes(st: Record<string, unknown>): LiveScope[] {
+  const raw = Array.isArray(st.scopes) ? (st.scopes as Record<string, unknown>[]) : []
+  return raw
+    .map((x) => ({ id: String(x.id || ''), root: String(x.root || ''), keyVersion: Number(x.keyVersion || 1) }))
+    .filter((x) => x.id)
+}
+
+function liveDevices(st: Record<string, unknown>): LiveDevice[] {
+  const raw = Array.isArray(st.devices) ? (st.devices as Record<string, unknown>[]) : []
+  return raw
+    .map((d) => ({
+      id: String(d.id || ''),
+      email: String(d.email || ''),
+      label: String(d.label || ''),
+      fingerprint: String(d.fingerprint || ''),
+      status: String(d.status || ''),
+      publicKey: String(d.publicKey || ''),
+      role: String(d.role || d.seatKind || ''),
+      roots: Array.isArray(d.roots) ? d.roots.map(String) : null,
+      held: Array.isArray(d.held)
+        ? (d.held as Record<string, unknown>[]).map((h) => ({
+            scope: String(h.scope || ''),
+            keyVersion: Number(h.keyVersion || 0)
+          }))
+        : []
+    }))
+    .filter((d) => d.id)
+}
+
+function waitingRow(d: LiveDevice, mine = false): MediaWaiting {
+  return {
+    deviceId: d.id,
+    name: d.email.split('@')[0] || 'Mac',
+    // Older Macs registered as plain "Mac"; the fingerprint says more than that.
+    label: d.label && d.label !== 'Mac' ? d.label : '',
+    fingerprint: d.fingerprint,
+    project: d.roots?.length ? d.roots.map((r) => r.replace(/\/$/, '')).join(', ') : 'brain',
+    mine
+  }
+}
+
+/** This Mac's name as other computers see it: the hostname without .local. */
+function thisMacLabel(): string {
+  try {
+    return macLabelFromHostname(hostname())
+  } catch {
+    return 'Mac'
+  }
+}
+
+/**
+ * Normal sign-in is enough: register this Mac with the brain's storage and pull whatever keys an owner or
+ * scout Mac has wrapped to it. One run per folder at a time.
+ */
+function liveSilentJoin(folder: string): Promise<LiveJoin> {
+  const hit = joins.get(folder)
+  if (hit) return hit
+  const run = liveSilentJoinOnce(folder)
+    .catch((): LiveJoin => {
+      const id = readMediaConfig(folder)?.mediaBrainId || liveSnapForFolder(userData(), folder)?.mediaBrainId
+      if (!id) return { phase: 'none' }
+      // Offline: a Mac that already joined keeps working from its local keys.
+      const row = brainForFolder(folder)
+      const token = readPmsSeat(userData(), id, safe())?.token || actor(folder).token
+      return readLiveSnap(userData(), id)?.deviceId ? { phase: 'on', row, token } : { phase: 'waiting' }
+    })
+    .finally(() => joins.delete(folder))
+  joins.set(folder, run)
+  return run
+}
+
+async function liveSilentJoinOnce(folder: string): Promise<LiveJoin> {
+  const who = actor(folder)
+  const known = readMediaConfig(folder)?.mediaBrainId || liveSnapForFolder(userData(), folder)?.mediaBrainId || ''
+  if (!who.token) return { phase: known ? 'sign_in' : 'none' }
+  let deviceId = known ? liveDeviceId(known) : ''
+  // A brain made with an email code is not linked to Plyntr seats yet, so the storage seat on this Mac is the way in.
+  const tokens = [who.token]
+  const pmsToken = known ? readPmsSeat(userData(), known, safe())?.token || '' : ''
+  if (pmsToken && pmsToken !== who.token) tokens.push(pmsToken)
+  let token = who.token
+  let st = { status: 0, json: {} as Record<string, unknown> }
+  for (const t of tokens) {
+    token = t
+    st = await mediaLiveJson({ method: 'GET', path: MEDIA_STATE_PATH, token, deviceId: deviceId || undefined })
+    if (st.status !== 401 && st.status !== 404) break
+  }
+  if (st.status === 410) {
+    if (known) mediaWipeBrain(known, userData())
+    return { phase: 'none', wiped: true }
+  }
+  if (st.status !== 200) return { phase: known ? 'waiting' : 'none' }
+  const id = String(st.json.id || '')
+  if (!/^[A-Za-z0-9_-]{8,80}$/.test(id)) return { phase: known ? 'waiting' : 'none' }
+  if (id !== known) deviceId = liveDeviceId(id)
+  const live = ensureDeviceKey(userData(), id, safe())
+  if (!deviceId) {
+    const reg = await mediaLiveJson({
+      method: 'POST',
+      path: MEDIA_DEVICES_PATH,
+      token,
+      body: { publicKey: hexBuf(live.publicKey), fingerprint: live.fingerprint, label: thisMacLabel() }
+    })
+    if (reg.status === 410) {
+      mediaWipeBrain(id, userData())
+      return { phase: 'none', wiped: true }
+    }
+    // 409 means this Mac is already registered; its id comes back either way.
+    deviceId = reg.status === 200 || reg.status === 409 ? String(reg.json.id || '') : ''
+    if (!deviceId) return { phase: 'waiting' }
+    st = await mediaLiveJson({ method: 'GET', path: MEDIA_STATE_PATH, token, deviceId })
+    if (st.status === 410) {
+      mediaWipeBrain(id, userData())
+      return { phase: 'none', wiped: true }
+    }
+    if (st.status !== 200) return { phase: 'waiting' }
+  }
+  if (token.startsWith('pms_') && who.brainId && st.json.plyntrBrainId === '' && !linkTried.has(id)) {
+    // Owner or scout Mac: link the brain once so HQ seats on it can join with their normal sign-in.
+    linkTried.add(id)
+    await mediaLiveJson({
+      method: 'POST',
+      path: `${MEDIA_BRAINS_PATH}/${id}/link`,
+      token,
+      deviceId,
+      body: { plyntrBrainId: who.brainId }
+    }).catch(() => undefined)
+  }
+  const brainKeyVersion = Number(st.json.brainKeyVersion || 1)
+  const prev = readLiveSnap(userData(), id)
+  writeLiveSnap(userData(), {
+    mediaBrainId: id,
+    deviceId,
+    bucket: prev?.bucket || '',
+    folder,
+    bucketStatus: st.json.bucketStatus === 'on' ? 'on' : 'off',
+    capBytes: st.json.capBytes == null ? null : Number(st.json.capBytes),
+    usedBytes: Number(st.json.usedBytes || 0),
+    brainKeyVersion
+  })
+  const wraps = Array.isArray(st.json.wraps) ? (st.json.wraps as Record<string, unknown>[]) : []
+  for (const w of wraps) {
+    if (!w.scope || !w.ciphertext) continue
+    upsertWrap(userData(), id, {
+      scope: String(w.scope),
+      key_version: Number(w.keyVersion || 1),
+      eph_pub: String(w.ephPub || ''),
+      nonce: String(w.nonce || ''),
+      ciphertext: String(w.ciphertext || '')
+    })
+  }
+  const ready = joinReady({
+    builder: !who.hmac && isBuilderRole(who.role),
+    wraps: readWrapsFile(userData(), id),
+    scopes: liveScopes(st.json),
+    brainKeyVersion
+  })
+  if (!ready) startFastJoinPoll(folder)
+  return { phase: ready ? 'on' : 'waiting', token, row: brainForFolder(folder), state: st.json }
+}
+
+/** Every 2s for about a minute after a Mac starts waiting, then the 10-minute state poll takes over. */
+function startFastJoinPoll(folder: string): void {
+  if (fastJoinPolls.has(folder)) return
+  fastJoinPolls.add(folder)
+  let ticks = 0
+  const timer = setInterval(() => {
+    ticks += 1
+    void liveSilentJoin(folder).then((j) => {
+      if (j.phase === 'on' || j.phase === 'none' || ticks >= FAST_JOIN_TICKS) stop()
+    })
+  }, FAST_JOIN_MS)
+  const stop = () => {
+    clearInterval(timer)
+    fastJoinPolls.delete(folder)
+  }
+  if (typeof timer === 'object' && timer && 'unref' in timer) timer.unref()
+}
+
+/**
+ * From a Mac that holds the keys, wrap to every Mac on this brain what its seat allows and it does not hold
+ * yet. Owner and scout get the brain key; team and project never do. Returns the device ids that got wraps.
+ */
+async function liveAutoWrap(opts: {
+  row: MediaBrainRow
+  token: string
+  state: Record<string, unknown>
+  only?: string
+}): Promise<string[]> {
+  const me = liveDeviceId(opts.row.id)
+  const brainKeyVersion = Number(opts.state.brainKeyVersion || opts.row.brain_key_version || 1)
+  const scopes = liveScopes(opts.state)
+  const wrapped: string[] = []
+  for (const d of liveDevices(opts.state)) {
+    if (d.id === me || (opts.only && d.id !== opts.only)) continue
+    if (d.status !== 'pending' && d.status !== 'approved') continue
+    if (!/^[0-9a-f]{64}$/i.test(d.publicKey)) continue
+    const devicePublicKey = Buffer.from(d.publicKey, 'hex')
+    const rows: Record<string, unknown>[] = []
+    for (const p of missingWraps(seatWrapPlan({ role: d.role, roots: d.roots }, scopes, brainKeyVersion), d.held)) {
+      const key =
+        p.scope === 'brain'
+          ? p.keyVersion === opts.row.brain_key_version
+            ? ensureBrainKeyInMemory(opts.row)
+            : null
+          : ensureProjectKeyInMemory(opts.row, p.scope, p.keyVersion)
+      if (!key) continue
+      const w = wrapKeyToDevice({ key, devicePublicKey, mediaBrainId: opts.row.id, scope: p.scope, version: p.keyVersion })
+      rows.push({ deviceId: d.id, scope: p.scope, keyVersion: p.keyVersion, ...wrapLive(w) })
+    }
+    if (!rows.length) continue
+    const res = await mediaLiveJson({ method: 'POST', path: MEDIA_WRAPS_PATH, token: opts.token, deviceId: me, body: { wraps: rows } })
+    if (res.status === 200) wrapped.push(d.id)
+  }
+  return wrapped
+}
+
+async function liveMediaStatus(folder: string, routes: boolean): Promise<MediaStatus> {
+  const who = actor(folder)
+  const join: LiveJoin = routes ? await liveSilentJoin(folder) : { phase: 'none' }
+  const row = join.row || brainForFolder(folder)
+  let fingerprint = ''
+  if (row) {
+    try {
+      fingerprint = ensureDeviceKey(userData(), row.id, safe()).fingerprint
+    } catch {
+      fingerprint = ''
+    }
+  }
+  const snap = row ? readLiveSnap(userData(), row.id) : null
+  const base: MediaStatus = {
+    routes,
+    on: false,
+    joining: false,
+    hasSeatToken: Boolean(who.token),
+    fingerprint,
+    usedBytes: snap?.usedBytes || 0,
+    capBytes: snap?.capBytes ?? null,
+    bucketStatus: snap?.bucketStatus || 'off',
+    waiting: [],
+    others: [],
+    projects: listMediaRoots(folder),
+    detail: ''
+  }
+  if (!routes) return base
+  if (join.phase === 'waiting' || join.phase === 'sign_in') {
+    return { ...base, joining: true, detail: join.phase === 'sign_in' ? MEDIA_JOIN_SIGN_IN : MEDIA_JOIN_WAIT }
+  }
+  if (join.phase === 'none') {
+    const detail = canTurnOnStorage(who, folder) ? MEDIA_OFF_OWNER : who.token ? MEDIA_OFF_OTHER : MEDIA_OFF_KEYLESS
+    return { ...base, detail }
+  }
+  if (join.state && join.token && row && isBuilderActor(who)) {
+    const wrapped = await liveAutoWrap({ row, token: join.token, state: join.state }).catch(() => [] as string[])
+    const devices = liveDevices(join.state)
+    const me = liveDeviceId(row.id)
+    base.waiting = devices.filter((d) => d.status === 'pending' && !wrapped.includes(d.id)).map((d) => waitingRow(d))
+    base.others = devices
+      .filter((d) => d.status === 'approved' && d.fingerprint)
+      .map((d) => waitingRow(d, d.id === me))
+  }
+  const on: MediaStatus = { ...base, on: true }
+  on.detail = mediaUsedLine(on)
+  return on
+}
+
+/** Session start, window focus, and the 10-minute poll: join if needed, then wrap for anyone waiting. */
+export async function liveMediaCheckIn(folder: string): Promise<{ status: number; wiped: boolean }> {
+  const join = await liveSilentJoin(folder)
+  if (join.wiped) return { status: 410, wiped: true }
+  if (join.phase === 'none') return { status: 204, wiped: false }
+  if (join.phase !== 'on') return { status: 202, wiped: false }
+  const who = actor(folder)
+  if (join.state && join.token && join.row && isBuilderActor(who)) {
+    await liveAutoWrap({ row: join.row, token: join.token, state: join.state }).catch(() => [])
+  }
+  return { status: 200, wiped: false }
+}
+
+/** Settings Allow: the manual backup for auto-wrap, same live path. */
+export async function liveMediaAllow(opts: { folder: string; deviceId: string }): Promise<{ ok: true; detail: string }> {
+  const folder = String(opts.folder || '')
+  const who = actor(folder)
+  if (!isBuilderActor(who)) throw new Error('Only an owner or scout can allow a computer.')
+  const join = await liveSilentJoin(folder)
+  if (join.phase !== 'on' || !join.row || !join.state || !join.token) throw new Error('Turn on storage first.')
+  const wrapped = await liveAutoWrap({ row: join.row, token: join.token, state: join.state, only: String(opts.deviceId || '') })
+  if (!wrapped.length) throw new Error('Nothing this Mac can share with that computer yet.')
+  void liveMediaCheckIn(folder).catch(() => undefined)
+  return { ok: true, detail: 'That computer can open files here now.' }
+}
+
+/** Owner or scout names a computer on this brain, this Mac included. */
+export async function liveRenameDevice(opts: { folder: string; deviceId: string; label: string }): Promise<{
+  ok: boolean
+  detail: string
+}> {
+  const folder = String(opts.folder || '')
+  if (!isBuilderActor(actor(folder))) throw new Error('Only an owner or scout can name a computer.')
+  const label = macLabel(opts.label)
+  if (!label) return { ok: false, detail: 'Type a name for that computer.' }
+  const join = await liveSilentJoin(folder)
+  if (join.phase !== 'on' || !join.row || !join.token) throw new Error('Turn on storage first.')
+  const res = await mediaLiveJson({
+    method: 'PATCH',
+    path: `${MEDIA_DEVICES_PATH}/${encodeURIComponent(String(opts.deviceId || ''))}`,
+    token: join.token,
+    deviceId: liveDeviceId(join.row.id),
+    body: { label }
+  })
+  if (res.status !== 200) return { ok: false, detail: 'Could not rename that computer.' }
+  return { ok: true, detail: `Saved the name ${label}.` }
+}
+
+/**
+ * Remove one computer from a Mac that still has storage. No passphrase: the worker blocks that one device
+ * and the brain key stays the same. Emergency restore is the path when no computer with storage is left.
+ */
+export async function liveRevokeDevice(opts: { folder: string; deviceId: string }): Promise<{
+  ok: true
+  detail: string
+  kind: string
+}> {
+  const folder = String(opts.folder || '')
+  if (!isBuilderActor(actor(folder))) throw new Error('Only an owner or scout can remove a computer.')
+  const join = await liveSilentJoin(folder)
+  if (join.phase !== 'on' || !join.row || !join.token) throw new Error('Turn on storage first.')
+  const target = String(opts.deviceId || '')
+  const me = liveDeviceId(join.row.id)
+  if (!target) throw new Error('Pick a computer.')
+  if (target === me) throw new Error('This is the computer you are on. Remove it from another computer.')
+  const res = await mediaLiveJson({
+    method: 'POST',
+    path: `${MEDIA_DEVICES_PATH}/${encodeURIComponent(target)}/revoke`,
+    token: join.token,
+    deviceId: me,
+    body: {}
+  })
+  if (res.status === 403) throw new Error('Only an owner can remove an owner or scout computer.')
+  if (res.status === 404) throw new Error('That computer is not on this brain.')
+  if (res.status !== 200) throw new Error('Could not remove that computer.')
+  return { ok: true, detail: 'That computer is removed. It cannot open files here now.', kind: String(res.json.mode || '') }
+}
+
+/** Emergency restore: email code plus the six words or the recovery key. */
+export async function liveReclaimOnThisMac(opts: {
+  folder: string
+  email: string
+  code: string
+  passphrase?: string
+  recovery?: string
+}): Promise<MediaEnableResult> {
+  const folder = String(opts.folder || '')
+  const who = actor(folder)
+  if (!canTurnOnStorage(who, folder) || who.hmac || who.role === 'project') throw new Error(NO_BUILDER)
+  const id = readMediaConfig(folder)?.mediaBrainId || liveSnapForFolder(userData(), folder)?.mediaBrainId
+  if (!id) throw new Error('Turn on storage first.')
+  return liveReconnect({
+    folder,
+    mediaBrainId: id,
+    email: String(opts.email || who.email || '').trim().toLowerCase(),
+    code: String(opts.code || '').trim(),
+    passphrase: opts.passphrase,
+    recoveryKey: opts.recovery
+  })
+}
+
+export async function liveRequestMediaCode(email: string): Promise<boolean> {
+  const want = String(email || '').trim().toLowerCase()
+  if (!want.includes('@')) return false
+  try {
+    await mintStorageCode(want)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export const MEDIA_ADD_BY_SEAT = 'Add them to this brain. Plyntr storage comes with their seat.'
+
+/** Add a person on a storage-only brain. A brain linked to Plyntr adds people through its seats. */
+export async function liveInvitePerson(opts: { folder: string; email: string; role?: string }): Promise<{
+  ok: boolean
+  detail: string
+}> {
+  const folder = String(opts.folder || '')
+  const who = actor(folder)
+  if (!isBuilderActor(who)) throw new Error(NO_BUILDER)
+  const row = brainForFolder(folder)
+  if (!row) return { ok: false, detail: 'Turn on storage first.' }
+  const email = String(opts.email || '').trim().toLowerCase()
+  if (!email.includes('@')) return { ok: false, detail: 'Enter their email.' }
+  if (who.token.startsWith('pbt_')) return { ok: false, detail: MEDIA_ADD_BY_SEAT }
+  const res = await mediaLiveJson({
+    method: 'POST',
+    path: '/v1/media/invites',
+    token: who.token,
+    deviceId: liveDeviceId(row.id),
+    body: { email, name: email, role: opts.role || 'team' }
+  })
+  if (res.status === 403) return { ok: false, detail: MEDIA_ADD_BY_SEAT }
+  if (res.status !== 200) return { ok: false, detail: 'Could not add that person.' }
+  // A scout Mac with Brain open wraps to them within seconds of them joining; start this one now.
+  void liveMediaCheckIn(folder).catch(() => undefined)
+  return { ok: true, detail: res.json.emailed ? 'Invite sent.' : 'Invite made, but the email did not go out. Try again.' }
+}
+
 export async function mediaShouldAsk(opts: { folder: string; role?: string }): Promise<boolean> {
   const folder = String(opts.folder || '')
   const st = await mediaStatus(folder)
@@ -396,10 +927,11 @@ export async function mediaShouldAsk(opts: { folder: string; role?: string }): P
   return shouldShowStorageAsk({
     role: opts.role || who.role || roster,
     joe: who.joe,
-    storageOn: st.on,
+    storageOn: st.on || st.joining,
     mediaAsked: mediaAskedFor(folder),
     hasSeatToken: st.hasSeatToken,
-    routes: st.routes
+    routes: st.routes,
+    hasMediaConfig: Boolean(readMediaConfig(folder))
   })
 }
 
@@ -435,9 +967,354 @@ export function takeRecoveryKey(folder: string): string | null {
   return v
 }
 
-export async function mediaEnable(opts: { folder: string; passphrase?: string; email?: string; code?: string }): Promise<MediaEnableResult> {
+async function mintStorageCode(email: string): Promise<void> {
+  const minted = await mediaLiveJson({
+    method: 'POST',
+    path: '/v1/media/codes/email',
+    body: { email }
+  })
+  if (minted.status !== 200) throw new Error('Could not send a storage code.')
+}
+
+async function liveReconnect(opts: {
+  folder: string
+  mediaBrainId: string
+  email: string
+  code: string
+  passphrase?: string
+  recoveryKey?: string
+}): Promise<MediaEnableResult> {
+  const folder = opts.folder
+  const recoveryText = String(opts.recoveryKey || '').trim()
+  const email = String(opts.email || '').trim().toLowerCase()
+  if (!email) throw new Error(NO_SEAT)
+  let code = String(opts.code || '').trim()
+  if (!code) {
+    const minted = await mediaLiveJson({
+      method: 'POST',
+      path: '/v1/media/codes/email',
+      body: { email }
+    })
+    if (minted.status !== 200) throw new Error('Could not send a storage code.')
+    return {
+      ok: false,
+      fingerprint: '',
+      detail:
+        'Check your email for a code. Enter it and the six-word passphrase from when you first turned storage on, then turn storage on again.',
+      needsCode: true,
+      needsPassphrase: true
+    }
+  }
+  if (!opts.passphrase && !recoveryText) {
+    return {
+      ok: false,
+      fingerprint: '',
+      detail: 'Type the six-word passphrase from when you first turned storage on, then turn storage on again.',
+      needsPassphrase: true
+    }
+  }
+  const live = ensureDeviceKey(userData(), opts.mediaBrainId, safe())
+  const start = await mediaLiveJson({
+    method: 'POST',
+    path: MEDIA_RECLAIM_START_PATH,
+    body: {
+      email,
+      code,
+      mediaBrainId: opts.mediaBrainId,
+      device: { publicKey: hexBuf(live.publicKey), fingerprint: live.fingerprint, label: thisMacLabel() }
+    }
+  })
+  const outcome = reclaimStartOutcome(start.status)
+  if (outcome === 'no_brain') {
+    // The code is spent and media.json points at a brain that is gone. Drop it so the next enable creates.
+    removeMediaConfig(folder)
+    await mintStorageCode(email)
+    return { ok: false, fingerprint: '', detail: NO_BRAIN_DETAIL, needsCode: true }
+  }
+  if (outcome !== 'ok') {
+    return { ok: false, fingerprint: '', detail: 'That code did not work.', needsCode: true, needsPassphrase: true }
+  }
+  const wrapObj = (start.json.passphraseWrap || (start.json.wraps as { passphrase?: unknown } | undefined)?.passphrase) as
+    | LivePassphraseWrap
+    | undefined
+  const salt = Buffer.from(String(wrapObj?.salt || start.json.salt || ''), 'hex')
+  const wrap = sealedPassphraseWrap(wrapObj)
+  const challengeB64 = String(start.json.challenge || '')
+  const challenge = Buffer.from(challengeB64, 'base64')
+  const reclaimToken = String(start.json.token || '')
+  let brainKey: Buffer | null = null
+  let proof: { ikm: Buffer; info: string } | null = null
+  if (opts.passphrase) {
+    try {
+      brainKey = unwrapBrainKeyWithPassphrase({
+        wrap: {
+          salt,
+          N: Number(wrapObj?.N || start.json.N || SCRYPT_N),
+          r: Number(wrapObj?.r || start.json.r || SCRYPT_R),
+          p: Number(wrapObj?.p || start.json.p || SCRYPT_P),
+          wrap,
+          proofPublicKey: Buffer.alloc(0)
+        },
+        passphrase: opts.passphrase,
+        mediaBrainId: opts.mediaBrainId
+      })
+      proof = { ikm: passphraseIkm(opts.passphrase, salt), info: PASSPHRASE_INFO(opts.mediaBrainId) }
+    } catch (err) {
+      if ((err as Error)?.message !== KEY_UNLOCK_FAIL) throw err
+    }
+  }
+  if (!brainKey && recoveryText) {
+    const recObj = (start.json.recoveryWrap || (start.json.wraps as { recovery?: unknown } | undefined)?.recovery) as
+      | { wrap?: string }
+      | string
+      | undefined
+    const recHex = typeof recObj === 'string' ? recObj : String(recObj?.wrap || '')
+    try {
+      const raw = parseRecoveryKey(recoveryText)
+      brainKey = unwrapBrainKeyWithRecovery({
+        wrap: { wrap: /^[0-9a-f]+$/i.test(recHex) ? Buffer.from(recHex, 'hex') : Buffer.alloc(0), proofPublicKey: Buffer.alloc(0) },
+        recoveryKey: raw,
+        mediaBrainId: opts.mediaBrainId
+      })
+      proof = { ikm: raw, info: RECOVERY_INFO(opts.mediaBrainId) }
+    } catch {
+      brainKey = null
+    }
+  }
+  if (!brainKey || !proof) {
+    // Start already used the emailed code, so a retry needs a fresh one.
+    return {
+      ok: false,
+      fingerprint: '',
+      detail: recoveryText
+        ? `${KEY_UNLOCK_FAIL} Check the passphrase and recovery key.`
+        : `${KEY_UNLOCK_FAIL} Check the passphrase.`,
+      needsCode: true,
+      needsPassphrase: true
+    }
+  }
+  const signature = signWithProof(proof.ikm, proof.info, challenge)
+  const deviceWrap = wrapKeyToDevice({
+    key: brainKey,
+    devicePublicKey: live.publicKey,
+    mediaBrainId: opts.mediaBrainId,
+    scope: 'brain',
+    version: Number(start.json.brainKeyVersion || 1)
+  })
+  const finish = await mediaLiveJson({
+    method: 'POST',
+    path: MEDIA_RECLAIM_FINISH_PATH,
+    body: {
+      token: reclaimToken,
+      signature: signature.toString('base64'),
+      devicePub: hexBuf(live.publicKey),
+      fingerprint: live.fingerprint,
+      device: { publicKey: hexBuf(live.publicKey), fingerprint: live.fingerprint, label: thisMacLabel() },
+      deviceWrap: wrapLive(deviceWrap)
+    }
+  })
+  const outToken = String(finish.json.token || '')
+  if (finish.status !== 200 || (!outToken.startsWith('pms_') && !outToken.startsWith('pbt_'))) {
+    brainKey.fill(0)
+    proof.ikm.fill(0)
+    return {
+      ok: false,
+      fingerprint: '',
+      detail: 'Could not sign this Mac into storage. Check the passphrase.',
+      needsCode: true,
+      needsPassphrase: true
+    }
+  }
+  holdKey(brainKeyId(opts.mediaBrainId), brainKey)
+  holdProof(opts.mediaBrainId, proof.ikm, proof.info)
+  const token = outToken
+  const deviceId = String(finish.json.deviceId || '')
+  const bucket = String(finish.json.bucket || readLiveSnap(userData(), opts.mediaBrainId)?.bucket || '')
+  writePmsSeat(
+    userData(),
+    { email, role: 'owner', token, mediaBrainId: opts.mediaBrainId },
+    safe()
+  )
+  writeLiveSnap(userData(), {
+    mediaBrainId: opts.mediaBrainId,
+    deviceId,
+    bucket,
+    folder,
+    bucketStatus: (readLiveSnap(userData(), opts.mediaBrainId)?.bucketStatus || 'on') as 'off' | 'on',
+    capBytes: readLiveSnap(userData(), opts.mediaBrainId)?.capBytes ?? 5368709120,
+    usedBytes: readLiveSnap(userData(), opts.mediaBrainId)?.usedBytes ?? 0
+  })
+  const packed = wrapToHex(deviceWrap)
+  upsertWrap(userData(), opts.mediaBrainId, {
+    scope: 'brain',
+    key_version: Number(start.json.brainKeyVersion || 1),
+    eph_pub: packed.eph_pub,
+    nonce: packed.nonce,
+    ciphertext: packed.ciphertext
+  })
+  writeMediaConfig(folder, opts.mediaBrainId, 'owner')
+  return { ok: true, fingerprint: live.fingerprint, detail: 'Plyntr storage is on.' }
+}
+
+async function liveEnable(opts: {
+  folder: string
+  passphrase?: string
+  recoveryKey?: string
+  email?: string
+  code?: string
+}): Promise<MediaEnableResult> {
   const folder = String(opts.folder || '')
-  if (!isMediaDryRun()) throw new Error('Storage enable is dry-run only in this slice.')
+  const who = actor(folder)
+  if (!canTurnOnStorage(who, folder)) throw new Error(NO_BUILDER)
+  if (!who.token && !who.email && !opts.email) throw new Error(NO_SEAT)
+  if (who.hmac || who.role === 'project') throw new Error(NO_BUILDER)
+  // Storage already set up for this brain: this Mac joins on its normal sign-in. Nothing here creates or unwraps.
+  const join = await liveSilentJoin(folder)
+  if (join.phase === 'on' && join.row) {
+    return { ok: true, fingerprint: ensureDeviceKey(userData(), join.row.id, safe()).fingerprint, detail: MEDIA_ON }
+  }
+  if (join.phase !== 'none') {
+    return { ok: false, fingerprint: '', detail: join.phase === 'sign_in' ? MEDIA_JOIN_SIGN_IN : MEDIA_JOIN_WAIT }
+  }
+  const email = String(opts.email || who.email || '').trim().toLowerCase()
+  const pbt = Boolean(who.token && who.token.startsWith('pbt_'))
+  let claimedToken = who.token
+  if (!pbt) {
+    if (!email) throw new Error(NO_SEAT)
+    let code = String(opts.code || '').trim()
+    if (!code) {
+      const minted = await mediaLiveJson({
+        method: 'POST',
+        path: '/v1/media/codes/email',
+        body: { email }
+      })
+      if (minted.status !== 200) throw new Error('Could not send a storage code.')
+      return {
+        ok: false,
+        fingerprint: '',
+        detail: 'Check your email for a code, enter it, then turn storage on again.',
+        needsCode: true
+      }
+    }
+    claimedToken = ''
+  }
+  // First create: a typed passphrase becomes the wrap. Nothing here unwraps.
+  const phrase = opts.passphrase ? assertPassphrase(opts.passphrase) : generatePassphrase()
+  const mediaBrainId = randomBytes(16).toString('hex')
+  const live = ensureDeviceKey(userData(), mediaBrainId, safe())
+  const brainKey = createBrainKey()
+  const recovery = createRecoveryKey()
+  const passWrap = wrapBrainKeyWithPassphrase({ brainKey, passphrase: phrase, mediaBrainId })
+  const recWrap = wrapBrainKeyWithRecovery({ brainKey, recoveryKey: recovery.raw, mediaBrainId })
+  const deviceWrap = wrapKeyToDevice({
+    key: brainKey,
+    devicePublicKey: live.publicKey,
+    mediaBrainId,
+    scope: 'brain',
+    version: 1
+  })
+  let hqRepo = ''
+  try {
+    const hq = await import('../hq-sync.ts')
+    hqRepo = hq.hqRepoFromFolder(folder) || ''
+  } catch {
+    hqRepo = ''
+  }
+  const body = {
+    id: mediaBrainId,
+    hqRepo,
+    passphraseWrap: {
+      salt: hexBuf(passWrap.salt),
+      N: passWrap.N,
+      r: passWrap.r,
+      p: passWrap.p,
+      wrap: hexBuf(passWrap.wrap)
+    },
+    passphraseProofPub: hexBuf(passWrap.proofPublicKey),
+    recoveryWrap: { wrap: hexBuf(recWrap.wrap) },
+    recoveryProofPub: hexBuf(recWrap.proofPublicKey),
+    device: { publicKey: hexBuf(live.publicKey), fingerprint: live.fingerprint, label: thisMacLabel() },
+    deviceWrap: wrapLive(deviceWrap)
+  }
+  const headersToken = pbt ? who.token : undefined
+  const claimBody = pbt
+    ? body
+    : { ...body, email, code: String(opts.code || '').trim(), plyntrBrainId: who.brainId || undefined }
+  const created = await mediaLiveJson({
+    method: 'POST',
+    path: MEDIA_BRAINS_PATH,
+    token: headersToken,
+    body: claimBody
+  })
+  if (created.status !== 200) {
+    brainKey.fill(0)
+    recovery.raw.fill(0)
+  }
+  if (created.status === 409) {
+    // Storage already exists. This Mac joins it like any other; the passphrase stays behind Emergency restore.
+    const existingId = conflictBrainId(created.json, mediaBrainId)
+    if (existingId) writeMediaConfig(folder, existingId, who.role)
+    return { ok: false, fingerprint: '', detail: EXISTS_DETAIL }
+  }
+  if (created.status !== 200) {
+    const err = String(created.json.error || created.status)
+    throw new Error(err === 'invalid' ? 'Could not turn on storage.' : `Could not turn on storage (${err}).`)
+  }
+  const deviceId = String(created.json.deviceId || '')
+  const bucket = String(created.json.bucket || '')
+  if (!deviceId || !bucket) throw new Error('Could not turn on storage.')
+  holdKey(brainKeyId(mediaBrainId), brainKey)
+  if (String(created.json.token || '').startsWith('pms_')) {
+    writePmsSeat(
+      userData(),
+      {
+        email,
+        role: 'owner',
+        token: String(created.json.token),
+        mediaBrainId
+      },
+      safe()
+    )
+    claimedToken = String(created.json.token)
+  }
+  writeLiveSnap(userData(), {
+    mediaBrainId,
+    deviceId,
+    bucket,
+    folder,
+    bucketStatus: 'off',
+    capBytes: null,
+    usedBytes: 0
+  })
+  const packed = wrapToHex(deviceWrap)
+  upsertWrap(userData(), mediaBrainId, {
+    scope: 'brain',
+    key_version: 1,
+    eph_pub: packed.eph_pub,
+    nonce: packed.nonce,
+    ciphertext: packed.ciphertext
+  })
+  writeMediaConfig(folder, mediaBrainId, who.role)
+  holdProof(mediaBrainId, passphraseIkm(phrase, passWrap.salt), PASSPHRASE_INFO(mediaBrainId))
+  const held = slot(mediaBrainId)
+  if (!opts.passphrase) held.passphrase = phrase
+  held.recovery = recovery.display
+  recovery.raw.fill(0)
+  markMediaAsked(folder)
+  void claimedToken
+  kickAutoStore(folder)
+  return { ok: true, fingerprint: live.fingerprint, detail: 'Plyntr storage is on.' }
+}
+
+export async function mediaEnable(opts: {
+  folder: string
+  passphrase?: string
+  recoveryKey?: string
+  email?: string
+  code?: string
+}): Promise<MediaEnableResult> {
+  const folder = String(opts.folder || '')
+  if (!isMediaDryRun()) return liveEnable(opts)
   const who = actor(folder)
   if (!canTurnOnStorage(who, folder)) throw new Error(NO_BUILDER)
   if (!who.token && !who.email && !opts.email) throw new Error(NO_SEAT)
@@ -571,11 +1448,50 @@ export async function mediaEnable(opts: { folder: string; passphrase?: string; e
   return { ok: true, fingerprint: live.fingerprint, detail: 'Plyntr storage is on.' }
 }
 
-export function mediaSetPassphrase(opts: { folder: string; passphrase: string }): { ok: true } {
+async function liveSetPassphrase(row: MediaBrainRow, folder: string, pass: string): Promise<{ ok: true }> {
+  const brainKey = ensureBrainKeyInMemory(row)
+  const proof = proofs.get(row.id)
+  if (!brainKey || !proof) throw new Error('This Mac does not have the storage key in memory. Turn storage on again.')
+  const who = actor(folder)
+  if (!who.token) throw new Error('This Mac is not signed into storage yet. Turn Plyntr storage on again.')
+  const deviceId = liveDeviceId(row.id)
+  const action = 'wrap-passphrase'
+  const issued = await mediaLiveJson({
+    method: 'POST',
+    path: '/v1/media/challenges',
+    token: who.token,
+    deviceId,
+    body: { action }
+  })
+  const challengeId = String(issued.json.id || '')
+  const challengeB64 = String(issued.json.challenge || '')
+  if (issued.status !== 200 || !challengeId || !challengeB64) throw new Error('Could not save the new passphrase.')
+  const wrap = wrapBrainKeyWithPassphrase({ brainKey, passphrase: pass, mediaBrainId: row.id })
+  const body: Record<string, unknown> = {
+    brainKeyVersion: row.brain_key_version,
+    passphraseWrap: { salt: hexBuf(wrap.salt), N: wrap.N, r: wrap.r, p: wrap.p, wrap: hexBuf(wrap.wrap) },
+    passphraseProofPub: hexBuf(wrap.proofPublicKey)
+  }
+  const message = wrapProofMessage(Buffer.from(challengeB64, 'base64'), action, body)
+  const signature = signWithProof(proof.ikm, proof.info, message)
+  const res = await mediaLiveJson({
+    method: 'POST',
+    path: MEDIA_WRAP_PASSPHRASE_PATH,
+    token: who.token,
+    deviceId,
+    body: { ...body, challengeId, signature: signature.toString('base64') }
+  })
+  if (res.status !== 200) throw new Error('Could not save the new passphrase.')
+  holdProof(row.id, passphraseIkm(pass, wrap.salt), PASSPHRASE_INFO(row.id))
+  return { ok: true }
+}
+
+export async function mediaSetPassphrase(opts: { folder: string; passphrase: string }): Promise<{ ok: true }> {
   const folder = String(opts.folder || '')
   const row = brainForFolder(folder)
   if (!row) throw new Error('Turn on storage first.')
   const pass = assertPassphrase(opts.passphrase)
+  if (!isMediaDryRun()) return liveSetPassphrase(row, folder, pass)
   const brainKey = takeKey(brainKeyId(row.id))
   if (!brainKey) throw new Error('This Mac does not have the storage key in memory. Turn storage on again.')
   const wrap = wrapBrainKeyWithPassphrase({ brainKey, passphrase: pass, mediaBrainId: row.id })
@@ -585,19 +1501,60 @@ export function mediaSetPassphrase(opts: { folder: string; passphrase: string })
   return { ok: true }
 }
 
-export function mediaSetCap(opts: { folder: string; capBytes: number }): { ok: true; capBytes: number } {
-  const row = brainForFolder(String(opts.folder || ''))
+export async function mediaSetCap(opts: { folder: string; capBytes: number }): Promise<{ ok: true; capBytes: number }> {
+  const folder = String(opts.folder || '')
+  if (!canTurnOnStorage(actor(folder), folder)) throw new Error(NO_BUILDER)
+  const row = brainForFolder(folder)
   if (!row) throw new Error('Turn on storage first.')
   const n = Number(opts.capBytes)
   if (!Number.isInteger(n) || n <= 0) throw new Error('Enter a storage limit in bytes.')
+  if (!isMediaDryRun()) {
+    const who = actor(folder)
+    if (!who.token) {
+      throw new Error('This Mac is not signed into storage yet. Turn Plyntr storage on again.')
+    }
+    const res = await mediaLiveJson({
+      method: 'POST',
+      path: `/v1/media/brains/${row.id}/cap`,
+      token: who.token,
+      deviceId: liveDeviceId(row.id),
+      body: { capBytes: n }
+    })
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('This Mac is not signed into storage yet. Turn Plyntr storage on again.')
+    }
+    if (res.status !== 200) throw new Error('Could not save the storage limit.')
+    const capBytes = Number(res.json.capBytes)
+    if (!Number.isFinite(capBytes) || capBytes <= 0) throw new Error('Could not save the storage limit.')
+    const snap = readLiveSnap(userData(), row.id)
+    if (snap) writeLiveSnap(userData(), { ...snap, capBytes })
+    return { ok: true, capBytes }
+  }
   row.cap_bytes = n
   return { ok: true, capBytes: n }
 }
 
-export function mediaTurnOnBucket(folder: string): { ok: true; bucket: string } {
-  if (!isMediaDryRun()) throw new Error('Bucket create is dry-run only in this slice.')
+export async function mediaTurnOnBucket(folder: string): Promise<{ ok: true; bucket: string }> {
+  if (!canTurnOnStorage(actor(String(folder || '')), String(folder || ''))) throw new Error(NO_BUILDER)
   const row = brainForFolder(String(folder || ''))
   if (!row) throw new Error('Turn on storage first.')
+  if (!isMediaDryRun()) {
+    const who = actor(folder)
+    const res = await mediaLiveJson({
+      method: 'POST',
+      path: `/v1/media/brains/${row.id}/bucket`,
+      token: who.token,
+      deviceId: liveDeviceId(row.id),
+      body: {}
+    })
+    if (res.status === 423) throw new Error('Plyntr storage for this brain is not turned on yet. Plyntr will let you know.')
+    if (res.status !== 200) throw new Error('Could not turn on the storage bucket.')
+    const bucket = String(res.json.bucket || row.bucket)
+    const snap = readLiveSnap(userData(), row.id)
+    if (snap) writeLiveSnap(userData(), { ...snap, bucket, bucketStatus: 'on' })
+    kickAutoStore(folder)
+    return { ok: true, bucket }
+  }
   enableDirectoryBucket(userData(), row.bucket)
   row.bucket_status = 'on'
   return { ok: true, bucket: row.bucket }
@@ -773,13 +1730,218 @@ function ensureScope(row: MediaBrainRow, root: string): { id: string; version: n
   return { id, version: 1 }
 }
 
+async function liveEnsureScope(
+  row: MediaBrainRow,
+  root: string,
+  token: string
+): Promise<{ id: string; version: number }> {
+  const deviceId = liveDeviceId(row.id)
+  const created = await mediaLiveJson({
+    method: 'POST',
+    path: MEDIA_SCOPES_PATH,
+    token,
+    deviceId,
+    body: { root }
+  })
+  let scopeId = ''
+  let version = 1
+  if (created.status === 200) {
+    scopeId = String(created.json.id || '')
+    version = Number(created.json.keyVersion || 1)
+  } else if (created.status === 409) {
+    scopeId = String(created.json.id || '')
+    const st = await mediaLiveJson({ method: 'GET', path: MEDIA_STATE_PATH, token, deviceId })
+    const scopes = Array.isArray(st.json.scopes) ? st.json.scopes : []
+    const hit = scopes.find((s: { id?: string; root?: string }) => s.id === scopeId || s.root === root)
+    if (hit) {
+      scopeId = String(hit.id || scopeId)
+      version = Number((hit as { keyVersion?: number }).keyVersion || 1)
+    }
+  } else {
+    throw new Error('Could not file this in that project.')
+  }
+  if (!scopeId) throw new Error('Could not file this in that project.')
+  let projectKey = ensureProjectKeyInMemory(row, scopeId, version)
+  if (!projectKey) {
+    if (!ensureBrainKeyInMemory(row)) throw new Error('This Mac does not have the storage key in memory. Turn storage on again.')
+    projectKey = createScopeKey()
+    holdKey(scopeKeyId(scopeId), projectKey)
+    const live = ensureDeviceKey(userData(), row.id, safe())
+    const deviceWrap = wrapKeyToDevice({
+      key: projectKey,
+      devicePublicKey: live.publicKey,
+      mediaBrainId: row.id,
+      scope: scopeId,
+      version
+    })
+    const packed = wrapToHex(deviceWrap)
+    const posted = await mediaLiveJson({
+      method: 'POST',
+      path: MEDIA_WRAPS_PATH,
+      token,
+      deviceId,
+      body: {
+        wraps: [{ deviceId, scope: scopeId, keyVersion: version, ...wrapLive(deviceWrap) }]
+      }
+    })
+    if (posted.status !== 200) throw new Error('Could not file this in that project.')
+    upsertWrap(userData(), row.id, {
+      scope: scopeId,
+      key_version: version,
+      eph_pub: packed.eph_pub,
+      nonce: packed.nonce,
+      ciphertext: packed.ciphertext
+    })
+    // Everyone whose seat covers this project gets the new key now, not at the next poll.
+    if (row.folder) void liveMediaCheckIn(row.folder).catch(() => undefined)
+  }
+  return { id: scopeId, version }
+}
+
+async function liveAdd(opts: { folder: string; root: string; path?: string }): Promise<MediaAddResult> {
+  const folder = String(opts.folder || '')
+  const who = actor(folder)
+  if (!who.token) throw new Error(NO_SEAT)
+  if (!canTurnOnGithubSync(who.role, who.joe)) throw new Error(NO_BUILDER)
+  const row = brainForFolder(folder)
+  if (!row) throw new Error('Turn on storage first.')
+  let filePath = String(opts.path || '')
+  if (!filePath) {
+    const picked = await dialog.showOpenDialog({
+      title: 'Add a video or image',
+      properties: ['openFile']
+    })
+    if (picked.canceled || !picked.filePaths[0]) return { ok: false, status: 400, error: 'canceled', detail: 'No file picked.' }
+    filePath = picked.filePaths[0]
+  }
+  if (!existsSync(filePath)) throw new Error('That file is not on this computer.')
+  const root = String(opts.root || '')
+  if (!/^projects\/[^/]+\/$/.test(root) && !/^clients\/[^/]+\/$/.test(root)) {
+    throw new Error('Pick a project in this folder.')
+  }
+  const plain = readFileSync(filePath)
+  const token = who.token
+  const deviceId = liveDeviceId(row.id)
+  const scope = await liveEnsureScope(row, root, token)
+  const projectKey = ensureProjectKeyInMemory(row, scope.id, scope.version)
+  if (!projectKey) {
+    throw new Error('This Mac does not have the project key.')
+  }
+  const mediaId = randomUUID()
+  const dek = newDek()
+  const encrypted = encryptMedia({ plaintext: plain, mediaId, chunkSize: mediaChunkSize(), dek })
+  const cipherBytes = encrypted.object.length
+  const dekWrap = wrapDek({
+    dek,
+    projectKey,
+    mediaId,
+    scopeId: scope.id,
+    keyVersion: scope.version
+  })
+  const partSize = mediaPartSize()
+  const cut = mediaCutover()
+  let parts = 1
+  if (cipherBytes > cut) parts = Math.max(1, Math.ceil(cipherBytes / partSize))
+  const started = await mediaLiveJson({
+    method: 'POST',
+    path: MEDIA_UPLOADS_PATH,
+    token,
+    deviceId,
+    body: {
+      id: mediaId,
+      cipherBytes,
+      bytes: plain.length,
+      mime: mimeFor(filePath),
+      scopeId: scope.id,
+      dekWrap: hexBuf(dekWrap),
+      dekVersion: scope.version,
+      partCount: parts
+    }
+  })
+  if (started.status === 409) {
+    dek.fill(0)
+    return { ok: false, status: 409, error: 'no_cap', detail: 'Plyntr has not set a storage limit for this brain yet.' }
+  }
+  if (started.status === 413) {
+    dek.fill(0)
+    return { ok: false, status: 413, error: 'over_cap', detail: "This brain's storage is full. Ask Plyntr to raise the limit." }
+  }
+  if (started.status === 423 && started.json.error === ROTATION_PENDING) {
+    dek.fill(0)
+    return { ok: false, status: 423, error: ROTATION_PENDING, detail: MEDIA_UPLOADS_PAUSED }
+  }
+  if (started.status === 423) {
+    dek.fill(0)
+    return { ok: false, status: 423, error: 'bucket_off', detail: 'Plyntr storage for this brain is not turned on yet. Plyntr will let you know.' }
+  }
+  if (started.status === 403) {
+    dek.fill(0)
+    return { ok: false, status: 403, error: 'wrong_project', detail: MEDIA_WRONG_PROJECT }
+  }
+  if (started.status !== 200) {
+    dek.fill(0)
+    return { ok: false, status: started.status, error: 'upload', detail: 'Could not upload that file.' }
+  }
+  const objectId = String(started.json.id || mediaId)
+  const etags: { partNumber: number; etag: string }[] = []
+  const blob = encrypted.object
+  const sliceSize = parts === 1 ? blob.length : partSize
+  for (let i = 0; i < parts; i++) {
+    const partNumber = i + 1
+    const chunk = blob.subarray(i * sliceSize, i === parts - 1 ? blob.length : (i + 1) * sliceSize)
+    const part = await mediaLiveJson({
+      method: 'POST',
+      path: `${MEDIA_UPLOADS_PATH}/${objectId}/parts`,
+      token,
+      deviceId,
+      body: { partNumber }
+    })
+    if (part.status !== 200 || typeof part.json.url !== 'string') {
+      await mediaLiveJson({ method: 'POST', path: `${MEDIA_UPLOADS_PATH}/${objectId}/abort`, token, deviceId, body: {} })
+      dek.fill(0)
+      throw new Error('Could not upload that file.')
+    }
+    const put = await mediaLivePut(String(part.json.url), Buffer.from(chunk))
+    if (put.status >= 300) {
+      await mediaLiveJson({ method: 'POST', path: `${MEDIA_UPLOADS_PATH}/${objectId}/abort`, token, deviceId, body: {} })
+      dek.fill(0)
+      throw new Error('Could not upload that file.')
+    }
+    etags.push({ partNumber, etag: put.etag })
+  }
+  const done = await mediaLiveJson({
+    method: 'POST',
+    path: `${MEDIA_UPLOADS_PATH}/${objectId}/complete`,
+    token,
+    deviceId,
+    body: { parts: etags }
+  })
+  dek.fill(0)
+  if (done.status !== 200) throw new Error('Could not upload that file.')
+  writeCipherCache(userData(), row.id, objectId, blob)
+  const title = basename(filePath).replace(/\.[^.]+$/, '') || 'file'
+  const pointer = writePointer({
+    folder,
+    root,
+    fields: {
+      brain_media: 1,
+      media_id: objectId,
+      title,
+      mime: mimeFor(filePath),
+      bytes: plain.length,
+      added: new Date().toISOString().slice(0, 10)
+    }
+  })
+  return { ok: true, rel: pointer.rel, parts, detail: `Saved ${title}.` }
+}
+
 export async function mediaAdd(opts: {
   folder: string
   root: string
   path?: string
 }): Promise<MediaAddResult> {
   const folder = String(opts.folder || '')
-  if (!isMediaDryRun()) throw new Error('Storage upload is dry-run only in this slice.')
+  if (!isMediaDryRun()) return liveAdd(opts)
   const who = actor(folder)
   if (!who.token) throw new Error(NO_SEAT)
   if (!canTurnOnGithubSync(who.role, who.joe)) throw new Error(NO_BUILDER)
@@ -874,6 +2036,21 @@ export async function mediaAdd(opts: {
     }
   })
   return { ok: true, rel: pointer.rel, parts, detail: `Saved ${title}.` }
+}
+
+/** Dry run: name a computer in the local store. */
+export function mediaRenameDevice(opts: { folder: string; deviceId: string; label: string }): { ok: boolean; detail: string } {
+  const folder = String(opts.folder || '')
+  const who = actor(folder)
+  if (!canTurnOnGithubSync(who.role, who.joe)) throw new Error('Only an owner or scout can name a computer.')
+  const row = brainForFolder(folder)
+  if (!row) throw new Error('Turn on storage first.')
+  const label = macLabel(opts.label)
+  if (!label) return { ok: false, detail: 'Type a name for that computer.' }
+  const device = store().devices.find((d) => d.media_brain_id === row.id && d.id === String(opts.deviceId || ''))
+  if (!device) return { ok: false, detail: 'Could not rename that computer.' }
+  device.label = label
+  return { ok: true, detail: `Saved the name ${label}.` }
 }
 
 export function mediaAllow(opts: { folder: string; deviceId: string }): { ok: true; detail: string } {
@@ -971,6 +2148,30 @@ function projectKeyFor(brainId: string, scopeId: string, keyVersion: number): Bu
   }
 }
 
+async function ensureLiveObjectCached(
+  brain: MediaBrainRow,
+  objectId: string,
+  token: string,
+  deviceId: string
+): Promise<string> {
+  if (cipherCacheExists(userData(), brain.id, objectId)) {
+    touchCipherCache(userData(), brain.id, objectId)
+    return cachePath(userData(), brain.id, objectId)
+  }
+  const signed = await mediaLiveJson({
+    method: 'POST',
+    path: `/v1/media/objects/${objectId}/download`,
+    token,
+    deviceId,
+    body: {}
+  })
+  if (signed.status === 403) throw new MediaErr(403, 'wrong_project', MEDIA_WRONG_PROJECT)
+  if (signed.status !== 200 || typeof signed.json.url !== 'string') throw new Error(MEDIA_NEEDS_NET)
+  const got = await mediaLiveGet(String(signed.json.url))
+  if (got.status !== 200 || !got.body.length) throw new Error(MEDIA_NEEDS_NET)
+  return writeCipherCache(userData(), brain.id, objectId, got.body)
+}
+
 function ensureObjectCached(brain: MediaBrainRow, objectId: string, objectKey: string): string {
   if (cipherCacheExists(userData(), brain.id, objectId)) {
     touchCipherCache(userData(), brain.id, objectId)
@@ -987,17 +2188,49 @@ function ensureObjectCached(brain: MediaBrainRow, objectId: string, objectKey: s
   }
 }
 
-export function prepareMediaPlay(opts: { folder: string; mediaId: string }): {
+export async function prepareMediaPlay(opts: { folder: string; mediaId: string }): Promise<{
   cacheFile: string
   dek: Buffer
   mime: string
   plainLen: number
   mediaBrainId: string
-} {
+}> {
   const folder = String(opts.folder || '')
   const mediaId = assertMediaId(opts.mediaId)
   const brain = brainForFolder(folder)
   if (!brain) throw new Error(MEDIA_OPEN_FAIL)
+  if (!isMediaDryRun()) {
+    const who = actor(folder)
+    const deviceId = liveDeviceId(brain.id)
+    const meta = await mediaLiveJson({
+      method: 'GET',
+      path: `/v1/media/objects/${mediaId}`,
+      token: who.token,
+      deviceId
+    })
+    if (meta.status === 403) throw new MediaErr(403, 'wrong_project', MEDIA_WRONG_PROJECT)
+    if (meta.status === 410) throw new MediaErr(410, DEVICE_REVOKED, MEDIA_OPEN_FAIL)
+    if (meta.status !== 200) throw new Error(MEDIA_OPEN_FAIL)
+    if (String(meta.json.status) === 'deleted') throw new Error(MEDIA_REMOVED)
+    const scopeId = String(meta.json.scopeId || '')
+    const dekVersion = Number(meta.json.dekVersion || 1)
+    const projectKey = projectKeyFor(brain.id, scopeId, dekVersion)
+    const dek = unwrapDek({
+      wrap: Buffer.from(String(meta.json.dekWrap || ''), 'hex'),
+      projectKey,
+      mediaId,
+      scopeId,
+      keyVersion: dekVersion
+    })
+    const cacheFile = await ensureLiveObjectCached(brain, mediaId, who.token, deviceId)
+    return {
+      cacheFile,
+      dek,
+      mime: String(meta.json.mime || 'application/octet-stream'),
+      plainLen: Number(meta.json.bytes || 0),
+      mediaBrainId: brain.id
+    }
+  }
   const mem = store()
   const object = mem.objects.find((o) => o.id === mediaId)
   if (!object) throw new Error(MEDIA_OPEN_FAIL)
@@ -1039,10 +2272,10 @@ export function prepareMediaPlay(opts: { folder: string; mediaId: string }): {
   }
 }
 
-export function mediaDownload(opts: { folder: string; mediaId: string }): {
+export async function mediaDownload(opts: { folder: string; mediaId: string }): Promise<{
   status: number
   error?: string
-} {
+}> {
   const folder = String(opts.folder || '')
   const who = actor(folder)
   const brain = brainForFolder(folder)
@@ -1061,7 +2294,7 @@ export function mediaDownload(opts: { folder: string; mediaId: string }): {
     }
   }
   try {
-    const prep = prepareMediaPlay(opts)
+    const prep = await prepareMediaPlay(opts)
     prep.dek.fill(0)
     return { status: 200 }
   } catch (err) {

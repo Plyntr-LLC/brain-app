@@ -78,3 +78,14 @@ test('rotate-scope POST body is worker camelCase', () => {
     { deviceId: 'KEEP-MAC1', ephPub: '11', nonce: '22', ciphertext: '33' }
   )
 })
+
+test('wrapProofMessage ignores signature, challengeId, and top-level key order', async () => {
+  const { wrapProofMessage } = await import('./worker-shapes.ts')
+  const ch = Buffer.alloc(32, 7)
+  const a = wrapProofMessage(ch, 'wrap-passphrase', { passphraseProofPub: 'ab', brainKeyVersion: 1 })
+  const b = wrapProofMessage(ch, 'wrap-passphrase', { brainKeyVersion: 1, passphraseProofPub: 'ab', signature: 's', challengeId: 'c' })
+  assert.deepEqual(a, b)
+  assert.deepEqual(a.subarray(0, 32), ch)
+  assert.equal(a.subarray(32, 32 + 15).toString(), 'wrap-passphrase')
+  assert.equal(a.length, 32 + 15 + 32)
+})

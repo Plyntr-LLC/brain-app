@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export const MEDIA_CONFIG_FILE = 'media.json'
@@ -47,4 +47,9 @@ export function writeMediaConfig(folder: string, mediaBrainId: string, role?: st
   const body: MediaConfig = { version: 1, mediaBrainId: id }
   writeFileSync(mediaConfigPath(folder), `${JSON.stringify(body)}\n`)
   return true
+}
+
+export function removeMediaConfig(folder: string): void {
+  if (!String(folder || '').trim()) return
+  rmSync(mediaConfigPath(folder), { force: true })
 }

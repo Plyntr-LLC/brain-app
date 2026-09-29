@@ -83,6 +83,7 @@ const brain = {
     requestCode: () => Promise.resolve({ ok: true, detail: '' }),
     reclaim: () => Promise.resolve({ ok: true, fingerprint: '', detail: '' }),
     invitePerson: () => Promise.resolve({ ok: true, detail: '' }),
+    renameDevice: () => Promise.resolve({ ok: true, detail: '' }),
     revokeDevice: () => Promise.resolve({ ok: true, detail: '', kind: 'blocked' })
   }
 }
@@ -114,13 +115,14 @@ let watchedNow: () => Promise<string> = () => Promise.resolve('')
 let mediaNow = {
   routes: false,
   on: false,
+  joining: false,
   hasSeatToken: false,
   fingerprint: '',
   usedBytes: 0,
   capBytes: null as number | null,
   bucketStatus: 'off' as const,
-  waiting: [] as { deviceId: string; name: string; fingerprint: string; project: string }[],
-  others: [] as { deviceId: string; name: string; fingerprint: string; project: string }[],
+  waiting: [] as { deviceId: string; name: string; label: string; fingerprint: string; project: string; mine?: boolean }[],
+  others: [] as { deviceId: string; name: string; label: string; fingerprint: string; project: string; mine?: boolean }[],
   projects: [] as { id: string; name: string; root: string }[],
   detail: ''
 }

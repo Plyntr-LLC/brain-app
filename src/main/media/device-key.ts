@@ -69,6 +69,7 @@ export function unsealDevicePrivate(sealed: Buffer, safe: SafeStorageApi): KeyOb
 
 export function saveDeviceKey(userData: string, mediaBrainId: string, key: DeviceKey, safe: SafeStorageApi): void {
   const path = deviceKeyPath(userData, mediaBrainId)
+  if (existsSync(path)) throw new Error(SAFE_STORAGE_FAIL)
   mkdirSync(dirname(path), { recursive: true })
   const sealed = sealDevicePrivate(key.privateKey, safe)
   writeFileSync(path, sealed, { mode: 0o600 })
@@ -83,14 +84,21 @@ export function loadDeviceKey(userData: string, mediaBrainId: string, safe: Safe
   const path = deviceKeyPath(userData, mediaBrainId)
   if (!existsSync(path)) return null
   refuseUnsafe(safe)
-  const privateKey = unsealDevicePrivate(readFileSync(path), safe)
-  const publicKey = exportX25519Public(createPublicKey(privateKey))
-  return { publicKey, fingerprint: deviceFingerprint(publicKey), privateKey }
+  // An existing file that will not open is still the only copy of the wrap target. Never report it as missing.
+  try {
+    const privateKey = unsealDevicePrivate(readFileSync(path), safe)
+    const publicKey = exportX25519Public(createPublicKey(privateKey))
+    return { publicKey, fingerprint: deviceFingerprint(publicKey), privateKey }
+  } catch {
+    throw new Error(SAFE_STORAGE_FAIL)
+  }
 }
 
+/** Creates a key only when device.key is missing. An unreadable file throws SAFE_STORAGE_FAIL and is left alone. */
 export function ensureDeviceKey(userData: string, mediaBrainId: string, safe: SafeStorageApi): DeviceKey {
   const existing = loadDeviceKey(userData, mediaBrainId, safe)
   if (existing) return existing
+  if (existsSync(deviceKeyPath(userData, mediaBrainId))) throw new Error(SAFE_STORAGE_FAIL)
   const created = createDeviceKey(safe)
   saveDeviceKey(userData, mediaBrainId, created, safe)
   return created

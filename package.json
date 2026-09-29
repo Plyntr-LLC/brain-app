@@ -1,6 +1,6 @@
 {
   "name": "brain-app",
-    "version": "0.1.98",
+  "version": "0.1.106",
   "private": true,
   "author": "Plyntr LLC",
   "description": "The room in front of Agency Brain: first-run, interview, chat.",
@@ -8,6 +8,8 @@
   "type": "module",
   "scripts": {
     "dev": "BRAIN_APP_DRY_RUN=1 electron-vite dev",
+    "dev:live-media": "electron-vite dev",
+    "check-media-live": "node --experimental-strip-types scripts/check-media-live.ts",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false",
     "preview": "electron-vite preview",
