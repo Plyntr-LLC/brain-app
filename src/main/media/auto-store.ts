@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync, unlinkSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync } from 'node:fs'
 import { basename, join, posix } from 'node:path'
 import { mediaSlug, readPointer, serializePointer } from './pointer.ts'
 
@@ -172,8 +172,9 @@ function brainWide(status: number): boolean {
 }
 
 /**
- * Upload qualifying files under projects/<name>/ and clients/<name>/ to Plyntr storage,
- * then remove the original so git never gets it. Live, owner/scout only.
+ * Upload qualifying files under projects/<name>/ and clients/<name>/ to Plyntr storage. The local
+ * file always stays (Joe 2026-09-29); the pointer mediaAdd writes is what stops a second upload.
+ * Removing local copies is a separate step someone asks for. Live, owner/scout only.
  */
 export async function maybeAutoStore(folder: string, opts: { force?: boolean } = {}): Promise<{ stored: string[] }> {
   const stored: string[] = []
@@ -202,12 +203,6 @@ export async function maybeAutoStore(folder: string, opts: { force?: boolean } =
           break
         }
         continue
-      }
-      try {
-        const st = lstatSync(c.path)
-        if (st.isFile() && st.size === c.bytes && st.mtimeMs === c.mtimeMs) unlinkSync(c.path)
-      } catch {
-        /* already gone */
       }
       lastTry.delete(c.path)
       stored.push(c.rel)

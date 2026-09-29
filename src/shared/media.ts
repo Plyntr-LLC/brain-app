@@ -142,7 +142,7 @@ export const MEDIA_UPLOADS_PAUSED =
   'New uploads are paused after a computer was removed. Ask Plyntr to finish the key change.'
 export const MEDIA_PROJECT_WATCH = 'You can watch videos in the projects you are on.'
 export const MEDIA_AUTO_STORE =
-  'Images, videos, and other large files in a project or client folder move here on their own. A note stays in that project.'
+  'Images, videos, and other large files in a project or client folder are copied here on their own. The file stays where it is, and a note is added beside it in media/.'
 export const MEDIA_ASK_H1 = 'Where should big videos and pictures live?'
 export const MEDIA_ASK_BODY =
   'Your notes stay in this folder either way. Big files can stay on this computer, or go to Plyntr storage so the people on each project can watch them.'
