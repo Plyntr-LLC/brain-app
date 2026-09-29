@@ -235,16 +235,65 @@ function MediaFilePane({
       dead = true
     }
   }, [src])
+  const mediaId = tab.mediaId || ''
+  const [said, setSaid] = useState('')
+  useEffect(() => {
+    if (mediaId) void window.brain.media.prepare({ mediaId })
+  }, [mediaId])
+  const act = async (run: () => Promise<{ ok: boolean; detail?: string; canceled?: boolean; path?: string }>, done: string) => {
+    const r = await run()
+    setSaid(r.ok ? done : r.canceled ? '' : r.detail || MEDIA_OPEN_FAIL)
+  }
+  const arm = () => {
+    if (mediaId) void window.brain.media.armDrag({ mediaId })
+  }
+  const drag = (e: React.DragEvent) => {
+    e.preventDefault()
+    if (mediaId) window.brain.media.startDrag({ mediaId })
+  }
+  const mime = tab.mediaMime || ''
   return (
     <>
-      <div className="filetab-head">{tab.mediaTitle || tab.title}</div>
+      <div className="filetab-head">
+        {tab.mediaTitle || tab.title}
+        {mediaId ? (
+          <span className="filetab-actions">
+            <button type="button" onClick={() => void act(() => window.brain.media.open({ mediaId }), '')}>
+              Open
+            </button>
+            <button type="button" onClick={() => void act(() => window.brain.media.saveCopy({ mediaId }), 'Saved a copy.')}>
+              Save a copy…
+            </button>
+            <button type="button" onClick={() => void act(() => window.brain.media.copyHere({ mediaId }), 'Put a copy in this folder.')}>
+              Put a copy in this folder
+            </button>
+          </span>
+        ) : null}
+      </div>
+      {said ? <p className="tiny">{said}</p> : null}
       {note ? (
         <p className="note">{note}</p>
-      ) : tab.mediaMime && tab.mediaMime.startsWith('image/') ? (
+      ) : mime.startsWith('image/') ? (
         <div className="filemedia">
           <img
             src={src}
             alt={tab.mediaTitle || tab.title}
+            draggable
+            onMouseDown={arm}
+            onDragStart={drag}
+            onError={() => {
+              if (!note) setNote(MEDIA_OPEN_FAIL)
+            }}
+          />
+        </div>
+      ) : mime.startsWith('video/') || mime.startsWith('audio/') ? (
+        <div className="filemedia">
+          <video
+            controls
+            src={src}
+            draggable
+            onMouseDown={arm}
+            onDragStart={drag}
             onError={() => {
               if (!note) setNote(MEDIA_OPEN_FAIL)
             }}
@@ -252,13 +301,10 @@ function MediaFilePane({
         </div>
       ) : (
         <div className="filemedia">
-          <video
-            controls
-            src={src}
-            onError={() => {
-              if (!note) setNote(MEDIA_OPEN_FAIL)
-            }}
-          />
+          <p className="tiny">
+            {mime || 'File'}
+            {tab.mediaBytes ? ` · ${Math.max(1, Math.round(tab.mediaBytes / 1024))} KB` : ''}. Use Open to view it in its own app.
+          </p>
         </div>
       )}
     </>

@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto'
 import { createRequire, registerHooks } from 'node:module'
 import {
   cpSync,
@@ -10,10 +10,11 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  truncateSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve as resolvePath } from 'node:path'
+import { basename, dirname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { CHUNK_SIZE_DEFAULT } from '../src/main/media/crypto.ts'
 
@@ -47,11 +48,12 @@ function unseal(buf: Buffer): string {
 
 const electronStub = `
 const handlers = globalThis.__ipc ||= new Map()
-export const ipcMain = { handle: (name, fn) => handlers.set(name, fn), on() {}, removeHandler(name) { handlers.delete(name) } }
-export const app = { getPath: () => globalThis.__userData, getAppPath: () => globalThis.__appPath, getVersion: () => '0.0.0', getName: () => 'Brain', isPackaged: false, on() {}, whenReady: () => Promise.resolve() }
+const onHandlers = globalThis.__ipcOn ||= new Map()
+export const ipcMain = { handle: (name, fn) => handlers.set(name, fn), on: (name, fn) => onHandlers.set(name, fn), removeHandler(name) { handlers.delete(name) } }
+export const app = { getFileIcon: async () => ({}), getPath: () => globalThis.__userData, getAppPath: () => globalThis.__appPath, getVersion: () => '0.0.0', getName: () => 'Brain', isPackaged: false, on() {}, whenReady: () => Promise.resolve() }
 export const BrowserWindow = { getAllWindows: () => [], getFocusedWindow: () => null, fromWebContents: () => null }
-export const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) }
-export const shell = {}
+export const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths: [] }), showSaveDialog: async () => globalThis.__saveAnswer || { canceled: true } }
+export const shell = { openPath: async (p) => { (globalThis.__openPaths ||= []).push(p); return '' } }
 export const clipboard = { readText: () => '' }
 export const nativeImage = {}
 export const Tray = class {}
@@ -801,6 +803,170 @@ if (won !== 1 || lost !== 1) fail('14', 'cap race was ' + JSON.stringify(raced))
 const objectsAfterRace = session.mediaDumpStore().objects.length
 if (objectsAfterRace !== objectsBeforeRace + 1) fail('14', 'second object was written')
 steps['14'] = { cap: { over: 413, raced: 1 } }
+// EX. Stored files work like normal files: exact bytes out, safe names, no overwrite, the viewer's gate, IPC for Open/Save/drag.
+{
+  const exportMod = await import('../src/main/media/export.ts')
+  const mediaShared = await import('../src/shared/media.ts')
+  const storeMod = await import('../src/main/media/store.ts')
+  const paths = await import('../src/main/factory/paths.ts')
+  const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex')
+  const shaFile = (p: string) => sha(readFileSync(p))
+  asOwner()
+  await invoke('media:setCap', { folder, capBytes: 256 * 1024 * 1024 })
+  const mk = (name: string, body: Buffer) => {
+    const p = join(folder, 'ex-src', name)
+    mkdirSync(join(folder, 'ex-src'), { recursive: true })
+    writeFileSync(p, body)
+    return p
+  }
+  const srcs = {
+    mp4: mk('ex-clip.mp4', randomBytes(12.5 * 1024 * 1024)),
+    pdf: mk('ex-doc.pdf', randomBytes(3000)),
+    empty: mk('ex-empty.pdf', Buffer.alloc(0)),
+    zip: mk('ex-pack.zip', randomBytes(70 * 1024))
+  }
+  const ids: Record<string, string> = {}
+  for (const [k, p] of Object.entries(srcs)) {
+    const before = new Set(session.mediaDumpStore().objects.map((o) => o.id))
+    const r = (await invoke('media:add', { folder, root: 'projects/alpha/', path: p })) as { ok: boolean; detail?: string }
+    if (!r.ok) fail('EX 1', `add ${k} failed ${JSON.stringify(r)}`)
+    const made = session.mediaDumpStore().objects.find((o) => !before.has(o.id))
+    if (!made) fail('EX 1', `no object for ${k}`)
+    ids[k] = made!.id
+  }
+  const want: Record<string, string> = { mp4: 'ex-clip.mp4', pdf: 'ex-doc.pdf', empty: 'ex-empty.pdf', zip: 'ex-pack.zip' }
+  const out: Record<string, string> = {}
+  for (const k of Object.keys(srcs)) {
+    const e = await exportMod.exportMedia({ folder, mediaId: ids[k] })
+    if (basename(e.path) !== want[k]) fail('EX 1', `${k} exported as ${basename(e.path)}`)
+    if (shaFile(e.path) !== shaFile(srcs[k as keyof typeof srcs])) fail('EX 1', `${k} bytes differ from the source`)
+    out[k] = e.path
+  }
+  steps['EX 1'] = { roundTrip: Object.keys(out).length }
+
+  const m1 = statSync(out.mp4).mtimeMs
+  const again = await exportMod.exportMedia({ folder, mediaId: ids.mp4 })
+  if (again.path !== out.mp4 || statSync(out.mp4).mtimeMs !== m1) fail('EX 2', 'a finished export was rewritten')
+  truncateSync(out.mp4, 1000)
+  const healed = await exportMod.exportMedia({ folder, mediaId: ids.mp4 })
+  if (shaFile(healed.path) !== shaFile(srcs.mp4)) fail('EX 2', 'rewritten export differs')
+  if (readdirSync(dirname(out.mp4)).some((f) => f.endsWith('.part'))) fail('EX 2', 'a .part file was left')
+  steps['EX 2'] = { reuse: true, repair: true }
+
+  const tmpRoot = exportMod.mediaTempRoot()
+  const projectRoot = join(folder, 'projects', 'alpha')
+  for (const title of ['../../evil', 'foo/bar']) {
+    const e = await exportMod.exportMedia({ folder, mediaId: ids.pdf, title })
+    if (dirname(e.path) !== join(tmpRoot, ids.pdf) || !paths.underPath(tmpRoot, e.path)) fail('EX 3', `export escaped for ${title}: ${e.path}`)
+    const c = await exportMod.copyMediaHere({ folder, mediaId: ids.pdf, title })
+    if (dirname(c) !== projectRoot || !paths.underPath(projectRoot, c)) fail('EX 3', `copy-here escaped for ${title}: ${c}`)
+  }
+  steps['EX 3'] = { names: 'contained' }
+
+  const first = await exportMod.copyMediaHere({ folder, mediaId: ids.zip })
+  if (first !== join(folder, 'projects/alpha', 'ex-pack.zip')) fail('EX 4', 'first copy landed at ' + first)
+  const second = await exportMod.copyMediaHere({ folder, mediaId: ids.zip })
+  const third = await exportMod.copyMediaHere({ folder, mediaId: ids.zip })
+  if (second !== join(projectRoot, 'ex-pack (2).zip') || third !== join(projectRoot, 'ex-pack (3).zip')) fail('EX 4', `copies landed at ${second} and ${third}`)
+  for (const p of [first, second, third]) if (shaFile(p) !== shaFile(srcs.zip)) fail('EX 4', 'a copy is not byte-identical')
+  steps['EX 4'] = { noOverwrite: true }
+
+  const g2 = globalThis as { __openPaths?: string[]; __saveAnswer?: { canceled: boolean; filePath?: string }; __drags?: { file: string }[] }
+  g2.__openPaths = []
+  g2.__drags = []
+  const onMap = (globalThis as { __ipcOn?: Map<string, (...a: unknown[]) => unknown> }).__ipcOn
+  // Fires the ipcMain.on listener the way Electron does and reports whether it finished synchronously.
+  const send = (name: string, arg: unknown): boolean => {
+    const fn = onMap?.get(name)
+    if (!fn) fail('EX 8', 'no ipcMain.on listener for ' + name)
+    const ret = fn!({ sender: { startDrag: (o: { file: string }) => g2.__drags!.push(o) } }, arg)
+    return !(ret && typeof (ret as Promise<unknown>).then === 'function')
+  }
+
+  const live = storeMod.memoryMediaStore(userData)
+  const pdfRow = live.objects.find((o) => o.id === ids.pdf)!
+  pdfRow.status = 'deleted'
+  let removedThrew = ''
+  try {
+    await exportMod.exportMedia({ folder, mediaId: ids.pdf })
+  } catch (err) {
+    removedThrew = String((err as Error).message)
+  }
+  const o5 = (await invoke('media:open', { folder, mediaId: ids.pdf })) as { ok: boolean }
+  const s5 = (await invoke('media:saveCopy', { folder, mediaId: ids.pdf })) as { ok: boolean }
+  const c5 = (await invoke('media:copyHere', { folder, mediaId: ids.pdf })) as { ok: boolean }
+  const a5 = (await invoke('media:armDrag', { folder, mediaId: ids.pdf })) as { ok: boolean }
+  send('media:startDrag', { folder, mediaId: ids.pdf })
+  if (![mediaShared.MEDIA_REMOVED, MEDIA_OPEN_FAIL].includes(removedThrew) || o5.ok || s5.ok || c5.ok || a5.ok || g2.__openPaths.length || g2.__drags.length) {
+    fail('EX 5', `a removed object still came out: ${JSON.stringify({ removedThrew, o5, s5, c5, a5, opens: g2.__openPaths, drags: g2.__drags })}`)
+  }
+  pdfRow.status = 'ready'
+  steps['EX 5'] = { removed: 'refused' }
+
+  const foreign = { ...live.objects.find((o) => o.id === ids.zip)!, id: randomUUID(), media_brain_id: 'brain-somebody-else' }
+  live.objects.push(foreign)
+  let wrong = ''
+  try {
+    await exportMod.exportMedia({ folder, mediaId: foreign.id })
+  } catch (err) {
+    wrong = String((err as Error).message)
+  }
+  if (wrong !== mediaShared.MEDIA_WRONG_PROJECT || existsSync(join(tmpRoot, foreign.id)) && readdirSync(join(tmpRoot, foreign.id)).length) fail('EX 6', `another brain's object: ${wrong}`)
+  live.objects.splice(live.objects.indexOf(foreign), 1)
+  steps['EX 6'] = { wrongBrain: 'refused' }
+
+  const dest = join(mkdtempSync(join(tmpdir(), 'ex-save-')), 'picked.mp4')
+  const rootBefore = readdirSync(projectRoot).sort().join('|')
+  g2.__saveAnswer = { canceled: true }
+  const sc = (await invoke('media:saveCopy', { folder, mediaId: ids.mp4 })) as { ok: boolean; canceled?: boolean }
+  if (sc.ok || !sc.canceled || existsSync(dest) || readdirSync(projectRoot).sort().join('|') !== rootBefore) fail('EX 7', 'cancel wrote a file')
+  g2.__saveAnswer = { canceled: false, filePath: dest }
+  const ss = (await invoke('media:saveCopy', { folder, mediaId: ids.mp4 })) as { ok: boolean; path?: string }
+  if (!ss.ok || ss.path !== dest || shaFile(dest) !== shaFile(srcs.mp4)) fail('EX 7', 'save did not write the original bytes')
+  steps['EX 7'] = { cancel: 'nothing', save: 'exact' }
+
+  const op = (await invoke('media:open', { folder, mediaId: ids.pdf })) as { ok: boolean }
+  if (!op.ok || g2.__openPaths.length !== 1 || shaFile(g2.__openPaths[0]) !== shaFile(srcs.pdf)) fail('EX 8', 'open did not hand the Mac the exact file')
+  const noArm = send('media:startDrag', { folder, mediaId: ids.zip })
+  if (!noArm || g2.__drags.length !== 0) fail('EX 8', 'a drag started without being armed, or the listener awaited')
+  const armed = (await invoke('media:armDrag', { folder, mediaId: ids.mp4 })) as { ok: boolean }
+  const sync = send('media:startDrag', { folder, mediaId: ids.mp4 })
+  const d1 = g2.__drags[0]
+  if (!armed.ok || !sync || g2.__drags.length !== 1 || d1.file.endsWith('.part') || shaFile(d1.file) !== shaFile(srcs.mp4)) fail('EX 8', 'an armed drag did not start synchronously with the finished file')
+  send('media:startDrag', { folder, mediaId: ids.mp4 })
+  if (g2.__drags.length !== 1) fail('EX 8', 'one arm allowed two drags')
+  const prepared = (await invoke('media:prepare', { folder, mediaId: ids.zip })) as { ok: boolean }
+  const rearm = invoke('media:armDrag', { folder, mediaId: ids.zip })
+  const midArm = send('media:startDrag', { folder, mediaId: ids.zip })
+  await rearm
+  const d3 = g2.__drags[1]
+  if (!prepared.ok || !midArm || g2.__drags.length !== 2 || !d3 || shaFile(d3.file) !== shaFile(srcs.zip)) fail('EX 8', 'a drag while a re-arm is in flight did not use the file the tab open prepared')
+  exportMod.clearMediaTemp()
+  const three = await Promise.all([1, 2, 3].map(() => exportMod.exportMedia({ folder, mediaId: ids.mp4 })))
+  if (new Set(three.map((e) => e.path)).size !== 1 || shaFile(three[0].path) !== shaFile(srcs.mp4) || readdirSync(dirname(three[0].path)).some((f) => f.endsWith('.part'))) {
+    fail('EX 8', 'concurrent exports of one object did not give one exact file')
+  }
+  steps['EX 8'] = { open: 1, drags: 2, concurrent: 'exact' }
+
+  exportMod.clearMediaTemp()
+  if (existsSync(tmpRoot)) fail('EX 9', 'temp tree is still there')
+  if (!indexSrc.includes('clearMediaTemp()') || indexSrc.indexOf('clearMediaTemp()', indexSrc.indexOf('app.whenReady()')) < 0 || indexSrc.indexOf('clearMediaTemp()', indexSrc.indexOf("app.on('before-quit'")) < 0) {
+    fail('EX 9', 'index does not clear the temp copies at ready and before-quit')
+  }
+  const tw = readFileSync(join(rootRepo, 'src/renderer/src/TerminalWorkspace.tsx'), 'utf8')
+  const pane = tw.slice(tw.indexOf('function MediaFilePane'), tw.indexOf('function widthPref'))
+  const head = pane.slice(pane.indexOf('className="filetab-head"'), pane.indexOf('</div>', pane.indexOf('className="filetab-head"')))
+  for (const [label, call] of [['Open', 'media.open'], ['Save a copy…', 'media.saveCopy'], ['Put a copy in this folder', 'media.copyHere']]) {
+    if (!head.includes(label) || !head.includes(call)) fail('EX UI', `${label} is not wired to ${call} in the file tab head`)
+  }
+  const other = pane.slice(pane.lastIndexOf(') : ('))
+  if (other.includes('<video')) fail('EX UI', 'the non-media branch still renders a video')
+  if ((pane.match(/draggable/g) || []).length < 2 || (pane.match(/onMouseDown=\{arm\}/g) || []).length < 2 || !pane.includes('media.startDrag') || !pane.includes('media.armDrag')) fail('EX UI', 'img and video are not armed on mousedown and dragged to startDrag')
+  if (!head.includes('{mediaId ? (')) fail('EX UI', 'the file actions hide behind the viewer note')
+  const pre = readFileSync(join(rootRepo, 'src/preload/index.ts'), 'utf8')
+  if (!/startDrag:[^\n]*ipcRenderer\.send\('media:startDrag'/.test(pre)) fail('EX UI', 'preload startDrag is not a send')
+  steps['EX 9'] = { cleared: true, ui: 'wired' }
+}
 
 asDevice(userDataB)
 const aside = mkdtempSync(join(tmpdir(), 'media-b-aside-'))
@@ -1456,6 +1622,7 @@ const reclaim = {
     wiped: false
   }
 }
+
 
 const artifact = {
   pass: true,

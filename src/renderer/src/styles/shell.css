@@ -1422,6 +1422,23 @@ button.runmeta-v:hover { color: var(--orange-deep); }
   font-size: 0.82rem;
   font-weight: 600;
 }
+.filetab-actions {
+  float: right;
+  display: inline-flex;
+  gap: 0.4rem;
+}
+.filetab-actions button {
+  font: inherit;
+  font-weight: 500;
+  font-size: 0.76rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
 .filemedia {
   flex: 1;
   min-height: 0;

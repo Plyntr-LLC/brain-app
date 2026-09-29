@@ -1101,7 +1101,19 @@ const brain = {
     renameDevice: (opts: { folder: string; deviceId: string; label: string }) =>
       ipcRenderer.invoke('media:renameDevice', opts) as Promise<{ ok: boolean; detail: string }>,
     revokeDevice: (opts: { folder: string; deviceId?: string; passphrase?: string }) =>
-      ipcRenderer.invoke('media:revokeDevice', opts) as Promise<{ ok: true; detail: string; kind: string }>
+      ipcRenderer.invoke('media:revokeDevice', opts) as Promise<{ ok: true; detail: string; kind: string }>,
+    prepare: (opts: { folder?: string; mediaId: string }) =>
+      ipcRenderer.invoke('media:prepare', opts) as Promise<{ ok: boolean; detail?: string }>,
+    open: (opts: { folder?: string; mediaId: string }) =>
+      ipcRenderer.invoke('media:open', opts) as Promise<{ ok: boolean; name?: string; detail?: string }>,
+    saveCopy: (opts: { folder?: string; mediaId: string }) =>
+      ipcRenderer.invoke('media:saveCopy', opts) as Promise<{ ok: boolean; path?: string; canceled?: boolean; detail?: string }>,
+    copyHere: (opts: { folder?: string; mediaId: string }) =>
+      ipcRenderer.invoke('media:copyHere', opts) as Promise<{ ok: boolean; path?: string; detail?: string }>,
+    armDrag: (opts: { folder?: string; mediaId: string }) =>
+      ipcRenderer.invoke('media:armDrag', opts) as Promise<{ ok: boolean; detail?: string }>,
+    // send: dragstart cannot wait for a reply, or the drop comes out empty.
+    startDrag: (opts: { folder?: string; mediaId: string }) => ipcRenderer.send('media:startDrag', opts)
   }
 }
 

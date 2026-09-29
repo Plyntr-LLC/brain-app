@@ -1,4 +1,10 @@
-import { app, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, type NativeImage } from 'electron'
+import { existsSync } from 'node:fs'
+import { copyFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { currentBrainFolder } from '../brains.ts'
+import { copyMediaHere, exportMedia } from './export.ts'
 import type { MediaAddResult } from '../../shared/media.ts'
 import { initShellVault } from '../shell-vault.ts'
 import { assertRendererSafe } from './renderer-safe.ts'
@@ -36,8 +42,69 @@ function folderOf(raw: unknown): string {
   return ''
 }
 
+type MediaFileAsk = { folder?: string; mediaId?: string }
+
+function note(err: unknown): string {
+  return String((err as Error)?.message || err || 'Could not open that file.')
+}
+
 export function registerMediaIpc(): void {
   initShellVault(app.getPath('userData'))
+  // A stored file as a normal file: every path goes through exportMedia, which runs the viewer's gate first.
+  const ask = (opts?: MediaFileAsk) => ({ folder: String(opts?.folder || currentBrainFolder() || ''), mediaId: String(opts?.mediaId || '') })
+  // A drag is armed when the tab opens and again on mousedown (each time the full gate and export run),
+  // and started synchronously on dragstart: macOS only takes a file during the drag the OS already
+  // began, so that handler cannot await. A re-arm never clears the ready slot first; a refused gate does.
+  const armed = new Map<string, { path: string; icon: NativeImage; until: number }>()
+  const arm = async (a: { folder: string; mediaId: string }) => {
+    try {
+      const exp = await exportMedia(a)
+      const icon = await app.getFileIcon(exp.path, { size: 'normal' })
+      armed.set(a.mediaId, { path: exp.path, icon, until: Date.now() + 120_000 })
+      return { ok: true as const }
+    } catch (err) {
+      armed.delete(a.mediaId)
+      return { ok: false as const, detail: note(err) }
+    }
+  }
+  ipcMain.handle('media:prepare', (_e, opts?: MediaFileAsk) => arm(ask(opts)))
+  ipcMain.handle('media:armDrag', (_e, opts?: MediaFileAsk) => arm(ask(opts)))
+  ipcMain.handle('media:open', async (_e, opts?: MediaFileAsk) => {
+    try {
+      const exp = await exportMedia(ask(opts))
+      const err = await shell.openPath(exp.path)
+      return err ? { ok: false as const, detail: err } : { ok: true as const, name: exp.name }
+    } catch (e) {
+      return { ok: false as const, detail: note(e) }
+    }
+  })
+  ipcMain.handle('media:saveCopy', async (e, opts?: MediaFileAsk) => {
+    try {
+      const exp = await exportMedia(ask(opts))
+      const win = BrowserWindow.fromWebContents(e.sender)
+      const pick = { defaultPath: join(homedir(), 'Downloads', exp.name) }
+      const r = win ? await dialog.showSaveDialog(win, pick) : await dialog.showSaveDialog(pick)
+      if (r.canceled || !r.filePath) return { ok: false as const, canceled: true }
+      copyFileSync(exp.path, r.filePath)
+      return { ok: true as const, path: r.filePath }
+    } catch (err) {
+      return { ok: false as const, detail: note(err) }
+    }
+  })
+  ipcMain.handle('media:copyHere', async (_e, opts?: MediaFileAsk) => {
+    try {
+      return { ok: true as const, path: await copyMediaHere(ask(opts)) }
+    } catch (err) {
+      return { ok: false as const, detail: note(err) }
+    }
+  })
+  ipcMain.on('media:startDrag', (e, opts?: MediaFileAsk) => {
+    const id = ask(opts).mediaId
+    const hit = armed.get(id)
+    armed.delete(id)
+    if (!hit || hit.until < Date.now() || !existsSync(hit.path)) return
+    e.sender.startDrag({ file: hit.path, icon: hit.icon })
+  })
   ipcMain.handle('media:status', async (_e, folder?: string) => {
     const path = String(folder || '')
     // Live status already joins and wraps for anyone waiting.

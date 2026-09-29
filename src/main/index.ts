@@ -19,6 +19,7 @@ import { registerFactoryIpc } from './factory/ipc'
 import { registerPhoneIpc, restorePhoneIfWanted, stopPhone } from './phone'
 import { registerMediaIpc } from './media/ipc'
 import { handleBrainMediaProtocol, registerBrainMediaScheme } from './media/protocol'
+import { clearMediaTemp } from './media/export'
 import { startMediaStatePoll } from './media/state-poll'
 import { refreshTray, startTray } from './tray'
 
@@ -112,6 +113,7 @@ function pushHealth(): void {
 }
 
 app.whenReady().then(() => {
+  clearMediaTemp()
   handleBrainMediaProtocol()
   if (process.env.BRAIN_CHECK_WINDOW === '1') return
   if (process.env.BRAIN_APP_SETUP_DRIVE === '1') {
@@ -177,6 +179,7 @@ app.on('window-all-closed', () => {
 })
 app.on('before-quit', (e) => {
   allowQuit = true
+  clearMediaTemp()
   if (quitFlushed) {
     void stopPhone()
     killAllPtys()
