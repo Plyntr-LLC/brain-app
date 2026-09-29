@@ -13,6 +13,7 @@ test('strict is needed for T2, elevated, critical, and MyPuppies paths only', ()
   assert.equal(strictNeeded({ tier: 'T0', risk: 'none', workRepo: '/x/MyPuppies-site' }), true)
   assert.equal(strictNeeded({ tier: 'T0', risk: 'none', workRepo: '/x/site' }), false)
   assert.equal(strictNeeded({ tier: 'T1', risk: 'none', workRepo: '/x/site' }), false)
+  assert.equal(strictNeeded({ tier: 'T0', risk: 'none', workRepo: '/x/site', shipThrough: true }), true)
 })
 
 test('strict prompt names the skill by path and never pastes its body', () => {
@@ -93,7 +94,7 @@ test('opus effort is always medium; never high or xhigh', () => {
 })
 
 test('reviewAccept: gaps are never a PASS', () => {
-  assert.equal(REVIEW_MAX, 6)
+  assert.equal(REVIEW_MAX, 13)
   assert.deepEqual(reviewAccept('Looks right.\nGAPS: 0\nPASS'), { status: 'pass', gaps: 0, why: '' })
   assert.equal(reviewAccept('**GAPS: 0**\n**PASS**').status, 'pass')
   assert.deepEqual(reviewAccept('ok\nPASS'), { status: 'fail', gaps: null, why: 'PASS without GAPS: 0' })

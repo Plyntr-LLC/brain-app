@@ -39,7 +39,7 @@ registerHooks({
     if (url === 'stub:electron') {
       const source = `export const app = { getVersion: () => '0.0.0', getPath: () => globalThis.__userData, isPackaged: false }
 export const BrowserWindow = { getAllWindows: () => globalThis.__brainWindows || [], fromWebContents: () => null }
-export const clipboard = {}, dialog = {}, ipcMain = { handle() {}, on() {} }, Menu = {}, nativeImage = {}, shell = {}, Tray = class {}
+export const clipboard = {}, dialog = {}, ipcMain = { handle(name, fn) { (globalThis.__fipc ||= new Map()).set(name, fn) }, on() {} }, Menu = {}, nativeImage = {}, shell = {}, Tray = class {}
 export default { app, BrowserWindow }`
       return { format: 'module', shortCircuit: true, source }
     }
@@ -696,7 +696,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   check('S2 4 plan by Opus waits for Approve', r?.phase === 'plan' && r.plan?.by === 'opus' && r.plan.status === 'waiting' && r.plan.text.startsWith('Opus plan') && r.plan.rejects === 2, JSON.stringify({ phase: r?.phase, plan: r?.plan, error: r?.error }))
 
   // Approve: build with the plan path line at Grok xhigh (Opus plan), verify with e2e, strict FAIL six times (a PASS with gaps is a FAIL): five automatic fixes, then the hold.
-  claudeSays(['a.ts:1 is wrong\nGAPS: 1\nFAIL', 'still wrong at a.ts:1\nFAIL', 'ok\nPASS', 'One nit: rename x.\nGAPS: 0\nPASS', 'a.ts:5 wrong\nGAPS: 1\nFAIL', 'still wrong at a.ts:9\nGAPS: 1\nFAIL'])
+  claudeSays(['a.ts:1 is wrong\nGAPS: 1\nFAIL', 'still wrong at a.ts:1\nFAIL', 'ok\nPASS', 'One nit: rename x.\nGAPS: 0\nPASS', ...Array(shared.REVIEW_MAX - 5).fill('a.ts:5 wrong\nGAPS: 1\nFAIL'), 'still wrong at a.ts:9\nGAPS: 1\nFAIL'])
   const p3 = promptCount()
   const e3 = effortCount()
   const c1 = claudeRows().length
@@ -713,8 +713,8 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   const fixes = [...grokFixes, ...builds.map((x) => x.argv[1])]
   check('S2 8 T2 has no self-check turn', !after.some((t) => /Role: self-check/.test(t)))
   check(
-    'S2 8 six fails send five auto fix turns (two Grok, then three Opus) with the Reviewer notes path',
-    grokFixes.length === 2 && builds.length === 3 && fixes.every((f) => /Phase: fix\./.test(f) && f.includes(`Reviewer notes: ${store.runTextPath(id, 'review')}. Fix what it names.`)),
+    `S2 8 ${shared.REVIEW_MAX} fails send ${shared.REVIEW_MAX - 1} auto fix turns (two Grok, then Opus) with the Reviewer notes path`,
+    grokFixes.length === 2 && builds.length === shared.REVIEW_MAX - 3 && fixes.every((f) => /Phase: fix\./.test(f) && f.includes(`Reviewer notes: ${store.runTextPath(id, 'review')}. Fix what it names.`)),
     JSON.stringify({ grok: grokFixes.length, opus: builds.length })
   )
   check('S2 8 a PASS without GAPS and a PASS naming a nit are fails', fixes.some((f) => f.includes('PASS without GAPS: 0')) && fixes.some((f) => f.includes('PASS named gaps')), JSON.stringify(fixes.map((f) => f.split('\n').find((l) => l.startsWith('Note:')))))
@@ -726,15 +726,15 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
     const strict = block.filter((x) => modeOf(x) === 'plan' && x.argv[1].includes('strict code review skill'))
     const builders = block.filter((x) => modeOf(x) === 'bypassPermissions')
     check(
-      'STRICT LOW 3 planners at medium, 6 strict reviews at low, 3 Opus builders at medium',
-      planners.length === 3 && planners.every((x) => eff(x) === 'medium') && strict.length === 6 && strict.every((x) => eff(x) === 'low') && builders.length === 3 && builders.every((x) => eff(x) === 'medium'),
+      'STRICT LOW 3 planners at medium, REVIEW_MAX strict reviews at low, the Opus builders at medium',
+      planners.length === 3 && planners.every((x) => eff(x) === 'medium') && strict.length === shared.REVIEW_MAX && strict.every((x) => eff(x) === 'low') && builders.length === shared.REVIEW_MAX - 3 && builders.every((x) => eff(x) === 'medium'),
       JSON.stringify({ planners: planners.map(eff), strict: strict.map(eff), builders: builders.map(eff) })
     )
   }
   const buildPids = builds.map((x) => x.pid)
   check(
     'FB 4 after two Grok review fixes (reviewCycles 3) the next fix spawns claude --permission-mode bypassPermissions; plan and review stay plan mode; distinct pids',
-    builds.length === 3 &&
+    builds.length === shared.REVIEW_MAX - 3 &&
       builds.every((x) => x.argv.includes('--model') && x.argv[x.argv.indexOf('--effort') + 1] === 'medium' && realish(x.cwd) === realish(work2) && x.stdinBytes === 0 && !x.anthropic && !x.argv.includes('--bare')) &&
       [planner1, planner2, row, ...reviews].every((x) => !!x && modeOf(x) === 'plan') &&
       new Set([...buildPids, ...reviews.map((x) => x.pid), planner1?.pid, planner2?.pid, row?.pid]).size === buildPids.length + reviews.length + 3 &&
@@ -743,13 +743,13 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   )
   check('FB 4 the Opus builder never became the run builder (Grok still the grunt)', (r?.builder || 'grok') === 'grok', String(r?.builder))
   const plannerPids = [planner1?.pid, planner2?.pid, row?.pid]
-  check('S2 8 reviewers are never the planner process', reviews.length === 6 && reviews.every((x) => !plannerPids.includes(x.pid)), JSON.stringify({ planners: plannerPids, reviewers: reviews.map((x) => x.pid) }))
+  check('S2 8 reviewers are never the planner process', reviews.length === shared.REVIEW_MAX && reviews.every((x) => !plannerPids.includes(x.pid)), JSON.stringify({ planners: plannerPids, reviewers: reviews.map((x) => x.pid) }))
   check(
-    'S2 8 exactly 6 claude review spawns, each a new process, prompt asks for GAPS then PASS/FAIL',
-    reviews.length === 6 && new Set(reviews.map((x) => x.pid)).size === 6 && reviews.every((x) => x.argv[1].includes('strict-code-review/SKILL.md') && x.argv[1].trimEnd().endsWith('PASS only with GAPS: 0.')),
+    `S2 8 exactly ${shared.REVIEW_MAX} claude review spawns, each a new process, prompt asks for GAPS then PASS/FAIL`,
+    reviews.length === shared.REVIEW_MAX && new Set(reviews.map((x) => x.pid)).size === shared.REVIEW_MAX && reviews.every((x) => x.argv[1].includes('strict-code-review/SKILL.md') && x.argv[1].trimEnd().endsWith('PASS only with GAPS: 0.')),
     JSON.stringify(reviews.map((x) => x.pid))
   )
-  check('S2 8 the sixth fail holds in review with the FAIL text and reviewCycles 6, no auto-commit', r?.phase === 'review' && !!r.diff && r.reviewCycles === 6 && r.strict?.status === 'fail' && r.strict.text.includes('a.ts:9') && store.loadRun(id)?.reviewCycles === 6 && !r.commitSha, JSON.stringify({ phase: r?.phase, cycles: r?.reviewCycles, strict: r?.strict, error: r?.error }))
+  check('S2 8 the last fail holds in review with the FAIL text and reviewCycles REVIEW_MAX, no auto-commit', r?.phase === 'review' && !!r.diff && r.reviewCycles === shared.REVIEW_MAX && r.strict?.status === 'fail' && r.strict.text.includes('a.ts:9') && store.loadRun(id)?.reviewCycles === shared.REVIEW_MAX && !r.commitSha, JSON.stringify({ phase: r?.phase, cycles: r?.reviewCycles, strict: r?.strict, error: r?.error }))
   check('S2 8 no Joe guide reached a reviewer', reviews.every((x) => !x.argv[1].includes('Joe says')))
   // Keep fixing after the hold: one Opus builder fix (past two review fixes), then a sixth fresh reviewer; still held (cycles past 5).
   claudeSays(['a.ts:9 still\nGAPS: 1\nFAIL'])
@@ -759,19 +759,19 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   r = await ctl.settle(id)
   const kf = opusBuilds(claudeRows().slice(c4))
   const r6 = opusReviews(claudeRows().slice(c4))
-  check('S2 8 keep-fix: one Opus fix turn, then another fresh Opus review, held again at 7', promptCount() === p4 && kf.length === 1 && /Phase: fix\./.test(kf[0].argv[1]) && r6.length === 1 && !reviews.some((x) => x.pid === r6[0].pid) && r?.phase === 'review' && r.reviewCycles === 7 && r.strict?.status === 'fail', JSON.stringify({ turns: kf.length, spawns: r6.length, phase: r?.phase, cycles: r?.reviewCycles }))
+  check('S2 8 keep-fix: one Opus fix turn, then another fresh Opus review, held again at REVIEW_MAX + 1', promptCount() === p4 && kf.length === 1 && /Phase: fix\./.test(kf[0].argv[1]) && r6.length === 1 && !reviews.some((x) => x.pid === r6[0].pid) && r?.phase === 'review' && r.reviewCycles === shared.REVIEW_MAX + 1 && r.strict?.status === 'fail', JSON.stringify({ turns: kf.length, spawns: r6.length, phase: r?.phase, cycles: r?.reviewCycles }))
   // Re-review: a fresh Opus only, no builder turn.
   claudeSays(['a.ts:9 still\nGAPS: 1\nFAIL'])
   const p5 = promptCount()
   const c5 = claudeRows().length
   ctl.decideRun(id, 're-review')
   r = await ctl.settle(id)
-  check('S2 8 re-review: no builder turn, one new claude, held at 8', promptCount() === p5 && claudeRows().length === c5 + 1 && r?.phase === 'review' && r.reviewCycles === 8 && !!r.diff, JSON.stringify({ phase: r?.phase, cycles: r?.reviewCycles }))
+  check('S2 8 re-review: no builder turn, one new claude, held at REVIEW_MAX + 2', promptCount() === p5 && claudeRows().length === c5 + 1 && r?.phase === 'review' && r.reviewCycles === shared.REVIEW_MAX + 2 && !!r.diff, JSON.stringify({ phase: r?.phase, cycles: r?.reviewCycles }))
   const done = ctl.commitRunNow(id)
   check('S2 8 Commit anyway commits and records the branch', done.phase === 'done' && done.branch === 'main' && git(work2, ['rev-parse', 'HEAD']).trim() === done.commitSha)
   const before = git(bare, ['for-each-ref']).trim()
   const pushed = await ctl.publishRun(id)
-  check('S2 9 Push on main is refused and the remote is unchanged', !pushed.pushed && /does not push to main/.test(pushed.pushError || '') && git(bare, ['for-each-ref']).trim() === before && ctl.publishBlockFor(id) === pushed.pushError, pushed.pushError)
+  check('S2 9 Push on main pushes (Joe 2026-09-29): the remote main is the commit', !!pushed.pushed && pushed.pushed.branch === 'main' && git(bare, ['rev-parse', 'refs/heads/main']).trim() === done.commitSha && git(bare, ['for-each-ref']).trim() !== before, JSON.stringify({ pushed: pushed.pushed, err: pushed.pushError }))
 }
 
 // 4. Third reject pauses; with no claude, the first plan and a reject both pause.
@@ -918,7 +918,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   const call = voiceCalls[0]
   check('S2 10 voice stub called with doppler team-brain dev and the check script', !!call && call.bin === 'doppler' && call.args.slice(0, 7).join(' ') === 'run -p team-brain -c dev -- node' && call.args.some((a) => a.startsWith('--file=')) && call.args.includes('--register=email') && call.args.includes('--audience=client'), JSON.stringify(call?.args))
   check('S2 10 only added copy lines go in, tmp file deleted', call?.body.trim() === 'Best sites ever, buy now!' && !existsSync(String(call?.args.find((a) => a.startsWith('--file='))).slice(7)))
-  check('S2 10 REJECT fixes itself 5 times, then holds in review', r?.phase === 'review' && r.voice?.status === 'fail' && r.voiceCycles === 5 && voiceCalls.length === 6, JSON.stringify({ phase: r?.phase, voice: r?.voice, cycles: r?.voiceCycles, calls: voiceCalls.length, error: r?.error }))
+  check('S2 10 REJECT fixes itself VOICE_MAX times, then holds in review', r?.phase === 'review' && r.voice?.status === 'fail' && r.voiceCycles === shared.VOICE_MAX && voiceCalls.length === shared.VOICE_MAX + 1, JSON.stringify({ phase: r?.phase, voice: r?.voice, cycles: r?.voiceCycles, calls: voiceCalls.length, error: r?.error }))
   let hold = ''
   try {
     ctl.commitRunNow(id)
@@ -929,7 +929,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   voiceCode = 0
   ctl.decideRun(id, 'fix-copy')
   r = await ctl.settle(id)
-  check('S2 10 Fix copy then APPROVE passes', r?.phase === 'review' && r.voice?.status === 'pass' && voiceCalls.length === 7, JSON.stringify({ phase: r?.phase, voice: r?.voice }))
+  check('S2 10 Fix copy then APPROVE passes', r?.phase === 'review' && r.voice?.status === 'pass' && voiceCalls.length === shared.VOICE_MAX + 2, JSON.stringify({ phase: r?.phase, voice: r?.voice }))
   fakeDeps.voiceCheckPath = join(temp, 'no-such-check.cjs')
   ctl.configureFactory(fakeDeps)
   ctl.abandonRun(id)
@@ -937,7 +937,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   const res2 = ctl.startRun({ task: 'fix typo in README.md', workRepo: work2, brainPath: brainA })
   const id2 = res2.ok ? res2.run.id : ''
   const r2 = await ctl.settle(id2)
-  check('S2 10 missing VOICE_CHECK gives skipped, not a fail', r2?.phase === 'review' && r2.voice?.status === 'skipped' && voiceCalls.length === 7, JSON.stringify({ phase: r2?.phase, voice: r2?.voice }))
+  check('S2 10 missing VOICE_CHECK gives skipped, not a fail', r2?.phase === 'review' && r2.voice?.status === 'skipped' && voiceCalls.length === shared.VOICE_MAX + 2, JSON.stringify({ phase: r2?.phase, voice: r2?.voice }))
   ctl.abandonRun(id2)
   reset2()
   profiles.saveProfile(work2, { voice: { on: false } })
@@ -1074,32 +1074,35 @@ ctl.configureFactory(fakeDeps)
   const id2 = res2.ok ? res2.run.id : ''
   const r2 = await ctl.settle(id2)
   check(
-    'UX 7 shipThrough on main: commit, pushError set, no push call, remote unchanged',
-    r2?.phase === 'done' && !!r2.commitSha && !r2.pushed && /does not push to main/.test(r2.pushError || '') && pushCalls === push1 && git(bare, ['for-each-ref']).trim() === refs,
-    JSON.stringify({ phase: r2?.phase, err: r2?.pushError })
+    'UX 7 shipThrough on main: commit, then one push to main after the Opus pass',
+    r2?.phase === 'done' && !!r2.commitSha && r2.pushed?.branch === 'main' && pushCalls === push1 + 1 && git(bare, ['rev-parse', 'refs/heads/main']).trim() === r2.commitSha && git(bare, ['for-each-ref']).trim() !== refs,
+    JSON.stringify({ phase: r2?.phase, err: r2?.pushError, pushed: r2?.pushed })
   )
+  const push2 = pushCalls
 
   execFileSync('/bin/rm', ['-f', claudeBin])
   const head2 = git(work2, ['rev-parse', 'HEAD']).trim()
   const res3 = ctl.startRun({ task: APITASK, workRepo: work2, brainPath: brainA, runThrough: true, shipThrough: true })
   const id3 = res3.ok ? res3.run.id : ''
   const r3 = await ctl.settle(id3)
-  check('UX 7 missing claude: no auto-commit and no push, even with both boxes', r3?.phase === 'review' && r3.strict?.status === 'missing' && !r3.commitSha && git(work2, ['rev-parse', 'HEAD']).trim() === head2 && pushCalls === push1, JSON.stringify({ phase: r3?.phase, strict: r3?.strict }))
+  check('UX 7 missing claude: no auto-commit and no push, even with both boxes', r3?.phase === 'review' && r3.strict?.status === 'missing' && !r3.commitSha && git(work2, ['rev-parse', 'HEAD']).trim() === head2 && pushCalls === push2, JSON.stringify({ phase: r3?.phase, strict: r3?.strict }))
   ctl.abandonRun(id3)
   reset2()
   installClaude()
 
   const c0 = claudeRows().length
+  claudeSays(['Checked it.\nGAPS: 0\nPASS'])
   const res4 = ctl.startRun({ task: 'fix typo in the app label', workRepo: work2, brainPath: brainA, shipThrough: true })
   const id4 = res4.ok ? res4.run.id : ''
   const r4 = await ctl.settle(id4)
-  check('UX 7 plain T0 with only shipThrough: no Opus, waits on Commit, never pushes', res4.ok && res4.run.tier === 'T0' && r4?.phase === 'review' && !!r4.diff && !r4.commitSha && claudeRows().length === c0 && pushCalls === push1, JSON.stringify({ phase: r4?.phase, tier: r4?.tier }))
+  check('UX 7 plain T0 with only shipThrough: an Opus review at low, then commit and push to main', res4.ok && res4.run.tier === 'T0' && r4?.phase === 'done' && !!r4.commitSha && r4.pushed?.branch === 'main' && opusReviews(claudeRows().slice(c0)).length === 1 && opusReviews(claudeRows().slice(c0)).every((x) => x.argv[x.argv.indexOf('--effort') + 1] === 'low') && pushCalls === push2 + 1, JSON.stringify({ phase: r4?.phase, tier: r4?.tier }))
+  const push4 = pushCalls
   ctl.abandonRun(id4)
   reset2()
 
   // UX 8 + 9: every review names a nit under PASS: never a pass; five auto fixes, held at 6, no commit, no push.
   const nit = 'Looks fine. One nit: rename x, a non-blocker.\nGAPS: 0\nPASS'
-  claudeSays([nit, nit, nit, nit, nit, nit])
+  claudeSays(Array(shared.REVIEW_MAX).fill(nit))
   const head5 = git(work2, ['rev-parse', 'HEAD']).trim()
   const p5 = promptCount()
   const cu5 = claudeRows().length
@@ -1107,11 +1110,11 @@ ctl.configureFactory(fakeDeps)
   const id5 = res5.ok ? res5.run.id : ''
   let r5 = await ctl.settle(id5)
   check(
-    'UX 8 PASS naming nits never auto-commits: held at 6 with both boxes on',
-    r5?.phase === 'review' && !!r5.diff && r5.reviewCycles === 6 && r5.strict?.status === 'fail' && r5.strict.text.startsWith('PASS named gaps') && !r5.commitSha && git(work2, ['rev-parse', 'HEAD']).trim() === head5 && pushCalls === push1,
+    'UX 8 PASS naming nits never auto-commits: held at REVIEW_MAX with both boxes on',
+    r5?.phase === 'review' && !!r5.diff && r5.reviewCycles === shared.REVIEW_MAX && r5.strict?.status === 'fail' && r5.strict.text.startsWith('PASS named gaps') && !r5.commitSha && git(work2, ['rev-parse', 'HEAD']).trim() === head5 && pushCalls === push4,
     JSON.stringify({ phase: r5?.phase, cycles: r5?.reviewCycles, strict: r5?.strict?.text.slice(0, 40), sha: r5?.commitSha })
   )
-  check('UX 9 five auto fix turns before the hold (two Grok, three Opus)', promptsFrom(p5).filter((t) => /Phase: fix\./.test(t)).length === 2 && opusBuilds(claudeRows().slice(cu5)).length === 3)
+  check('UX 9 REVIEW_MAX - 1 auto fix turns before the hold (two Grok, then Opus)', promptsFrom(p5).filter((t) => /Phase: fix\./.test(t)).length === 2 && opusBuilds(claudeRows().slice(cu5)).length === shared.REVIEW_MAX - 3)
 
   // UX 6: Guide on a held reject is Keep fixing with that note, then a fresh reviewer that never sees the note.
   claudeSays(['Checked it.\nGAPS: 0\nPASS'])
@@ -1127,7 +1130,7 @@ ctl.configureFactory(fakeDeps)
     JSON.stringify({ turns: g6.length, spawns: rev6.length })
   )
   check('UX 6 guide note is on the run and marked sent', r5?.guide?.length === 1 && r5.guide[0].text === 'Rename x to count in src/app.ts' && r5.guide[0].sent === true)
-  check('UX 9 clean pass after keep fixing is an Opus approval: runThrough + shipThrough commit, main refuses the push', r5?.phase === 'done' && !!r5.commitSha && /does not push to main/.test(r5.pushError || '') && pushCalls === push1, JSON.stringify({ phase: r5?.phase, err: r5?.pushError }))
+  check('UX 9 clean pass after keep fixing is an Opus approval: runThrough + shipThrough commit and push to main', r5?.phase === 'done' && !!r5.commitSha && r5.pushed?.branch === 'main' && pushCalls === push4 + 1, JSON.stringify({ phase: r5?.phase, err: r5?.pushError, pushed: r5?.pushed }))
   if (r5?.phase !== 'done') ctl.abandonRun(id5)
   fakeDeps.publish = publish0
   ctl.configureFactory(fakeDeps)
@@ -2136,9 +2139,9 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
     git(onMaster, ['remote', 'rename', 'upstream', 'origin'])
     const w4b = warnOf(onMaster, true)
     check('PW 1 no remote: says so and names origin', w1 === 'No remote named origin. Factory commits here but cannot push.', String(w1))
-    check('PW 2 Ship in advance on main with a remote: protected line naming main', w2 === 'On main. Ship in advance commits but Brain never pushes main.', String(w2))
+    check('PW 2 Ship in advance on main with a remote: no warning (main pushes)', w2 === undefined, String(w2))
     check('PW 3 no Ship in advance on main: no warning', w3 === undefined, String(w3))
-    check('PW 4 remote upstream on master: protected line naming master; with only origin, no remote named upstream', w4a === 'On master. Ship in advance commits but Brain never pushes master.' && w4b === 'No remote named upstream. Factory commits here but cannot push.', JSON.stringify({ w4a, w4b }))
+    check('PW 4 remote upstream on master: no warning (master pushes); with only origin, no remote named upstream', w4a === undefined && w4b === 'No remote named upstream. Factory commits here but cannot push.', JSON.stringify({ w4a, w4b }))
     check('PW 5 feature branch with a remote: no warning', w5 === undefined, String(w5))
     // A move from the no-remote repo onto the feature branch repo clears the line.
     const m = ctl.startRun({ task: 'fix typo in the app label', workRepo: noRemote, brainPath: brainA })
@@ -2460,7 +2463,7 @@ process.stdout.write(JSON.stringify({ type: 'end', stopReason: 'end_turn', usage
         writeFileSync(join(evB, 'NOTES.md'), `Release note ${n}\n`)
       }
     }
-    claudeSays(['CODEMARK_STRICT at src/a.ts:1\nGAPS: 1\nFAIL', ...Array(7).fill('GAPS: 0\nPASS')])
+    claudeSays(['CODEMARK_STRICT at src/a.ts:1\nGAPS: 1\nFAIL', ...Array(shared.VOICE_MAX + 2).fill('GAPS: 0\nPASS')])
     const res = ctl.startRun({ task: EVTASK, workRepo: evB, brainPath: brainEv, runThrough: false, shipThrough: false })
     bId = res.ok ? res.run.id : ''
     const r = await ctl.settle(bId)
@@ -2667,13 +2670,13 @@ process.stdout.write(JSON.stringify({ type: 'end', stopReason: 'end_turn', usage
     await ctl.settle(B.id)
     const bAfter = ctl.getRun(B.id)
     ctl.commitRunNow(B.id, { by: 'joe' })
-    const C = await evStart(evG, Array(6).fill('Bug at src/a.ts:1\nGAPS: 1\nFAIL'))
+    const C = await evStart(evG, Array(shared.REVIEW_MAX).fill('Bug at src/a.ts:1\nGAPS: 1\nFAIL'))
     gIds.push(C.id)
-    const cHeld = C.r?.reviewCycles === 6 && C.r?.phase === 'review'
+    const cHeld = C.r?.reviewCycles === shared.REVIEW_MAX && C.r?.phase === 'review'
     ctl.commitRunNow(C.id, { by: 'joe' })
     profiles.saveProfile(evG, { voice: { on: true } })
     voiceCode = 2
-    const D = await evStart(evG, Array(7).fill('GAPS: 0\nPASS'))
+    const D = await evStart(evG, Array(shared.VOICE_MAX + 2).fill('GAPS: 0\nPASS'))
     gIds.push(D.id)
     ctl.abandonRun(D.id, { by: 'joe' })
     voiceCode = 0
@@ -3072,14 +3075,14 @@ setTimeout(() => {
       const r = copyRepo('ev-vl2')
       copyWriter(r)
       voiceSays.length = 0
-      for (let i = 0; i < 6; i++) voiceSays.push(REJ)
+      for (let i = 0; i <= shared.VOICE_MAX; i++) voiceSays.push(REJ)
       const p0 = promptCount()
       const c0 = claudeRows().length
       const res = ctl.startRun({ task: TYPO, workRepo: r, brainPath: brainEv, runThrough: true })
       const id = res.ok ? res.run.id : ''
       const held = await ctl.settle(id)
       const fixes = fixPrompts(p0)
-      check('VL 2 six REJECTs: five automatic fixes, then a hold at voiceCycles 5, no commit', fixes.length === 5 && held?.phase === 'review' && held.voice?.status === 'fail' && held.voiceCycles === 5 && !held.commitSha && /attempt 5 of 5/.test(fixes[4] || ''), JSON.stringify({ n: fixes.length, phase: held?.phase, cycles: held?.voiceCycles }))
+      check('VL 2 VOICE_MAX + 1 REJECTs: VOICE_MAX automatic fixes, then a hold at voiceCycles VOICE_MAX, no commit', fixes.length === shared.VOICE_MAX && held?.phase === 'review' && held.voice?.status === 'fail' && held.voiceCycles === shared.VOICE_MAX && !held.commitSha && new RegExp(`attempt ${shared.VOICE_MAX} of ${shared.VOICE_MAX}`).test(fixes[shared.VOICE_MAX - 1] || ''), JSON.stringify({ n: fixes.length, phase: held?.phase, cycles: held?.voiceCycles }))
       check('VL 2 voice fixes never spawn the Opus builder', !claudeRows().slice(c0).some((x) => modeOf(x) === 'bypassPermissions'))
       const pq = promptCount()
       await ctl.settle(id)
@@ -3112,7 +3115,7 @@ setTimeout(() => {
       const r = copyRepo('ev-vl3b')
       copyWriter(r)
       voiceSays.length = 0
-      for (let i = 0; i < 6; i++) voiceSays.push(REJ)
+      for (let i = 0; i <= shared.VOICE_MAX; i++) voiceSays.push(REJ)
       const res = ctl.startRun({ task: TYPO, workRepo: r, brainPath: brainEv, runThrough: true })
       const id = res.ok ? res.run.id : ''
       await ctl.settle(id)
@@ -3120,12 +3123,12 @@ setTimeout(() => {
       const p1 = promptCount()
       ctl.guideRun(id, 'Say it plainly.')
       const again = await ctl.settle(id)
-      check('VL 3b Guide at the cap: exactly one fix turn, the next REJECT holds again at 5', fixPrompts(p1).length === 1 && again?.phase === 'review' && again.voice?.status === 'fail' && again.voiceCycles === 5, JSON.stringify({ n: fixPrompts(p1).length, phase: again?.phase, cycles: again?.voiceCycles }))
+      check('VL 3b Guide at the cap: exactly one fix turn, the next REJECT holds again at VOICE_MAX', fixPrompts(p1).length === 1 && again?.phase === 'review' && again.voice?.status === 'fail' && again.voiceCycles === shared.VOICE_MAX, JSON.stringify({ n: fixPrompts(p1).length, phase: again?.phase, cycles: again?.voiceCycles }))
       ctl.dropMemory()
       const back = ctl.restoreRun(id)
       const p2 = promptCount()
       await ctl.settle(id)
-      check('VL 3b after a restart voiceCycles is still 5 and nothing starts', back?.voiceCycles === 5 && promptCount() === p2, JSON.stringify({ cycles: back?.voiceCycles, phase: back?.phase }))
+      check('VL 3b after a restart voiceCycles is still VOICE_MAX and nothing starts', back?.voiceCycles === shared.VOICE_MAX && promptCount() === p2, JSON.stringify({ cycles: back?.voiceCycles, phase: back?.phase }))
       voiceSays.push(APP)
       const p3 = promptCount()
       ctl.guideRun(id, 'Plainer, please.')
@@ -3173,8 +3176,159 @@ setTimeout(() => {
       check('VL 6 Fix copy when voice did not hold refuses', msg === 'The voice check did not hold this run.', msg)
       ctl.abandonRun(id)
     }
-    check('ST 6 the Opus hold line says five fixes', ctl.HELD_LINE === 'Opus has not approved after 5 fixes. Gaps still count.' && shared.REVIEW_MAX === 6, ctl.HELD_LINE)
+    check('ST 6 twelve tries: the Opus hold line says 12 fixes; REVIEW_MAX 13, VOICE_MAX 12', ctl.HELD_LINE === 'Opus has not approved after 12 fixes. Gaps still count.' && ctl.VOICE_HELD_LINE === 'Voice has not approved after 12 fixes.' && shared.REVIEW_MAX === 13 && shared.VOICE_MAX === 12, ctl.HELD_LINE)
     voiceSays.length = 0
+  }
+
+  // PM. Push main by click and by Ship in advance; staging/prod/production and Kennel stay gated; Push anyway through the real IPC.
+  {
+    const fIpc = (await import(src('factory/ipc.ts'))) as typeof import('../src/main/factory/ipc.ts')
+    fIpc.registerFactoryIpc()
+    const fipc = (globalThis as { __fipc?: Map<string, (...a: unknown[]) => unknown> }).__fipc
+    let pc = 0
+    const pushDeps = { publish: async (r: string, t: Parameters<typeof gates.publish>[1], over?: Parameters<typeof gates.publish>[3]) => (pc++, gates.publish(r, t, undefined, over)) }
+    use(pushDeps)
+    const call = async (name: string, id: string) => {
+      const fn = fipc?.get(name)
+      if (!fn) throw new Error('no factory IPC handler ' + name)
+      return (await fn({}, id)) as { ok: boolean; run?: import('../src/shared/factory.ts').RunRecord; offer?: boolean; block?: string | null; error?: string }
+    }
+    const remoteRepo = (name: string, branch = 'main') => {
+      const r = evRepo(name)
+      const b = join(temp, `${name}-origin.git`)
+      mkdirSync(b)
+      git(b, ['init', '-q', '--bare', '-b', 'main'])
+      git(r, ['remote', 'add', 'origin', b])
+      if (branch !== 'main') git(r, ['checkout', '-q', '-b', branch])
+      writer(r)
+      return { r, b, refs: () => git(b, ['for-each-ref']).trim(), at: (br: string) => (git(b, ['for-each-ref', `refs/heads/${br}`]).trim().split(' ')[0] || '') }
+    }
+    const PLAIN = 'Refresh the release notes and counter value'
+    const PASS = 'GAPS: 0\nPASS'
+
+    // PM 1: Approve in advance, Ship off: done and committed, not pushed; the click pushes main.
+    {
+      const x = remoteRepo('ev-pm1')
+      const p0 = pc
+      const { id, r } = await evStart(x.r, [PASS], { through: true })
+      const before = { phase: r?.phase, sha: r?.commitSha, pushed: !!r?.pushed, calls: pc - p0, main: x.at('main') }
+      const clicked = await call('factory:publish', id)
+      check('PM 1 Approve in advance alone commits and does not push; the Push click pushes main once', before.phase === 'done' && !!before.sha && !before.pushed && before.calls === 0 && before.main === '' && clicked.ok && pc - p0 === 1 && x.at('main') === before.sha, JSON.stringify({ before, after: pc - p0, main: x.at('main') }))
+    }
+    // PM 2: plain T1 on main with Ship in advance: an Opus review at low, then a push. FAIL×REVIEW_MAX holds with no push.
+    {
+      const x = remoteRepo('ev-pm2')
+      const c0 = claudeRows().length
+      const { r } = await evStart(x.r, [PASS], { ship: true, task: PLAIN })
+      const revs = opusReviews(claudeRows().slice(c0))
+      check('PM 2 plain run with Ship in advance gets an Opus review at low, then pushes main', revs.length === 1 && revs[0].argv[revs[0].argv.indexOf('--effort') + 1] === 'low' && r?.phase === 'done' && r.pushed?.branch === 'main' && x.at('main') === r.commitSha, JSON.stringify({ revs: revs.length, phase: r?.phase, pushed: r?.pushed, err: r?.pushError }))
+      const y = remoteRepo('ev-pm2b')
+      const { r: held } = await evStart(y.r, Array(shared.REVIEW_MAX).fill('Bug\nGAPS: 1\nFAIL'), { ship: true, task: PLAIN })
+      check('PM 2 Ship in advance with REVIEW_MAX fails holds at REVIEW_MAX, no push, remote unchanged', held?.phase === 'review' && held.reviewCycles === shared.REVIEW_MAX && !held.pushed && y.refs() === '', JSON.stringify({ phase: held?.phase, cycles: held?.reviewCycles }))
+    }
+    // PM 3: Ship in advance off, plain run: no Opus review, no push.
+    {
+      const x = remoteRepo('ev-pm3')
+      const c0 = claudeRows().length
+      const p0 = pc
+      const { id, r } = await evStart(x.r, [], { task: PLAIN })
+      check('PM 3 plain run without Ship in advance: no claude spawn, no push', claudeRows().length === c0 && pc === p0 && !r?.pushed && x.refs() === '', JSON.stringify({ spawns: claudeRows().length - c0, phase: r?.phase }))
+      ctl.abandonRun(id)
+    }
+    // PM 4: staging, prod, production stay refused by click and by Ship in advance; Start names the branch.
+    for (const br of ['staging', 'prod', 'production']) {
+      const x = remoteRepo(`ev-pm4-${br}`, br)
+      const { id, r, res } = await evStart(x.r, [PASS], { through: true, ship: true })
+      const clicked = await call('factory:publish', id)
+      check(`PM 4 ${br}: Ship in advance and the Push click both refuse; the remote is unchanged; Start names ${br}`, r?.phase === 'done' && !r.pushed && clicked.run?.pushError === `Brain does not push to ${br}. Push it from Terminal after review.` && x.refs() === '' && (res.ok ? res.run.pushWarn || '' : '').includes(br), JSON.stringify({ err: clicked.run?.pushError, warn: res.ok ? res.run.pushWarn : res }))
+    }
+    // PM 5: Kennel main, master, staging refused by click and auto; Start names the gate; factory/x pushes.
+    for (const br of ['main', 'master', 'staging']) {
+      const x = remoteRepo(`mykennel-web-${br}`, br)
+      const c0 = claudeRows().length
+      const { id, r, res } = await evStart(x.r, [PASS], { through: true, ship: true })
+      const spawnsBefore = claudeRows().length
+      const clicked = await call('factory:publish', id)
+      check(`PM 5 Kennel ${br}: auto and the Push click refuse with the Kennel sentence; Start names the gate`, r?.phase === 'done' && !r.pushed && clicked.run?.pushError === gates.KENNEL_PUSH_REFUSAL && claudeRows().length === spawnsBefore && x.refs() === '' && (res.ok ? res.run.pushWarn || '' : '').includes('Kennel gate'), JSON.stringify({ err: clicked.run?.pushError, warn: res.ok ? res.run.pushWarn : res, spawns: spawnsBefore - c0 }))
+    }
+    {
+      const x = remoteRepo('mykennel-web-feature', 'factory/x')
+      const { r } = await evStart(x.r, [PASS], { through: true, ship: true })
+      check('PM 5 Kennel on factory/x pushes as before', r?.pushed?.branch === 'factory/x' && x.at('factory/x') === r.commitSha, JSON.stringify({ pushed: r?.pushed, err: r?.pushError }))
+    }
+    // PM 6: guards on main.
+    {
+      const x = remoteRepo('ev-pm6')
+      const { id, r } = await evStart(x.r, [PASS], { through: true })
+      git(x.r, ['push', '-q', 'origin', 'main'])
+      const clicked = await call('factory:publish', id)
+      const direct = gates.publishBlock({ repo: x.r, remote: 'origin', branch: 'main', sha: r?.commitSha || '' })
+      check('PM 6 already pushed by hand: the click and publishBlock both say already pushed; remote unchanged', clicked.run?.pushError === 'Already pushed to origin/main.' && direct === 'Already pushed to origin/main.' && x.at('main') === r?.commitSha, JSON.stringify({ err: clicked.run?.pushError, direct }))
+      const y = remoteRepo('ev-pm6b')
+      const { id: id2 } = await evStart(y.r, [PASS], { through: true })
+      writeFileSync(join(y.r, 'extra.md'), 'by hand\n')
+      git(y.r, ['add', '-A'])
+      git(y.r, ['commit', '-q', '-m', 'by hand'])
+      const moved = await call('factory:publish', id2)
+      const z = evRepo('ev-pm6c')
+      writer(z)
+      const { id: id3 } = await evStart(z, [PASS], { through: true })
+      const none = await call('factory:publish', id3)
+      check('PM 6 branch moved and no remote are still refused on main', /moved since Factory committed/.test(moved.run?.pushError || '') && /no remote named origin/.test(none.run?.pushError || ''), JSON.stringify({ moved: moved.run?.pushError, none: none.run?.pushError }))
+    }
+    // PM 8: screen text.
+    {
+      const pane = readFileSync(join(rootRepo, 'src', 'renderer', 'src', 'FactoryPane.tsx'), 'utf8')
+      check('PM 8 Ship checkbox text is the exact new sentence', pane.includes('Ship in advance: after an Opus review with no gaps, Brain commits and pushes. On its own it never pushes staging, prod, production, or Kennel main, master, and staging.'))
+      check('PM 8 Ship sentence and strict wait line use the shared strict rule', pane.includes('const opusReviews = strictRequired(run)') && pane.includes("run.phase === 'review' && !run.diff && strictRequired(run) && !run.strict"))
+    }
+    // PM 9: Push anyway through the real IPC handlers.
+    {
+      const x = remoteRepo('ev-pm9-staging', 'staging')
+      const { id, r } = await evStart(x.r, [PASS], { through: true, ship: true })
+      const offer = await call('factory:publishAnywayFor', id)
+      const plain = await call('factory:publish', id)
+      const anyway = await call('factory:publishAnyway', id)
+      check('PM 9 staging: auto and Push refuse; Push anyway is offered and pushes staging', r?.phase === 'done' && !r.pushed && offer.offer === true && !plain.run?.pushed && anyway.run?.pushed?.branch === 'staging' && x.at('staging') === r.commitSha, JSON.stringify({ offer: offer.offer, err: plain.run?.pushError, pushed: anyway.run?.pushed }))
+    }
+    const kennelGate = async (name: string, br: string, verdict: string) => {
+      const x = remoteRepo(name, br)
+      const { id, r } = await evStart(x.r, [PASS], { through: true })
+      const offer = await call('factory:publishAnywayFor', id)
+      claudeSays([verdict])
+      const c0 = claudeRows().length
+      const out = await call('factory:publishAnyway', id)
+      const spawns = claudeRows().slice(c0)
+      const medium = spawns.length === 1 && spawns[0].argv.includes('opus') && spawns[0].argv[spawns[0].argv.indexOf('--effort') + 1] === 'medium' && modeOf(spawns[0]) === 'plan'
+      return { x, r, offer: offer.offer, out: out.run, medium, spawns: spawns.length }
+    }
+    {
+      const k = await kennelGate('mykennel-web-anyway', 'main', PASS)
+      check('PM 9 Kennel main: Push anyway runs one Opus 5.5 medium gate, then pushes', k.offer === true && k.medium && k.out?.pushed?.branch === 'main' && k.x.at('main') === k.r?.commitSha, JSON.stringify({ offer: k.offer, spawns: k.spawns, pushed: k.out?.pushed, err: k.out?.pushError }))
+      const f = await kennelGate('mykennel-web-gatefail', 'main', 'Bug at src/a.ts:1\nGAPS: 1\nFAIL')
+      check('PM 9 Kennel main: a gate FAIL pushes nothing', f.medium && !f.out?.pushed && (f.out?.pushError || '').startsWith('Kennel gate did not approve') && f.x.refs() === '', JSON.stringify({ err: f.out?.pushError }))
+      const s2 = await kennelGate('mykennel-web-stg', 'staging', PASS)
+      check('PM 9 Kennel staging (protected and Kennel): the gate PASS pushes staging', s2.offer === true && s2.medium && s2.out?.pushed?.branch === 'staging' && s2.x.at('staging') === s2.r?.commitSha, JSON.stringify({ err: s2.out?.pushError, spawns: s2.spawns }))
+    }
+    for (const [name, br] of [['mykennel-web-moved', 'main'], ['ev-pm9-moved', 'staging']] as const) {
+      const x = remoteRepo(name, br)
+      const { id } = await evStart(x.r, [PASS], { through: true })
+      writeFileSync(join(x.r, 'extra.md'), 'by hand\n')
+      git(x.r, ['add', '-A'])
+      git(x.r, ['commit', '-q', '-m', 'by hand'])
+      const offer = await call('factory:publishAnywayFor', id)
+      const c0 = claudeRows().length
+      const out = await call('factory:publishAnyway', id)
+      check(`PM 9 ${br} moved: Push anyway is not offered, no gate runs, nothing pushes`, offer.offer === false && claudeRows().length === c0 && /moved since Factory committed/.test(out.run?.pushError || '') && x.refs() === '', JSON.stringify({ offer: offer.offer, err: out.run?.pushError }))
+    }
+    {
+      const pane = readFileSync(join(rootRepo, 'src', 'renderer', 'src', 'FactoryPane.tsx'), 'utf8')
+      const btn = pane.slice(pane.indexOf('{pushAnyway && run.branch ? ('), pane.indexOf('{pushBlock ? <span'))
+      const ctlSrc = readFileSync(join(rootRepo, 'src', 'main', 'factory', 'controller.ts'), 'utf8')
+      const fr = ctlSrc.slice(ctlSrc.indexOf('async function finishReview'), ctlSrc.indexOf('function liveFor'))
+      check('PM 9 the anyway button: confirm gates publishAnyway, shown only on publishAnywayFor; finishReview never overrides', btn.includes('if (!window.confirm(ask)) return') && btn.indexOf('if (!window.confirm(ask)) return') < btn.indexOf('publishAnyway(run.id)') && pane.includes('publishAnywayFor(run.id)') && !fr.includes('allowProtected'))
+    }
+    use()
   }
 
   // h. Argv pins.

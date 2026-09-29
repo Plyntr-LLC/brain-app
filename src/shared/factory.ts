@@ -19,11 +19,19 @@ export type RunPhase =
   | 'failed'
   | 'abandoned'
 
-/** Opus strict reviews that may fail before the run holds for Joe: the first 5 fails each get an automatic fix (Joe 2026-09-29). */
-export const REVIEW_MAX = 6
+/** Opus strict reviews that may fail before the run holds for Joe: the first 12 fails each get an automatic fix (Joe 2026-09-29). */
+export const REVIEW_MAX = 13
+
+/**
+ * Whether a run gets the Opus strict review: T2 and T3, elevated or critical risk, any MyPuppies path, and
+ * any run with Ship in advance on (it only pushes after an Opus pass). Main and the Factory pane share it.
+ */
+export function strictRequired(run: { tier: Tier; risk: string; workRepo: string; shipThrough?: boolean }): boolean {
+  return run.tier === 'T2' || run.tier === 'T3' || run.risk === 'elevated' || run.risk === 'critical' || /mypuppies/i.test(run.workRepo) || !!run.shipThrough
+}
 
 /** Automatic voice fixes before a voice REJECT holds for Joe (Joe 2026-09-29). */
-export const VOICE_MAX = 5
+export const VOICE_MAX = 12
 
 /** From this strict-review cycle on, the review fix is made by the Opus builder, not Grok or Cursor (they get the first two). */
 export const BUILDER_FIX_MAX = 3

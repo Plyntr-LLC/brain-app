@@ -153,8 +153,14 @@ export function factoryEnv(base: NodeJS.ProcessEnv, shimDir: string): NodeJS.Pro
   return env
 }
 
-/** Branches the Push click never pushes. */
-export const PROTECTED_BRANCHES = new Set(['main', 'master', 'staging', 'prod', 'production'])
+/** Branches Brain never pushes unless Joe clicks Push anyway (Joe 2026-09-29: main and master push normally). */
+export const PROTECTED_BRANCHES = new Set(['staging', 'prod', 'production'])
+
+/** Kennel's main, master, and staging go through its Opus 5.5 CLI gate (Joe's standing rule). */
+export const KENNEL_GATED = new Set(['main', 'master', 'staging'])
+export const KENNEL_PUSH_REFUSAL = 'Brain does not push Kennel main or staging. That goes through the Opus 5.5 Claude CLI gate.'
+
+export type PushOverride = { allowProtected?: boolean; kennelApproved?: boolean }
 
 export type PublishTarget = { remote: string; branch: string; sha: string }
 
@@ -171,18 +177,26 @@ function remoteRef(repo: string, remote: string, branch: string): string {
   }
 }
 
-/** Null when Push may run. Otherwise the one sentence the disabled Push shows. */
-export function publishBlock(o: { repo: string } & Partial<PublishTarget>): string | null {
+/**
+ * Null when Push may run. Otherwise the one sentence the disabled Push shows. The git guards always run;
+ * the override skips only the protected check (allowProtected) and the Kennel check (kennelApproved).
+ */
+export function publishBlock(o: { repo: string } & Partial<PublishTarget>, over: PushOverride = {}): string | null {
   const branch = String(o.branch || '')
   const remote = String(o.remote || '')
   if (!branch) return 'This commit is on a detached HEAD. Push it from Terminal.'
-  if (PROTECTED_BRANCHES.has(branch)) return `Brain does not push to ${branch}. Push it from Terminal after review.`
   const now = currentBranch(o.repo)
   if (!now) return 'This repo is on a detached HEAD. Push it from Terminal.'
   if (now !== branch || headSha(o.repo) !== o.sha) return 'This branch moved since Factory committed. Push from Terminal.'
   if (!remote || !hasRemote(o.repo, remote)) return `This repo has no remote named ${remote || 'origin'}.`
   if (o.sha && remoteRef(o.repo, remote, branch) === o.sha) return `Already pushed to ${remote}/${branch}.`
+  if (!over.kennelApproved && isKennelGated(o.repo, branch)) return KENNEL_PUSH_REFUSAL
+  if (!over.allowProtected && PROTECTED_BRANCHES.has(branch)) return `Brain does not push to ${branch}. Push it from Terminal after review.`
   return null
+}
+
+export function isKennelGated(repo: string, branch: string): boolean {
+  return KENNEL_RE.test(String(repo || '')) && KENNEL_GATED.has(branch)
 }
 
 /**
@@ -193,8 +207,9 @@ export function pushWarn(o: { repo: string; remote: string; shipThrough?: boolea
   const remote = String(o.remote || 'origin')
   if (!hasRemote(o.repo, remote)) return `No remote named ${remote}. Factory commits here but cannot push.`
   const branch = currentBranch(o.repo)
+  if (branch && isKennelGated(o.repo, branch)) return `On Kennel ${branch}. Brain pushes it only through the Kennel gate, on your Push anyway click.`
   if (o.shipThrough && branch && PROTECTED_BRANCHES.has(branch)) {
-    return `On ${branch}. Ship in advance commits but Brain never pushes ${branch}.`
+    return `On ${branch}. Ship in advance commits but Brain never pushes ${branch} on its own.`
   }
   return undefined
 }
@@ -208,8 +223,8 @@ export function noShimPath(path: string | undefined): string {
 }
 
 /** The Push click: real git, never the shim dir, no prompts, 90 s. Refuses anything publishBlock names. */
-export function publish(workRepo: string, t: PublishTarget, timeoutMs = 90_000): Promise<{ ok: boolean; out: string }> {
-  const block = publishBlock({ repo: workRepo, ...t })
+export function publish(workRepo: string, t: PublishTarget, timeoutMs = 90_000, over: PushOverride = {}): Promise<{ ok: boolean; out: string }> {
+  const block = publishBlock({ repo: workRepo, ...t }, over)
   if (block) return Promise.resolve({ ok: false, out: block })
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: noShimPath(process.env.PATH), GIT_TERMINAL_PROMPT: '0' }
   return new Promise((done) => {

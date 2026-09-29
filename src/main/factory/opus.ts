@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
-import type { RunRecord, UsageRow, VerifyRow } from '../../shared/factory.ts'
+import { strictRequired, type RunRecord, type UsageRow, type VerifyRow } from '../../shared/factory.ts'
 import { claudeRow, parseClaudeEnvelope, usageRow } from './usage.ts'
 
 export { REVIEW_MAX } from '../../shared/factory.ts'
@@ -153,10 +153,8 @@ export function runOpus(o: {
   })
 }
 
-/** Strict review is required for T2 and T3, elevated or critical risk, and any MyPuppies path. */
-export function strictNeeded(run: Pick<RunRecord, 'tier' | 'risk' | 'workRepo'>): boolean {
-  return run.tier === 'T2' || run.tier === 'T3' || run.risk === 'elevated' || run.risk === 'critical' || /mypuppies/i.test(run.workRepo)
-}
+/** The shared rule (shared/factory.ts strictRequired): T2/T3, elevated or critical, MyPuppies, or Ship in advance. */
+export const strictNeeded = strictRequired
 
 export function strictPrompt(o: { task: string; tier: string; risk: string; base: string; diff: string; workRepo: string; verify?: VerifyRow[] }): string {
   const rows = (o.verify || []).filter((r) => r.status !== 'skipped')

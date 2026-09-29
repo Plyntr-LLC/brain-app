@@ -13,6 +13,7 @@ import {
   guideRun,
   listFactoryRuns,
   pauseRun,
+  publishAnywayFor,
   publishBlockFor,
   publishRun,
   restoreRun,
@@ -114,6 +115,15 @@ export function registerFactoryIpc(): void {
   })
   ipcMain.handle('factory:deployBlock', (_e, id: string) => safe(() => ({ ok: true as const, block: deployBlockFor(String(id)) })))
   ipcMain.handle('factory:publishBlock', (_e, id: string) => safe(() => ({ ok: true as const, block: publishBlockFor(String(id)) })))
+  ipcMain.handle('factory:publishAnywayFor', (_e, id: string) => safe(() => ({ ok: true as const, offer: publishAnywayFor(String(id)) })))
+  // Joe's Push anyway click: protected branches, and Kennel through its Opus 5.5 medium gate. Never automatic.
+  ipcMain.handle('factory:publishAnyway', async (_e, id: string) => {
+    try {
+      return { ok: true as const, run: await publishRun(String(id), { by: 'joe', allowProtected: true }) }
+    } catch (e) {
+      return { ok: false as const, error: String((e as Error).message || e) }
+    }
+  })
   ipcMain.handle('factory:commit', (_e, id: string) => safe(() => ({ ok: true as const, run: commitRunNow(String(id), { by: 'joe' }) })))
   ipcMain.handle('factory:pause', (_e, id: string) => safe(() => ({ ok: true as const, run: pauseRun(String(id)) })))
   ipcMain.handle('factory:detach', (_e, id: string) => safe(() => ({ ok: true as const, run: detachRun(String(id)) })))

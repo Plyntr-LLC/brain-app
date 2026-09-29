@@ -971,6 +971,10 @@ const brain = {
       ipcRenderer.invoke('factory:deployBlock', id) as Promise<{ ok: true; block: string | null } | { ok: false; error: string }>,
     publishBlock: (id: string) =>
       ipcRenderer.invoke('factory:publishBlock', id) as Promise<{ ok: true; block: string | null } | { ok: false; error: string }>,
+    publishAnywayFor: (id: string) =>
+      ipcRenderer.invoke('factory:publishAnywayFor', id) as Promise<{ ok: true; offer: boolean } | { ok: false; error: string }>,
+    publishAnyway: (id: string) =>
+      ipcRenderer.invoke('factory:publishAnyway', id) as Promise<{ ok: true; run: FactoryRun } | { ok: false; error: string }>,
     commit: (id: string) => ipcRenderer.invoke('factory:commit', id) as Promise<FactoryResult>,
     pause: (id: string) => ipcRenderer.invoke('factory:pause', id) as Promise<FactoryResult>,
     detach: (id: string) => ipcRenderer.invoke('factory:detach', id) as Promise<FactoryResult>,

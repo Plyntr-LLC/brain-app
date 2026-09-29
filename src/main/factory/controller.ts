@@ -7,7 +7,7 @@ import { ACK_FILED, ACK_NOTED, BUILDER_FIX_MAX, VOICE_MAX, type Builder, type Gu
 import { upsertLog } from './brain-log.ts'
 import { buildBrief, type BriefPhase } from './brief.ts'
 import { isNeedOpus } from './fallback.ts'
-import { deploy as gitDeploy, deployBlock, publish as gitPublish, publishBlock, pushWarn, type PublishTarget } from './gates.ts'
+import { deploy as gitDeploy, deployBlock, isKennelGated, publish as gitPublish, publishBlock, pushWarn, type PublishTarget, type PushOverride } from './gates.ts'
 import { auditTurn, commitRun, currentBranch, diffText, dirtyPaths, gitTop, headSha, isClean, isGitRepo, numstat, porcelain, stashAll } from './git-audit.ts'
 import { OPUS_PLAN_TIMEOUT_MS, OPUS_REVIEW_TIMEOUT_MS, planPrompt, REVIEW_MAX, reviewAccept, runOpus, splitOutside, STRICT_EFFORT, strictNeeded, strictPrompt, type SpawnFn } from './opus.ts'
 import { realish } from './paths.ts'
@@ -84,7 +84,7 @@ export type FactoryDeps = {
   spawnOpus?: SpawnFn
   spawnVoice?: SpawnFn
   voiceCheckPath?: string
-  publish?: (workRepo: string, t: PublishTarget) => Promise<{ ok: boolean; out: string }>
+  publish?: (workRepo: string, t: PublishTarget, over?: PushOverride) => Promise<{ ok: boolean; out: string }>
   deploy?: (workRepo: string, cmd: string, o?: { env?: NodeJS.ProcessEnv }) => Promise<{ ok: boolean; out: string }>
   /** Where Projects folder names in a task resolve. Default ~/Projects. */
   projectsDir?: string
@@ -1565,16 +1565,60 @@ export function publishBlockFor(id: string): string | null {
   return publishBlock({ repo: run.workRepo, ...pushTarget(run) })
 }
 
-/** The Push click. Real git, run branch only, refused when HEAD moved or the branch is protected. */
-export async function publishRun(id: string, o: Actor = {}): Promise<RunRecord> {
+/** True when Push is refused only because the branch is protected or Kennel-gated: Push anyway is offered. */
+export function publishAnywayFor(id: string): boolean {
+  const run = getRun(id)
+  if (!run || run.phase !== 'done' || !run.commitSha || run.pushed) return false
+  const t = { repo: run.workRepo, ...pushTarget(run) }
+  return publishBlock(t) !== null && publishBlock(t, { allowProtected: true, kennelApproved: true }) === null
+}
+
+export const KENNEL_GATE_FAIL = 'Kennel gate did not approve'
+
+/**
+ * The Push click. Real git, run branch only, refused when HEAD moved or the branch is protected. With
+ * allowProtected (Joe's Push anyway click, never finishReview) protected branches push, and Kennel
+ * main/master/staging push only after a fresh Opus 5.5 medium review approves (Joe's Kennel rule).
+ */
+export async function publishRun(id: string, o: Actor & { allowProtected?: boolean } = {}): Promise<RunRecord> {
   const state = liveFor(id)
   const run = state.run
   if (run.phase !== 'done' || !run.commitSha) throw new Error('Push comes after Commit.')
   if (run.pushed) return run
   const t = pushTarget(run)
-  const block = publishBlock({ repo: run.workRepo, ...t })
+  let over: PushOverride = {}
+  if (o.allowProtected) {
+    const guard = publishBlock({ repo: run.workRepo, ...t }, { allowProtected: true, kennelApproved: true })
+    if (guard) return setPhase(state, 'done', { pushError: guard })
+    over = { allowProtected: true }
+    if (isKennelGated(run.workRepo, t.branch)) {
+      const d = need()
+      const res = await withLive(state, { phase: 'review', ...OPUS_LIVE }, () =>
+        runOpus({
+          cwd: run.workRepo,
+          prompt: strictPrompt({ task: run.task, tier: run.tier, risk: run.risk, base: run.base, diff: safeDiff(run.workRepo, run.base), workRepo: run.workRepo, verify: run.verify }),
+          env: d.env(run.workRepo),
+          bin: (d.claudeBin || (() => resolveBin('claude')))(),
+          timeoutMs: d.opusTimeoutMs ?? OPUS_REVIEW_TIMEOUT_MS,
+          spawnFn: d.spawnOpus,
+          phase: 'review',
+          run: { model: 'opus', effort: 'medium' },
+          maxBytes: d.opusMax
+        })
+      )
+      addUsage(state, res.usage)
+      const acc = res.found && res.code === 0 && res.parsed ? reviewAccept(splitOutside(res.text).review) : { status: 'fail' as const, why: res.found ? NO_VERDICT : STRICT_MISSING }
+      if (acc.status !== 'pass') {
+        saveRunText(run.id, 'review', res.text || acc.why)
+        return setPhase(state, 'done', { pushError: `${KENNEL_GATE_FAIL}: ${acc.why}` })
+      }
+      over = { allowProtected: true, kennelApproved: true }
+    }
+  }
+  const block = publishBlock({ repo: run.workRepo, ...t }, over)
   if (block) return setPhase(state, 'done', { pushError: block })
-  const res = await (need().publish || gitPublish)(run.workRepo, t)
+  const pub = need().publish
+  const res = pub ? await pub(run.workRepo, t, over) : await gitPublish(run.workRepo, t, undefined, over)
   if (!res.ok) return setPhase(state, 'done', { pushError: tail(res.out || 'git push failed.', 6) })
   const shadow = o.by === 'joe' ? withJudgment(state.run.shadow, 'push') : state.run.shadow
   return setPhase(state, 'done', { pushed: { ...t, at: Date.now() }, pushError: undefined, shadow })

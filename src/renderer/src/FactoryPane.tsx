@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { modelsLine, REVIEW_MAX, VOICE_MAX, type FactoryTriage, type LiveCall, type RunPhase, type RunRecord } from '../../shared/factory'
+import { modelsLine, REVIEW_MAX, strictRequired, VOICE_MAX, type FactoryTriage, type LiveCall, type RunPhase, type RunRecord } from '../../shared/factory'
 
 type Perm = { title?: string; path?: string; detail?: string; options?: { id: string; label: string }[] }
 type FileHit = { path: string; tool?: string; live: boolean }
@@ -90,6 +90,7 @@ export function FactoryPane(props: {
     return () => clearInterval(t)
   }, [calls.length])
   const [pushBlock, setPushBlock] = useState<string | null>(null)
+  const [pushAnyway, setPushAnyway] = useState(false)
   const [deployBlock, setDeployBlock] = useState<string | null>(null)
   const [files, setFiles] = useState<FileHit[]>([])
   const runRef = useRef<string>(runId || '')
@@ -176,8 +177,12 @@ export function FactoryPane(props: {
   const doneSha = run?.phase === 'done' ? run.commitSha || '' : ''
   const pushedAt = run?.pushed?.at || 0
   useEffect(() => {
-    if (!run || !doneSha) return setPushBlock(null)
+    if (!run || !doneSha) {
+      setPushAnyway(false)
+      return setPushBlock(null)
+    }
     void window.brain.factory.publishBlock(run.id).then((r) => setPushBlock(r.ok ? r.block : r.error))
+    void window.brain.factory.publishAnywayFor(run.id).then((r) => setPushAnyway(r.ok ? r.offer : false))
   }, [run?.id, doneSha, pushedAt])
 
   const deployedAt = run?.deployed?.at || 0
@@ -270,8 +275,7 @@ export function FactoryPane(props: {
             <label className="tiny">
               <input type="checkbox" checked={shipThrough} onChange={(e) => setShipThrough(e.target.checked)} />
               <span>
-                Ship in advance (if Opus finds no gaps, commit and push; never deploys; never pushes main, master, staging, prod, or
-                production)
+                Ship in advance: after an Opus review with no gaps, Brain commits and pushes. On its own it never pushes staging, prod, production, or Kennel main, master, and staging.
               </span>
             </label>
           </div>
@@ -312,14 +316,14 @@ export function FactoryPane(props: {
           ? `${BUILDER_NAME[run.builder || 'grok']} is fixing: ${run.note.split('\n')[0].slice(0, 140)}`
           : run.phase === 'review' && !run.diff && run.tier === 'T1' && !run.selfChecked
             ? `${BUILDER_NAME[run.builder || 'grok']} is re-reading its diff`
-            : run.phase === 'review' && !run.diff && (run.tier === 'T2' || run.tier === 'T3' || run.risk !== 'none') && !run.strict
+            : run.phase === 'review' && !run.diff && strictRequired(run) && !run.strict
           ? 'Opus strict review running'
           : ''
   const strictHeld = run.phase === 'review' && !!run.diff && run.strict?.status === 'fail' && (run.reviewCycles || 0) >= REVIEW_MAX
   // The true count; runs saved before dirtyCount only kept the first 20 paths.
   const dirtyN = run.dirtyCount ?? run.dirtyFiles?.length ?? 0
   const dirtyLabel = run.dirtyCount === undefined && dirtyN >= 20 ? '20+' : String(dirtyN)
-  const opusReviews = run.tier === 'T2' || run.tier === 'T3' || run.risk !== 'none' || /mypuppies/i.test(run.workRepo)
+  const opusReviews = strictRequired(run)
 
   async function sendNote() {
     const text = note.trim()
@@ -661,6 +665,19 @@ export function FactoryPane(props: {
                 <button type="button" className="primary" disabled={!!pushBlock} onClick={() => void act(window.brain.factory.publish(run.id))}>
                   Push
                 </button>
+                {pushAnyway && run.branch ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const kennel = /mykennel/i.test(run.workRepo)
+                      const ask = `Brain normally never pushes ${run.branch}. Push this commit to ${run.profile?.publish.remote || 'origin'}/${run.branch}?${kennel ? ' Brain runs the Kennel gate first (a fresh Opus 5.5 medium review) and pushes only if it approves.' : ''}`
+                      if (!window.confirm(ask)) return
+                      void act(window.brain.factory.publishAnyway(run.id))
+                    }}
+                  >
+                    {`Push to ${run.branch} anyway…`}
+                  </button>
+                ) : null}
                 {pushBlock ? <span className="tiny">{pushBlock}</span> : null}
               </>
             ) : null}
