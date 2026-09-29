@@ -1,0 +1,9 @@
+The open item is whether check I now matches the push rule. I'll read `publishRun`, the early-return path, and how a refused push is reported.Fixed: 11. Still open: none. New: none.
+
+**11. Check I against the push rule.** The push bullet now counts only an IPC `publishRun` that sets `run.pushed` on this call, and the never-list names the already-pushed early return. That is the check I click.
+
+With both boxes on and a strict pass, `finishReview` commits and then calls `publishRun` (`controller.ts` 1078–1081). That call is not from IPC. On success it is the only place `publishRun` assigns `run.pushed` (1437), and the automatic-ship bullet still adds `auto` 1 and no judgment. The later click hits `if (run.pushed) return run` (1431) and returns the same run. `factory:publish` comes back `ok` (`ipc.ts` 100–102) without a new `run.pushed`. Check I’s `auto` 1 and zero judgments match, including that second click.
+
+Check H still records one push judgment: Ship in advance is off, so `finishReview` does not call `publishRun`, and Joe’s Push is the call that assigns `run.pushed`. A `publishBlock` refusal (1434) and a failed `git push` (1436) leave `pushed` unset and write `pushError`, so they stay off the push bullet. Repo 1’s print is unchanged: `agree 6/8, streak 4, auto 1, noGate 1`.
+
+APPROVE

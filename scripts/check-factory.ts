@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createRequire, registerHooks } from 'node:module'
 import { tmpdir } from 'node:os'
 import { EventEmitter } from 'node:events'
@@ -353,6 +353,7 @@ const scriptRuns: string[] = []
 type VoiceCall = { bin: string; args: string[]; body: string }
 const voiceCalls: VoiceCall[] = []
 let voiceCode = 0
+let voiceText = ''
 // A hung prompt settles when its tab is cancelled, like an ACP session/cancel.
 const pendingPrompts = new Map<string, () => void>()
 const fakeDeps: Parameters<typeof ctl.configureFactory>[0] = {
@@ -397,7 +398,7 @@ const fakeDeps: Parameters<typeof ctl.configureFactory>[0] = {
     child.stderr = new EventEmitter()
     child.kill = () => true
     setTimeout(() => {
-      child.stdout.emit('data', Buffer.from(voiceCode === 0 ? 'APPROVE\n' : 'REJECT: reads like an ad\n'))
+      child.stdout.emit('data', Buffer.from(voiceText || (voiceCode === 0 ? 'APPROVE\n' : 'REJECT: reads like an ad\n')))
       child.emit('close', voiceCode)
     }, 5)
     return child as never
@@ -564,13 +565,23 @@ const fs = require('fs')
 let n = 0
 try { n = fs.readFileSync(0).length } catch { n = 0 }
 fs.appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ argv: process.argv.slice(2), pid: process.pid, stdinBytes: n, cwd: process.cwd(), anthropic: 'ANTHROPIC_API_KEY' in process.env, translator: 'ANTHROPIC_TRANSLATOR_API_KEY' in process.env }) + '\\n')
+const json = process.argv[process.argv.indexOf('--output-format') + 1] === 'json'
+const envelope = (text) => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, total_cost_usd: 0.0123, usage: { input_tokens: 111, output_tokens: 22, cache_read_input_tokens: 3333, cache_creation_input_tokens: 444 }, modelUsage: { 'claude-fake-served': { costUSD: 0.0123 } } })
+const say = (text) => process.stdout.write(json ? envelope(text) : text + '\\n')
 // The Opus builder (bypassPermissions) never takes a planner or reviewer line from the queue.
-if (process.argv.includes('bypassPermissions')) { process.stdout.write('Opus built it.\\n'); process.exit(0) }
+if (process.argv.includes('bypassPermissions')) { say('Opus built it.'); process.exit(0) }
 let plan = []
 try { plan = JSON.parse(fs.readFileSync(process.env.FAKE_CLAUDE_PLAN, 'utf8')) } catch {}
 const next = plan.shift()
 fs.writeFileSync(process.env.FAKE_CLAUDE_PLAN, JSON.stringify(plan))
-process.stdout.write(next == null ? 'no plan line\\n' : next + '\\n')
+const line = next == null ? 'no plan line' : String(next)
+// @@raw:<text> plain stdout; @@pad:<n>:<text> n chars before text in result; @@sleep:<ms>; @@exit:<code>:<text>
+const m = /^@@(raw|pad|sleep|exit):(?:(\\d+):)?([\\s\\S]*)$/.exec(line)
+if (!m) say(line)
+else if (m[1] === 'raw') process.stdout.write(m[3] + '\\n')
+else if (m[1] === 'pad') say('x'.repeat(Number(m[2])) + '\\n' + m[3])
+else if (m[1] === 'exit') { say(m[3]); process.exit(Number(m[2])) }
+else if (m[1] === 'sleep') { setTimeout(() => say('late'), Number(m[3])) }
 `
 const installClaude = () => {
   writeFileSync(claudeBin, claudeSource)
@@ -672,7 +683,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   const argv = row?.argv || []
   const flag = (f: string) => argv[argv.indexOf(f) + 1]
   check('S2 4 reject 2 spawns claude once, a new process', claudeRows().length === c0 + 1 && row?.pid !== planner2?.pid && row?.pid !== planner1?.pid)
-  check('S2 4 Opus argv: -p prompt, --model opus, --effort medium, --permission-mode plan, --output-format text, no --bare', argv[0] === '-p' && argv[1].includes(T2TASK) && flag('--model') === 'opus' && flag('--effort') === 'medium' && flag('--permission-mode') === 'plan' && flag('--output-format') === 'text' && !argv.includes('--bare'), JSON.stringify(argv.filter((a) => a.length < 40)))
+  check('S2 4 Opus argv: -p prompt, --model opus, --effort medium, --permission-mode plan, --output-format json, no --bare', argv[0] === '-p' && argv[1].includes(T2TASK) && flag('--model') === 'opus' && flag('--effort') === 'medium' && flag('--permission-mode') === 'plan' && flag('--output-format') === 'json' && !argv.includes('--bare'), JSON.stringify(argv.filter((a) => a.length < 40)))
   check('S2 4 Opus stdin empty, no Anthropic keys, cwd is the work repo', row?.stdinBytes === 0 && row.anthropic === false && row.translator === false && realish(row.cwd) === realish(work2), JSON.stringify({ ...row, argv: undefined }))
   check('S2 4 plan by Opus waits for Approve', r?.phase === 'plan' && r.plan?.by === 'opus' && r.plan.status === 'waiting' && r.plan.text.startsWith('Opus plan') && r.plan.rejects === 2, JSON.stringify({ phase: r?.phase, plan: r?.plan, error: r?.error }))
 
@@ -1266,7 +1277,7 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
   check('S3 5 worker tabs are closed after the build', [`factory-${id}-w1`, `factory-${id}-w2`].every((t) => calls.some((c) => c.fn === 'close' && c.o?.tabId === t)))
   check('S3 6 verify T3 runs typecheck, test, the profile e2e, and an e2e:full row', scriptRuns.join(',') === 'typecheck,test,test:e2e' && r?.verify?.map((v) => v.script).join(',') === 'typecheck,test,test:e2e,e2e:full' && r.verify.at(-1)?.status === 'skipped', JSON.stringify({ scripts: scriptRuns, verify: r?.verify }))
   const art = store.runTextPath(id, 'verify')
-  check('S3 8 verify artifact <id>.verify.txt under userData', r?.verifyArtifact === art && art.endsWith(`${id}.verify.txt`) && underPath(realish(userData), realish(art)) && readFileSync(art, 'utf8').includes('npm run typecheck: pass'), String(r?.verifyArtifact))
+  check('S3 8 verify artifact verify.txt in the work repo store, not userData', r?.verifyArtifact === art && art.endsWith(join('.git', 'brain-factory', id, 'verify.txt')) && !underPath(realish(userData), realish(art)) && readFileSync(art, 'utf8').includes('npm run typecheck: pass'), String(r?.verifyArtifact))
   const review = claudeRows().slice(c0)[1]
   check('S3 11 T3 planner and reviewer are different claude processes', !!review && review.pid !== planner?.pid && review.argv[1].includes('strict-code-review/SKILL.md'))
   check('S3 11 T3 Opus review argv has --effort medium, plan mode', !!review && review.argv[review.argv.indexOf('--effort') + 1] === 'medium' && review.argv[review.argv.indexOf('--permission-mode') + 1] === 'plan', JSON.stringify(review?.argv.filter((a) => a.length < 40)))
@@ -2272,10 +2283,500 @@ if (argv[0] === '-p') {
   git(brainA, ['checkout', '--', '.'])
 }
 
+// ---- Factory evals pass (plans/20260929-factory-evals-build.md): usage, code stays home, brain log, shadow ----
+const opusMod = (await import(src('factory/opus.ts'))) as typeof import('../src/main/factory/opus.ts')
+const tllm = (await import(src('factory/triage-llm.ts'))) as typeof import('../src/main/factory/triage-llm.ts')
+const shadowMod = (await import(src('factory/shadow.ts'))) as typeof import('../src/main/factory/shadow.ts')
+const brainLog = (await import(src('factory/brain-log.ts'))) as typeof import('../src/main/factory/brain-log.ts')
+{
+  const brainEv = repo('brain-ev', { 'AGENTS.md': '# Brain EV\n' })
+  const EVTASK = 'fix the API error message'
+  const commonDir = (r: string) => git(r, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim()
+  const storeOf = (r: string, id: string) => join(commonDir(r), 'brain-factory', id)
+  const filesUnder = (dir: string): string[] =>
+    existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? filesUnder(join(dir, e.name)) : [join(dir, e.name)])) : []
+  const hits = (dir: string, needle: string) => filesUnder(dir).filter((f) => readFileSync(f, 'utf8').includes(needle))
+  const evPkg = JSON.stringify({ name: 'ev', private: true, scripts: { typecheck: 'x', test: 'x' } })
+  const evRepo = (name: string) => repo(name, { 'package.json': evPkg, 'src/a.ts': 'export const a = 0\n' })
+  const clean = (r: string) => {
+    git(r, ['checkout', '-q', '--', '.'])
+    git(r, ['clean', '-qfd'])
+  }
+  let acpUsage: { model?: string; effort?: string; usage?: Record<string, unknown> | null } | null = null
+  let evScript: ((script: string) => { code: number; out: string } | null) | null = null
+  const basePrompt = fakeDeps.driver.prompt
+  const baseScript = fakeDeps.runScript
+  const evDeps: typeof fakeDeps = {
+    ...fakeDeps,
+    driver: {
+      ...fakeDeps.driver,
+      prompt: async (o) => {
+        if (acpUsage) o.onUsage?.(acpUsage)
+        return basePrompt(o)
+      }
+    },
+    runScript: async (r, script, env) => evScript?.(script) || (baseScript ? baseScript(r, script, env) : { code: 0, out: 'ok' }),
+    publish: async (r, t) => gates.publish(r, t)
+  }
+  const use = (over: Partial<typeof fakeDeps> = {}) => ctl.configureFactory({ ...evDeps, ...over })
+  use()
+  const writer = (r: string, mark = 'CODEMARK_DIFF') => {
+    let n = 0
+    promptPlan = async (o) => {
+      if (/Phase: (build|fix)\./.test(o.text)) {
+        writeFileSync(join(r, 'src', 'a.ts'), `export const a = ${++n} // ${mark}\n`)
+        writeFileSync(join(r, 'NOTES.md'), `Release note ${n}\n`)
+      }
+    }
+  }
+  const evStart = async (r: string, says: string[], o: { through?: boolean; ship?: boolean; task?: string } = {}) => {
+    claudeSays(says)
+    const res = ctl.startRun({ task: o.task || EVTASK, workRepo: r, brainPath: brainEv, runThrough: !!o.through, shipThrough: !!o.ship })
+    const id = res.ok ? res.run.id : ''
+    return { id, r: await ctl.settle(id), res }
+  }
+  const reviewRows = (run: Awaited<ReturnType<typeof ctl.settle>>) => (run?.usage || []).filter((u) => u.phase === 'review')
+
+  // a. JSON verdicts and usage rows.
+  const evA = evRepo('ev-a')
+  writer(evA)
+  {
+    const { r } = await evStart(evA, ['Checked.\nGAPS: 0\nPASS'], { through: true })
+    const rv = (r?.usage || []).find((u) => u.phase === 'review')
+    const tr = (r?.usage || []).find((u) => u.phase === 'triage')
+    check('EV a full JSON envelope PASS commits; row ok with served model and counts', r?.phase === 'done' && !!r.commitSha && rv?.ok === true && rv.model === 'claude-fake-served' && rv.inTokens === 111 && rv.cacheRead === 3333 && rv.cli === 'claude', JSON.stringify({ phase: r?.phase, rv }))
+    check('EV a triage row is written when grok is missing (ok false, no model)', tr?.ok === false && tr.model === '' && tr.cli === 'grok', JSON.stringify(tr))
+  }
+  {
+    const { r } = await evStart(evA, ['@@pad:500000:GAPS: 0\nPASS'], { through: true })
+    check('EV a 500k result (over the old 400k slice, under the cap) still commits', r?.phase === 'done' && !!r.commitSha && reviewRows(r)[0]?.ok === true, JSON.stringify({ phase: r?.phase, rows: reviewRows(r) }))
+  }
+  {
+    use({ opusMax: 100_000 })
+    const p0 = promptCount()
+    const { r } = await evStart(evA, ['@@pad:500000:GAPS: 0\nPASS', 'GAPS: 0\nPASS'], { through: true })
+    const fix = promptsFrom(p0).find((t) => /Phase: fix\./.test(t)) || ''
+    const rows = reviewRows(r)
+    check('EV a over the cap: NO_VERDICT, a fix turn, ok false, commit only after the next clean review', rows.length === 2 && rows[0].ok === false && rows[1].ok === true && /did not end with PASS or FAIL/.test(fix) && r?.reviewCycles === 1 && r?.phase === 'done', JSON.stringify({ rows, cycles: r?.reviewCycles, phase: r?.phase }))
+    use()
+  }
+  {
+    const { r } = await evStart(evA, ['Bug at src/a.ts:1\nGAPS: 2\nFAIL', 'GAPS: 0\nPASS'], { through: true })
+    const rows = reviewRows(r)
+    check('EV a FAIL inside result starts a fix turn, no commit on it', rows.length === 2 && rows[0].ok === true && r?.reviewCycles === 1 && r?.phase === 'done', JSON.stringify({ rows, cycles: r?.reviewCycles }))
+  }
+  {
+    use({ opusTimeoutMs: 1500 })
+    const { r } = await evStart(evA, ['@@raw:GAPS: 0\nPASS', '@@sleep:4000', '@@exit:3:GAPS: 0\nPASS', 'GAPS: 0\nPASS'], { through: true })
+    const rows = reviewRows(r)
+    const opusBuild = (r?.usage || []).filter((u) => u.phase === 'build' && u.cli === 'claude')
+    check('EV a plain stdout ending PASS is NO_VERDICT (row ok false)', rows[0]?.ok === false && rows[0].model === '', JSON.stringify(rows[0]))
+    check('EV a timeout leaves a row: ok false, ms at the timeout, no model', rows[1]?.ok === false && rows[1].ms >= 1400 && rows[1].ms < 4000 && rows[1].model === '', JSON.stringify(rows[1]))
+    check('EV a exit 3 leaves a row: ok false, no model', rows[2]?.ok === false && rows[2].model === '', JSON.stringify(rows[2]))
+    check('EV a the run commits only after the clean fourth review', rows.length === 4 && rows[3].ok === true && r?.phase === 'done' && r.reviewCycles === 3, JSON.stringify({ n: rows.length, phase: r?.phase, cycles: r?.reviewCycles }))
+    check('EV a the Opus builder turn leaves a claude build row', opusBuild.length >= 1 && opusBuild.every((u) => u.ok && u.model === 'claude-fake-served'), JSON.stringify(opusBuild))
+    use()
+  }
+  {
+    use({ claudeBin: () => join(temp, 'no-such-claude') })
+    const { id, r } = await evStart(evA, [], { through: true })
+    const rv = reviewRows(r)[0]
+    check('EV a missing claude leaves a row: ok false, no model; no commit', r?.strict?.status === 'missing' && !r.commitSha && rv?.ok === false && rv.model === '', JSON.stringify({ strict: r?.strict?.status, rv }))
+    ctl.abandonRun(id)
+    clean(evA)
+    use()
+  }
+  {
+    const fakeGrok = join(temp, 'fake-grok-triage')
+    writeFileSync(
+      fakeGrok,
+      `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: 'text', data: JSON.stringify({ size: 'T1', risk: 'elevated', reason: 'fake' }) }) + '\\n')
+process.stdout.write(JSON.stringify({ type: 'end', stopReason: 'end_turn', usage: { input_tokens: 21, output_tokens: 3, cache_read_input_tokens: 5, cache_creation_input_tokens: 0, reasoning_tokens: 2 }, num_turns: 1, total_cost_usd: 0.001, modelUsage: { 'grok-fake-served': { costUSD: 0.001 } } }) + '\\n')
+`
+    )
+    chmodSync(fakeGrok, 0o755)
+    triageBin = fakeGrok
+    acpUsage = { model: 'grok-acp-fake', effort: 'high', usage: { input_tokens: 50, output_tokens: 5 } }
+    const { r } = await evStart(evA, ['GAPS: 0\nPASS'], { through: true })
+    triageBin = null
+    acpUsage = null
+    const tr = (r?.usage || []).find((u) => u.phase === 'triage')
+    const builds = (r?.usage || []).filter((u) => u.phase === 'build' && u.cli === 'grok')
+    check('EV a triage row carries the model from the grok end event', tr?.ok === true && tr.model === 'grok-fake-served' && tr.inTokens === 21 && tr.outTokens === 5, JSON.stringify(tr))
+    check('EV a ACP build row has tokens and model when the turn reports usage', builds.length >= 1 && builds.every((u) => u.inTokens === 50 && u.model === 'grok-acp-fake' && u.turns === 1 && u.effort === 'high'), JSON.stringify(builds))
+    const { r: r2 } = await evStart(evA, ['GAPS: 0\nPASS'], { through: true })
+    const b2 = (r2?.usage || []).filter((u) => u.phase === 'build' && u.cli === 'grok')
+    check('EV a ACP build row has ms and turns, 0 tokens, when the turn reports none', b2.length >= 1 && b2.every((u) => u.inTokens === 0 && u.outTokens === 0 && u.turns === 1 && u.ms >= 0 && u.ok), JSON.stringify(b2))
+  }
+
+  // b. Code stays home: every code-bearing field lands in the repo store and never in userData.
+  const evB = evRepo('ev-b')
+  const evBbare = join(temp, 'ev-b-origin.git')
+  mkdirSync(evBbare)
+  git(evBbare, ['init', '-q', '--bare', '-b', 'main'])
+  git(evB, ['remote', 'add', 'origin', evBbare])
+  git(evB, ['checkout', '-q', '-b', 'factory/ev-b'])
+  let bId = ''
+  {
+    profiles.saveProfile(evB, { voice: { on: true } })
+    voiceCode = 2
+    voiceText = 'REJECT: CODEMARK_VOICE reads like an ad\n'
+    let testCalls = 0
+    evScript = (script) => {
+      if (script === 'typecheck') return { code: 1, out: 'other/file.ts: CODEMARK_TAIL2 broken next door' }
+      if (script === 'test' && ++testCalls === 1) return { code: 1, out: 'FAIL src/a.ts:1 CODEMARK_TAIL' }
+      return null
+    }
+    const snaps: { phase: string; leak: number; stored: number; mark: string }[] = []
+    let n = 0
+    promptPlan = async (o) => {
+      if (/Phase: fix\./.test(o.text) && bId) {
+        const mark = o.text.includes('CODEMARK_TAIL') ? 'CODEMARK_TAIL' : 'CODEMARK_STRICT'
+        snaps.push({ phase: 'fix', mark, leak: hits(userData, mark).length, stored: hits(storeOf(evB, bId), mark).length })
+      }
+      if (/Phase: (build|fix)\./.test(o.text)) {
+        writeFileSync(join(evB, 'src', 'a.ts'), `export const a = ${++n} // CODEMARK_DIFF\n`)
+        writeFileSync(join(evB, 'NOTES.md'), `Release note ${n}\n`)
+      }
+    }
+    claudeSays(['CODEMARK_STRICT at src/a.ts:1\nGAPS: 1\nFAIL', 'GAPS: 0\nPASS'])
+    const res = ctl.startRun({ task: EVTASK, workRepo: evB, brainPath: brainEv, runThrough: false, shipThrough: false })
+    bId = res.ok ? res.run.id : ''
+    const r = await ctl.settle(bId)
+    const dir = storeOf(evB, bId)
+    check('EV b fix notes carrying the verify tail and the strict text never touch userData; the repo store has them', snaps.length === 2 && snaps.every((x) => x.leak === 0 && x.stored > 0), JSON.stringify(snaps))
+    check('EV b held on the voice REJECT with diff, strict pass, unrelated red row', r?.phase === 'review' && r.voice?.status === 'fail' && !!r.diff?.includes('CODEMARK_DIFF') && r.strict?.status === 'pass' && r.verify?.some((v) => v.status === 'fail' && v.tail?.includes('CODEMARK_TAIL2')) === true, JSON.stringify({ phase: r?.phase, voice: r?.voice, strict: r?.strict?.status, diffHasNotes: r?.diff?.includes('NOTES.md') }))
+    check('EV b userData has no CODEMARK after the held review', hits(userData, 'CODEMARK').length === 0, JSON.stringify(hits(userData, 'CODEMARK')))
+    check('EV b repo store holds diff, voice tail, verify tail, and the strict FAIL (review.md)', ['CODEMARK_DIFF', 'CODEMARK_VOICE', 'CODEMARK_TAIL2', 'CODEMARK_STRICT'].every((m) => hits(dir, m).length > 0) && existsSync(join(dir, 'review.md')), JSON.stringify(filesUnder(dir)))
+    check('EV b the repo store is inside .git and the work tree shows none of it', underPath(realish(join(evB, '.git')), realish(dir)) && !git(evB, ['status', '--porcelain', '--untracked-files=all']).includes('brain-factory'))
+    evScript = null
+    voiceCode = 0
+    voiceText = ''
+  }
+  // d. Restart: every code field comes back from the repo store.
+  {
+    ctl.dropMemory()
+    const back = ctl.restoreRun(bId)
+    check('EV d restore brings back diff, voice tail, verify tail from the repo store', !!back?.diff?.includes('CODEMARK_DIFF') && !!back?.voice?.tail?.includes('CODEMARK_VOICE') && back?.verify?.some((v) => v.tail?.includes('CODEMARK_TAIL2')) === true, JSON.stringify({ diff: !!back?.diff, voice: back?.voice }))
+    check('EV d a fix brief reviewPath exists on disk after restore', existsSync(store.runTextPath(bId, 'review')) && readFileSync(store.runTextPath(bId, 'review'), 'utf8').includes('CODEMARK_STRICT'))
+  }
+  // b (cont). Multi-line push and deploy errors.
+  {
+    const evP = evRepo('ev-p')
+    const pbare = join(temp, 'ev-p-origin.git')
+    mkdirSync(pbare)
+    git(pbare, ['init', '-q', '--bare', '-b', 'main'])
+    git(evP, ['remote', 'add', 'origin', pbare])
+    git(evP, ['checkout', '-q', '-b', 'factory/ev-p'])
+    profiles.saveProfile(evP, { deploy: { cmd: 'echo deploy' } })
+    writer(evP)
+    const { id } = await evStart(evP, ['GAPS: 0\nPASS'])
+    ctl.commitRunNow(id, { by: 'joe' })
+    use({ publish: async () => ({ ok: false, out: 'push line 1\npush line 2\nCODEMARK_PUSH rejected\n' }) })
+    let r = await ctl.publishRun(id, { by: 'joe' })
+    const pushErr = r.pushError || ''
+    const pushLeak = hits(userData, 'CODEMARK').length
+    use({ deploy: async () => ({ ok: false, out: 'deploy 1\ndeploy 2\nCODEMARK_DEPLOY failed\n' }) })
+    r = await ctl.publishRun(id, { by: 'joe' })
+    r = await ctl.deployRun(id)
+    const dir = storeOf(evP, id)
+    check('EV b multi-line pushError and deployError: line 1 in userData, full text in the repo store', pushErr.includes('CODEMARK_PUSH') && pushLeak === 0 && !!r.pushed && (r.deployError || '').includes('CODEMARK_DEPLOY') && hits(userData, 'CODEMARK').length === 0 && hits(dir, 'CODEMARK_DEPLOY').length > 0, JSON.stringify({ phase: r.phase, pushed: !!r.pushed, pushErr: pushErr.slice(0, 80), leaks: hits(userData, 'CODEMARK') }))
+    use()
+  }
+  {
+    const evErr = evRepo('ev-err')
+    promptPlan = async (o) => {
+      if (/Phase: build\./.test(o.text)) throw new Error('build broke\nCODEMARK_ERROR at src/a.ts:1')
+    }
+    const { id, r } = await evStart(evErr, [])
+    check('EV b a multi-line error keeps line 1 in userData and the rest in the repo store', r?.phase === 'failed' && (r.error || '').includes('CODEMARK_ERROR') && hits(userData, 'CODEMARK').length === 0 && hits(storeOf(evErr, id), 'CODEMARK_ERROR').length > 0, JSON.stringify({ phase: r?.phase, leaks: hits(userData, 'CODEMARK') }))
+    ctl.abandonRun(id)
+  }
+  {
+    const evPlan = evRepo('ev-plan')
+    const { id, r } = await evStart(evPlan, ['Plan CODEMARK_PLAN: add src/b.ts and a route.'], { task: 'Add a new page for team settings with a new route and shared types' })
+    ctl.dropMemory()
+    const back = ctl.restoreRun(id)
+    check('EV b plan text: repo store only; restore brings it back and planPath exists', r?.phase === 'plan' && hits(userData, 'CODEMARK').length === 0 && hits(storeOf(evPlan, id), 'CODEMARK_PLAN').length > 0 && !!back?.plan?.text.includes('CODEMARK_PLAN') && existsSync(store.runTextPath(id, 'plan')), JSON.stringify({ phase: r?.phase, plan: back?.plan?.text?.slice(0, 40) }))
+    ctl.abandonRun(id)
+  }
+  {
+    const evT3 = evRepo('ev-t3')
+    evScript = () => ({ code: 0, out: 'CODEMARK_VERIFYTXT all good' })
+    promptPlan = async (o) => {
+      const m = /Your slice (\d+) of \d+: [^.]+\. Edit only these files; other builders own the rest: (.+)/.exec(o.text)
+      for (const rel of (m?.[2] || '').split(', ').map((x) => x.trim()).filter(Boolean)) writeFileSync(join(evT3, rel), `export const v = 1\n`)
+    }
+    t3Says([{ title: 'x', files: ['src/x.ts'] }, { title: 'y', files: ['src/y.ts'] }], 'GAPS: 0\nPASS')
+    const res = ctl.startRun({ task: T3TASK, workRepo: evT3, brainPath: brainEv, runThrough: true })
+    const id = res.ok ? res.run.id : ''
+    const r = await ctl.settle(id)
+    evScript = null
+    check('EV b T3 verify.txt with the full output is in the repo store only', r?.phase === 'done' && hits(storeOf(evT3, id), 'CODEMARK_VERIFYTXT').length > 0 && hits(userData, 'CODEMARK').length === 0, JSON.stringify({ phase: r?.phase, error: r?.error }))
+  }
+  // c. Linked worktree work repo.
+  {
+    const evC = evRepo('ev-c')
+    const wt = join(temp, 'ev-c-wt')
+    git(evC, ['worktree', 'add', '-q', wt, '-b', 'wt'])
+    writer(wt)
+    const { id, r } = await evStart(wt, ['GAPS: 0\nPASS'], { through: true })
+    const dir = join(commonDir(evC), 'brain-factory', id)
+    check('EV c worktree: store under the common git dir, worktree clean after commit, no userData leak', r?.phase === 'done' && existsSync(join(dir, 'code.json')) && git(wt, ['status', '--porcelain', '--untracked-files=all']).trim() === '' && hits(userData, 'CODEMARK').length === 0, JSON.stringify({ phase: r?.phase, dir, files: filesUnder(dir) }))
+  }
+  // d (cont). A note paused mid fix comes back after restart.
+  {
+    const evD = evRepo('ev-d')
+    let once = 0
+    evScript = (script) => (script === 'test' && ++once === 1 ? { code: 1, out: 'FAIL src/a.ts:1 CODEMARK_NOTE' } : null)
+    let did = ''
+    let n = 0
+    promptPlan = async (o) => {
+      if (/Phase: fix\./.test(o.text) && did) {
+        ctl.pauseRun(did)
+        return
+      }
+      if (/Phase: build\./.test(o.text)) writeFileSync(join(evD, 'src', 'a.ts'), `export const a = ${++n}\n`)
+    }
+    claudeSays([])
+    const res = ctl.startRun({ task: EVTASK, workRepo: evD, brainPath: brainEv })
+    did = res.ok ? res.run.id : ''
+    await ctl.settle(did)
+    evScript = null
+    const leak = hits(userData, 'CODEMARK').length
+    ctl.dropMemory()
+    const back = ctl.restoreRun(did)
+    check('EV d a paused fix note comes back from the repo store, never in userData', back?.phase === 'paused' && !!back.note?.includes('CODEMARK_NOTE') && leak === 0, JSON.stringify({ phase: back?.phase, note: back?.note?.slice(0, 60), leak }))
+    ctl.abandonRun(did)
+  }
+  // e. Migration of old-format runs.
+  {
+    const evE = evRepo('ev-e')
+    const tmpl = store.loadRun(bId)
+    const runsDir = join(store.factoryDir(), 'runs')
+    const old = (id: string, repoPath: string) => {
+      const rec = {
+        ...tmpl,
+        id,
+        workRepo: repoPath,
+        diff: '+CODEMARK_MIG_DIFF',
+        note: 'CODEMARK_MIG_NOTE',
+        plan: { text: 'CODEMARK_MIG_PLAN', by: 'opus', status: 'approved', rejects: 0, reasons: [] },
+        strict: { status: 'fail', text: 'CODEMARK_MIG_STRICT' },
+        verify: [{ script: 'test', status: 'fail', tail: 'CODEMARK_MIG_TAIL' }],
+        voice: { script: 'voice', status: 'fail', tail: 'CODEMARK_MIG_VOICE' },
+        error: 'line one\nCODEMARK_MIG_ERROR',
+        pushError: 'push one\nCODEMARK_MIG_PUSH',
+        deployError: 'deploy one\nCODEMARK_MIG_DEPLOY',
+        phase: 'done'
+      }
+      writeFileSync(join(runsDir, `${id}.json`), JSON.stringify(rec))
+      for (const k of ['plan.md', 'review.md', 'verify.txt']) writeFileSync(join(runsDir, `${id}.${k}`), `CODEMARK_MIG_FILE ${k}`)
+    }
+    old('run-mig-have', evE)
+    const gone = join(temp, 'ev-gone')
+    old('run-mig-gone', gone)
+    const have = store.loadRun('run-mig-have')
+    const lost = store.loadRun('run-mig-gone')
+    const leftovers = readdirSync(runsDir).filter((f) => f.startsWith('run-mig-') && !f.endsWith('.json'))
+    check('EV e old run with its repo: userData clean, repo store has every marker, fields come back', hits(userData, 'CODEMARK_MIG').length === 0 && hits(storeOf(evE, 'run-mig-have'), 'CODEMARK_MIG').length >= 3 && !!have?.diff?.includes('CODEMARK_MIG_DIFF') && !!have?.plan?.text.includes('CODEMARK_MIG_PLAN') && !!have?.error?.includes('CODEMARK_MIG_ERROR'), JSON.stringify({ leaks: hits(userData, 'CODEMARK_MIG'), have: !!have }))
+    check('EV e old run whose repo is gone: loads, text files gone, code fields empty', !!lost && leftovers.length === 0 && lost.diff === undefined && !lost.plan?.text && !lost.strict?.text && !lost.verify?.some((v) => v.tail) && !lost.voice?.tail && lost.note === undefined && lost.error === 'line one', JSON.stringify({ leftovers, lost: lost && { diff: lost.diff, error: lost.error } }))
+  }
+  // f. Brain log.
+  {
+    mkdirSync(join(brainEv, 'clients', 'ev-f2'), { recursive: true })
+    symlinkSync(tmpdir(), join(brainEv, 'escape'))
+    check('EV f profile brainFolder clients/acme is used', brainLog.logFolder(brainEv, '/x/ev-f1', 'clients/acme') === join('clients', 'acme'))
+    check('EV f ../evil, /tmp/x and a symlink out of the brain fall through', ['../evil', '/tmp/x', 'escape'].every((f) => brainLog.logFolder(brainEv, '/x/ev-f1', f) === join('projects', 'ev-f1')))
+    check('EV f an existing clients/<repo> folder is used', brainLog.logFolder(brainEv, '/x/ev-f2') === join('clients', 'ev-f2'))
+    check('EV f no folder: projects/<repo> (created on write)', brainLog.logFolder(brainEv, '/x/ev-f3') === join('projects', 'ev-f3') && !existsSync(join(brainEv, 'projects', 'ev-f3')))
+    const evF = evRepo('ev-f3')
+    const fbare = join(temp, 'ev-f-origin.git')
+    mkdirSync(fbare)
+    git(fbare, ['init', '-q', '--bare', '-b', 'main'])
+    git(evF, ['remote', 'add', 'origin', fbare])
+    git(evF, ['checkout', '-q', '-b', 'factory/ev-f'])
+    writer(evF)
+    const { id, r } = await evStart(evF, ['GAPS: 0\nPASS'])
+    ctl.pauseRun(id)
+    ctl.resumeRun(id)
+    await ctl.settle(id)
+    ctl.commitRunNow(id, { by: 'joe' })
+    await ctl.settle(id)
+    const pushed = await ctl.publishRun(id, { by: 'joe' })
+    const logFile = join(brainEv, 'projects', 'ev-f3', 'factory-log.md')
+    const body = existsSync(logFile) ? readFileSync(logFile, 'utf8') : ''
+    check('EV f one entry per run through pause, resume, done, a second settle and a Push; it names the SHA and the push; no code', r?.phase === 'review' && body.split(`<!-- factory-run:${id} -->`).length === 2 && body.includes(String(pushed.commitSha).slice(0, 12)) && body.includes('pushed to origin/factory/ev-f') && !body.includes('CODEMARK'), body.slice(-600))
+    const evN = evRepo('ev-n')
+    let rid = ''
+    promptPlan = async (o) => {
+      if (/Phase: build\./.test(o.text)) {
+        writeFileSync(join(evN, 'src', 'a.ts'), 'export const a = 9\n')
+        mkdirSync(join(brainEv, 'projects', 'ev-n'), { recursive: true })
+        writeFileSync(join(brainEv, 'projects', 'ev-n', 'factory-log.md'), '# Factory log: ev-n\n')
+        writeFileSync(join(brainEv, 'projects', 'ev-n', 'stray.md'), 'stray\n')
+        mkdirSync(join(brainEv, 'notes'), { recursive: true })
+        writeFileSync(join(brainEv, 'notes', 'stray.md'), 'stray\n')
+      }
+    }
+    const nres = await evStart(evN, ['GAPS: 0\nPASS'])
+    rid = nres.id
+    const audit = nres.r?.audit?.brain || []
+    check('EV f audit: strays in the same folder and elsewhere are listed, factory-log.md is not', audit.includes('projects/ev-n/stray.md') && audit.includes('notes/stray.md') && !audit.some((p) => p.endsWith('factory-log.md')), JSON.stringify(audit))
+    ctl.abandonRun(rid)
+    rmSync(join(brainEv, 'notes'), { recursive: true, force: true })
+    rmSync(join(brainEv, 'projects', 'ev-n', 'stray.md'), { force: true })
+  }
+  // g. Shadow ledger: judgments, not runs.
+  {
+    const evG = evRepo('ev-g')
+    const gbare = join(temp, 'ev-g-origin.git')
+    mkdirSync(gbare)
+    git(gbare, ['init', '-q', '--bare', '-b', 'main'])
+    git(evG, ['remote', 'add', 'origin', gbare])
+    git(evG, ['checkout', '-q', '-b', 'factory/ev-g'])
+    writer(evG)
+    const gIds: string[] = []
+    const A = await evStart(evG, ['GAPS: 0\nPASS'])
+    gIds.push(A.id)
+    ctl.commitRunNow(A.id, { by: 'joe' })
+    const B = await evStart(evG, ['GAPS: 0\nPASS', 'GAPS: 0\nPASS'])
+    gIds.push(B.id)
+    ctl.guideRun(B.id, 'Make the message friendlier.')
+    await ctl.settle(B.id)
+    const bAfter = ctl.getRun(B.id)
+    ctl.commitRunNow(B.id, { by: 'joe' })
+    const C = await evStart(evG, Array(5).fill('Bug at src/a.ts:1\nGAPS: 1\nFAIL'))
+    gIds.push(C.id)
+    const cHeld = C.r?.reviewCycles === 5 && C.r?.phase === 'review'
+    ctl.commitRunNow(C.id, { by: 'joe' })
+    profiles.saveProfile(evG, { voice: { on: true } })
+    voiceCode = 2
+    const D = await evStart(evG, ['GAPS: 0\nPASS'])
+    gIds.push(D.id)
+    ctl.abandonRun(D.id, { by: 'joe' })
+    voiceCode = 0
+    profiles.saveProfile(evG, { voice: { on: false } })
+    clean(evG)
+    claudeSays([])
+    const E = ctl.startRun({ task: EVTASK, workRepo: evG, brainPath: brainEv })
+    const eId = E.ok ? E.run.id : ''
+    gIds.push(eId)
+    ctl.abandonRun(eId, { by: 'joe' })
+    await ctl.settle(eId)
+    clean(evG)
+    const F = await evStart(evG, ['Bug\nGAPS: 1\nFAIL', 'GAPS: 0\nPASS'])
+    gIds.push(F.id)
+    ctl.commitRunNow(F.id, { by: 'joe' })
+    let gid = ''
+    let n = 0
+    promptPlan = async (o) => {
+      if (/Phase: build\./.test(o.text)) {
+        writeFileSync(join(evG, 'src', 'a.ts'), `export const a = ${100 + ++n}\n`)
+        if (gid && n === 1) ctl.guideRun(gid, 'Also keep the old wording in the log line.')
+      }
+    }
+    claudeSays(['GAPS: 0\nPASS'])
+    const G = ctl.startRun({ task: EVTASK, workRepo: evG, brainPath: brainEv })
+    gid = G.ok ? G.run.id : ''
+    gIds.push(gid)
+    const gRun = await ctl.settle(gid)
+    ctl.commitRunNow(gid, { by: 'joe' })
+    writer(evG)
+    const H = await evStart(evG, ['GAPS: 0\nPASS'], { through: true, ship: false })
+    gIds.push(H.id)
+    const hPushed = await ctl.publishRun(H.id, { by: 'joe' })
+    const runs = gIds.map((i) => store.loadRun(i)).filter((x): x is NonNullable<typeof x> => !!x)
+    const line = shadowMod.agreement(runs).map(shadowMod.agreementLine)[0]
+    const js = runs.flatMap((x) => x.shadow?.judgments || [])
+    check('EV g B: a Guide on a passing gate is a disagreement, the next gate is its own judgment', (store.loadRun(B.id)?.shadow?.judgments || []).map((j) => `${j.action}:${j.agree}`).join(',') === 'guide:false,commit:true' && bAfter?.phase === 'review', JSON.stringify(store.loadRun(B.id)?.shadow))
+    check('EV g C: held fail then Commit anyway is a disagreement', cHeld && store.loadRun(C.id)?.shadow?.judgments.map((j) => `${j.action}:${j.agree}`).join(',') === 'commit:false', JSON.stringify(store.loadRun(C.id)?.shadow))
+    check('EV g E: abandon during triage is noGate, no judgment', store.loadRun(eId)?.shadow?.noGate === true && !store.loadRun(eId)?.shadow?.judgments.length)
+    check('EV g F: a fail cycle then pass keeps the pass gate', store.loadRun(F.id)?.shadow?.gate?.strict === 'pass' && store.loadRun(F.id)?.shadow?.judgments.length === 1)
+    check('EV g G: a queued note during build is not a judgment', gRun?.phase === 'review' && store.loadRun(gid)?.shadow?.judgments.length === 1, JSON.stringify(store.loadRun(gid)?.shadow))
+    check('EV g H: auto-commit counts auto 1, Joe’s real Push is the judgment', !!hPushed.pushed && store.loadRun(H.id)?.shadow?.auto === 1 && store.loadRun(H.id)?.shadow?.judgments.map((j) => j.action).join(',') === 'push')
+    check('EV g one judgment per gate', new Set(js.map((j) => j.gate)).size === js.length)
+    check('EV g agreement prints agree 6/8, streak 4, auto 1, noGate 1', line === 'agree 6/8, streak 4, auto 1, noGate 1', line)
+    const evI = evRepo('ev-i')
+    const ibare = join(temp, 'ev-i-origin.git')
+    mkdirSync(ibare)
+    git(ibare, ['init', '-q', '--bare', '-b', 'main'])
+    git(evI, ['remote', 'add', 'origin', ibare])
+    git(evI, ['checkout', '-q', '-b', 'factory/ev-i'])
+    writer(evI)
+    const I = await evStart(evI, ['GAPS: 0\nPASS'], { through: true, ship: true })
+    const again = await ctl.publishRun(I.id, { by: 'joe' })
+    const iShadow = store.loadRun(I.id)?.shadow
+    check('EV g I: auto-commit and auto-push on one gate is auto 1, zero judgments; a later Push click adds none', !!I.r?.pushed && !!again.pushed && iShadow?.auto === 1 && iShadow.judgments.length === 0, JSON.stringify(iShadow))
+  }
+  // Diff review round 1 fixes: a refused auto-commit is not an auto-ship; a Guide that starts no turn is no judgment; a failed migration loses nothing.
+  {
+    const evR = evRepo('ev-refuse')
+    writeFileSync(join(evR, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n')
+    chmodSync(join(evR, '.git', 'hooks', 'pre-commit'), 0o755)
+    writer(evR)
+    const { id, r } = await evStart(evR, ['GAPS: 0\nPASS'], { through: true })
+    check('EV g a refused auto-commit (git hook exits 1) is not an automatic ship', r?.phase === 'review' && /Commit failed/.test(r.error || '') && !r.commitSha && (r.shadow?.auto || 0) === 0 && !!r.shadow?.gate?.wouldShip, JSON.stringify({ phase: r?.phase, error: r?.error, shadow: r?.shadow }))
+    ctl.abandonRun(id)
+    clean(evR)
+  }
+  {
+    const evK = evRepo('ev-keep')
+    const evHeld = evRepo('ev-held')
+    use({ projectsDir: temp })
+    writer(evHeld)
+    const holder = await evStart(evHeld, ['GAPS: 0\nPASS'])
+    const lock = { ok: store.activeRunFor(evHeld)?.runId === holder.id }
+    writer(evK)
+    const { id, r } = await evStart(evK, ['GAPS: 0\nPASS'])
+    const p0 = promptCount()
+    const after = ctl.guideRun(id, `Do this in ${evHeld} instead.`)
+    await ctl.settle(id)
+    const now = ctl.getRun(id)
+    check('EV g a Guide whose repo move is refused starts no turn and records no judgment', lock.ok && r?.phase === 'review' && promptCount() === p0 && (now?.shadow?.judgments.length || 0) === 0 && now?.phase === 'review' && /already running/.test(now?.error || '') && !!after, JSON.stringify({ lock: lock.ok, phase: now?.phase, shadow: now?.shadow, error: now?.error }))
+    ctl.abandonRun(holder.id)
+    ctl.abandonRun(id)
+    clean(evK)
+    clean(evHeld)
+    use()
+  }
+  {
+    const evM = evRepo('ev-mig-fail')
+    const runsDir = join(store.factoryDir(), 'runs')
+    const tmpl = store.loadRun(bId)
+    const mid = 'run-mig-fail'
+    writeFileSync(join(runsDir, `${mid}.json`), JSON.stringify({ ...tmpl, id: mid, workRepo: evM, diff: '+CODEMARK_MIGFAIL', note: undefined, error: undefined, pushError: undefined, deployError: undefined, phase: 'done' }))
+    writeFileSync(join(runsDir, `${mid}.review.md`), 'CODEMARK_MIGFAIL review')
+    const block = join(commonDir(evM), 'brain-factory', mid)
+    mkdirSync(dirname(block), { recursive: true })
+    writeFileSync(block, 'a file where the store folder should be')
+    const first = store.loadRun(mid)
+    const kept = existsSync(join(runsDir, `${mid}.review.md`)) && readFileSync(join(runsDir, `${mid}.json`), 'utf8').includes('CODEMARK_MIGFAIL')
+    rmSync(block, { force: true })
+    const second = store.loadRun(mid)
+    const moved = !existsSync(join(runsDir, `${mid}.review.md`)) && !readFileSync(join(runsDir, `${mid}.json`), 'utf8').includes('CODEMARK_MIGFAIL') && hits(storeOf(evM, mid), 'CODEMARK_MIGFAIL').length === 2
+    check('EV e a failed migration copy keeps userData as it was; the next load moves it', !!first?.diff?.includes('CODEMARK_MIGFAIL') && kept && !!second?.diff?.includes('CODEMARK_MIGFAIL') && moved, JSON.stringify({ first: !!first?.diff, kept, moved }))
+  }
+  // h. Argv pins.
+  {
+    check('EV h opusArgs pin', JSON.stringify(opusMod.opusArgs('p')) === JSON.stringify(['-p', 'p', '--model', 'opus', '--effort', 'medium', '--permission-mode', 'plan', '--output-format', 'json']))
+    check('EV h opusBuildArgs pin', JSON.stringify(opusMod.opusBuildArgs('p')) === JSON.stringify(['-p', 'p', '--model', 'opus', '--effort', 'medium', '--permission-mode', 'bypassPermissions', '--output-format', 'json']))
+    check('EV h grokTriageArgs pin', JSON.stringify(tllm.grokTriageArgs('p')) === JSON.stringify(['-p', 'p', '--effort', 'low', '--output-format', 'streaming-json']))
+    const g47 = tllm.grokTriageArgs('p', { model: 'grok-4.7' })
+    const son = opusMod.opusArgs('p', { model: 'sonnet', effort: 'high' })
+    check('EV h options change only model and effort', g47.join(' ').endsWith('-m grok-4.7') && son[son.indexOf('--model') + 1] === 'sonnet' && son[son.indexOf('--effort') + 1] === 'high')
+    const pane = readFileSync(join(rootRepo, 'src', 'renderer', 'src', 'FactoryPane.tsx'), 'utf8')
+    check('EV h Approve in advance and Ship in advance still default on', /const \[runThrough, setRunThrough\] = useState\(true\)/.test(pane) && /const \[shipThrough, setShipThrough\] = useState\(true\)/.test(pane))
+  }
+  ctl.configureFactory(fakeDeps)
+}
+
 // 12. Store only under userData; neither repo sees it.
 {
   check('12 factoryDir is under userData, not the brain or work repo', underPath(realish(userData), realish(store.factoryDir())) && !underPath(realish(brainA), realish(store.factoryDir())) && !underPath(realish(work), realish(store.factoryDir())))
-  check('12 brain and work repo git status are clean after runs', git(work, ['status', '--porcelain']).trim() === '' && git(brainA, ['status', '--porcelain']).trim() === '', git(brainA, ['status', '--porcelain']))
+  const brainDirty = git(brainA, ['status', '--porcelain', '--untracked-files=all']).split('\n').map((l) => l.slice(3).trim()).filter(Boolean)
+  check('12 work repo is clean and the brain only has factory-log.md records after runs', git(work, ['status', '--porcelain']).trim() === '' && brainDirty.length > 0 && brainDirty.every((p) => p.split('/').at(-1) === 'factory-log.md'), JSON.stringify(brainDirty))
 }
 
 // Persist keeps the factory tab and runId; phone never lists it.

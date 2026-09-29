@@ -1,0 +1,12 @@
+diff --git a/src/main/factory/opus.ts b/src/main/factory/opus.ts
+index 5599e43..f046dcb 100644
+--- a/src/main/factory/opus.ts
++++ b/src/main/factory/opus.ts
+@@ -31,7 +31,6 @@ export function opusBuildArgs(prompt: string): string[] {
+ 
+ export function opusEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+   const env: NodeJS.ProcessEnv = { ...base }
+-  delete env.ANTHROPIC_API_KEY
+   delete env.ANTHROPIC_TRANSLATOR_API_KEY
+   return env
+ }

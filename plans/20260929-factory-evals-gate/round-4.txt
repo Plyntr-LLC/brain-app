@@ -1,0 +1,17 @@
+The open items are about whether this round's checks match the controller, verdict parsing, and the audit. I'll read those paths and compare them to the diff.Fixed: 1, 8, 9, 10. Still open: 11. New: 11.
+
+**1. Shadow ledger.** Check H matches `finishReview`. Approve in advance on and Ship in advance off auto-commits a passing gate and leaves the push for later (`controller.ts` 1078–1081: `shipThrough` is what calls `publishRun`). That is one automatic ship, so `shadow.auto` is 1. `run.pushed` is still unset, so Joe's Push goes through `publishRun` and the push judgment is the H✓ in the streak. On a non-protected branch the bare remote receives it. `publishBlock` refuses `main` (`gates.ts` 179). The guide rule now matches the review-with-diff branch: phase `review`, `diff` set, `buildStep(..., 'fix')`, and `guideRoute` returns false (1380–1384). That predicate is checked before the fix turn clears `diff` (602–607). The waiting-plan branch is phase `plan` and calls `opusPlan` (1375–1378).
+
+**8. Multi-line `error`.** Check b plants the marker on line 2 of the Error thrown from the build turn. `track` stores that message, newlines included, cut at 400 characters (`controller.ts` 158), so line 2 is on the run and Section C keeps only the first line in userData. Check e puts the same line-2 markers in old-format `error`, `pushError`, and `deployError`. `deployError` and `pushError` are still `tail(..., 6)` (1468, 1436), and the deploy marker on line 3 sits inside that tail.
+
+**9. Live smoke.** `TRIAGE_TIMEOUT_MS` is 8000 (`triage-llm.ts` 10) and triage's cwd is `run.brainPath` (`controller.ts` 422). The smoke sentence gives `grok-default-low` that brain call at 8 seconds, and gives `grok-low-emptycwd` the empty cwd and 60 seconds. Limit 6 on those two configs is 12 live calls.
+
+**10. Failure 2.** A truncated or odd stdout now returns `NO_VERDICT`, writes `ok:false`, and must not commit. That is the string `strictStep` already uses (`controller.ts` 104) and the same outcome as Section A and check a.
+
+**11. Check I against the push rule.** This hunk is new:
+
+> I (both ON, a separate repo so repo 1's numbers are unchanged): auto-commit + auto-push on one gate gives `auto` 1 and zero judgments. Joe's later Push click is a no-op (already pushed) and adds no judgment.
+
+The once-per-gate auto count matches that finishReview. The judgment does not. Section E still appends a push judgment for `publishRun` from IPC when the commit was automatic and the gate has no judgment yet. Check I is that click. Both boxes make `finishReview` commit and push (1078–1081). The automatic ship adds no judgment, so the gate is still open. The later click hits `if (run.pushed) return run` (1431) and does not throw, and `factory:publish` returns ok (`ipc.ts` 100–102). The push bullet records a judgment there. Check I forbids one. The never-a-judgment list, edited in this diff, has no entry for a Push click on an already-pushed run.
+
+REJECT

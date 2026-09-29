@@ -93,13 +93,13 @@ export function registerFactoryIpc(): void {
   )
   ipcMain.handle('factory:saveProfile', (_e, repo: string, patch: ProfilePatch) =>
     safe(() => {
-      const p = saveProfile(repoTop(repo), { voice: patch?.voice, scripts: patch?.scripts, publish: patch?.publish, deploy: patch?.deploy })
+      const p = saveProfile(repoTop(repo), { voice: patch?.voice, scripts: patch?.scripts, publish: patch?.publish, deploy: patch?.deploy, brainFolder: patch?.brainFolder })
       return { ok: true as const, profile: p, line: profileLine(p) }
     })
   )
   ipcMain.handle('factory:publish', async (_e, id: string) => {
     try {
-      return { ok: true as const, run: await publishRun(String(id)) }
+      return { ok: true as const, run: await publishRun(String(id), { by: 'joe' }) }
     } catch (e) {
       return { ok: false as const, error: String((e as Error).message || e) }
     }
@@ -113,10 +113,10 @@ export function registerFactoryIpc(): void {
   })
   ipcMain.handle('factory:deployBlock', (_e, id: string) => safe(() => ({ ok: true as const, block: deployBlockFor(String(id)) })))
   ipcMain.handle('factory:publishBlock', (_e, id: string) => safe(() => ({ ok: true as const, block: publishBlockFor(String(id)) })))
-  ipcMain.handle('factory:commit', (_e, id: string) => safe(() => ({ ok: true as const, run: commitRunNow(String(id)) })))
+  ipcMain.handle('factory:commit', (_e, id: string) => safe(() => ({ ok: true as const, run: commitRunNow(String(id), { by: 'joe' }) })))
   ipcMain.handle('factory:pause', (_e, id: string) => safe(() => ({ ok: true as const, run: pauseRun(String(id)) })))
   ipcMain.handle('factory:detach', (_e, id: string) => safe(() => ({ ok: true as const, run: detachRun(String(id)) })))
-  ipcMain.handle('factory:abandon', (_e, id: string) => safe(() => ({ ok: true as const, run: abandonRun(String(id)) })))
+  ipcMain.handle('factory:abandon', (_e, id: string) => safe(() => ({ ok: true as const, run: abandonRun(String(id), { by: 'joe' }) })))
   ipcMain.handle('factory:list', () => safe(() => listFactoryRuns()))
   ipcMain.handle('factory:get', (_e, id: string) => safe(() => restoreRun(String(id)) || getRun(String(id))))
 }

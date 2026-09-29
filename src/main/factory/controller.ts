@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseGrokLine, resolveBin, type StreamEvent } from '../ai-cli'
-import { ACK_FILED, ACK_NOTED, BUILDER_FIX_MAX, type Builder, type GuideNote, type Slice, type Tier } from '../../shared/factory.ts'
+import { ACK_FILED, ACK_NOTED, BUILDER_FIX_MAX, type Builder, type GuideNote, type Slice, type Tier, type UsageRow } from '../../shared/factory.ts'
+import { upsertLog } from './brain-log.ts'
 import { buildBrief, type BriefPhase } from './brief.ts'
 import { isNeedOpus } from './fallback.ts'
 import { deploy as gitDeploy, deployBlock, publish as gitPublish, publishBlock, pushWarn, type PublishTarget } from './gates.ts'
@@ -30,7 +31,9 @@ import {
 import { triage, type Size } from './triage.ts'
 import { llmTriage, mergeTriage } from './triage-llm.ts'
 import { parseSlices, scheduleSlices } from './slices.ts'
+import { gateFor, gateOpen, withAuto, withGate, withJudgment } from './shadow.ts'
 import { checkTripwire, type Tripwire } from './tripwire.ts'
+import { acpRow, withUsage } from './usage.ts'
 import { runVoice } from './voice.ts'
 
 /**
@@ -53,6 +56,8 @@ export type Driver = {
     text: string
     onEvent: (ev: StreamEvent) => void
     onBuilder?: (builder: 'cursor', sessionId: string) => void
+    /** What the ACP turn reported: served model, effort, and usage when the result carries it. */
+    onUsage?: (u: TurnUsage) => void
   }) => Promise<string>
   cancel: (tabId: string) => void
   close: (tabId: string) => void
@@ -61,6 +66,8 @@ export type Driver = {
 }
 
 export type ScriptResult = { code: number; out: string }
+
+export type TurnUsage = { model?: string; effort?: string; usage?: Record<string, unknown> | null }
 
 export type FactoryDeps = {
   driver: Driver
@@ -79,6 +86,10 @@ export type FactoryDeps = {
   deploy?: (workRepo: string, cmd: string, o?: { env?: NodeJS.ProcessEnv }) => Promise<{ ok: boolean; out: string }>
   /** Where Projects folder names in a task resolve. Default ~/Projects. */
   projectsDir?: string
+  /** Test hook: the Opus stdout cap (default OPUS_JSON_MAX). */
+  opusMax?: number
+  /** Test hook: the Opus review timeout (default OPUS_REVIEW_TIMEOUT_MS). */
+  opusTimeoutMs?: number
 }
 
 /** workers: T3 builder tabs open right now (factory-<id>-w<n>). */
@@ -130,8 +141,43 @@ function titleOf(task: string): string {
 
 function persist(state: Live): RunRecord {
   state.run = saveRun(state.run)
+  if (TERMINAL_PHASES.includes(state.run.phase)) logToBrain(state.run)
   need().emit({ runId: state.run.id, kind: 'run', run: state.run })
   return state.run
+}
+
+/** The brain's record of this run. A brain that cannot take the write never stops the run. */
+function logToBrain(run: RunRecord): void {
+  try {
+    let folder = run.profile?.brainFolder
+    try {
+      folder = readProfile(run.workRepo).brainFolder || folder
+    } catch {
+      /* the run's copy */
+    }
+    upsertLog(run.brainPath, run, folder)
+  } catch {
+    /* read-only or missing brain */
+  }
+}
+
+function addUsage(state: Live, row: UsageRow): void {
+  state.run = { ...state.run, usage: withUsage(state.run.usage, row) }
+}
+
+/** One ACP builder turn with its usage row, whatever way it ends. */
+async function acpTurn(state: Live, o: Parameters<Driver['prompt']>[0]): Promise<void> {
+  const started = Date.now()
+  let got: TurnUsage = {}
+  let ok = false
+  try {
+    await need().driver.prompt({ ...o, onUsage: (u) => (got = u) })
+    ok = true
+  } finally {
+    const cli = state.run.builder === 'cursor' ? 'cursor' : 'grok'
+    addUsage(state, acpRow({ phase: 'build', cli, effort: got.effort || '', ms: Date.now() - started }, { model: got.model, usage: got.usage, ok }))
+    persist(state)
+  }
 }
 
 function setPhase(state: Live, phase: RunPhase, patch: Partial<RunRecord> = {}): RunRecord {
@@ -425,7 +471,11 @@ async function triageStep(state: Live): Promise<void> {
     parseLine: parseGrokLine,
     spawnFn: d.spawnTriage
   })
-  if (stale(state, gen)) return
+  addUsage(state, res.usage)
+  if (stale(state, gen)) {
+    persist(state)
+    return
+  }
   const m = mergeTriage(rules, res.llm, res.why)
   const tier = asTier(m.size)
   const up = (a: Tier, b: Tier) => (Number(b.slice(1)) > Number(a.slice(1)) ? b : a)
@@ -561,18 +611,26 @@ async function opusPlan(state: Live): Promise<void> {
     bin: (d.claudeBin || (() => resolveBin('claude')))(),
     timeoutMs: OPUS_PLAN_TIMEOUT_MS,
     spawnFn: d.spawnOpus,
-    signal: abort.signal
+    signal: abort.signal,
+    phase: 'plan',
+    maxBytes: d.opusMax
   })
   if (state.abort === abort) state.abort = undefined
-  if (stale(state, gen)) return
+  addUsage(state, res.usage)
+  if (stale(state, gen)) {
+    persist(state)
+    return
+  }
   state.planNotes = undefined
   const why = !res.found
     ? 'Opus planner not found (claude CLI).'
     : res.code !== 0
       ? `Opus plan did not finish (exit ${res.code}).`
-      : !res.text.trim()
-        ? 'Opus returned no plan.'
-        : ''
+      : !res.parsed
+        ? 'Opus plan answer could not be read.'
+        : !res.text.trim()
+          ? 'Opus returned no plan.'
+          : ''
   if (why) {
     // The notes did not reach a plan: they wait for the Resume.
     const guide = state.run.guide?.map((g) => (notes.includes(g.text) && g.sent ? { at: g.at, text: g.text, ...(g.ack ? { ack: g.ack } : {}) } : g))
@@ -654,7 +712,7 @@ async function builderTurn(state: Live, gen: number, phase: BriefPhase, note?: s
   })
   if (opusBuilds(state, viaOpus)) return opusBuildTurn(state, gen, brief)
   try {
-    await d.driver.prompt({
+    await acpTurn(state, {
       tabId: run.acpTab,
       brainPath: run.brainPath,
       text: brief,
@@ -694,12 +752,17 @@ async function opusBuildTurn(state: Live, gen: number, brief: string): Promise<v
     spawnFn: d.spawnOpus,
     signal: abort.signal,
     build: true,
-    onText: (t) => say({ kind: 'text', data: t })
+    phase: 'build',
+    maxBytes: d.opusMax
   })
   if (state.abort === abort) state.abort = undefined
+  addUsage(state, res.usage)
+  persist(state)
   if (stale(state, gen)) return
   if (!res.found) throw new Error('Opus builder not found (claude CLI).')
   if (res.code !== 0) throw new Error(`Opus build did not finish (exit ${res.code}).`)
+  if (!res.parsed) throw new Error('Opus build answer could not be read.')
+  if (res.text) say({ kind: 'text', data: res.text })
 }
 
 /** Notes Joe sent while a turn ran: one follow-up turn with them before verify. False: the run moved. */
@@ -773,7 +836,7 @@ async function buildSlices(state: Live, gen: number, brainBefore: Record<string,
               planPath: runTextPath(run.id, 'plan'),
               slice: { title: job.slice.title, files: job.slice.files, n: job.n, of: slices.length }
             })
-            await d.driver.prompt({
+            await acpTurn(state, {
               tabId: job.tabId,
               brainPath: run.brainPath,
               text: brief,
@@ -1015,12 +1078,18 @@ async function strictStep(state: Live): Promise<boolean> {
     prompt: strictPrompt({ task: run.task, tier: run.tier, risk: run.risk, base: run.base, diff: safeDiff(run.workRepo, run.base), workRepo: run.workRepo, verify: run.verify }),
     env: d.env(run.workRepo),
     bin: (d.claudeBin || (() => resolveBin('claude')))(),
-    timeoutMs: OPUS_REVIEW_TIMEOUT_MS,
+    timeoutMs: d.opusTimeoutMs ?? OPUS_REVIEW_TIMEOUT_MS,
     spawnFn: d.spawnOpus,
-    signal: abort.signal
+    signal: abort.signal,
+    phase: 'review',
+    maxBytes: d.opusMax
   })
   if (state.abort === abort) state.abort = undefined
-  if (stale(state, gen)) return false
+  addUsage(state, res.usage)
+  if (stale(state, gen)) {
+    persist(state)
+    return false
+  }
   if (!res.found) {
     state.run = { ...state.run, strict: { status: 'missing', text: STRICT_MISSING }, followUps: undefined }
     persist(state)
@@ -1030,7 +1099,8 @@ async function strictStep(state: Live): Promise<boolean> {
   const split = splitOutside(res.text)
   state.run = { ...state.run, followUps: split.outside.length ? split.outside : undefined }
   // The controller reads the review (reviewAccept), not Opus's story: any gap is a fail, even under PASS.
-  const acc = res.code === 0 ? reviewAccept(split.review) : { status: 'fail' as const, why: NO_VERDICT }
+  // A verdict comes only from a whole JSON envelope: cut, over-cap, or plain stdout is never read as PASS.
+  const acc = res.code === 0 && res.parsed ? reviewAccept(split.review) : { status: 'fail' as const, why: NO_VERDICT }
   if (acc.status === 'pass') {
     state.run = { ...state.run, strict: { status: 'pass', text: tail(split.review, 12) } }
     persist(state)
@@ -1068,8 +1138,12 @@ async function finishReview(state: Live): Promise<void> {
     diff = `Could not read the diff: ${String((e as Error).message || e)}`
   }
   setPhase(state, 'review', { diff, resumePhase: 'review' })
+  if (!read || !diff.trim()) return
+  const reviewModel = [...(state.run.usage || [])].reverse().find((u) => u.phase === 'review')?.model
+  state.run = { ...state.run, shadow: withGate(state.run.shadow, gateFor(state.run, { needed: strictNeeded(state.run), ourFail: !!ourFail(state.run), model: reviewModel })) }
+  persist(state)
   const r = state.run
-  if (!read || !diff.trim() || r.voice?.status === 'fail') return
+  if (r.voice?.status === 'fail') return
   // Only reviewAccept's pass is an Opus approval. A missing reviewer, a fail, or a held reject never
   // auto-commits or auto-pushes. Approve in advance commits; Ship in advance commits then pushes. Never deploys.
   // A red verify row that names a changed file waits for Joe, even after a PASS.
@@ -1078,7 +1152,10 @@ async function finishReview(state: Live): Promise<void> {
   const auto = opusOk ? r.runThrough || r.shipThrough : r.runThrough && !strictNeeded(r) && !r.strict
   if (!auto) return
   const done = commitRunNow(r.id)
-  if (done.phase === 'done' && opusOk && r.shipThrough) await publishRun(r.id)
+  if (done.phase !== 'done') return
+  state.run = { ...state.run, shadow: withAuto(state.run.shadow) }
+  persist(state)
+  if (opusOk && r.shipThrough) await publishRun(r.id)
 }
 
 function liveFor(id: string): Live {
@@ -1369,7 +1446,10 @@ function guideRoute(state: Live): boolean {
       track(state, opusPlan(state))
     }
     // Built or under review: a fix turn on the work. Otherwise one builder (T3 slices are not restarted).
-    else track(state, buildStep(state, run.diff || run.phase === 'review' ? 'fix' : 'build'))
+    else {
+      judgeGuide(state)
+      track(state, buildStep(state, run.diff || run.phase === 'review' ? 'fix' : 'build'))
+    }
     return true
   }
   if (run.phase === 'plan' && run.plan?.status === 'waiting' && run.plan.text) {
@@ -1380,13 +1460,22 @@ function guideRoute(state: Live): boolean {
   // A diff exists: one builder fix turn with the note, never a fresh (T3: sliced) build.
   if (run.phase === 'review' && run.diff) {
     state.gen++
+    judgeGuide(state)
     track(state, buildStep(state, 'fix'))
     return false
   }
   return false
 }
 
-export function commitRunNow(id: string): RunRecord {
+/** Joe's note is about to start a fix turn on a reviewed diff: he did not take the loop's call as is. */
+function judgeGuide(state: Live): void {
+  if (state.run.phase === 'review' && state.run.diff && gateOpen(state.run.shadow)) state.run = { ...state.run, shadow: withJudgment(state.run.shadow, 'guide') }
+}
+
+/** by 'joe': a click (IPC). Only clicks are judgments in the shadow ledger; finishReview's auto-commit is not. */
+export type Actor = { by?: 'joe' }
+
+export function commitRunNow(id: string, o: Actor = {}): RunRecord {
   const state = liveFor(id)
   const run = state.run
   if (run.phase !== 'review' || !run.diff) throw new Error('Commit is only offered after review.')
@@ -1405,7 +1494,8 @@ export function commitRunNow(id: string): RunRecord {
     } catch {
       /* */
     }
-    return setPhase(state, 'done', { commitSha: sha, branch, audit: { brain: run.audit?.brain || [], work: rows } })
+    const shadow = o.by === 'joe' ? withJudgment(state.run.shadow, 'commit') : state.run.shadow
+    return setPhase(state, 'done', { commitSha: sha, branch, audit: { brain: run.audit?.brain || [], work: rows }, shadow })
   } catch (e) {
     return setPhase(state, 'review', { error: `Commit failed: ${String((e as Error).message || e).slice(0, 300)}` })
   }
@@ -1424,7 +1514,7 @@ export function publishBlockFor(id: string): string | null {
 }
 
 /** The Push click. Real git, run branch only, refused when HEAD moved or the branch is protected. */
-export async function publishRun(id: string): Promise<RunRecord> {
+export async function publishRun(id: string, o: Actor = {}): Promise<RunRecord> {
   const state = liveFor(id)
   const run = state.run
   if (run.phase !== 'done' || !run.commitSha) throw new Error('Push comes after Commit.')
@@ -1434,7 +1524,8 @@ export async function publishRun(id: string): Promise<RunRecord> {
   if (block) return setPhase(state, 'done', { pushError: block })
   const res = await (need().publish || gitPublish)(run.workRepo, t)
   if (!res.ok) return setPhase(state, 'done', { pushError: tail(res.out || 'git push failed.', 6) })
-  return setPhase(state, 'done', { pushed: { ...t, at: Date.now() }, pushError: undefined })
+  const shadow = o.by === 'joe' ? withJudgment(state.run.shadow, 'push') : state.run.shadow
+  return setPhase(state, 'done', { pushed: { ...t, at: Date.now() }, pushError: undefined, shadow })
 }
 
 function deployCmd(run: RunRecord): string {
@@ -1469,8 +1560,9 @@ export async function deployRun(id: string): Promise<RunRecord> {
   return setPhase(state, 'done', { deployed: { at: Date.now() }, deployError: undefined })
 }
 
-export function abandonRun(id: string): RunRecord {
+export function abandonRun(id: string, o: Actor = {}): RunRecord {
   const state = liveFor(id)
+  if (o.by === 'joe' && !TERMINAL_PHASES.includes(state.run.phase)) state.run = { ...state.run, shadow: withJudgment(state.run.shadow, 'abandon') }
   state.gen++
   state.abort?.abort()
   closeWorkers(state)

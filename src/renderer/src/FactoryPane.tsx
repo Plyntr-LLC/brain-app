@@ -39,6 +39,15 @@ function railIndex(run: RunRecord): number {
   return i < 0 ? 0 : i
 }
 
+/** "4 model calls, 182k tokens, 3m 10s" for the run header. */
+function usageLine(rows: NonNullable<RunRecord['usage']>): string {
+  const tokens = rows.reduce((n, r) => n + r.inTokens + r.outTokens + r.cacheRead + r.cacheWrite, 0)
+  const secs = Math.round(rows.reduce((n, r) => n + r.ms, 0) / 1000)
+  const t = tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens)
+  const time = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`
+  return `${rows.length} model call${rows.length === 1 ? '' : 's'}, ${t} tokens, ${time}`
+}
+
 export function FactoryPane(props: {
   id: string
   runId?: string
@@ -322,6 +331,7 @@ export function FactoryPane(props: {
           <p className="tiny">
             Work repo: <strong>{baseName(run.workRepo)}</strong> {run.workRepo}
             {run.builder ? ` · Builder: ${BUILDER_NAME[run.builder]}` : ''}
+            {run.usage?.length ? ` · ${usageLine(run.usage)}` : ''}
           </p>
           <div className="phaserail">
             {RAIL.map((r, i) => (

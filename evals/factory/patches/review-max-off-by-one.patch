@@ -1,0 +1,13 @@
+diff --git a/src/main/factory/controller.ts b/src/main/factory/controller.ts
+index 3edf84f..d340952 100644
+--- a/src/main/factory/controller.ts
++++ b/src/main/factory/controller.ts
+@@ -1044,7 +1044,7 @@ async function strictStep(state: Live): Promise<boolean> {
+   persist(state)
+   // Auto fix + a fresh independent review until REVIEW_MAX; the last fail holds for Joe.
+   // Grok/Cursor make the first two review fixes; from the third on, Claude makes the fix.
+-  if (cycles < REVIEW_MAX) {
++  if (cycles <= REVIEW_MAX) {
+     const why = acc.why === 'FAIL' ? 'The strict reviewer said FAIL.' : `The strict reviewer did not approve: ${acc.why}. Every gap counts.`
+     await buildStep(state, 'fix', why, cycles >= BUILDER_FIX_MAX)
+     return false

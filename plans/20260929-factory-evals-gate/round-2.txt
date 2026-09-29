@@ -1,0 +1,39 @@
+I'll re-review only the six open items against the plan diff and the code those checks have to pin.The plan's new checks have to match how finishReview, usage parsing, and the audit actually behave. I'll read those paths next.REJECT. Fixed: 3, 6. Still open: 1, 2, 4, 5. New: 7, 8, 9.
+
+**3. Code stays home.** The diff covers the plants from last round. Check b puts a marker in the failing verify tail, the voice REJECT tail, the fix note that copies the tail, the plan text, the strict FAIL text, and the T3 `.verify.txt`, then requires zero hits in userData and those bytes in the repo store. Check d brings plan text back with the diff and strict text, and requires `planPath` on disk after `dropMemory` and `restoreRun`. Check e loads a deleted repo without throwing, removes `.plan.md`, `.review.md`, and `.verify.txt`, and returns the fields empty.
+
+**6. Usage rows, build argv, checkbox defaults.** Check a records a row for a timeout at exit 124, a non-zero exit, and a missing binary, each with `ok: false` and `model: ''`. The fake Grok `end` event supplies `grok-fake-served`. One ACP build row has `ms` and turns with no tokens, and one has tokens. Check h pins `opusBuildArgs` beside `opusArgs` and `grokTriageArgs`, build staying `bypassPermissions` and output `json`. The S2 4 assertion and `opus.test.ts` move from `text` to `json` and otherwise stay put. The "default off" sentence is gone from section E. Check h requires the two `useState(true)` initials for `runThrough` and `shipThrough`.
+
+**1. Shadow ledger.** `wouldShip` is now independent of the checkboxes, an auto-commit sets `shadow.auto` and does not set `joe`, and the extra rows are listed. The agree check still does not match the controller, and the streak is still a blank.
+
+`guideRoute` returns false on the path that starts the turn. At `controller.ts` lines 1381-1384, a review that already has a diff calls `buildStep` and returns false. Lines 1375-1378 do the same for a waiting plan. Section E sets `joe` to guided only when `guideRoute` returns true, and the agree rule uses that same boolean as "a turn-starting Guide." Check g item 2 is this path. The gate has passed, Joe sends a Guide, a fix turn starts, and `joe` stays unset.
+
+That call also removes the diff before `guideRun` returns. `buildStep` clears `diff` on a fix turn in the same turn, before its first await. `commitRunNow` then throws unless the phase is review and `diff` is set, `controller.ts` line 1392. The disagree variant, Commit after the Guide with no new gate, cannot be driven. When the fix turn finishes, `finishReview` runs again and writes a new gate.
+
+The print line is still `agree 3/5, streak <n>`. Last round asked for the numeric trailing streak for this order. The fraction does not follow from the agree prose either. With `joe` and a gate missing, "everything else is disagree," so the run is in the total. Check g item 7 is a gate plus a queued note and no `joe`. Counted, the total is 6. The printed 3/5 leaves it out. Item 6 of that check, the fail that later passes, never says whether Joe acted. Until the judged set is one set, there is no streak number to print.
+
+**2. Truncated JSON.** The fixture shape is right. The extraction next to it does not yield a commit.
+
+Check a cuts the head by printing 450k of padding inside `result`, so the 400k buffer starts mid-string and ends in `}`. `runOpus` keeps the last 400_000 characters, `opus.ts` line 85. The `"result":"` key is in front of that padding, so it is not in the buffer. Step 2 says to pull the `"result":"..."` string. A search for that key finds nothing. Step 3 keeps raw stdout minus trailing JSON envelope lines. A compact envelope is one line ending in `}`. A pretty one leaves a line ending in `PASS",`. `verdict` strips `` *`_. `` and then accepts only a last line that is exactly `PASS` or `FAIL`, `opus.ts` lines 167-169. Both of those leftovers fail.
+
+Commit uses `reviewAccept`, not the last-line verdict alone. `reviewAccept` rejects a PASS with no `GAPS: 0` line, `opus.ts` line 282, and `strictStep` uses that result, `controller.ts` line 1033. The full-envelope bullet ends in `GAPS: 0\nPASS`. The cut bullet only says PASS. A cut `result` whose verdict line is PASS does not commit. The `ok: false` row on the cut, and the FAIL cut that must not commit, are specified. They do not make the PASS cut commit.
+
+**4. Brain log.** The folder cases and the single-entry pause, resume, done, and second settle are in check f. The negative control still passes the bug from last round, and the Push assertion does not match section D.
+
+`auditTurn` records every brain path whose porcelain changed, `git-audit.ts` lines 145-166. Check f writes the other file at `notes/stray.md`. An audit that ignores every path under `projects/` still lists `notes/stray.md` and still omits `projects/<basename>/factory-log.md`. The check passes. The second file has to be under `projects/`, and `audit.brain` has to include that path while the factory-log path stays off the list.
+
+The same check says one later Push updates that single entry with the push SHA. Section D upserts when the run reaches done or abandoned, and on a second settle or a resume-then-done. `publishRun` stays in done, so a hook on the transition into done never sees the push.
+
+**5. Failures 11-14.** The Doppler guard, `--dry` for the registry, the `reviewAccept` gap, the line window, the numstat commit, holdout `--confirm`, and the clean worktree checks are in part 2. The three weight fixtures cannot all be true, and the results grep fights the report.
+
+Section F still says under-size costs 3 times the steps and over-size costs 1 times the steps. Expected T1, got T2 is one step larger and the check assigns 1, so a larger answer costs 1 per step. Expected T0, got T2 is two steps larger, which is 2 under that rule. The check assigns 6. Expected T3, got T1 is two steps smaller, and the 6 there matches under-size. The T0/T2 row is the one that breaks the formula.
+
+Part 2 also says the results directory has zero lines starting with `+`, `-`, or `@@`. Section F writes the markdown report into that same directory. A markdown bullet starts with `- `.
+
+**7. Section 2 item 10 now says the opposite of the new agree rule.** Item 10, which this diff does not change, says a misattribution is a Commit after a Guide counting as agreement. The section E agree bullet and check g item 2 say a Guide, a later passing gate, and a Commit is agree. The hunk changes the approved failure and leaves the old sentence in place.
+
+**8. Multi-line `error` is now a code field, and no check plants it.** The section C hunk adds `error` strings over one line to the repo store. Checks b through e plant `CODEMARK` in the diff, the tails, the voice tail, the note, the plan, the strict text, and the verify file. None of them plant a marker in `error`. A multi-line error left in the userData JSON still greps clean for those markers. Failure 5 already names error strings that embed command output.
+
+**9. The live smoke gained a config this round's items did not include.** The section F hunk adds `grok-low-emptycwd`, same argv, cwd an empty temp directory, timeout 60 seconds. Part 3 runs it with `rules` and `grok-default-low` under one `--limit 8`. The approved smoke was `rules`, `grok-default-low`, and `opus-medium`. The plan does not say whether `--limit` is per config or for the whole job, so the new config either takes the live Grok slots or adds up to eight more calls at 60 seconds.
+
+REJECT

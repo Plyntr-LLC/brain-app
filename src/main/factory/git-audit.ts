@@ -141,6 +141,11 @@ export type TurnAudit = {
   brainChecked: boolean
 }
 
+/** The controller's own brain record (brain-log.ts). Only that exact file name, anywhere in the brain. */
+function isFactoryLog(path: string): boolean {
+  return path.split('/').at(-1) === 'factory-log.md'
+}
+
 /** After a build turn: new brain porcelain entries vs the pre-turn snapshot, and work repo numstat vs base. */
 export function auditTurn(opts: { brainPath: string; workRepo: string; brainBefore: Snapshot; base: string }): TurnAudit {
   const brainChecked = isGitRepo(opts.brainPath)
@@ -151,12 +156,13 @@ export function auditTurn(opts: { brainPath: string; workRepo: string; brainBefo
     const now = porcelain(opts.brainPath)
     for (const [path, mark] of Object.entries(now)) {
       if (opts.brainBefore[path] === mark) continue
+      if (isFactoryLog(path)) continue
       // A work repo nested in the brain is audited on its own.
       if (underPath(work, join(top, path))) continue
       brain.push(path)
     }
     for (const path of Object.keys(opts.brainBefore)) {
-      if (!(path in now)) {
+      if (!(path in now) && !isFactoryLog(path)) {
         const abs = join(top, path)
         if (underPath(work, abs)) continue
         brain.push(path)
