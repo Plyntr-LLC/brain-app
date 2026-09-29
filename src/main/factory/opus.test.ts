@@ -46,7 +46,7 @@ test('verdict reads the last non-empty line', () => {
 
 test('argv shape and a fresh process with no stdin, no keys, no shell', async () => {
   const a = opusArgs('hello')
-  assert.deepEqual(a, ['-p', 'hello', '--model', 'opus', '--effort', 'medium', '--permission-mode', 'plan', '--output-format', 'text'])
+  assert.deepEqual(a, ['-p', 'hello', '--model', 'opus', '--effort', 'medium', '--permission-mode', 'plan', '--output-format', 'json'])
   assert.ok(!a.includes('--bare'))
   const dir = mkdtempSync(join(tmpdir(), 'factory-opus-'))
   const log = join(dir, 'log.jsonl')

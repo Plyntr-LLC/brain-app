@@ -1581,7 +1581,7 @@ export function registerPoolForCheck(pool: Pool): void {
 async function factoryPromptOn(
   pool: Pool,
   tab: Tab,
-  opts: { brainPath: string; text: string; onEvent: (ev: StreamEvent) => void }
+  opts: { brainPath: string; text: string; onEvent: (ev: StreamEvent) => void; onUsage?: (u: { model?: string; effort?: string; usage?: Record<string, unknown> | null }) => void }
 ): Promise<string> {
   tab.alwaysApprove = false
   if (tab.promptId != null) acpCancel(tab.tabId)
@@ -1598,7 +1598,10 @@ async function factoryPromptOn(
         return raw
       }
     })
-    const stop = String(asRecord(raw).stopReason || 'end_turn')
+    const res = asRecord(raw)
+    const usage = asRecord(res.usage || asRecord(res._meta).usage)
+    opts.onUsage?.({ model: tab.model, effort: tab.effort, usage: Object.keys(usage).length ? usage : null })
+    const stop = String(res.stopReason || 'end_turn')
     if (stop === 'cancelled') throw new Error('cancelled')
     if (stop !== 'end_turn' && !tab.text) throw new Error(stop)
   } finally {
@@ -1621,6 +1624,7 @@ export async function factoryPrompt(opts: {
   text: string
   onEvent: (ev: StreamEvent) => void
   onBuilder?: (builder: 'cursor', sessionId: string) => void
+  onUsage?: (u: { model?: string; effort?: string; usage?: Record<string, unknown> | null }) => void
 }): Promise<string> {
   const key = tabPool.get(opts.tabId)
   const pool = key ? pools.get(key) : undefined

@@ -15,7 +15,8 @@
     "preview": "electron-vite preview",
     "pack:mac": "node scripts/pack-mac.cjs",
     "pack:win": "node scripts/pack-win.cjs",
-    "dry-run:plyntr-fixture": "node scripts/dry-run-plyntr-fixture.mjs"
+    "dry-run:plyntr-fixture": "node scripts/dry-run-plyntr-fixture.mjs",
+    "eval:factory": "node --experimental-strip-types scripts/eval-factory.ts"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

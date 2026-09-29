@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import type { UsageRow } from '../../shared/factory.ts'
 import { RANK, type Risk, type Size, type Triage } from './triage.ts'
+import { grokEnd, grokRow } from './usage.ts'
 
 /**
  * Model triage at Start: one Grok low one-shot, raise-only on top of the rules. Never uses the
@@ -8,8 +10,11 @@ import { RANK, type Risk, type Size, type Triage } from './triage.ts'
  */
 
 export const TRIAGE_TIMEOUT_MS = 8000
-/** Empty means the Grok CLI default model (4.7). Set if the CLI default ever moves. */
+/** Empty means the Grok CLI default model (grok-4.6-build on 2026-09-29, per the CLI's own answer). */
 export const TRIAGE_MODEL = ''
+export const TRIAGE_EFFORT = 'low'
+
+export type TriageRun = { model?: string; effort?: string }
 
 export type LlmTriage = { size: Size; risk: Risk; reason: string }
 
@@ -28,8 +33,9 @@ export function triagePrompt(task: string, rules: Triage): string {
   ].join('\n')
 }
 
-export function grokTriageArgs(prompt: string): string[] {
-  return ['-p', prompt, '--effort', 'low', '--output-format', 'streaming-json', ...(TRIAGE_MODEL ? ['-m', TRIAGE_MODEL] : [])]
+export function grokTriageArgs(prompt: string, o: TriageRun = {}): string[] {
+  const model = o.model ?? TRIAGE_MODEL
+  return ['-p', prompt, '--effort', o.effort || TRIAGE_EFFORT, '--output-format', 'streaming-json', ...(model ? ['-m', model] : [])]
 }
 
 const SIZES: Size[] = ['T0', 'T1', 'T2', 'T3']
@@ -77,9 +83,13 @@ export async function llmTriage(o: {
   /** Chat's Grok line reader (parseGrokLine). Without it the raw stdout is read. */
   parseLine?: (line: string) => LineEvent
   spawnFn?: SpawnFn
-}): Promise<{ llm: LlmTriage | null; why: string }> {
-  if (!o.bin) return { llm: null, why: 'grok CLI not found' }
-  const args = grokTriageArgs(triagePrompt(o.task, o.rules))
+  run?: TriageRun
+}): Promise<{ llm: LlmTriage | null; why: string; usage: UsageRow }> {
+  const started = Date.now()
+  let end: ReturnType<typeof grokEnd> = null
+  const row = (ok: boolean) => grokRow({ phase: 'triage', cli: 'grok', effort: o.run?.effort || TRIAGE_EFFORT, ms: Date.now() - started }, end, ok)
+  if (!o.bin) return { llm: null, why: 'grok CLI not found', usage: row(false) }
+  const args = grokTriageArgs(triagePrompt(o.task, o.rules), o.run)
   const timeoutMs = o.timeoutMs ?? TRIAGE_TIMEOUT_MS
   return new Promise((resolve) => {
     let settled = false
@@ -87,25 +97,25 @@ export async function llmTriage(o: {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      resolve(r)
+      resolve({ ...r, usage: row(!!r.llm) })
     }
     let child: ChildProcess
     try {
       child = (o.spawnFn || spawn)(o.bin as string, args, { cwd: o.cwd, env: o.env, stdio: ['ignore', 'pipe', 'pipe'], shell: false })
     } catch (e) {
-      resolve({ llm: null, why: String((e as Error).message || e) })
+      resolve({ llm: null, why: String((e as Error).message || e), usage: row(false) })
       return
     }
     let raw = ''
     let text = ''
     let buf = ''
     const line = (l: string) => {
+      end = grokEnd(l) || end
       const ev = o.parseLine?.(l)
       if (ev && ev.kind === 'text' && ev.data) text += ev.data
     }
     child.stdout?.on('data', (d: Buffer) => {
       raw = (raw + String(d)).slice(-50_000)
-      if (!o.parseLine) return
       buf += String(d)
       const parts = buf.split('\n')
       buf = parts.pop() || ''

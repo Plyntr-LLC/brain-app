@@ -38,6 +38,34 @@ export type GuideNote = { at: number; text: string; sent?: boolean; repo?: strin
 
 export type VerifyRow = { script: string; status: 'pass' | 'fail' | 'skipped'; tail?: string }
 
+/** One model call. model is what the CLI said served it (never the configured name); '' when no answer came. */
+export type UsageRow = {
+  phase: 'triage' | 'plan' | 'review' | 'build'
+  cli: 'claude' | 'grok' | 'cursor'
+  model: string
+  effort: string
+  inTokens: number
+  outTokens: number
+  cacheRead: number
+  cacheWrite: number
+  /** The CLI's list-price equivalent in USD. Subscription calls are not billed this. */
+  costEq: number
+  ms: number
+  turns: number
+  ok: boolean
+  at: number
+}
+
+/** The loop's own ship call at the last finishReview, whatever the checkboxes say. */
+export type ShadowGate = { id: string; wouldShip: boolean; strict: 'pass' | 'held' | 'missing' | 'none'; model: string; at: number }
+
+export type JudgmentAction = 'commit' | 'push' | 'guide' | 'abandon'
+
+/** One click by Joe against one gate. agree: he did what the loop would have done. */
+export type Judgment = { gate: string; wouldShip: boolean; action: JudgmentAction; agree: boolean; at: number }
+
+export type Shadow = { gate?: ShadowGate; judgments: Judgment[]; auto: number; autoGates?: string[]; noGate?: boolean }
+
 /** Per work repo settings, kept in userData only. Keyed by lockKey(repo). */
 export type RepoProfile = {
   repo: string
@@ -46,6 +74,8 @@ export type RepoProfile = {
   publish: { remote: string }
   /** Deploy click only (never the model). userData profile only; runs never copy the cmd. */
   deploy?: { cmd?: string }
+  /** Brain-relative folder for this repo's factory-log.md. Anything that leaves the brain is ignored. */
+  brainFolder?: string
   updatedAt: number
 }
 
@@ -130,6 +160,9 @@ export type RunRecord = {
   deployError?: string
   note?: string
   error?: string
+  /** Every model call this run made (last 200). */
+  usage?: UsageRow[]
+  shadow?: Shadow
   createdAt: number
   updatedAt: number
 }

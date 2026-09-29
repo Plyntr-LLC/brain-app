@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { realish, underPath } from './paths.ts'
+import { joinCode, readCode, repoStoreDir, splitCode, writeCode } from './repo-store.ts'
 
 /**
  * Factory run records and work-repo locks. They live only under the app's userData, never in the
@@ -66,35 +67,98 @@ function safeId(id: string): string {
   return s
 }
 
+/** Which repo holds each run's code store (the run's current work repo). */
+const repoOf = new Map<string, string>()
+const wrote = new Map<string, string>()
+
+/** Metadata to userData; the code fields to the work repo's own store. The caller keeps the whole run. */
 export function saveRun(run: RunRecord): RunRecord {
   assertStoreOutside(run.brainPath, run.workRepo)
   mkdirSync(runsDir(), { recursive: true })
   const next = { ...run, updatedAt: Date.now() }
-  atomicWrite(join(runsDir(), `${safeId(run.id)}.json`), JSON.stringify(next, null, 2))
+  const { meta, code } = splitCode(next)
+  const dir = repoStoreDir(next.workRepo, safeId(next.id))
+  if (dir) {
+    repoOf.set(next.id, next.workRepo)
+    const body = JSON.stringify(code)
+    if (wrote.get(dir) !== body) {
+      writeCode(dir, code)
+      wrote.set(dir, body)
+    }
+  }
+  atomicWrite(join(runsDir(), `${safeId(run.id)}.json`), JSON.stringify(meta, null, 2))
   return next
 }
 
-/** Plan text and the last strict FAIL text sit beside the run record, not in the brief. */
+/** Plan text and the last strict FAIL text sit beside the run's code, in the work repo's store. */
 export type RunTextKind = 'plan' | 'review' | 'verify'
 
-/** plan and review are .md; the T3 verify artifact is .txt. */
+const TEXT_KINDS: RunTextKind[] = ['plan', 'review', 'verify']
+
+function textName(kind: RunTextKind): string {
+  return `${kind}.${kind === 'verify' ? 'txt' : 'md'}`
+}
+
+/** Where Brain.app kept these before 0.1.107. Read only to move them out. */
+function legacyTextPath(id: string, kind: RunTextKind): string {
+  return join(runsDir(), `${safeId(id)}.${textName(kind)}`)
+}
+
+/** plan and review are .md; the T3 verify artifact is .txt. In the work repo's store, never userData. */
 export function runTextPath(id: string, kind: RunTextKind): string {
-  return join(runsDir(), `${safeId(id)}.${kind}.${kind === 'verify' ? 'txt' : 'md'}`)
+  const repo = repoOf.get(id)
+  const dir = repo ? repoStoreDir(repo, safeId(id)) : null
+  if (!dir) throw new Error('This run has no work repo to keep its text in.')
+  return join(dir, textName(kind))
 }
 
 export function saveRunText(id: string, kind: RunTextKind, text: string): string {
-  mkdirSync(runsDir(), { recursive: true })
   const dest = runTextPath(id, kind)
+  mkdirSync(dirname(dest), { recursive: true })
   atomicWrite(dest, String(text || ''))
   return dest
 }
 
+/**
+ * Before 0.1.107 userData held code (diff, review, plan, tails) and text files beside the record.
+ * Copy them into the repo store; delete the userData copies only once the copies are in place. With no
+ * repo left there is nowhere to keep them, so they go. A failed copy throws and leaves userData as it was.
+ */
+function migrate(raw: RunRecord): RunRecord {
+  const { meta, code } = splitCode(raw)
+  const legacy = TEXT_KINDS.filter((k) => existsSync(legacyTextPath(raw.id, k)))
+  if (!Object.keys(code).length && !legacy.length) return raw
+  const dir = repoStoreDir(raw.workRepo, safeId(raw.id))
+  if (dir) {
+    mkdirSync(dir, { recursive: true })
+    writeCode(dir, { ...(readCode(dir) || {}), ...code })
+    for (const k of legacy) copyFileSync(legacyTextPath(raw.id, k), join(dir, textName(k)))
+    const stored = readCode(dir)
+    const missing = Object.keys(code).some((k) => !stored || !(k in stored)) || legacy.some((k) => !existsSync(join(dir, textName(k))))
+    if (missing) throw new Error('Repo store copy is incomplete.')
+  }
+  atomicWrite(join(runsDir(), `${safeId(raw.id)}.json`), JSON.stringify(meta, null, 2))
+  for (const k of legacy) rmSync(legacyTextPath(raw.id, k), { force: true })
+  return meta
+}
+
 export function loadRun(id: string): RunRecord | null {
+  let raw: RunRecord
   try {
-    return JSON.parse(readFileSync(join(runsDir(), `${safeId(id)}.json`), 'utf8')) as RunRecord
+    raw = JSON.parse(readFileSync(join(runsDir(), `${safeId(id)}.json`), 'utf8')) as RunRecord
   } catch {
     return null
   }
+  let meta = raw
+  try {
+    meta = migrate(raw)
+  } catch {
+    // Nothing is lost: userData keeps the old record and files, and the next load tries again.
+    return raw
+  }
+  const dir = repoStoreDir(meta.workRepo, safeId(meta.id))
+  if (dir) repoOf.set(meta.id, meta.workRepo)
+  return joinCode(meta, readCode(dir))
 }
 
 export function listRuns(): RunRecord[] {

@@ -47,6 +47,7 @@ export function readProfile(repo: string): RepoProfile {
     voice: { ...found.voice, ...(saved.voice || {}), on: saved.voice?.on === true },
     publish: { remote: String(saved.publish?.remote || found.publish.remote) },
     ...(saved.deploy?.cmd ? { deploy: { cmd: String(saved.deploy.cmd) } } : {}),
+    ...(saved.brainFolder ? { brainFolder: String(saved.brainFolder) } : {}),
     updatedAt: Number(saved.updatedAt || 0)
   }
 }
@@ -56,6 +57,7 @@ export type ProfilePatch = {
   voice?: Partial<RepoProfile['voice']>
   publish?: Partial<RepoProfile['publish']>
   deploy?: { cmd?: string }
+  brainFolder?: string
 }
 
 export function saveProfile(repo: string, patch: ProfilePatch): RepoProfile {
@@ -71,6 +73,8 @@ export function saveProfile(repo: string, patch: ProfilePatch): RepoProfile {
   }
   const cmd = patch.deploy ? String(patch.deploy.cmd || '').trim() : String(cur.deploy?.cmd || '')
   if (cmd) next.deploy = { cmd }
+  const folder = patch.brainFolder !== undefined ? String(patch.brainFolder || '').trim() : String(cur.brainFolder || '')
+  if (folder) next.brainFolder = folder
   mkdirSync(profilesDir(), { recursive: true })
   const dest = profilePath(repo)
   const tmp = `${dest}.${process.pid}.tmp`

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
-import type { RunRecord, VerifyRow } from '../../shared/factory.ts'
+import type { RunRecord, UsageRow, VerifyRow } from '../../shared/factory.ts'
+import { claudeRow, parseClaudeEnvelope, usageRow } from './usage.ts'
 
 export { REVIEW_MAX } from '../../shared/factory.ts'
 
@@ -14,19 +15,29 @@ export const OPUS_PLAN_TIMEOUT_MS = 10 * 60_000
 export const OPUS_REVIEW_TIMEOUT_MS = 10 * 60_000
 
 export type SpawnFn = (bin: string, args: string[], opts: SpawnOptions) => ChildProcess
-export type OpusResult = { found: boolean; code: number; text: string; last: string }
+/**
+ * parsed: stdout was one whole Claude result envelope and text is its `result`. Otherwise text is the
+ * raw stdout tail for a person to read, and no verdict, plan, or build may be taken from it.
+ */
+export type OpusResult = { found: boolean; code: number; text: string; last: string; parsed: boolean; usage: UsageRow }
 
-/** Factory Opus is always medium (same as the Kennel merge gate). Claude has no xhigh. */
-export function opusArgs(prompt: string): string[] {
-  return ['-p', prompt, '--model', 'opus', '--effort', 'medium', '--permission-mode', 'plan', '--output-format', 'text']
+/** Stdout kept for the JSON envelope. Over this, the answer is not read at all. */
+export const OPUS_JSON_MAX = 16 * 1024 * 1024
+const RAW_TAIL = 400_000
+
+export type OpusRun = { model?: string; effort?: string }
+
+/** Factory Opus is always medium (same as the Kennel merge gate). Claude has no xhigh. Evals pass other runs. */
+export function opusArgs(prompt: string, o: OpusRun = {}): string[] {
+  return ['-p', prompt, '--model', o.model || 'opus', '--effort', o.effort || 'medium', '--permission-mode', 'plan', '--output-format', 'json']
 }
 
 /**
  * Opus as the builder (Grok and Cursor could not run, or the third review fix): same as opusArgs but
  * bypassPermissions so it can edit. Never used for plan or strict review.
  */
-export function opusBuildArgs(prompt: string): string[] {
-  return ['-p', prompt, '--model', 'opus', '--effort', 'medium', '--permission-mode', 'bypassPermissions', '--output-format', 'text']
+export function opusBuildArgs(prompt: string, o: OpusRun = {}): string[] {
+  return ['-p', prompt, '--model', o.model || 'opus', '--effort', o.effort || 'medium', '--permission-mode', 'bypassPermissions', '--output-format', 'json']
 }
 
 export function opusEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -57,32 +68,48 @@ export function runOpus(o: {
   build?: boolean
   /** Stdout as it arrives. */
   onText?: (chunk: string) => void
+  /** Which job this call is, for its usage row. */
+  phase?: UsageRow['phase']
+  run?: OpusRun
+  /** Test hook: a smaller stdout cap. */
+  maxBytes?: number
 }): Promise<OpusResult> {
-  if (!o.bin) return Promise.resolve({ found: false, code: 127, text: '', last: '' })
+  const started = Date.now()
+  const base = () => ({ phase: o.phase || (o.build ? 'build' : 'review'), cli: 'claude' as const, effort: o.run?.effort || 'medium', ms: Date.now() - started })
+  if (!o.bin) return Promise.resolve({ found: false, code: 127, text: '', last: '', parsed: false, usage: usageRow(base(), { ok: false }) })
+  const max = o.maxBytes ?? OPUS_JSON_MAX
   return new Promise((resolve) => {
     let settled = false
     let text = ''
+    let over = false
     let err = ''
     const finish = (code: number) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      resolve({ found: true, code, text: text.trim() || err.trim(), last: lastLine(text) })
+      const env = over || code !== 0 ? null : parseClaudeEnvelope(text)
+      const raw = text.slice(-RAW_TAIL).trim() || err.trim()
+      const body = env ? String(env.result || '').trim() : raw
+      resolve({ found: true, code, text: body, last: lastLine(body), parsed: !!env, usage: claudeRow(base(), env) })
     }
     let child: ChildProcess
     try {
-      child = (o.spawnFn || spawn)(o.bin as string, o.build ? opusBuildArgs(o.prompt) : opusArgs(o.prompt), {
+      child = (o.spawnFn || spawn)(o.bin as string, o.build ? opusBuildArgs(o.prompt, o.run) : opusArgs(o.prompt, o.run), {
         cwd: o.cwd,
         env: opusEnv(o.env),
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: false
       })
     } catch (e) {
-      resolve({ found: true, code: 127, text: String((e as Error).message || e), last: '' })
+      resolve({ found: true, code: 127, text: String((e as Error).message || e), last: '', parsed: false, usage: usageRow(base(), { ok: false }) })
       return
     }
     child.stdout?.on('data', (d: Buffer) => {
-      text = (text + String(d)).slice(-400_000)
+      text += String(d)
+      if (text.length > max) {
+        over = true
+        text = text.slice(-RAW_TAIL)
+      }
       o.onText?.(String(d))
     })
     child.stderr?.on('data', (d: Buffer) => {
@@ -102,7 +129,7 @@ export function runOpus(o: {
       if (missing && !settled) {
         settled = true
         clearTimeout(timer)
-        resolve({ found: false, code: 127, text: '', last: '' })
+        resolve({ found: false, code: 127, text: '', last: '', parsed: false, usage: usageRow(base(), { ok: false }) })
         return
       }
       err += String(e.message || e)
