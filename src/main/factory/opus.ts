@@ -27,7 +27,14 @@ const RAW_TAIL = 400_000
 
 export type OpusRun = { model?: string; effort?: string }
 
-/** Factory Opus is always medium (same as the Kennel merge gate). Claude has no xhigh. Evals pass other runs. */
+/**
+ * Strict review effort. Opus 5.5 low matched or beat medium on the Factory reviewer eval (held-out 13/14 vs
+ * 11/14, same bugs caught, about half the tokens and time), agency-brain
+ * projects/factory-evals/log/2026-09-29-reviewer-round-2.md. Joe said yes 2026-09-29. Plan and build stay medium.
+ */
+export const STRICT_EFFORT = 'low'
+
+/** Factory Opus plan and build run at medium (same as the Kennel merge gate). Claude has no xhigh. */
 export function opusArgs(prompt: string, o: OpusRun = {}): string[] {
   return ['-p', prompt, '--model', o.model || 'opus', '--effort', o.effort || 'medium', '--permission-mode', 'plan', '--output-format', 'json']
 }

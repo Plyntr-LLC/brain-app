@@ -715,6 +715,18 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   )
   check('S2 8 a PASS without GAPS and a PASS naming a nit are fails', fixes.some((f) => f.includes('PASS without GAPS: 0')) && fixes.some((f) => f.includes('PASS named gaps')), JSON.stringify(fixes.map((f) => f.split('\n').find((l) => l.startsWith('Note:')))))
   const reviews = opusReviews(claudeRows().slice(c1))
+  {
+    const block = claudeRows().slice(c00)
+    const eff = (x: ClaudeRow) => x.argv[x.argv.indexOf('--effort') + 1]
+    const planners = block.filter((x) => modeOf(x) === 'plan' && x.argv[1].includes('Write the implementation plan'))
+    const strict = block.filter((x) => modeOf(x) === 'plan' && x.argv[1].includes('strict code review skill'))
+    const builders = block.filter((x) => modeOf(x) === 'bypassPermissions')
+    check(
+      'STRICT LOW 3 planners at medium, 5 strict reviews at low, 2 Opus builders at medium',
+      planners.length === 3 && planners.every((x) => eff(x) === 'medium') && strict.length === 5 && strict.every((x) => eff(x) === 'low') && builders.length === 2 && builders.every((x) => eff(x) === 'medium'),
+      JSON.stringify({ planners: planners.map(eff), strict: strict.map(eff), builders: builders.map(eff) })
+    )
+  }
   const buildPids = builds.map((x) => x.pid)
   check(
     'FB 4 after two Grok review fixes (reviewCycles 3) the next fix spawns claude --permission-mode bypassPermissions; plan and review stay plan mode; distinct pids',
@@ -1284,7 +1296,7 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
   check('S3 8 verify artifact verify.txt in the work repo store, not userData', r?.verifyArtifact === art && art.endsWith(join('.git', 'brain-factory', id, 'verify.txt')) && !underPath(realish(userData), realish(art)) && readFileSync(art, 'utf8').includes('npm run typecheck: pass'), String(r?.verifyArtifact))
   const review = claudeRows().slice(c0)[1]
   check('S3 11 T3 planner and reviewer are different claude processes', !!review && review.pid !== planner?.pid && review.argv[1].includes('strict-code-review/SKILL.md'))
-  check('S3 11 T3 Opus review argv has --effort medium, plan mode', !!review && review.argv[review.argv.indexOf('--effort') + 1] === 'medium' && review.argv[review.argv.indexOf('--permission-mode') + 1] === 'plan', JSON.stringify(review?.argv.filter((a) => a.length < 40)))
+  check('S3 11 T3 Opus review argv has --effort low, plan mode', !!review && review.argv[review.argv.indexOf('--effort') + 1] === 'low' && review.argv[review.argv.indexOf('--permission-mode') + 1] === 'plan', JSON.stringify(review?.argv.filter((a) => a.length < 40)))
   check('S3 5 T3 runThrough reaches done with a commit, not pushed', r?.phase === 'done' && !!r.commitSha && !r.pushed && pushCalls === push0, JSON.stringify({ phase: r?.phase, error: r?.error, strict: r?.strict }))
   check('S3 8 work repo git status is clean of the artifact', git(work2, ['status', '--porcelain', '--ignored']).trim() === '' && !existsSync(join(work2, `${id}.verify.txt`)))
 }
@@ -2822,7 +2834,7 @@ setTimeout(() => {
     await new Promise((r) => setTimeout(r, 2000))
     const quiet = events.length === before
     releaseAll()
-    const rv = await one(aId, 'review|claude|opus|medium')
+    const rv = await one(aId, 'review|claude|opus|low')
     const aEnd = await ctl.settle(aId)
     triageBin = null
     process.env.FAKE_CLAUDE_DELAY = '0'
@@ -2841,7 +2853,7 @@ setTimeout(() => {
     })()
     check('LV f one ACP call flips live twice (set, clear); a 2 s wait while blocked emits nothing', flips === 2 && quiet, JSON.stringify({ flips, quiet }))
     const aDone = store.loadRun(aId)
-    check('LV f Models line comes from served models, each phase/model/effort once', shared.modelsLine(aDone?.usage).includes('review claude-fake-served medium') && shared.modelsLine(aDone?.usage).includes('triage grok-fake-served low'), shared.modelsLine(aDone?.usage))
+    check('LV f Models line comes from served models, each phase/model/effort once', shared.modelsLine(aDone?.usage).includes('review claude-fake-served low') && shared.modelsLine(aDone?.usage).includes('triage grok-fake-served low'), shared.modelsLine(aDone?.usage))
     const row = (phase: 'review' | 'build', model: string, effort: string) => ({ phase, cli: 'claude' as const, model, effort, inTokens: 0, outTokens: 0, cacheRead: 0, cacheWrite: 0, costEq: 0, ms: 0, turns: 1, ok: true, at: 0 })
     check('LV f modelsLine dedupes the same triple', shared.modelsLine([row('review', 'm1', 'medium'), row('review', 'm1', 'medium'), row('build', 'm2', 'high')]) === 'review m1 medium; build m2 high')
 
@@ -2878,8 +2890,8 @@ setTimeout(() => {
       use()
       return { id, end, seen }
     }
-    await ending('claude timeout', { repoName: 'ev-lv-timeout', says: ['GAPS: 0\nPASS', 'GAPS: 0\nPASS'], delay: '4000', want: 'review|claude|opus|medium', over: { opusTimeoutMs: 800 }, act: () => {} })
-    await ending('claude exit 3', { repoName: 'ev-lv-exit', says: ['@@exit:3:GAPS: 0\nPASS', 'GAPS: 0\nPASS'], delay: '1200', want: 'review|claude|opus|medium', act: () => {} })
+    await ending('claude timeout', { repoName: 'ev-lv-timeout', says: ['GAPS: 0\nPASS', 'GAPS: 0\nPASS'], delay: '4000', want: 'review|claude|opus|low', over: { opusTimeoutMs: 800 }, act: () => {} })
+    await ending('claude exit 3', { repoName: 'ev-lv-exit', says: ['@@exit:3:GAPS: 0\nPASS', 'GAPS: 0\nPASS'], delay: '1200', want: 'review|claude|opus|low', act: () => {} })
     await ending('missing claude binary', { repoName: 'ev-lv-missing', says: [], want: '', over: { claudeBin: () => join(temp, 'no-such-claude') }, act: () => {} })
     const thrower = evRepo('ev-lv-throw')
     promptPlan = async (o) => {
@@ -2924,7 +2936,7 @@ setTimeout(() => {
       repoName: 'ev-lv-pause',
       says: ['GAPS: 0\nPASS'],
       delay: '4000',
-      want: 'review|claude|opus|medium',
+      want: 'review|claude|opus|low',
       act: (id) => {
         ctl.pauseRun(id)
       }

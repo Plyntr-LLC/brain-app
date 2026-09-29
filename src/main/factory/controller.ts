@@ -9,7 +9,7 @@ import { buildBrief, type BriefPhase } from './brief.ts'
 import { isNeedOpus } from './fallback.ts'
 import { deploy as gitDeploy, deployBlock, publish as gitPublish, publishBlock, pushWarn, type PublishTarget } from './gates.ts'
 import { auditTurn, commitRun, currentBranch, diffText, dirtyPaths, gitTop, headSha, isClean, isGitRepo, numstat, porcelain, stashAll } from './git-audit.ts'
-import { OPUS_PLAN_TIMEOUT_MS, OPUS_REVIEW_TIMEOUT_MS, planPrompt, REVIEW_MAX, reviewAccept, runOpus, splitOutside, strictNeeded, strictPrompt, type SpawnFn } from './opus.ts'
+import { OPUS_PLAN_TIMEOUT_MS, OPUS_REVIEW_TIMEOUT_MS, planPrompt, REVIEW_MAX, reviewAccept, runOpus, splitOutside, STRICT_EFFORT, strictNeeded, strictPrompt, type SpawnFn } from './opus.ts'
 import { realish } from './paths.ts'
 import { detectProfile, readProfile, runProfile } from './profile.ts'
 import { lastRepo, rememberRepo, resolveWorkRepo } from './resolve-repo.ts'
@@ -1103,7 +1103,7 @@ async function strictStep(state: Live): Promise<boolean> {
   const run = state.run
   const abort = new AbortController()
   state.abort = abort
-  const res = await withLive(state, { phase: 'review', ...OPUS_LIVE }, () =>
+  const res = await withLive(state, { phase: 'review', ...OPUS_LIVE, effort: STRICT_EFFORT }, () =>
     runOpus({
       cwd: run.workRepo,
       prompt: strictPrompt({ task: run.task, tier: run.tier, risk: run.risk, base: run.base, diff: safeDiff(run.workRepo, run.base), workRepo: run.workRepo, verify: run.verify }),
@@ -1113,6 +1113,7 @@ async function strictStep(state: Live): Promise<boolean> {
       spawnFn: d.spawnOpus,
       signal: abort.signal,
       phase: 'review',
+      run: { effort: STRICT_EFFORT },
       maxBytes: d.opusMax
     })
   )
