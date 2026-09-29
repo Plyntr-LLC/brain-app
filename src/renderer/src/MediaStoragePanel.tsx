@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { canTurnOnGithubSync } from '@shared/contracts'
 import {
+  MEDIA_AUTO_STORE,
+  MEDIA_LOST_COPY,
+  computerLine,
   MEDIA_NOTES,
   MEDIA_OFF_KEYLESS,
   MEDIA_OFF_OTHER,
@@ -10,10 +13,13 @@ import {
   MEDIA_PROJECT_WATCH,
   MEDIA_RECOVERY_COPY,
   mediaUsedLine,
+  parseStorageGb,
+  storageBytesToGb,
+  storageEstimateLine,
+  storageGbToBytes,
   type MediaStatus
 } from '@shared/media'
 import { ipcErrorText } from '@shared/plyntr-org-copy'
-import { WorkPulse } from './WorkPulse'
 
 export function MediaAdminFields({
   folder,
@@ -107,7 +113,6 @@ export function MediaStoragePanel({
   const [own, setOwn] = useState('')
   const [own2, setOwn2] = useState('')
   const [saved, setSaved] = useState(false)
-  const [root, setRoot] = useState('')
   const [lost, setLost] = useState(false)
   const [reclaimEmail, setReclaimEmail] = useState('')
   const [reclaimCode, setReclaimCode] = useState('')
@@ -115,7 +120,11 @@ export function MediaStoragePanel({
   const [reclaimRec, setReclaimRec] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
   const [removeId, setRemoveId] = useState('')
-  const [removePass, setRemovePass] = useState('')
+  const [computerName, setComputerName] = useState('')
+  const [enableCode, setEnableCode] = useState('')
+  const [needCode, setNeedCode] = useState(false)
+  const [capGb, setCapGb] = useState('10')
+  const [capTouched, setCapTouched] = useState(false)
   const canEnable = st?.hasSeatToken
     ? canTurnOnGithubSync(role, Boolean(joe))
     : canTurnOnGithubSync(role, false)
@@ -123,7 +132,8 @@ export function MediaStoragePanel({
   async function refresh() {
     const next = await window.brain.media.status(folder)
     setSt(next)
-    if (next.projects[0] && !root) setRoot(next.projects[0].root)
+    const gb = storageBytesToGb(next.capBytes)
+    if (gb != null && !capTouched) setCapGb(String(gb))
     return next
   }
 
@@ -140,16 +150,57 @@ export function MediaStoragePanel({
   if (!st) return null
   if (!st.routes) return null
 
-  async function enable() {
+  async function applyCap(gb: number) {
+    await window.brain.media.setCap({ folder, capBytes: storageGbToBytes(gb) })
+    await window.brain.media.turnOnBucket(folder)
+  }
+
+  async function saveCap() {
+    const gb = parseStorageGb(capGb)
+    if (gb == null) {
+      setErr('Enter a whole number of GB, at least 1.')
+      return
+    }
     setBusy(true)
     setErr('')
     try {
-      await window.brain.media.enable({ folder })
+      await applyCap(gb)
+      setCapTouched(false)
+      onDone(`Storage limit saved (${gb} GB).`)
+      await refresh()
+    } catch (e) {
+      setErr(ipcErrorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function enable() {
+    if (parseStorageGb(capGb) == null) {
+      setErr('Enter a whole number of GB, at least 1.')
+      return
+    }
+    setBusy(true)
+    setErr('')
+    try {
+      const res = await window.brain.media.enable({ folder, code: enableCode || undefined })
+      if (res.needsCode) {
+        setEnableCode('')
+        setNeedCode(true)
+        setErr(res.detail)
+        return
+      }
+      if (!res.ok) {
+        setErr(res.detail)
+        await refresh()
+        return
+      }
       const pass = await window.brain.media.takePassphrase(folder)
       const rec = await window.brain.media.takeRecoveryKey(folder)
       setWords(pass || '')
       setRecovery(rec || '')
       setPhase('secrets')
+      setNeedCode(false)
       await refresh()
     } catch (e) {
       setErr(ipcErrorText(e))
@@ -181,30 +232,198 @@ export function MediaStoragePanel({
     setOwn2('')
     setSaved(false)
     setPhase('idle')
-    onDone('Plyntr storage is on.')
-    void refresh()
-  }
-
-  async function addFile() {
-    if (!root) {
-      setErr('Pick a project.')
+    const gb = parseStorageGb(capGb)
+    if (gb == null) {
+      setErr('Enter a whole number of GB, at least 1, then Save.')
+      void refresh()
       return
     }
     setBusy(true)
-    setErr('')
     try {
-      const res = await window.brain.media.add({ folder, root })
-      if (!res.ok) setErr(res.detail)
-      else onDone(res.detail)
-      await refresh()
+      await applyCap(gb)
+      setCapTouched(false)
+      onDone(`Plyntr storage is on (${gb} GB).`)
     } catch (e) {
       setErr(ipcErrorText(e))
     } finally {
       setBusy(false)
+      void refresh()
     }
   }
 
   const builder = Boolean(canEnable)
+  const picked = st.others.find((w) => w.deviceId === removeId)
+  const computersBlock = (
+    <>
+      <label className="field">
+        Computers
+        <select
+          value={removeId}
+          onChange={(e) => {
+            setRemoveId(e.target.value)
+            setComputerName(st.others.find((w) => w.deviceId === e.target.value)?.label || '')
+          }}
+        >
+          <option value="">Pick a computer</option>
+          {st.others.map((w) => (
+            <option key={w.deviceId} value={w.deviceId}>
+              {computerLine(w)}
+              {w.mine ? ' (this Mac)' : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        Name
+        <input value={computerName} onChange={(e) => setComputerName(e.target.value)} maxLength={40} />
+      </label>
+      <div className="actions tight">
+        <button
+          className="ghost"
+          type="button"
+          disabled={busy || !removeId || !computerName.trim()}
+          onClick={() => {
+            setBusy(true)
+            void window.brain.media
+              .renameDevice({ folder, deviceId: removeId, label: computerName })
+              .then((res) => {
+                onDone(res.detail)
+                void refresh()
+              })
+              .catch((e) => setErr(ipcErrorText(e)))
+              .finally(() => setBusy(false))
+          }}
+        >
+          Save
+        </button>
+        <button
+          className="ghost"
+          type="button"
+          disabled={busy || !picked || picked.mine}
+          onClick={() => {
+            setBusy(true)
+            void window.brain.media
+              .revokeDevice({ folder, deviceId: removeId })
+              .then((res) => {
+                onDone(res.detail)
+                setRemoveId('')
+                setComputerName('')
+                void refresh()
+              })
+              .catch((e) => setErr(ipcErrorText(e)))
+              .finally(() => setBusy(false))
+          }}
+        >
+          Remove that computer
+        </button>
+      </div>
+      {picked && !picked.mine ? (
+        <p className="tiny">
+          Remove that computer stops {computerLine(picked)} from opening files here. Other computers keep working.
+        </p>
+      ) : picked?.mine ? (
+        <p className="tiny">This is the computer you are on. Remove it from another computer.</p>
+      ) : null}
+    </>
+  )
+  const lostBlock = builder ? (
+    <>
+      <div className="actions tight">
+        <button className="ghost" type="button" onClick={() => setLost((v) => !v)}>
+          Emergency restore
+        </button>
+      </div>
+      {lost ? (
+        <>
+          <p className="tiny">{MEDIA_LOST_COPY}</p>
+          <label className="field">
+            Email
+            <input value={reclaimEmail} onChange={(e) => setReclaimEmail(e.target.value)} />
+          </label>
+          <div className="actions tight">
+            <button
+              className="ghost"
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                void window.brain.media.requestCode({ email: reclaimEmail }).then((res) => {
+                  onDone(res.detail)
+                })
+              }}
+            >
+              Email me a code
+            </button>
+          </div>
+          <label className="field">
+            Code
+            <input value={reclaimCode} onChange={(e) => setReclaimCode(e.target.value)} />
+          </label>
+          <label className="field">
+            Passphrase
+            <input value={reclaimPass} onChange={(e) => setReclaimPass(e.target.value)} type="password" />
+          </label>
+          <label className="field">
+            Recovery key
+            <input value={reclaimRec} onChange={(e) => setReclaimRec(e.target.value)} type="password" />
+          </label>
+          <div className="actions tight">
+            <button
+              className="primary"
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setBusy(true)
+                void window.brain.media
+                  .reclaim({
+                    folder,
+                    email: reclaimEmail,
+                    code: reclaimCode,
+                    passphrase: reclaimPass || undefined,
+                    recovery: reclaimRec || undefined
+                  })
+                  .then((res) => {
+                    onDone(res.detail)
+                    setReclaimPass('')
+                    setReclaimRec('')
+                    setReclaimCode('')
+                    void refresh()
+                  })
+                  .catch((e) => setErr(ipcErrorText(e)))
+                  .finally(() => setBusy(false))
+              }}
+            >
+              Open storage on this computer
+            </button>
+          </div>
+          {st.waiting[0] ? (
+            <p className="tiny">New sign-in by email, not approved on a known Mac.</p>
+          ) : null}
+          <label className="field">
+            Add a person
+            <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+          </label>
+          <div className="actions tight">
+            <button
+              className="ghost"
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                void window.brain.media
+                  .invitePerson({ folder, email: inviteEmail })
+                  .then((res) => {
+                    onDone(res.detail)
+                    if (res.ok) setInviteEmail('')
+                  })
+                  .catch((e) => setErr(ipcErrorText(e)))
+              }}
+            >
+              Add
+            </button>
+          </div>
+        </>
+      ) : null}
+    </>
+  ) : null
 
   return (
     <div className="set-block" data-media-block="1">
@@ -255,11 +474,37 @@ export function MediaStoragePanel({
             </button>
           </div>
         </>
+      ) : !st.on && st.joining ? (
+        <>
+          <p>{st.detail}</p>
+          {lostBlock}
+          {err ? <p className="note">{err}</p> : null}
+        </>
       ) : !st.on ? (
         <>
           <p>{builder ? MEDIA_OFF_OWNER : st.hasSeatToken ? MEDIA_OFF_OTHER : MEDIA_OFF_KEYLESS}</p>
           {builder ? (
             <>
+              <label className="field">
+                Storage limit (GB)
+                <input
+                  value={capGb}
+                  onChange={(e) => {
+                    setCapGb(e.target.value)
+                    setCapTouched(true)
+                  }}
+                  inputMode="numeric"
+                />
+              </label>
+              {parseStorageGb(capGb) != null ? (
+                <p className="tiny">{storageEstimateLine(parseStorageGb(capGb) as number)}</p>
+              ) : null}
+              {needCode ? (
+                <label className="field">
+                  Email code
+                  <input value={enableCode} onChange={(e) => setEnableCode(e.target.value)} />
+                </label>
+              ) : null}
               <div className="actions tight">
                 <button className="primary" type="button" disabled={busy} onClick={() => void enable()}>
                   {busy ? 'Turning on…' : 'Use Plyntr storage'}
@@ -275,40 +520,47 @@ export function MediaStoragePanel({
           <p>{MEDIA_ON}</p>
           <p className="tiny">{mediaUsedLine(st)}</p>
           {!builder ? <p className="tiny">{MEDIA_PROJECT_WATCH}</p> : null}
-          {builder && st.projects.length ? (
+          {builder ? <p className="tiny">{MEDIA_AUTO_STORE}</p> : null}
+          {builder ? (
             <>
               <label className="field">
-                Project
-                <select value={root} onChange={(e) => setRoot(e.target.value)}>
-                  {st.projects.map((p) => (
-                    <option key={p.root} value={p.root}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
+                Storage limit (GB)
+                <input
+                  value={capGb}
+                  onChange={(e) => {
+                    setCapGb(e.target.value)
+                    setCapTouched(true)
+                  }}
+                  inputMode="numeric"
+                />
               </label>
+              {parseStorageGb(capGb) != null ? (
+                <p className="tiny">{storageEstimateLine(parseStorageGb(capGb) as number)}</p>
+              ) : null}
               <div className="actions tight">
-                <button className="primary" type="button" disabled={busy} onClick={() => void addFile()}>
-                  Add a video or image
+                <button className="ghost" type="button" disabled={busy} onClick={() => void saveCap()}>
+                  Save
                 </button>
               </div>
-              {busy ? <WorkPulse label="Uploading" /> : null}
             </>
           ) : null}
           {builder
             ? st.waiting.map((w) => (
                 <div className="set-row" key={w.deviceId}>
                   <span>
-                    Waiting: {w.name} · Mac {w.fingerprint} · {w.project || 'brain'}
+                    Waiting: {w.name} · {computerLine(w)} · {w.project || 'brain'}
                   </span>
                   <button
                     className="ghost"
                     type="button"
                     onClick={() => {
-                      void window.brain.media.allow({ folder, deviceId: w.deviceId }).then((res) => {
-                        onDone(res.detail)
-                        void refresh()
-                      })
+                      void window.brain.media
+                        .allow({ folder, deviceId: w.deviceId })
+                        .then((res) => {
+                          onDone(res.detail)
+                          void refresh()
+                        })
+                        .catch((e) => setErr(ipcErrorText(e)))
                     }}
                   >
                     Allow
@@ -317,136 +569,8 @@ export function MediaStoragePanel({
               ))
             : null}
           {st.fingerprint ? <p className="tiny">This Mac: {st.fingerprint}.</p> : null}
-          {builder ? (
-            <>
-              <div className="actions tight">
-                <button className="ghost" type="button" onClick={() => setLost((v) => !v)}>
-                  This computer is lost
-                </button>
-              </div>
-              {lost ? (
-                <>
-                  <p className="tiny">
-                    On a new computer, ask for an email code, then type your passphrase or recovery key.
-                  </p>
-                  <label className="field">
-                    Email
-                    <input value={reclaimEmail} onChange={(e) => setReclaimEmail(e.target.value)} />
-                  </label>
-                  <div className="actions tight">
-                    <button
-                      className="ghost"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => {
-                        void window.brain.media.requestCode({ email: reclaimEmail }).then((res) => {
-                          onDone(res.detail)
-                        })
-                      }}
-                    >
-                      Email me a code
-                    </button>
-                  </div>
-                  <label className="field">
-                    Code
-                    <input value={reclaimCode} onChange={(e) => setReclaimCode(e.target.value)} />
-                  </label>
-                  <label className="field">
-                    Passphrase
-                    <input value={reclaimPass} onChange={(e) => setReclaimPass(e.target.value)} type="password" />
-                  </label>
-                  <label className="field">
-                    Recovery key
-                    <input value={reclaimRec} onChange={(e) => setReclaimRec(e.target.value)} type="password" />
-                  </label>
-                  <div className="actions tight">
-                    <button
-                      className="primary"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => {
-                        setBusy(true)
-                        void window.brain.media
-                          .reclaim({
-                            folder,
-                            email: reclaimEmail,
-                            code: reclaimCode,
-                            passphrase: reclaimPass || undefined,
-                            recovery: reclaimRec || undefined
-                          })
-                          .then((res) => {
-                            onDone(res.detail)
-                            setReclaimPass('')
-                            setReclaimRec('')
-                            setReclaimCode('')
-                            void refresh()
-                          })
-                          .catch((e) => setErr(ipcErrorText(e)))
-                          .finally(() => setBusy(false))
-                      }}
-                    >
-                      Open storage on this computer
-                    </button>
-                  </div>
-                  {st.waiting[0] ? (
-                    <p className="tiny">New sign-in by email, not approved on a known Mac.</p>
-                  ) : null}
-                  <label className="field">
-                    Remove this computer
-                    <select value={removeId} onChange={(e) => setRemoveId(e.target.value)}>
-                      <option value="">Pick a computer</option>
-                      {st.others.map((w) => (
-                        <option key={w.deviceId} value={w.deviceId}>
-                          {w.name} · {w.fingerprint}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="field">
-                    Passphrase to remove a computer
-                    <input value={removePass} onChange={(e) => setRemovePass(e.target.value)} type="password" />
-                  </label>
-                  <div className="actions tight">
-                    <button
-                      className="ghost"
-                      type="button"
-                      disabled={busy || !removeId}
-                      onClick={() => {
-                        void window.brain.media
-                          .revokeDevice({ folder, deviceId: removeId, passphrase: removePass })
-                          .then((res) => {
-                            onDone(res.detail)
-                            setRemovePass('')
-                            void refresh()
-                          })
-                      }}
-                    >
-                      Remove that computer
-                    </button>
-                  </div>
-                  <label className="field">
-                    Add a person
-                    <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
-                  </label>
-                  <div className="actions tight">
-                    <button
-                      className="ghost"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => {
-                        void window.brain.media.invitePerson({ folder, email: inviteEmail }).then((res) => {
-                          onDone(res.detail)
-                          setInviteEmail('')
-                        })
-                      }}
-                    >
-                      Add
-                    </button>
-                  </div>
-                </>
-              ) : null}
-            </>
-          ) : null}
+          {builder ? computersBlock : null}
+          {lostBlock}
           {err ? <p className="note">{err}</p> : null}
         </>
       )}

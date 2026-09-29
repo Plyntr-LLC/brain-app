@@ -146,7 +146,8 @@ import {
   type ClientBrain,
   type TeamPerson
 } from './settings-store'
-import { afterHqProjectRevoke, afterPlyntrSeatRevoke, recordMintedInvite } from './media/session'
+import { afterHqProjectRevoke, afterPlyntrSeatRevoke, liveMediaCheckIn, recordMintedInvite } from './media/session'
+import { isMediaDryRun } from './media/transport'
 
 type RecentFolder = { path: string; name: string; watching?: boolean }
 
@@ -1793,6 +1794,9 @@ export function registerStubIpc(): void {
         roots: Array.isArray(body?.roots) ? body.roots.map(String) : [],
         role: String(body?.role || '')
       })
+      // This Mac wraps keys to the new person as soon as they join; any other owner or scout Mac does too.
+      const folder = currentBrainFolder()
+      if (folder && !isMediaDryRun()) void liveMediaCheckIn(folder).catch(() => undefined)
       return result
     }
   )

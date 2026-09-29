@@ -1078,7 +1078,7 @@ const brain = {
     shouldAsk: (opts: { folder: string; role?: string }) =>
       ipcRenderer.invoke('media:shouldAsk', opts) as Promise<boolean>,
     skip: (folder: string) => ipcRenderer.invoke('media:skip', folder) as Promise<{ ok: true }>,
-    enable: (opts: { folder: string; passphrase?: string; email?: string; code?: string }) =>
+    enable: (opts: { folder: string; passphrase?: string; recoveryKey?: string; email?: string; code?: string }) =>
       ipcRenderer.invoke('media:enable', opts) as Promise<MediaEnableResult>,
     setPassphrase: (opts: { folder: string; passphrase: string }) =>
       ipcRenderer.invoke('media:setPassphrase', opts) as Promise<{ ok: true }>,
@@ -1098,6 +1098,8 @@ const brain = {
       ipcRenderer.invoke('media:reclaim', opts) as Promise<{ ok: boolean; fingerprint: string; detail: string }>,
     invitePerson: (opts: { folder: string; email: string; role?: string }) =>
       ipcRenderer.invoke('media:invitePerson', opts) as Promise<{ ok: boolean; detail: string }>,
+    renameDevice: (opts: { folder: string; deviceId: string; label: string }) =>
+      ipcRenderer.invoke('media:renameDevice', opts) as Promise<{ ok: boolean; detail: string }>,
     revokeDevice: (opts: { folder: string; deviceId?: string; passphrase?: string }) =>
       ipcRenderer.invoke('media:revokeDevice', opts) as Promise<{ ok: true; detail: string; kind: string }>
   }

@@ -59,14 +59,14 @@ export type PlayResult = {
   end: number
 }
 
-export function playMedia(opts: {
+export async function playMedia(opts: {
   mediaId: string
   folder?: string
   range?: { start: number; end?: number }
-}): PlayResult {
+}): Promise<PlayResult> {
   const folder = String(opts.folder || currentBrainFolder() || '')
   const mediaId = assertMediaId(opts.mediaId)
-  const prep = prepareMediaPlay({ folder, mediaId })
+  const prep = await prepareMediaPlay({ folder, mediaId })
   const total = prep.plainLen
   const start = opts.range?.start ?? 0
   const end = opts.range && opts.range.end != null ? opts.range.end : total === 0 ? -1 : total - 1
@@ -104,7 +104,7 @@ export async function handleBrainMediaRequest(request: {
   try {
     const mediaId = parseBrainMediaUrl(request.url)
     const folder = currentBrainFolder()
-    const played = playMedia({
+    const played = await playMedia({
       mediaId,
       folder,
       range: parseRange(headerGet(request.headers, 'range')) || undefined

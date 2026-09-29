@@ -1,5 +1,7 @@
 /** HTTP bodies that match brain-sync media-v1 Slice 6 (tip MEDIA_V1_TIP in transport.ts). */
 
+import { createHash } from 'node:crypto'
+
 export const MEDIA_STATE_PATH = '/v1/media/state'
 export const MEDIA_WRAPS_PATH = '/v1/media/wraps'
 export const MEDIA_ROTATE_SCOPE_PATH = '/v1/media/rotate-scope'
@@ -13,6 +15,8 @@ export const MEDIA_RECLAIM_START_PATH = '/v1/media/reclaim/start'
 export const MEDIA_RECLAIM_FINISH_PATH = '/v1/media/reclaim/finish'
 export const MEDIA_WRAP_PASSPHRASE_PATH = '/v1/media/wrap/passphrase'
 export const MEDIA_ROTATE_PATH = '/v1/media/rotate'
+export const MEDIA_SCOPES_PATH = '/v1/media/scopes'
+export const MEDIA_UPLOADS_PATH = '/v1/media/uploads'
 
 export type MediaErrorBody = {
   error: string
@@ -134,4 +138,12 @@ export type WrapPassphraseBody = {
 export function reclaimStartHasSecrets(body: unknown): boolean {
   const raw = JSON.stringify(body || {})
   return /\bpbt_|\bpms_|X-Amz-|BEGIN [A-Z ]*PRIVATE|r2\.cloudflarestorage\.com|https?:\/\/[^\s"]*download/i.test(raw)
+}
+
+/** Signed bytes for a proof route: challenge, action, then sha256 of the body minus signature and challengeId, top-level keys sorted. */
+export function wrapProofMessage(challenge: Buffer, action: string, body: Record<string, unknown>): Buffer {
+  const sorted: Record<string, unknown> = {}
+  for (const k of Object.keys(body).filter((k) => k !== 'signature' && k !== 'challengeId').sort()) sorted[k] = body[k]
+  const hash = createHash('sha256').update(JSON.stringify(sorted)).digest()
+  return Buffer.concat([challenge, Buffer.from(action), hash])
 }

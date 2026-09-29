@@ -526,7 +526,7 @@ if (indexSrc.indexOf('registerBrainMediaScheme()') > indexSrc.indexOf('app.whenR
 }
 if (!indexSrc.includes('handleBrainMediaProtocol()')) fail('6', 'brain-media handler is not installed at ready')
 
-const played = play.playMedia({ folder, mediaId })
+const played = await play.playMedia({ folder, mediaId })
 const plaintextSha256 = createHash('sha256').update(plain).digest('hex')
 const playedSha256 = createHash('sha256').update(played.bytes).digest('hex')
 if (playedSha256 !== plaintextSha256) fail('6', 'played bytes did not match the source')
@@ -615,7 +615,7 @@ writeFileSync(objPath, flipped)
 cache.deleteCipherCache(userData, brainRow.id, mediaId)
 let flippedMsg = ''
 try {
-  play.playMedia({ folder, mediaId })
+  await play.playMedia({ folder, mediaId })
 } catch (err) {
   flippedMsg = String((err as Error).message || err)
 }
@@ -630,7 +630,7 @@ writeFileSync(objPath, truncated)
 cache.deleteCipherCache(userData, brainRow.id, mediaId)
 let truncatedMsg = ''
 try {
-  play.playMedia({ folder, mediaId })
+  await play.playMedia({ folder, mediaId })
 } catch (err) {
   truncatedMsg = String((err as Error).message || err)
 }
@@ -745,7 +745,7 @@ steps['5'] = { minted: true, wrapped: wrapIn.wrapped.length, tokens: 'hmac' }
 
 asDevice(userDataB)
 session.runMediaCheckIn(folder)
-const playedB = play.playMedia({ folder, mediaId })
+const playedB = await play.playMedia({ folder, mediaId })
 const playedBSha = createHash('sha256').update(playedB.bytes).digest('hex')
 if (playedBSha !== plaintextSha256) fail('6', 'device B played bytes did not match the source')
 const rangeB = await play.handleBrainMediaRequest({
@@ -755,14 +755,14 @@ const rangeB = await play.handleBrainMediaRequest({
 if (rangeB.status !== 206) fail('6', 'device B range status was ' + rangeB.status)
 const rangeBBytes = Buffer.from(await rangeB.arrayBuffer())
 if (Buffer.compare(rangeBBytes, plain.subarray(start, end + 1)) !== 0) fail('6', 'device B range bytes did not match')
-const fetchB = session.mediaDownload({ folder, mediaId })
+const fetchB = await session.mediaDownload({ folder, mediaId })
 if (fetchB.status !== 200) fail('6', 'device B download status was ' + fetchB.status)
 steps['6'] = { caller: 'B', shaMatch: true, rangeOk: true, alsoA: true }
 const seatBResult = { status: 200, shaMatch: true, rangeOk: true, token: 'hmac' as const }
 
 asDevice(userDataC)
 session.runMediaCheckIn(folder)
-const fetchC = session.mediaDownload({ folder, mediaId })
+const fetchC = await session.mediaDownload({ folder, mediaId })
 if (fetchC.status !== 403 || fetchC.error !== 'wrong_project') {
   fail('7', 'C expected 403 wrong_project got ' + JSON.stringify(fetchC))
 }
@@ -888,11 +888,11 @@ hmacSeat.writeHmacSeat(userDataB, {
   seat_id: seatB.seat_id
 })
 asDevice(userDataB)
-const refused = session.mediaDownload({ folder, mediaId })
+const refused = await session.mediaDownload({ folder, mediaId })
 if (refused.status !== 410 && refused.status !== 403) fail('15', 'revoked HMAC download was ' + JSON.stringify(refused))
 asDevice(userDataF)
 session.runMediaCheckIn(folder)
-const playedF = play.playMedia({ folder, mediaId })
+const playedF = await play.playMedia({ folder, mediaId })
 if (createHash('sha256').update(playedF.bytes).digest('hex') !== plaintextSha256) {
   fail('15', 'F could not play the file from step 4 after rotation')
 }
@@ -1095,7 +1095,7 @@ const reclaimedD = session.reclaimOnThisMac({
 })
 if (!reclaimedD.ok) fail('18', 'passphrase reclaim/finish failed: ' + reclaimedD.detail)
 session.runMediaCheckIn(folder)
-const playedD = play.playMedia({ folder, mediaId })
+const playedD = await play.playMedia({ folder, mediaId })
 if (createHash('sha256').update(playedD.bytes).digest('hex') !== plaintextSha256) {
   fail('18', 'D did not play the alpha file')
 }
@@ -1261,11 +1261,11 @@ keys.unwrapBrainKeyWithPassphrase({
   mediaBrainId: brainId
 })
 session.runMediaCheckIn(folder)
-const playedD2 = play.playMedia({ folder, mediaId })
+const playedD2 = await play.playMedia({ folder, mediaId })
 if (createHash('sha256').update(playedD2.bytes).digest('hex') !== plaintextSha256) fail('21', 'D could not play after rotation')
 asDevice(userDataF)
 session.runMediaCheckIn(folder)
-const playedF2 = play.playMedia({ folder, mediaId })
+const playedF2 = await play.playMedia({ folder, mediaId })
 if (createHash('sha256').update(playedF2.bytes).digest('hex') !== plaintextSha256) fail('21', 'F could not play after rotation')
 asOwner()
 const aState = session.runMediaCheckIn(folder)

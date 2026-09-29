@@ -3,10 +3,18 @@ import type { MediaAddResult } from '../../shared/media.ts'
 import { initShellVault } from '../shell-vault.ts'
 import { assertRendererSafe } from './renderer-safe.ts'
 import { pollMediaState } from './state-poll.ts'
+import { isMediaDryRun } from './transport.ts'
 import {
   MediaErr,
+  liveInvitePerson,
+  liveMediaAllow,
+  liveReclaimOnThisMac,
+  liveRenameDevice,
+  liveRevokeDevice,
+  liveRequestMediaCode,
   mediaAdd,
   mediaAllow,
+  mediaRenameDevice,
   mediaEnable,
   mediaSetCap,
   mediaSetPassphrase,
@@ -32,7 +40,8 @@ export function registerMediaIpc(): void {
   initShellVault(app.getPath('userData'))
   ipcMain.handle('media:status', async (_e, folder?: string) => {
     const path = String(folder || '')
-    if (path) await pollMediaState(path)
+    // Live status already joins and wraps for anyone waiting.
+    if (path && isMediaDryRun()) await pollMediaState(path)
     return assertRendererSafe(await mediaStatus(path))
   })
   ipcMain.handle('media:shouldAsk', async (_e, opts?: { folder?: string; role?: string }) => {
@@ -41,13 +50,24 @@ export function registerMediaIpc(): void {
   ipcMain.handle('media:skip', (_e, folder?: string) => {
     return assertRendererSafe(mediaSkip(String(folder || '')))
   })
-  ipcMain.handle('media:enable', async (_e, opts?: { folder?: string; passphrase?: string; email?: string; code?: string }) => {
+  ipcMain.handle(
+    'media:enable',
+    async (_e, opts?: { folder?: string; passphrase?: string; recoveryKey?: string; email?: string; code?: string }) => {
+      return assertRendererSafe(
+        await mediaEnable({
+          folder: folderOf(opts),
+          passphrase: opts?.passphrase,
+          recoveryKey: opts?.recoveryKey,
+          email: opts?.email,
+          code: opts?.code
+        })
+      )
+    }
+  )
+  ipcMain.handle('media:setPassphrase', async (_e, opts?: { folder?: string; passphrase?: string }) => {
     return assertRendererSafe(
-      await mediaEnable({ folder: folderOf(opts), passphrase: opts?.passphrase, email: opts?.email, code: opts?.code })
+      await mediaSetPassphrase({ folder: folderOf(opts), passphrase: String(opts?.passphrase || '') })
     )
-  })
-  ipcMain.handle('media:setPassphrase', (_e, opts?: { folder?: string; passphrase?: string }) => {
-    return assertRendererSafe(mediaSetPassphrase({ folder: folderOf(opts), passphrase: String(opts?.passphrase || '') }))
   })
   ipcMain.handle('media:takePassphrase', (_e, folder?: string) => takePassphrase(String(folder || '')))
   ipcMain.handle('media:takeRecoveryKey', (_e, folder?: string) => takeRecoveryKey(String(folder || '')))
@@ -71,16 +91,25 @@ export function registerMediaIpc(): void {
       throw err
     }
   })
-  ipcMain.handle('media:setCap', (_e, opts?: { folder?: string; capBytes?: number }) => {
-    return assertRendererSafe(mediaSetCap({ folder: folderOf(opts), capBytes: Number(opts?.capBytes) }))
+  ipcMain.handle('media:setCap', async (_e, opts?: { folder?: string; capBytes?: number }) => {
+    return assertRendererSafe(await mediaSetCap({ folder: folderOf(opts), capBytes: Number(opts?.capBytes) }))
   })
-  ipcMain.handle('media:turnOnBucket', (_e, folder?: string) => {
-    return assertRendererSafe(mediaTurnOnBucket(String(folder || '')))
+  ipcMain.handle('media:turnOnBucket', async (_e, folder?: string) => {
+    return assertRendererSafe(await mediaTurnOnBucket(String(folder || '')))
   })
-  ipcMain.handle('media:allow', (_e, opts?: { folder?: string; deviceId?: string }) => {
-    return assertRendererSafe(mediaAllow({ folder: folderOf(opts), deviceId: String(opts?.deviceId || '') }))
+  ipcMain.handle('media:allow', async (_e, opts?: { folder?: string; deviceId?: string }) => {
+    const args = { folder: folderOf(opts), deviceId: String(opts?.deviceId || '') }
+    return assertRendererSafe(isMediaDryRun() ? mediaAllow(args) : await liveMediaAllow(args))
   })
-  ipcMain.handle('media:revokeDevice', (_e, opts?: { folder?: string; deviceId?: string; seatId?: string; passphrase?: string }) => {
+  ipcMain.handle('media:renameDevice', async (_e, opts?: { folder?: string; deviceId?: string; label?: string }) => {
+    const args = { folder: folderOf(opts), deviceId: String(opts?.deviceId || ''), label: String(opts?.label || '') }
+    return assertRendererSafe(isMediaDryRun() ? mediaRenameDevice(args) : await liveRenameDevice(args))
+  })
+  ipcMain.handle('media:revokeDevice', async (_e, opts?: { folder?: string; deviceId?: string; seatId?: string; passphrase?: string }) => {
+    // Live: an owner or scout removes one computer without a passphrase. Emergency restore keeps the passphrase.
+    if (!isMediaDryRun() && opts?.deviceId && !opts?.passphrase) {
+      return assertRendererSafe(await liveRevokeDevice({ folder: folderOf(opts), deviceId: String(opts.deviceId) }))
+    }
     return assertRendererSafe(
       revokeMediaDevice({
         folder: folderOf(opts),
@@ -93,13 +122,24 @@ export function registerMediaIpc(): void {
   ipcMain.handle('media:revokeSeat', (_e, opts?: { folder?: string; seatId?: string }) => {
     return assertRendererSafe(revokeMediaDevice({ folder: folderOf(opts), seatId: String(opts?.seatId || '') }))
   })
-  ipcMain.handle('media:requestCode', (_e, opts?: { email?: string }) => {
-    const sent = requestMediaEmailCode(String(opts?.email || ''))
-    return assertRendererSafe({ ok: sent.status === 200, detail: sent.status === 200 ? 'Code sent.' : 'Could not send a code.' })
+  ipcMain.handle('media:requestCode', async (_e, opts?: { email?: string }) => {
+    const email = String(opts?.email || '')
+    const ok = isMediaDryRun() ? requestMediaEmailCode(email).status === 200 : await liveRequestMediaCode(email)
+    return assertRendererSafe({ ok, detail: ok ? 'Code sent.' : 'Could not send a code.' })
   })
   ipcMain.handle(
     'media:reclaim',
-    (_e, opts?: { folder?: string; email?: string; code?: string; passphrase?: string; recovery?: string }) => {
+    async (_e, opts?: { folder?: string; email?: string; code?: string; passphrase?: string; recovery?: string }) => {
+      if (!isMediaDryRun()) {
+        const res = await liveReclaimOnThisMac({
+          folder: folderOf(opts),
+          email: String(opts?.email || ''),
+          code: String(opts?.code || ''),
+          passphrase: opts?.passphrase,
+          recovery: opts?.recovery
+        })
+        return assertRendererSafe({ ok: res.ok, fingerprint: res.fingerprint, detail: res.detail })
+      }
       const result = reclaimOnThisMac({
         folder: folderOf(opts),
         email: String(opts?.email || ''),
@@ -114,7 +154,12 @@ export function registerMediaIpc(): void {
       })
     }
   )
-  ipcMain.handle('media:invitePerson', (_e, opts?: { folder?: string; email?: string; role?: string }) => {
+  ipcMain.handle('media:invitePerson', async (_e, opts?: { folder?: string; email?: string; role?: string }) => {
+    if (!isMediaDryRun()) {
+      return assertRendererSafe(
+        await liveInvitePerson({ folder: folderOf(opts), email: String(opts?.email || ''), role: opts?.role })
+      )
+    }
     const minted = mintPmsInvite({
       folder: folderOf(opts),
       email: String(opts?.email || ''),

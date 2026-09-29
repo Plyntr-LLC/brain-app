@@ -40,6 +40,16 @@ async function tick(): Promise<void> {
   if (isHqMiniFolder(cwd)) return
   const folder = cwd
   ticking = true
+  try {
+    const auto = await import('./media/auto-store')
+    await auto.maybeAutoStore(folder)
+  } catch {
+    /* storage off or offline; next tick */
+  }
+  if (cwd !== folder) {
+    ticking = false
+    return
+  }
   const manifest = readSyncManifest(folder)
   const row = brainRowForPath(folder)
   const plyntr = gitCredentialForMode(manifest?.ok ? manifest.manifest.mode : null) === 'plyntr'

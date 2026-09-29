@@ -58,6 +58,7 @@ export type MediaDeviceRow = {
   seat_id: string
   roots: string[]
   status: 'approved' | 'pending' | 'blocked' | 'revoked'
+  label?: string
 }
 
 export type MediaScopeRow = {
