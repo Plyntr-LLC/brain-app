@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { primeMediaLibrary } from './MediaLibraryPane'
 import { canTurnOnGithubSync } from '@shared/contracts'
 import {
   MEDIA_AUTO_STORE,
@@ -97,12 +98,14 @@ export function MediaStoragePanel({
   folder,
   role,
   joe,
-  onDone
+  onDone,
+  onSeeFiles
 }: {
   folder: string
   role?: string
   joe?: boolean
   onDone: (detail: string) => void
+  onSeeFiles?: () => void
 }) {
   const [st, setSt] = useState<MediaStatus | null>(null)
   const [err, setErr] = useState('')
@@ -519,6 +522,21 @@ export function MediaStoragePanel({
         <>
           <p>{MEDIA_ON}</p>
           <p className="tiny">{mediaUsedLine(st)}</p>
+          {onSeeFiles ? (
+            <div className="actions tight">
+              <button
+                className="ghost"
+                type="button"
+                onClick={() => {
+                  // Start the list now; the library tab picks it up and shows any failure there.
+                  primeMediaLibrary(folder, window.brain.media.library({ folder }))
+                  onSeeFiles()
+                }}
+              >
+                See files
+              </button>
+            </div>
+          ) : null}
           {!builder ? <p className="tiny">{MEDIA_PROJECT_WATCH}</p> : null}
           {builder ? <p className="tiny">{MEDIA_AUTO_STORE}</p> : null}
           {builder ? (

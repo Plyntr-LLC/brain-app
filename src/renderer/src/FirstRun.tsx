@@ -68,6 +68,7 @@ export function FirstRun() {
   const [err, setErr] = useState('')
   const [detected, setDetected] = useState<Partial<Record<AiKind, boolean>>>({})
   const [showInvite, setShowInvite] = useState(false)
+  const [libraryAsk, setLibraryAsk] = useState(0)
   const [railOpen, setRailOpen] = useState(true)
   const [theme, setTheme] = useState<'light' | 'dark'>(() => (localStorage.getItem('brain-theme') === 'dark' ? 'dark' : 'light'))
   const [activeSeat, setActiveSeat] = useState<{ email?: string; label?: string; token?: string }>({ email: '', label: '', token: '' })
@@ -1164,6 +1165,10 @@ export function FirstRun() {
             role={s.role}
             onClose={() => setShowInvite(false)}
             onLogout={() => void logOut()}
+            onSeeFiles={() => {
+              setShowInvite(false)
+              setLibraryAsk((n) => n + 1)
+            }}
             onSwitchBrain={(row) => {
               setS((p) => ({ ...p, brainPath: row.path, business: row.name }))
               setShowInvite(false)
@@ -2012,7 +2017,7 @@ export function FirstRun() {
                   </button>
                 </div>
               ) : null}
-              <TerminalWorkspace session={s} showInvite={showInvite} setShowInvite={setShowInvite} railOpen={railOpen} setRailOpen={setRailOpen} />
+              <TerminalWorkspace session={s} showInvite={showInvite} setShowInvite={setShowInvite} railOpen={railOpen} setRailOpen={setRailOpen} libraryAsk={libraryAsk} />
             </div>
           )}
         </section>

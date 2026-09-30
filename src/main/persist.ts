@@ -6,7 +6,7 @@ import { sameCwd } from '../shared/paths'
 export type SavedMsg = { who: 'me' | 'brain' | 'think' | 'sys'; text: string }
 export type SavedTab = {
   id: string
-  type: 'chat' | 'file' | 'term' | 'factory'
+  type: 'chat' | 'file' | 'term' | 'factory' | 'library'
   title: string
   kind?: string
   mode?: 'chat' | 'term'
@@ -17,6 +17,12 @@ export type SavedTab = {
   path?: string
   /** Factory tabs: the run this tab shows. */
   runId?: string
+  /** Stored-file tabs opened from the library: enough to open the same file again. */
+  fileKind?: string
+  mediaId?: string
+  mediaTitle?: string
+  mediaMime?: string
+  mediaBytes?: number
 }
 export type SavedChats = {
   cwd: string

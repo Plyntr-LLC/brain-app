@@ -61,6 +61,18 @@ export function kindLabel(mime: string): string {
   return 'File'
 }
 
+export const MEDIA_TITLE_MAX = 240
+
+/** A stored file name: trimmed, one line, at most 240 characters, nothing KEYISH. Null when refused. */
+export function cleanMediaTitle(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const t = raw.trim()
+  if (!t || t.length > MEDIA_TITLE_MAX) return null
+  if (/[\u0000-\u001f\u007f]/.test(t)) return null
+  if (KEYISH.test(t)) return null
+  return t
+}
+
 function assertNotKeyMaterial(value: string): void {
   if (KEYISH.test(value)) throw new Error(POINTER_KEY_FAIL)
 }

@@ -46,6 +46,10 @@ export type MediaObjectRow = {
   upload_id: string
   part_count: number
   created_by_email: string
+  /** Filename without its extension, saved at upload. Empty until a note fills it. */
+  title: string
+  /** ISO time the object was stored, same shape as the worker createdAt. */
+  created_at: string
 }
 
 export type MediaDeviceRow = {

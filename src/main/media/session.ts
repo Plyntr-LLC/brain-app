@@ -7,6 +7,8 @@ import { canTurnOnGithubSync } from '../../shared/contracts.ts'
 import {
   MEDIA_JOIN_SIGN_IN,
   MEDIA_JOIN_WAIT,
+  MEDIA_LIBRARY_FAIL,
+  MEDIA_LIBRARY_NOT_YET,
   MEDIA_NEEDS_NET,
   MEDIA_NOT_APPROVED,
   MEDIA_OFF_KEYLESS,
@@ -23,6 +25,8 @@ import {
   shouldShowStorageAsk,
   type MediaAddResult,
   type MediaEnableResult,
+  type MediaLibraryFile,
+  type MediaLibraryResult,
   type MediaStatus,
   type MediaWaiting
 } from '../../shared/media.ts'
@@ -92,7 +96,7 @@ import {
 } from './keys.ts'
 import { sealedPassphraseWrap, type LivePassphraseWrap } from './passphrase-wrap.ts'
 import { recordMintedInvite as writeMintedInvite, readMintedInvites } from './minted.ts'
-import { writePointer } from './pointer.ts'
+import { cleanMediaTitle, mediaId8, readPointer, writePointer } from './pointer.ts'
 import { readWrapsFile, upsertWrap } from './wraps-file.ts'
 import { assertPassphrase, generatePassphrase } from './passphrase.ts'
 import { isMediaDryRun } from './transport.ts'
@@ -102,6 +106,7 @@ import { isBuilderRole, joinReady, missingWraps, seatWrapPlan, type LiveScope } 
 import {
   MEDIA_BRAINS_PATH,
   MEDIA_DEVICES_PATH,
+  MEDIA_OBJECTS_PATH,
   MEDIA_RECLAIM_FINISH_PATH,
   MEDIA_RECLAIM_START_PATH,
   MEDIA_SCOPES_PATH,
@@ -1798,6 +1803,16 @@ async function liveEnsureScope(
   return { id: scopeId, version }
 }
 
+export const MEDIA_TITLE_REFUSED = 'That file name cannot be stored. Rename the file and try again.'
+
+/** The stored name: the filename without its extension. A refused name stops the upload before anything is stored. */
+function uploadTitle(filePath: string): string {
+  const raw = basename(filePath).replace(/\.[^.]+$/, '') || 'file'
+  const title = cleanMediaTitle(raw)
+  if (title == null) throw new MediaErr(400, 'bad_title', MEDIA_TITLE_REFUSED)
+  return title
+}
+
 async function liveAdd(opts: { folder: string; root: string; path?: string }): Promise<MediaAddResult> {
   const folder = String(opts.folder || '')
   const who = actor(folder)
@@ -1819,6 +1834,7 @@ async function liveAdd(opts: { folder: string; root: string; path?: string }): P
   if (!/^projects\/[^/]+\/$/.test(root) && !/^clients\/[^/]+\/$/.test(root)) {
     throw new Error('Pick a project in this folder.')
   }
+  const title = uploadTitle(filePath)
   const plain = readFileSync(filePath)
   const token = who.token
   const deviceId = liveDeviceId(row.id)
@@ -1852,6 +1868,7 @@ async function liveAdd(opts: { folder: string; root: string; path?: string }): P
       cipherBytes,
       bytes: plain.length,
       mime: mimeFor(filePath),
+      title,
       scopeId: scope.id,
       dekWrap: hexBuf(dekWrap),
       dekVersion: scope.version,
@@ -1919,7 +1936,6 @@ async function liveAdd(opts: { folder: string; root: string; path?: string }): P
   dek.fill(0)
   if (done.status !== 200) throw new Error('Could not upload that file.')
   writeCipherCache(userData(), row.id, objectId, blob)
-  const title = basename(filePath).replace(/\.[^.]+$/, '') || 'file'
   const pointer = writePointer({
     folder,
     root,
@@ -1961,6 +1977,7 @@ export async function mediaAdd(opts: {
   if (!/^projects\/[^/]+\/$/.test(root) && !/^clients\/[^/]+\/$/.test(root)) {
     throw new Error('Pick a project in this folder.')
   }
+  const title = uploadTitle(filePath)
   const plain = readFileSync(filePath)
   const chunkSize = mediaChunkSize()
   if (chunkSize < CHUNK_SIZE_MIN) throw new Error('Bad chunk size.')
@@ -2020,9 +2037,10 @@ export async function mediaAdd(opts: {
     status: 'ready',
     upload_id: randomUUID(),
     part_count: parts,
-    created_by_email: who.email
+    created_by_email: who.email,
+    title,
+    created_at: new Date().toISOString()
   })
-  const title = basename(filePath).replace(/\.[^.]+$/, '') || 'file'
   const pointer = writePointer({
     folder,
     root,
@@ -2304,6 +2322,144 @@ export async function mediaDownload(opts: { folder: string; mediaId: string }): 
     if (msg === MEDIA_NOT_APPROVED) return { status: 403, error: 'not_approved' }
     return { status: 403, error: 'refused' }
   }
+}
+
+const MEDIA_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const LIBRARY_ROOT_RE = /^(projects|clients)\/[^/]+\/$/
+
+/** The title in a note still on disk for this file, cleaned. Empty when there is no usable note. */
+function noteTitle(folder: string, root: string, mediaId: string): string {
+  if (!folder || !LIBRARY_ROOT_RE.test(root) || root.includes('..')) return ''
+  let id8 = ''
+  try {
+    id8 = mediaId8(mediaId)
+  } catch {
+    return ''
+  }
+  const dir = join(folder, ...root.split('/').filter(Boolean), 'media')
+  let names: string[] = []
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return ''
+  }
+  for (const name of names) {
+    if (!name.endsWith(`--${id8}.media.md`)) continue
+    try {
+      const note = readPointer(join(dir, name))
+      if (note.media_id.toLowerCase() !== mediaId.toLowerCase()) continue
+      const title = cleanMediaTitle(note.title)
+      if (title) return title
+    } catch {
+      /* a broken note fills nothing */
+    }
+  }
+  return ''
+}
+
+function libraryFile(f: MediaLibraryFile): MediaLibraryFile {
+  return {
+    id: f.id,
+    title: cleanMediaTitle(f.title) || '',
+    mime: String(f.mime || 'application/octet-stream'),
+    bytes: Number(f.bytes) || 0,
+    createdAt: String(f.createdAt || ''),
+    root: f.root
+  }
+}
+
+function newestFirst(files: MediaLibraryFile[]): MediaLibraryFile[] {
+  return files.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.title.localeCompare(b.title))
+}
+
+async function liveLibrary(folder: string, row: MediaBrainRow): Promise<MediaLibraryResult> {
+  const who = actor(folder)
+  const tokens = [who.token, readPmsSeat(userData(), row.id, safe())?.token || ''].filter(Boolean)
+  if (!tokens.length) return { ok: false, detail: NO_SEAT }
+  const deviceId = liveDeviceId(row.id) || undefined
+  let token = tokens[0]
+  let res = { status: 0, json: {} as Record<string, unknown> }
+  try {
+    for (const t of tokens) {
+      token = t
+      res = await mediaLiveJson({ method: 'GET', path: MEDIA_OBJECTS_PATH, token, deviceId })
+      if (res.status !== 401) break
+    }
+  } catch {
+    return { ok: false, detail: MEDIA_NEEDS_NET }
+  }
+  // A worker without the list route yet. Storage itself is still up, so the routes cache is left alone.
+  if (res.status === 404) return { ok: false, detail: MEDIA_LIBRARY_NOT_YET }
+  if (res.status !== 200) return { ok: false, detail: MEDIA_LIBRARY_FAIL }
+  const raw = Array.isArray(res.json.files) ? (res.json.files as Record<string, unknown>[]) : []
+  const files: MediaLibraryFile[] = []
+  for (const f of raw) {
+    const id = String(f.id || '')
+    const root = String(f.root || '')
+    if (!MEDIA_ID_RE.test(id) || !LIBRARY_ROOT_RE.test(root)) continue
+    let title = cleanMediaTitle(f.title) || ''
+    if (!title) {
+      const fromNote = noteTitle(folder, root, id)
+      if (fromNote) {
+        const filled = await mediaLiveJson({
+          method: 'POST',
+          path: `${MEDIA_OBJECTS_PATH}/${id}/title`,
+          token,
+          deviceId,
+          body: { title: fromNote }
+        }).catch(() => null)
+        title = (filled?.status === 200 ? cleanMediaTitle(filled.json.title) : null) || fromNote
+      }
+    }
+    files.push(
+      libraryFile({
+        id,
+        title,
+        mime: String(f.mime || ''),
+        bytes: Number(f.bytes) || 0,
+        createdAt: String(f.createdAt || ''),
+        root
+      })
+    )
+  }
+  return { ok: true, files: newestFirst(files) }
+}
+
+/**
+ * Stored files this seat may open, read from the storage records, not from notes. A note still on disk only
+ * fills a name that was never stored; a stored name is never replaced. Nothing here downloads a file.
+ */
+export async function mediaLibrary(folder: string): Promise<MediaLibraryResult> {
+  const path = String(folder || '')
+  const row = brainForFolder(path)
+  if (!row) return { ok: false, detail: 'Turn on storage first.' }
+  if (!isMediaDryRun()) return liveLibrary(path, row)
+  const who = actor(path)
+  if (!who.token) return { ok: false, detail: NO_SEAT }
+  const mem = store()
+  const roots = mediaAccessRoots(path)
+  const files: MediaLibraryFile[] = []
+  for (const o of mem.objects) {
+    if (o.media_brain_id !== row.id || o.status !== 'ready') continue
+    const scope = mem.scopes.find((sc) => sc.id === o.scope_id)
+    if (!scope) continue
+    if (roots !== 'full' && !rootsOverlap(roots, scope.root)) continue
+    if (!o.title) {
+      const fromNote = noteTitle(path, scope.root, o.id)
+      if (fromNote) o.title = fromNote
+    }
+    files.push(
+      libraryFile({
+        id: o.id,
+        title: o.title || '',
+        mime: o.mime,
+        bytes: o.bytes,
+        createdAt: o.created_at || '',
+        root: scope.root
+      })
+    )
+  }
+  return { ok: true, files: newestFirst(files) }
 }
 
 export function recordMintedInvite(opts: {

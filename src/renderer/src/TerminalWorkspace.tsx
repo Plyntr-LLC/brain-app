@@ -13,6 +13,8 @@ import { panelBlocks } from '../../shared/panel-blocks'
 import { WorldClocks } from './WorldClocks'
 import { WorkPulse } from './WorkPulse'
 import { FactoryPane } from './FactoryPane'
+import { MediaLibraryPane } from './MediaLibraryPane'
+import type { MediaLibraryFile } from '../../shared/media'
 import { SkinPane } from './skin/SkinPane'
 import { SkinCard } from './skin/Registry'
 import { skinPtyId } from './skin/SkinTerm'
@@ -178,7 +180,7 @@ const NEED_ARG = new Set([
 ])
 type Tab = {
   id: string
-  type: 'chat' | 'file' | 'term' | 'factory'
+  type: 'chat' | 'file' | 'term' | 'factory' | 'library'
   title: string
   kind?: AiKind
   mode?: Mode
@@ -309,6 +311,26 @@ function MediaFilePane({
       )}
     </>
   )
+}
+
+/** What a tab keeps across restarts. A stored file opened from the library keeps enough to open it again. */
+function savedTab(x: Tab) {
+  return {
+    id: x.id,
+    type: x.type,
+    title: x.title,
+    kind: x.kind,
+    mode: x.mode,
+    model: x.model,
+    effort: x.effort,
+    agentMode: x.agentMode,
+    cliSessionId: x.cliSessionId,
+    path: x.path,
+    runId: x.runId,
+    ...(x.fileKind === 'media' && !x.path
+      ? { fileKind: x.fileKind, mediaId: x.mediaId, mediaTitle: x.mediaTitle, mediaMime: x.mediaMime, mediaBytes: x.mediaBytes }
+      : {})
+  }
 }
 
 function widthPref(key: string, fallback: number): number {
@@ -2186,13 +2208,16 @@ export function TerminalWorkspace({
   showInvite,
   setShowInvite,
   railOpen,
-  setRailOpen
+  setRailOpen,
+  libraryAsk
 }: {
   session: Session
   showInvite: boolean
   setShowInvite: (v: boolean) => void
   railOpen: boolean
   setRailOpen: (v: boolean) => void
+  /** Bumped by Settings → See files to open the stored-file library tab. */
+  libraryAsk?: number
 }) {
   const setupKind = (s.ai || 'grok') as AiKind
   const [cwd, setCwd] = useState(s.brainPath || '')
@@ -2284,6 +2309,13 @@ export function TerminalWorkspace({
     if (s.brainPath && s.brainPath !== cwd) setCwd(s.brainPath)
   }, [s.brainPath])
 
+  const libraryDone = useRef(0)
+  useEffect(() => {
+    if (!libraryAsk || !hydrated || libraryDone.current === libraryAsk) return
+    libraryDone.current = libraryAsk
+    addLibrary()
+  }, [libraryAsk, hydrated])
+
   useEffect(() => {
     if (!closingId) return
     const onKey = (e: KeyboardEvent) => {
@@ -2358,19 +2390,7 @@ export function TerminalWorkspace({
         window.brain.chat.saveStateSync({
           cwd: s.cwd,
           active: s.active,
-          tabs: s.tabs.map((x) => ({
-            id: x.id,
-            type: x.type,
-            title: x.title,
-            kind: x.kind,
-            mode: x.mode,
-            model: x.model,
-            effort: x.effort,
-            agentMode: x.agentMode,
-            cliSessionId: x.cliSessionId,
-            path: x.path,
-            runId: x.runId
-          })),
+          tabs: s.tabs.map(savedTab),
           messages: s.transcripts
         })
       }
@@ -2383,19 +2403,7 @@ export function TerminalWorkspace({
     const payload = {
       cwd,
       active,
-      tabs: tabs.map((x) => ({
-        id: x.id,
-        type: x.type,
-        title: x.title,
-        kind: x.kind,
-        mode: x.mode,
-        model: x.model,
-        effort: x.effort,
-        agentMode: x.agentMode,
-        cliSessionId: x.cliSessionId,
-        path: x.path,
-        runId: x.runId
-      })),
+      tabs: tabs.map(savedTab),
       messages: transcripts
     }
     const t = window.setTimeout(() => {
@@ -2411,19 +2419,7 @@ export function TerminalWorkspace({
         window.brain.chat.saveStateSync({
           cwd: s.cwd,
           active: s.active,
-          tabs: s.tabs.map((x) => ({
-            id: x.id,
-            type: x.type,
-            title: x.title,
-            kind: x.kind,
-            mode: x.mode,
-            model: x.model,
-            effort: x.effort,
-            agentMode: x.agentMode,
-            cliSessionId: x.cliSessionId,
-            path: x.path,
-            runId: x.runId
-          })),
+          tabs: s.tabs.map(savedTab),
           messages: s.transcripts
         })
       }
@@ -2637,6 +2633,41 @@ export function TerminalWorkspace({
     setTabs((t) => [...t, { id, type: 'factory', title: 'Factory', runId }])
     setActive(id)
     setPicker(false)
+  }
+
+  function addLibrary() {
+    const open = tabsRef.current.find((t) => t.type === 'library')
+    if (open) {
+      setActive(open.id)
+      return
+    }
+    const id = nid()
+    setTabs((t) => [...t, { id, type: 'library', title: 'Stored files' }])
+    setActive(id)
+  }
+
+  function openStored(row: MediaLibraryFile) {
+    const open = tabsRef.current.find((t) => t.type === 'file' && t.fileKind === 'media' && t.mediaId === row.id)
+    if (open) {
+      setActive(open.id)
+      return
+    }
+    const id = nid()
+    const title = row.title || 'Untitled'
+    setTabs((t) => [
+      ...t,
+      {
+        id,
+        type: 'file',
+        title,
+        fileKind: 'media',
+        mediaId: row.id,
+        mediaTitle: title,
+        mediaMime: row.mime,
+        mediaBytes: row.bytes
+      }
+    ])
+    setActive(id)
   }
 
   function dropTab(id: string) {
@@ -3019,6 +3050,13 @@ export function TerminalWorkspace({
                   )
                 }
               />
+            ))}
+          {tabs
+            .filter((t) => t.type === 'library' && t.id === active)
+            .map((t) => (
+              <div key={t.id} className="filetab">
+                <MediaLibraryPane folder={cwd} askSeq={libraryAsk} onOpen={openStored} />
+              </div>
             ))}
           {tabs
             .filter((t) => t.type === 'file' && t.id === active)

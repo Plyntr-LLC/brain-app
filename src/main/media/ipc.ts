@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { currentBrainFolder } from '../brains.ts'
 import { copyMediaHere, exportMedia } from './export.ts'
-import type { MediaAddResult } from '../../shared/media.ts'
+import { MEDIA_LIBRARY_FAIL, type MediaAddResult } from '../../shared/media.ts'
 import { initShellVault } from '../shell-vault.ts'
 import { assertRendererSafe } from './renderer-safe.ts'
 import { pollMediaState } from './state-poll.ts'
@@ -22,6 +22,7 @@ import {
   mediaAllow,
   mediaRenameDevice,
   mediaEnable,
+  mediaLibrary,
   mediaSetCap,
   mediaSetPassphrase,
   mediaShouldAsk,
@@ -110,6 +111,14 @@ export function registerMediaIpc(): void {
     // Live status already joins and wraps for anyone waiting.
     if (path && isMediaDryRun()) await pollMediaState(path)
     return assertRendererSafe(await mediaStatus(path))
+  })
+  // The stored-file list. A failure stays a line in the library tab; it never changes media status.
+  ipcMain.handle('media:library', async (_e, opts?: { folder?: string }) => {
+    try {
+      return assertRendererSafe(await mediaLibrary(folderOf(opts) || currentBrainFolder() || ''))
+    } catch {
+      return { ok: false as const, detail: MEDIA_LIBRARY_FAIL }
+    }
   })
   ipcMain.handle('media:shouldAsk', async (_e, opts?: { folder?: string; role?: string }) => {
     return assertRendererSafe(await mediaShouldAsk({ folder: String(opts?.folder || ''), role: opts?.role }))

@@ -17,6 +17,7 @@ export const MEDIA_WRAP_PASSPHRASE_PATH = '/v1/media/wrap/passphrase'
 export const MEDIA_ROTATE_PATH = '/v1/media/rotate'
 export const MEDIA_SCOPES_PATH = '/v1/media/scopes'
 export const MEDIA_UPLOADS_PATH = '/v1/media/uploads'
+export const MEDIA_OBJECTS_PATH = '/v1/media/objects'
 
 export type MediaErrorBody = {
   error: string

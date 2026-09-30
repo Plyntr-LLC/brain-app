@@ -103,11 +103,14 @@ export function SettingsPanel({
   onClose,
   onLogout,
   onSwitchBrain,
-  onBeginCompanySetup
+  onBeginCompanySetup,
+  onSeeFiles
 }: {
   role?: string
   onClose: () => void
   onLogout?: () => void
+  /** Storage on: open the stored-file library tab. */
+  onSeeFiles?: () => void
   onSwitchBrain?: (row: { path: string; name: string }) => void
   onBeginCompanySetup?: (row: {
     brainId: string
@@ -556,6 +559,7 @@ export function SettingsPanel({
         role={plyntrRole || seat || role}
         joe={joe}
         onDone={(detail) => setNote(detail)}
+        onSeeFiles={onSeeFiles}
       />
     )
   }

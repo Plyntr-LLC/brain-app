@@ -40,6 +40,18 @@ export type MediaAddResult =
   | { ok: true; rel: string; parts: number; detail: string }
   | { ok: false; status: number; error: string; detail: string }
 
+/** One stored file in the library. The name is the filename without its extension. */
+export type MediaLibraryFile = {
+  id: string
+  title: string
+  mime: string
+  bytes: number
+  createdAt: string
+  root: string
+}
+
+export type MediaLibraryResult = { ok: true; files: MediaLibraryFile[] } | { ok: false; detail: string }
+
 export function shouldShowStorageAsk(opts: {
   role?: string
   joe?: boolean
@@ -152,6 +164,8 @@ export const MEDIA_NOT_APPROVED = 'This Mac is not approved yet. Ask your owner.
 export const MEDIA_NEEDS_NET = 'Needs the internet the first time.'
 export const MEDIA_OPEN_FAIL = 'This file could not be opened.'
 export const MEDIA_REMOVED = 'This file was removed from storage.'
+export const MEDIA_LIBRARY_NOT_YET = 'The file list is not available yet.'
+export const MEDIA_LIBRARY_FAIL = 'Could not load your stored files.'
 
 export const MEDIA_PLAY_NOTES = [
   MEDIA_WRONG_PROJECT,

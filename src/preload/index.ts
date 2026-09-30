@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AiKind } from '../shared/contracts'
 import type { FactoryTriage, RepoProfile, RunRecord as FactoryRun } from '../shared/factory'
-import type { MediaAddResult, MediaEnableResult, MediaStatus } from '../shared/media'
+import type { MediaAddResult, MediaEnableResult, MediaLibraryResult, MediaStatus } from '../shared/media'
 
 type FactoryResult = { ok: true; run: FactoryRun | null } | { ok: false; error: string }
 
@@ -1082,6 +1082,7 @@ const brain = {
   },
   media: {
     status: (folder?: string) => ipcRenderer.invoke('media:status', folder) as Promise<MediaStatus>,
+    library: (opts: { folder?: string }) => ipcRenderer.invoke('media:library', opts) as Promise<MediaLibraryResult>,
     shouldAsk: (opts: { folder: string; role?: string }) =>
       ipcRenderer.invoke('media:shouldAsk', opts) as Promise<boolean>,
     skip: (folder: string) => ipcRenderer.invoke('media:skip', folder) as Promise<{ ok: true }>,

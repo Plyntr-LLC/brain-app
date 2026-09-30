@@ -1451,6 +1451,14 @@ button.runmeta-v:hover { color: var(--orange-deep); }
   max-height: 100%;
 }
 .filetab .note { margin: 0.8rem 1rem; }
+.medialib { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.medialib th { text-align: left; font-weight: 600; padding: 0.3rem 0.6rem; border-bottom: 1px solid var(--line); }
+.medialib td { padding: 0.35rem 0.6rem; vertical-align: middle; }
+.medialib tbody tr { cursor: pointer; }
+.medialib tbody tr:hover,
+.medialib tbody tr:focus { background: rgba(127, 127, 127, 0.12); outline: none; }
+.medialib-name { display: flex; align-items: center; gap: 0.5rem; }
+.filemedia img.medialib-pic { width: 2rem; height: 2rem; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
 .filetab .mdview { margin: 0; }
 .mdview h1:first-child,
 .mdview h2:first-child,
