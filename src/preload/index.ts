@@ -950,7 +950,8 @@ const brain = {
         | 'prep-commit'
         | 'prep-stash'
         | 'keep-fix'
-        | 're-review',
+        | 're-review'
+        | 'retry-triage',
       reason?: string
     ) => ipcRenderer.invoke('factory:decide', id, choice, { reason }) as Promise<FactoryResult>,
     guide: (id: string, text: string) => ipcRenderer.invoke('factory:guide', id, text) as Promise<FactoryResult>,

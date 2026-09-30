@@ -460,7 +460,7 @@ export function FactoryPane(props: {
           ) : null}
           {run.phase === 'triage' && run.needsProceed ? (
             <div className="factory-trip">
-              <strong>Grok says this is critical risk</strong>
+              <strong>{run.triage.llm?.skipped ? 'Model triage did not answer' : 'Grok says this is critical risk'}</strong>
               <ul>
                 {run.triage.reasons.map((r) => (
                   <li key={r}>{r}</li>
@@ -470,6 +470,11 @@ export function FactoryPane(props: {
                 <button type="button" className="primary" onClick={() => void act(window.brain.factory.decide(run.id, 'proceed'))}>
                   Proceed at {run.tier}
                 </button>
+                {run.triage.llm?.skipped ? (
+                  <button type="button" className="ghost" onClick={() => void act(window.brain.factory.decide(run.id, 'retry-triage'))}>
+                    Retry triage
+                  </button>
+                ) : null}
               </div>
             </div>
           ) : null}

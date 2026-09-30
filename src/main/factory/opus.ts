@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { DONE_CONTRACT } from '../../shared/factory-done.ts'
 import { strictRequired, type RunRecord, type UsageRow, type VerifyRow } from '../../shared/factory.ts'
 import { claudeRow, parseClaudeEnvelope, usageRow } from './usage.ts'
 
@@ -171,9 +172,10 @@ export function strictPrompt(o: { task: string; tier: string; risk: string; base
     `Diff against the base (cut at 60k characters; run \`git diff ${o.base}\` in the work repo for the rest):`,
     o.diff,
     '',
-    'Name every real defect with file and line. Any gap is FAIL: nits, non-blockers, and follow-ups count as gaps.',
-    'Some asks no edit in this repo can close: splitting into separate changes, a person signing off, a live run that costs money or sends mail, a before/after on real data, deploy or ops steps. Put those in a block that starts with a line `OUTSIDE:` followed by `- ` bullets, before the GAPS line. They are not gaps and never make it FAIL. A defect in this diff is never OUTSIDE.',
-    'Do not write nit, non-blocker, or follow-up in a PASS review; if you would, it is a FAIL.',
+    DONE_CONTRACT,
+    'Where the skill and this contract disagree, follow the contract.',
+    'Name every real defect with file and line.',
+    'Some asks no edit in this repo can close: a person signing off, a live run that costs money or sends mail, a before/after on real data, deploy or ops steps. Put those, and anything the contract calls OUTSIDE, in a block that starts with a line `OUTSIDE:` followed by `- ` bullets, before the GAPS line. They are not gaps and never make it FAIL. A defect in this diff is never OUTSIDE.',
     'End with two lines: GAPS: <n> (how many gaps you found), then exactly PASS or FAIL. PASS only with GAPS: 0.'
   ].join('\n')
 }
@@ -182,6 +184,7 @@ export function planPrompt(o: { task: string; workRepo: string; plans: string[];
   const t3 = o.tier === 'T3'
   return [
     'Write the implementation plan for this change. You cannot edit files; read the repo as needed.',
+    DONE_CONTRACT,
     `Work repo: ${o.workRepo}`,
     t3
       ? 'Limit T3: up to 40 files, 2500 changed lines, no lockfile changes, no migrations.'
@@ -241,6 +244,19 @@ const NONE_LEFT = [
  * Drop each sentence that is only a none claim, unless the next sentence opens with a contrast.
  * Sentences end at . ; ! ? before a space, or at a newline, so "a.ts" stays whole.
  */
+function sentencesOf(body: string): string[] {
+  return body.split(/(?:[.;!?]+(?=\s|$)|\n)+/)
+}
+
+/** A leftover that only names an earlier round is not a current gap. */
+function isHistorySentence(sentence: string): boolean {
+  return /\b(earlier|previous|prior)\s+(rounds?|reviews?|passes?)\b/i.test(sentence)
+}
+
+function currentLeftover(body: string): boolean {
+  return sentencesOf(stripNones(body)).some((s) => LEFTOVER.test(s) && !isHistorySentence(s))
+}
+
 function stripNones(body: string): string {
   const sentences = body.split(/(?:[.;!?]+(?=\s|$)|\n)+/)
   const opensWithContrast = new RegExp(String.raw`^[\s"'*_>\-,]*${CONTRAST}`, 'i')
@@ -256,6 +272,14 @@ function stripNones(body: string): string {
 const OUTSIDE_CAP = 12
 const OUTSIDE_CHARS = 300
 
+/** A security defect or a revert of someone else's work stays a gap even under OUTSIDE. */
+const SECURITY_OR_REVERT =
+  /\b(path traversal|directory traversal|sql injection|command injection|xss|csrf|ssrf|auth bypass|privilege escalation)\b|\brevert(?:s|ed|ing)?\b[^.\n]{0,160}\b(someone else(?:'s)?|another (?:person|author|developer)|other people(?:'s)?)\b|\b(someone else(?:'s)?|another (?:person|author|developer))\b[^.\n]{0,160}\brevert(?:s|ed|ing)?\b/i
+
+function outsideStays(bullet: string): boolean {
+  return SECURITY_OR_REVERT.test(bullet)
+}
+
 /**
  * The OUTSIDE block cut out of a review: `OUTSIDE:` then `- ` bullets. The first line that is not a
  * bullet (a blank line, a defect, a GAPS line, a verdict) ends the block and stays in the review.
@@ -266,21 +290,26 @@ export function splitOutside(text: string): { review: string; outside: string[] 
   const keep: string[] = []
   const outside: string[] = []
   let inBlock = false
+  let seenBullet = false
   for (const line of lines) {
     const bare = line.trim().replace(/^[*_`]+|[*_`]+$/g, '')
     if (/^OUTSIDE\s*:\s*$/i.test(bare)) {
       inBlock = true
+      seenBullet = false
       continue
     }
     if (inBlock) {
       const m = /^\s*[-*•]\s+(.+)$/.exec(line)
       if (m) {
-        outside.push(m[1].trim().slice(0, OUTSIDE_CHARS))
+        const bullet = m[1].trim().slice(0, OUTSIDE_CHARS)
+        seenBullet = true
+        if (outsideStays(bullet)) keep.push(line)
+        else outside.push(bullet)
         continue
       }
       // A blank line before any bullet is spacing; after one it ends the block, so a defect bullet
-      // further down is never swept into follow-ups.
-      if (!line.trim() && !outside.length) continue
+      // further down is never swept into follow-ups. A security bullet counts as a bullet.
+      if (!line.trim() && !seenBullet) continue
       inBlock = false
     }
     keep.push(line)
@@ -314,6 +343,7 @@ export function reviewAccept(text: string): ReviewAccept {
   if (gaps === null) return { status: 'fail', gaps, why: 'PASS without GAPS: 0' }
   if (gaps > 0) return { status: 'fail', gaps, why: 'PASS named gaps' }
   const body = lines.filter((_, i) => !gapsAt.has(i) && i !== lines.length - 1).join('\n')
-  if (LEFTOVER.test(stripNones(body))) return { status: 'fail', gaps, why: 'PASS named gaps' }
+  if (SECURITY_OR_REVERT.test(body)) return { status: 'fail', gaps: Math.max(gaps ?? 0, 1), why: 'PASS named gaps' }
+  if (currentLeftover(body)) return { status: 'fail', gaps, why: 'PASS named gaps' }
   return { status: 'pass', gaps: 0, why: '' }
 }

@@ -349,6 +349,24 @@ const calls: Call[] = []
 const events: { runId: string; kind: string; run?: { phase: string } }[] = []
 let promptPlan: (o: { text: string; tabId?: string }) => Promise<void | string> = async () => {}
 let triageBin: string | null = null
+// A missed T0/T1 model answer holds. This echo agrees with the rules line so older checks still build.
+const echoGrok = join(temp, 'echo-grok')
+writeFileSync(
+  echoGrok,
+  `#!/usr/bin/env node
+const i = process.argv.indexOf('-p')
+const prompt = i >= 0 ? String(process.argv[i + 1] || '') : ''
+const m = /Rules said: (T[0-3]) \\((none|elevated|critical)\\)/.exec(prompt)
+const size = m ? m[1] : 'T1'
+const risk = m ? m[2] : 'none'
+process.stdout.write(JSON.stringify({ type: 'text', data: JSON.stringify({ size, risk, reason: 'agrees' }) }) + '\\n')
+`
+)
+chmodSync(echoGrok, 0o755)
+triageBin = echoGrok
+const restoreEcho = () => {
+  triageBin = echoGrok
+}
 const scriptRuns: string[] = []
 type VoiceCall = { bin: string; args: string[]; body: string }
 const voiceCalls: VoiceCall[] = []
@@ -434,7 +452,7 @@ ctl.configureFactory(fakeDeps)
   check('5 T1 runs one self-check turn with phase review', selfCheck.length === 1 && /Role: self-check\. Tier: T1\. Phase: review\./.test(String(selfCheck[0]?.o?.text)))
   check('5 review shows the diff', !!up?.diff?.includes('Copyright 2026'))
   const briefs = calls.filter((c) => c.fn === 'prompt').map((c) => String(c.o?.text))
-  check('brief is at most 1,200 characters and carries role, tier, phase, work repo', briefs.every((b) => b.length <= BRIEF_MAX && /Role: /.test(b) && /Tier: T[012]/.test(b) && /Phase: /.test(b) && b.includes(work)))
+  check('brief is at most 2,000 characters and carries role, tier, phase, work repo', briefs.every((b) => b.length <= BRIEF_MAX && /Role: /.test(b) && /Tier: T[012]/.test(b) && /Phase: /.test(b) && b.includes(work)))
   const done = ctl.commitRunNow(id)
   check('commit click commits in the work repo and records the sha', done.phase === 'done' && !!done.commitSha && git(work, ['rev-parse', 'HEAD']).trim() === done.commitSha)
   check('commit leaves the work repo clean and never adds a remote', git(work, ['status', '--porcelain']).trim() === '' && git(work, ['remote']).trim() === '')
@@ -898,7 +916,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   check('S2 2 junk model output keeps the rules result', j?.tier === 'T0' && !!j.triage.llm?.skipped && j.triage.reasons.some((x) => x.startsWith('Model triage skipped')), JSON.stringify(j?.triage))
   ctl.abandonRun(jid)
   reset2()
-  triageBin = null
+  restoreEcho()
 }
 
 // 10. Voice: default profile never calls the stub; on + REJECT holds Commit; Fix copy + APPROVE passes.
@@ -2422,7 +2440,7 @@ process.stdout.write(JSON.stringify({ type: 'end', stopReason: 'end_turn', usage
     triageBin = fakeGrok
     acpUsage = { model: 'grok-acp-fake', effort: 'high', usage: { input_tokens: 50, output_tokens: 5 } }
     const { r } = await evStart(evA, ['GAPS: 0\nPASS'], { through: true })
-    triageBin = null
+    restoreEcho()
     acpUsage = null
     const tr = (r?.usage || []).find((u) => u.phase === 'triage')
     const builds = (r?.usage || []).filter((u) => u.phase === 'build' && u.cli === 'grok')
@@ -2843,7 +2861,7 @@ setTimeout(() => {
     releaseAll()
     const rv = await one(aId, 'review|claude|opus|low')
     const aEnd = await ctl.settle(aId)
-    triageBin = null
+    restoreEcho()
     process.env.FAKE_CLAUDE_DELAY = '0'
     check('LV a triage, plan, ACP build, and review each show as the only live row while they run', [t, p, b, rv].every((x) => x.ok) && new Set([t.id, p.id, b.id, rv.id]).size === 4, JSON.stringify([t, p, b, rv]))
     check('LV a live is empty after the run', aEnd?.phase === 'done' && !aEnd.live?.length, JSON.stringify({ phase: aEnd?.phase, live: aEnd?.live }))
@@ -3331,11 +3349,312 @@ setTimeout(() => {
     use()
   }
 
+  // Done contract: one definition of done, outside vs security, tripwire plans, triage hold.
+  {
+    restoreEcho()
+    evScript = null
+    process.env.FAKE_CLAUDE_DELAY = '0'
+    use()
+    const triageMod = (await import(src('factory/triage.ts'))) as typeof import('../src/main/factory/triage.ts')
+    const doneMod = (await import(pathToFileURL(join(rootRepo, 'src/shared/factory-done.ts')).href)) as typeof import('../src/shared/factory-done.ts')
+    const CONTRACT = doneMod.DONE_CONTRACT
+    const T1TASK = 'Fix the date shown one day off in the order list'
+    const HINDI = 'speed up the translation and make it more accurate for Hindi and other languages'
+    const planSpawns = (from: number) => claudeRows().slice(from).filter((x) => String(x.argv[1] || '').includes('Write the implementation plan'))
+    const reviewers = (from: number) => claudeRows().slice(from).filter((x) => String(x.argv[1] || '').includes('Use the strict code review skill'))
+    const touch = (r: string) => {
+      promptPlan = async (o) => {
+        if (/Phase: (build|fix)\./.test(o.text)) writeFileSync(join(r, 'src', 'a.ts'), 'export const a = 4\n')
+      }
+    }
+    const twelve = (r: string) => {
+      promptPlan = async (o) => {
+        if (!/Phase: (build|fix)\./.test(o.text)) return
+        for (let i = 0; i < 12; i++) writeFileSync(join(r, 'src', `n${i}.ts`), `export const n${i} = 1\n`)
+      }
+    }
+    const go = async (task: string, workRepo: string, through: boolean) => {
+      const res = ctl.startRun({ task, workRepo, brainPath: brainEv, runThrough: through })
+      const id = res.ok ? res.run.id : ''
+      const run = id ? await ctl.settle(id) : null
+      return { res, id, run }
+    }
+    const snap = (run: Awaited<ReturnType<typeof ctl.settle>>) =>
+      JSON.stringify({
+        phase: run?.phase,
+        tier: run?.tier,
+        err: run?.error,
+        cycles: run?.reviewCycles,
+        np: run?.needsProceed,
+        plan: run?.plan?.status,
+        strict: run?.strict?.status,
+        ups: run?.followUps,
+        llm: run?.triage?.llm,
+        text: run?.strict?.text?.slice(0, 180)
+      })
+
+    const hist = opusMod.reviewAccept('Earlier rounds mentioned a follow-up about the changelog. No current defect remains.\nGAPS: 0\nPASS')
+    const nit = opusMod.reviewAccept('nit: missing test\nGAPS: 0\nPASS')
+    check('PASS history', hist.status === 'pass' && nit.status === 'fail', JSON.stringify({ hist: hist.status, nit: nit.status }))
+
+    {
+      const r = evRepo('ev-outside-split')
+      touch(r)
+      claudeSays(['OUTSIDE:\n- Split this into separate commits\nGAPS: 0\nPASS'])
+      const p0 = promptCount()
+      const { id, run } = await go(EVTASK, r, true)
+      const prompts = promptsFrom(p0)
+      check(
+        'OUTSIDE split passes',
+        run?.strict?.status === 'pass' &&
+          (run.reviewCycles || 0) === 0 &&
+          run.followUps?.includes('Split this into separate commits') === true &&
+          !String(run.strict?.text || '').includes('Split this into separate commits') &&
+          !prompts.some((t) => /Phase: fix\./.test(t)) &&
+          run.phase === 'done',
+        snap(run)
+      )
+      if (id) ctl.abandonRun(id)
+    }
+
+    {
+      const r = evRepo('ev-outside-sec')
+      touch(r)
+      claudeSays(['OUTSIDE:\n- path traversal is unchecked\nGAPS: 0\nPASS', 'GAPS: 0\nPASS'])
+      const p0 = promptCount()
+      const { id, run } = await go(EVTASK, r, true)
+      const prompts = promptsFrom(p0)
+      check(
+        'OUTSIDE security stays a gap',
+        (run?.reviewCycles || 0) === 1 && prompts.some((t) => /Phase: fix\./.test(t)) && run?.strict?.status === 'pass' && run.phase === 'done',
+        snap(run)
+      )
+      if (id) ctl.abandonRun(id)
+    }
+
+    {
+      const r = evRepo('ev-blocking')
+      touch(r)
+      claudeSays(['Plan: cover the one file.', "test/utterance.test.js extensionOf('I', 'It was')\nGAPS: 1\nFAIL", 'GAPS: 0\nPASS'])
+      const p0 = promptCount()
+      const c0 = claudeRows().length
+      const { id, run } = await go(T3TASK, r, true)
+      const prompts = promptsFrom(p0)
+      const fixes = prompts.filter((t) => /Phase: fix\./.test(t))
+      const builds = prompts.filter((t) => /Phase: build\./.test(t))
+      const revs = reviewers(c0)
+      check(
+        'BLOCKING fix carries the test',
+        run?.reviewCycles === 1 && fixes.some((t) => t.includes('test/utterance.test.js') && t.includes(CONTRACT)) && run?.phase === 'done',
+        JSON.stringify({ cycles: run?.reviewCycles, phase: run?.phase, err: run?.error, fix: fixes[0]?.includes('test/utterance.test.js') })
+      )
+      check(
+        'DONE_CONTRACT shared',
+        builds.some((t) => t.includes(CONTRACT)) &&
+          fixes.some((t) => t.includes(CONTRACT)) &&
+          revs.length >= 1 &&
+          revs.every((row) => String(row.argv[1] || '').includes(CONTRACT) && !String(row.argv[1] || '').includes('Any gap is FAIL')),
+        JSON.stringify({ builds: builds.length, fixes: fixes.length, revs: revs.length })
+      )
+      if (id) ctl.abandonRun(id)
+    }
+
+    {
+      const r = evRepo('ev-t3-trip')
+      twelve(r)
+      claudeSays(['Plan: cover the files.', 'GAPS: 0\nPASS'])
+      const c0 = claudeRows().length
+      const { res, id, run } = await go(T1TASK, r, true)
+      const plans = planSpawns(c0)
+      check(
+        'T3 tripwire plans',
+        res.run?.tier === 'T1' &&
+          run?.triage?.llm?.size === 'T1' &&
+          run?.tier === 'T3' &&
+          run.plan?.status === 'approved' &&
+          !!run.plan?.text &&
+          plans.length === 1 &&
+          run.phase === 'done',
+        JSON.stringify({ start: res.run?.tier, tier: run?.tier, llm: run?.triage?.llm, plan: run?.plan?.status, plans: plans.length, phase: run?.phase, err: run?.error })
+      )
+      if (id) ctl.abandonRun(id)
+    }
+
+    {
+      const r = evRepo('ev-t3-keep')
+      twelve(r)
+      claudeSays(['Plan: cover the files.', 'GAPS: 0\nPASS'])
+      const c0 = claudeRows().length
+      const { id, run } = await go(T2TASK, r, true)
+      const plans = planSpawns(c0)
+      check(
+        'T3 tripwire keeps an approved plan',
+        run?.tier === 'T3' && run.plan?.status === 'approved' && plans.length === 1 && (run.phase === 'done' || run.phase === 'review'),
+        JSON.stringify({ tier: run?.tier, plan: run?.plan?.status, plans: plans.length, phase: run?.phase, err: run?.error })
+      )
+      if (id) ctl.abandonRun(id)
+    }
+
+    {
+      const retryLog = join(temp, 'retry-log.txt')
+      writeFileSync(retryLog, '')
+      process.env.RETRY_LOG = retryLog
+      const missBin = join(temp, 'retry-miss-grok')
+      const hitBin = join(temp, 'retry-hit-grok')
+      writeFileSync(missBin, "#!/usr/bin/env node\nconst fs = require('fs')\nfs.appendFileSync(process.env.RETRY_LOG, 'miss\\n')\nprocess.stdout.write('nope\\n')\n")
+      writeFileSync(
+        hitBin,
+        "#!/usr/bin/env node\nconst fs = require('fs')\nfs.appendFileSync(process.env.RETRY_LOG, 'hit\\n')\nprocess.stdout.write(JSON.stringify({ type: 'text', data: JSON.stringify({ size: 'T1', risk: 'none', reason: 'small' }) }) + '\\n')\n"
+      )
+      chmodSync(missBin, 0o755)
+      chmodSync(hitBin, 0o755)
+      const r = evRepo('ev-retry')
+      touch(r)
+      triageBin = missBin
+      const p0 = promptCount()
+      const held = await go(T1TASK, r, false)
+      const heldPrompts = promptCount() - p0
+      let threw = ''
+      if (held.run?.phase === 'triage' && held.run.needsProceed && held.run.triage.llm?.skipped) {
+        triageBin = hitBin
+        try {
+          ctl.decideRun(held.id, 'retry-triage')
+        } catch (e) {
+          threw = String((e as Error).message || e)
+        }
+      }
+      const run = threw ? held.run : await ctl.settle(held.id)
+      const log = readFileSync(retryLog, 'utf8')
+      restoreEcho()
+      delete process.env.RETRY_LOG
+      const pane = readFileSync(join(rootRepo, 'src/renderer/src/FactoryPane.tsx'), 'utf8')
+      const at = pane.indexOf("run.phase === 'triage' && run.needsProceed")
+      const card = pane.slice(at, pane.indexOf('planWaiting', at))
+      const actions = card.slice(card.indexOf('factory-actions'))
+      const ghostAt = actions.lastIndexOf('llm?.skipped')
+      const ghost = actions.slice(ghostAt, actions.indexOf(': null', ghostAt))
+      const paneOk =
+        card.includes("? 'Model triage did not answer' : 'Grok says this is critical risk'") &&
+        (card.match(/Proceed at/g) || []).length === 1 &&
+        ghost.includes('Retry triage') &&
+        ghost.includes("'retry-triage'") &&
+        ghost.includes('className="ghost"') &&
+        !ghost.includes('Grok says this is critical risk')
+      check(
+        'RETRY_TRIAGE',
+        !threw &&
+          heldPrompts === 0 &&
+          held.run?.needsProceed === true &&
+          log.includes('miss') &&
+          log.indexOf('miss') < log.indexOf('hit') &&
+          run?.needsProceed !== true &&
+          run?.triage.llm?.size === 'T1' &&
+          !run?.triage.llm?.skipped &&
+          paneOk,
+        JSON.stringify({ threw, held: held.run?.phase, np: held.run?.needsProceed, heldPrompts, log, after: run?.phase, llm: run?.triage?.llm, paneOk })
+      )
+      if (held.id) ctl.abandonRun(held.id)
+    }
+
+    {
+      const slowLog = join(temp, 'slow-argv.txt')
+      writeFileSync(slowLog, '')
+      process.env.SLOW_ARGV = slowLog
+      const slowBin = join(temp, 'slow-grok')
+      writeFileSync(
+        slowBin,
+        "#!/usr/bin/env node\nconst fs = require('fs')\nfs.appendFileSync(process.env.SLOW_ARGV, JSON.stringify(process.argv.slice(2)) + '\\n')\nsetTimeout(() => {\n  process.stdout.write(JSON.stringify({ type: 'text', data: JSON.stringify({ size: 'T3', risk: 'none', reason: 'program' }) }) + '\\n')\n  process.exit(0)\n}, 10000)\n"
+      )
+      chmodSync(slowBin, 0o755)
+      const r = evRepo('ev-slow')
+      const rules = triageMod.triage(HINDI)
+      const expected = tllm.grokTriageArgs(tllm.triagePrompt(HINDI, rules))
+      let early = false
+      const c0 = claudeRows().length
+      promptPlan = async (o) => {
+        if (!/Phase: (build|fix)\./.test(o.text)) return
+        if (planSpawns(c0).length === 0) early = true
+        writeFileSync(join(r, 'src', 'a.ts'), 'export const a = 7\n')
+      }
+      triageBin = slowBin
+      claudeSays(['Plan: the translation work.', 'GAPS: 0\nPASS'])
+      const { res, id, run } = await go(HINDI, r, true)
+      restoreEcho()
+      delete process.env.SLOW_ARGV
+      const loggedLine = existsSync(slowLog) ? readFileSync(slowLog, 'utf8').trim().split('\n')[0] || '' : ''
+      let logged: string[] = []
+      try {
+        logged = JSON.parse(loggedLine) as string[]
+      } catch {
+        logged = []
+      }
+      const plans = planSpawns(c0)
+      const flags = (a: string[]) => a.map((x, i) => (i === 1 ? `prompt:${x.length}` : x)).join(' ')
+      check(
+        'TRIAGE_SLOW_RAISED plan',
+        rules.original === 'T1' &&
+          rules.risk === 'none' &&
+          res.run?.tier === 'T1' &&
+          JSON.stringify(logged) === JSON.stringify(expected) &&
+          run?.tier === 'T3' &&
+          !!run.plan?.text &&
+          plans.length === 1 &&
+          String(plans[0]?.argv[1] || '').includes(CONTRACT) &&
+          !early,
+        JSON.stringify({ rules: rules.original, risk: rules.risk, start: res.run?.tier, tier: run?.tier, phase: run?.phase, err: run?.error, early, plans: plans.length, got: flags(logged), want: flags(expected) })
+      )
+      if (id) ctl.abandonRun(id)
+    }
+
+    const sleeper = join(temp, 'sleeper-grok')
+    writeFileSync(sleeper, '#!/usr/bin/env node\nsetTimeout(() => {}, 70000)\n')
+    chmodSync(sleeper, 0o755)
+    const missed = async (name: string, task: string, through: boolean, says: string[]) => {
+      restoreEcho()
+      const r = evRepo(name)
+      promptPlan = async () => {}
+      claudeSays(says)
+      const p0 = promptCount()
+      const c0 = claudeRows().length
+      triageBin = sleeper
+      const out = await go(task, r, through)
+      restoreEcho()
+      if (out.id) ctl.abandonRun(out.id)
+      return { ...out, prompts: promptCount() - p0, plans: planSpawns(c0).length }
+    }
+    {
+      const m = await missed('ev-miss-t1', T1TASK, true, [])
+      check(
+        'TRIAGE_MISSED_HOLDS',
+        m.run?.phase === 'triage' && m.run.needsProceed === true && m.prompts === 0,
+        JSON.stringify({ phase: m.run?.phase, np: m.run?.needsProceed, prompts: m.prompts, err: m.run?.error, skipped: m.run?.triage?.llm?.skipped })
+      )
+    }
+    {
+      const m = await missed('ev-miss-t0', 'fix typo in footer', true, [])
+      check(
+        'TRIAGE_MISSED_T0_HOLDS',
+        m.run?.phase === 'triage' && m.run.needsProceed === true && m.prompts === 0 && m.res.run?.tier === 'T0',
+        JSON.stringify({ phase: m.run?.phase, np: m.run?.needsProceed, prompts: m.prompts, start: m.res.run?.tier, err: m.run?.error })
+      )
+    }
+    {
+      const m = await missed('ev-miss-t2', T2TASK, false, ['Plan: from a missed triage.'])
+      check(
+        'TRIAGE_MISSED_T2_PLANS',
+        m.run?.phase === 'plan' && m.plans === 1 && m.prompts === 0,
+        JSON.stringify({ phase: m.run?.phase, plans: m.plans, prompts: m.prompts, err: m.run?.error, tier: m.run?.tier })
+      )
+    }
+    restoreEcho()
+    promptPlan = async () => {}
+  }
+
   // h. Argv pins.
   {
     check('EV h opusArgs pin', JSON.stringify(opusMod.opusArgs('p')) === JSON.stringify(['-p', 'p', '--model', 'opus', '--effort', 'medium', '--permission-mode', 'plan', '--output-format', 'json']))
     check('EV h opusBuildArgs pin', JSON.stringify(opusMod.opusBuildArgs('p')) === JSON.stringify(['-p', 'p', '--model', 'opus', '--effort', 'medium', '--permission-mode', 'bypassPermissions', '--output-format', 'json']))
-    check('EV h grokTriageArgs pin', JSON.stringify(tllm.grokTriageArgs('p')) === JSON.stringify(['-p', 'p', '--effort', 'low', '--output-format', 'streaming-json']))
+    check('EV h grokTriageArgs pin', JSON.stringify(tllm.grokTriageArgs('p')) === JSON.stringify(['-p', 'p', '--effort', 'low', '--max-turns', '1', '--permission-mode', 'plan', '--no-subagents', '--disable-web-search', '--output-format', 'streaming-json']))
     const g47 = tllm.grokTriageArgs('p', { model: 'grok-4.7' })
     const son = opusMod.opusArgs('p', { model: 'sonnet', effort: 'high' })
     check('EV h options change only model and effort', g47.join(' ').endsWith('-m grok-4.7') && son[son.indexOf('--model') + 1] === 'sonnet' && son[son.indexOf('--effort') + 1] === 'high')

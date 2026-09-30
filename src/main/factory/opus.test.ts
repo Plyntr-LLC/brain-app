@@ -3,7 +3,8 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { opusArgs, opusBuildArgs, REVIEW_MAX, reviewAccept, runOpus, splitOutside, STRICT_SKILL_PATH, strictNeeded, strictPrompt, verdict } from './opus.ts'
+import { DONE_CONTRACT } from '../../shared/factory-done.ts'
+import { opusArgs, opusBuildArgs, planPrompt, REVIEW_MAX, reviewAccept, runOpus, splitOutside, STRICT_SKILL_PATH, strictNeeded, strictPrompt, verdict } from './opus.ts'
 
 test('strict is needed for T2, elevated, critical, and MyPuppies paths only', () => {
   assert.equal(strictNeeded({ tier: 'T2', risk: 'none', workRepo: '/x/site' }), true)
@@ -21,7 +22,9 @@ test('strict prompt names the skill by path and never pastes its body', () => {
   assert.ok(p.includes(STRICT_SKILL_PATH))
   assert.ok(p.includes('git diff abc123'))
   assert.ok(p.trimEnd().endsWith('End with two lines: GAPS: <n> (how many gaps you found), then exactly PASS or FAIL. PASS only with GAPS: 0.'))
-  assert.match(p, /Any gap is FAIL: nits, non-blockers, and follow-ups count as gaps\./)
+  assert.ok(p.includes(DONE_CONTRACT))
+  assert.match(p, /Where the skill and this contract disagree, follow the contract\./)
+  assert.equal(p.includes('Any gap is FAIL'), false)
   if (existsSync(STRICT_SKILL_PATH)) {
     const head = readFileSync(STRICT_SKILL_PATH, 'utf8').slice(0, 200)
     assert.ok(!p.includes(head))
@@ -108,6 +111,8 @@ test('reviewAccept: gaps are never a PASS', () => {
     assert.deepEqual(reviewAccept(`${body}\nGAPS: 0\nPASS`), { status: 'pass', gaps: 0, why: '' }, body)
   }
   assert.equal(reviewAccept('nit: missing test\nGAPS: 0\nPASS').why, 'PASS named gaps')
+  assert.equal(reviewAccept('Earlier rounds mentioned a follow-up about the changelog. No current defect remains.\nGAPS: 0\nPASS').status, 'pass')
+  assert.equal(reviewAccept('path traversal is unchecked\nGAPS: 0\nPASS').status, 'fail')
   assert.equal(reviewAccept('No nits in a.ts, but one nit: missing test.\nGAPS: 0\nPASS').why, 'PASS named gaps')
   for (const body of ['No nits, but one nit: missing test.', 'No nits, non-blocker: rename x.', 'Nothing blocking; leave the retry for later.', 'Nothing to leave for later, but leave it for later: docs.', 'No nits. Non-blocking: rename x.', 'There are no nits here; one nitpick: rename x', 'One nitpick: rename x.', 'A non-blocking issue at a.ts:2.', 'No nitpick: rename x.', 'No nits: rename x.', 'No non-blockers: rename x.', 'No nits except rename x in a.ts:3.', 'No follow-ups other than adding a test for b.ts.', 'No nits besides one: rename x.', 'No non-blockers apart from the missing test.', 'No nits, except that the label should be lowercase.', 'No follow-ups needed except a docs note.', 'We can leave the retry logic in b.ts for later.', 'Retry handling can be left for later.', "I'd leave that for a later PR.", 'Nothing to leave for later except the docs.', 'No nits; except rename x.', 'No nits. Except rename x.', 'No nits.\nExcept rename x.', 'No nits, but rename x.', 'No follow-up needed but add a test later.', 'Nits: none, but rename x.']) {
     assert.equal(reviewAccept(`${body}\nGAPS: 0\nPASS`).why, 'PASS named gaps', body)
@@ -173,6 +178,26 @@ test('splitOutside: no block leaves the review as it was; bold heading and caps 
   assert.equal(got.outside.length, 12)
   assert.equal(got.outside.every((o) => o.length <= 300), true)
   assert.equal(got.review, 'GAPS: 0\nPASS')
+})
+
+test('plan prompt carries the done contract verbatim', () => {
+  const p = planPrompt({ task: 't', workRepo: '/x', plans: [], reasons: [] })
+  assert.ok(p.includes(DONE_CONTRACT))
+})
+
+test('splitOutside: a security bullet stays in the review and fails a GAPS 0 PASS', () => {
+  const raw = 'OUTSIDE:\n- path traversal is unchecked\nGAPS: 0\nPASS'
+  const { review, outside } = splitOutside(raw)
+  assert.deepEqual(outside, [])
+  assert.match(review, /path traversal is unchecked/)
+  assert.equal(reviewAccept(review).status, 'fail')
+})
+
+test("splitOutside: a revert of someone else's work stays a gap", () => {
+  const raw = 'OUTSIDE:\n- Revert the auth check someone else added\nGAPS: 0\nPASS'
+  const { review, outside } = splitOutside(raw)
+  assert.deepEqual(outside, [])
+  assert.equal(reviewAccept(review).status, 'fail')
 })
 
 test('strictPrompt tells the reviewer where OUTSIDE items go', () => {

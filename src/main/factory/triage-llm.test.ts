@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { ensureShims, factoryEnv } from './gates.ts'
 import { triage } from './triage.ts'
-import { grokTriageArgs, llmTriage, mergeTriage, parseLlmTriage } from './triage-llm.ts'
+import { TRIAGE_TIMEOUT_MS, grokTriageArgs, llmTriage, mergeTriage, parseLlmTriage } from './triage-llm.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'factory-tllm-'))
 const log = join(dir, 'log.jsonl')
@@ -51,13 +51,22 @@ test('parse takes the last valid JSON object', () => {
   assert.equal(parseLlmTriage('{"size":"T9","risk":"none"}'), null)
 })
 
-test('argv has --effort low and no --always-approve', () => {
-  const a = grokTriageArgs('hi')
-  assert.equal(a[0], '-p')
-  assert.equal(a[1], 'hi')
-  assert.equal(a[a.indexOf('--effort') + 1], 'low')
-  assert.ok(!a.includes('--always-approve'))
-  assert.ok(a.includes('streaming-json'))
+test('argv is a one-shot in plan mode and has no --always-approve', () => {
+  assert.equal(TRIAGE_TIMEOUT_MS, 60_000)
+  assert.deepEqual(grokTriageArgs('hi'), [
+    '-p',
+    'hi',
+    '--effort',
+    'low',
+    '--max-turns',
+    '1',
+    '--permission-mode',
+    'plan',
+    '--no-subagents',
+    '--disable-web-search',
+    '--output-format',
+    'streaming-json'
+  ])
 })
 
 test('a grok that sleeps is killed at timeoutMs and rules are kept', async () => {

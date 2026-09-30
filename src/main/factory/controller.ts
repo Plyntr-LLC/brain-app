@@ -524,6 +524,11 @@ async function triageStep(state: Live): Promise<void> {
     setPhase(state, 'triage', { needsProceed: true, resumePhase: 'triage' })
     return
   }
+  // A missed model answer on rules T0/T1 waits. Approve in advance does not skip it. T2/T3 still plan.
+  if (!res.llm && (rules.original === 'T0' || rules.original === 'T1')) {
+    setPhase(state, 'triage', { needsProceed: true, resumePhase: 'triage' })
+    return
+  }
   await afterTriage(state)
 }
 
@@ -927,11 +932,17 @@ async function buildSlices(state: Live, gen: number, brainBefore: Record<string,
   await afterTurn(state, 'build', brainBefore)
 }
 
-/** A tripped tripwire. Approve in advance takes a suggested tier; otherwise (or no suggestion) wait on the card. True: go on. */
+/** A tripped tripwire. Approve in advance takes a suggested tier. T3 with no approved plan stops this turn and plans. T1 to T2 keeps going. True: go on. */
 async function onTrip(state: Live, trip: Tripwire): Promise<boolean> {
   if (state.run.runThrough && trip.suggest) {
-    state.run = { ...state.run, tier: trip.suggest, tripwire: { reasons: trip.reasons, suggest: trip.suggest, auto: true } }
+    const suggest = trip.suggest
+    const hadPlan = state.run.plan?.status === 'approved'
+    state.run = { ...state.run, tier: suggest, tripwire: { reasons: trip.reasons, suggest, auto: true } }
     persist(state)
+    if (suggest === 'T3' && !hadPlan) {
+      await opusPlan(state)
+      return false
+    }
     return true
   }
   setPhase(state, 'upgrade', { tripwire: { reasons: trip.reasons, suggest: trip.suggest }, resumePhase: 'upgrade' })
@@ -1165,8 +1176,8 @@ async function strictStep(state: Live): Promise<boolean> {
   // Auto fix + a fresh independent review until REVIEW_MAX; the last fail holds for Joe.
   // Grok/Cursor make the first two review fixes; from the third on, Claude makes the fix.
   if (cycles < REVIEW_MAX) {
-    const why = acc.why === 'FAIL' ? 'The strict reviewer said FAIL.' : `The strict reviewer did not approve: ${acc.why}. Every gap counts.`
-    await buildStep(state, 'fix', why, cycles >= BUILDER_FIX_MAX)
+    const lead = acc.why === 'FAIL' ? 'The strict reviewer said FAIL.' : `The strict reviewer did not approve: ${acc.why}. Every gap counts.`
+    await buildStep(state, 'fix', `${lead}\n${body.slice(0, 700)}`, cycles >= BUILDER_FIX_MAX)
     return false
   }
   return true
@@ -1347,6 +1358,7 @@ export type Decision =
   | 'prep-stash'
   | 'keep-fix'
   | 're-review'
+  | 'retry-triage'
 
 export function decideRun(id: string, choice: Decision, opts: { reason?: string } = {}): RunRecord {
   const state = liveFor(id)
@@ -1389,6 +1401,14 @@ export function decideRun(id: string, choice: Decision, opts: { reason?: string 
     state.run = { ...run, needsProceed: undefined }
     persist(state)
     track(state, afterTriage(state))
+    return state.run
+  }
+  if (choice === 'retry-triage') {
+    if (run.phase !== 'triage' || !run.needsProceed || !run.triage.llm?.skipped) throw new Error('This run is not waiting on another triage.')
+    state.gen++
+    state.run = { ...run, needsProceed: undefined, error: undefined }
+    persist(state)
+    track(state, triageStep(state))
     return state.run
   }
   if (choice === 'fix-copy') {

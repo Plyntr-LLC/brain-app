@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { DONE_CONTRACT } from '../../shared/factory-done.ts'
 import { BRIEF_MAX, buildBrief } from './brief.ts'
 
 const base = { role: 'builder' as const, tier: 'T0' as const, phase: 'build' as const, workRepo: '/tmp/work', brainPath: '/tmp/brain', task: 'fix typo in footer' }
@@ -16,7 +17,7 @@ test('brief carries role, tier, phase, work repo and the no-push rules', () => {
   assert.match(b, /fix typo in footer/)
 })
 
-test('a huge task is cut to 1,200 characters and the rules survive', () => {
+test('a huge task is cut to the cap and the rules survive', () => {
   const b = buildBrief({ ...base, tier: 'T1', phase: 'review', role: 'self-check', task: 'x'.repeat(10_000), note: 'n'.repeat(5_000) })
   assert.ok(b.length <= BRIEF_MAX, String(b.length))
   assert.match(b, /Tier: T1/)
@@ -25,7 +26,7 @@ test('a huge task is cut to 1,200 characters and the rules survive', () => {
   assert.match(b, /Task: x+\.\.\./)
 })
 
-test('T2 plan and fix briefs with a 5,000-char task stay at 1,200 and keep the path lines', () => {
+test('T2 plan and fix briefs with a 5,000-char task stay at the cap and keep the path lines', () => {
   const plan = buildBrief({ ...base, role: 'planner', tier: 'T2', phase: 'plan', task: 'p'.repeat(5_000), note: 'too big', previousPlanPath: '/u/factory/runs/run-abc.plan.md' })
   assert.ok(plan.length <= BRIEF_MAX, String(plan.length))
   assert.match(plan, /Tier: T2\. Phase: plan\./)
@@ -54,6 +55,21 @@ test('T3 plan brief asks for the slices JSON line; a T3 worker brief names its f
   assert.ok(worker.includes('Approved plan: /tmp/ud/run.plan.md'))
   assert.match(worker, /No git push, no gh, no deploy/)
   assert.ok(worker.length <= BRIEF_MAX)
+})
+
+test('build, fix, and self-check briefs carry the done contract under the cap', () => {
+  assert.equal(BRIEF_MAX, 2000)
+  const task = 'Fix the date shown one day off in the order list'
+  const reviewPath = '/u/factory/runs/run-abc.review.md'
+  for (const b of [
+    buildBrief({ ...base, tier: 'T3', phase: 'build', task }),
+    buildBrief({ ...base, role: 'self-check', tier: 'T1', phase: 'review', task }),
+    buildBrief({ ...base, tier: 'T3', phase: 'fix', task, reviewPath })
+  ]) {
+    assert.ok(b.includes(DONE_CONTRACT), b.slice(0, 80))
+    assert.ok(b.length <= BRIEF_MAX, String(b.length))
+  }
+  assert.ok(buildBrief({ ...base, tier: 'T3', phase: 'fix', task, reviewPath }).includes(reviewPath))
 })
 
 test("Joe's guide note wins over a long task; the task keeps a floor", () => {

@@ -9,7 +9,7 @@ import { grokEnd, grokRow } from './usage.ts'
  * rules result.
  */
 
-export const TRIAGE_TIMEOUT_MS = 8000
+export const TRIAGE_TIMEOUT_MS = 60_000
 /** Empty means the Grok CLI default model (grok-4.6-build on 2026-09-29, per the CLI's own answer). */
 export const TRIAGE_MODEL = ''
 export const TRIAGE_EFFORT = 'low'
@@ -35,7 +35,21 @@ export function triagePrompt(task: string, rules: Triage): string {
 
 export function grokTriageArgs(prompt: string, o: TriageRun = {}): string[] {
   const model = o.model ?? TRIAGE_MODEL
-  return ['-p', prompt, '--effort', o.effort || TRIAGE_EFFORT, '--output-format', 'streaming-json', ...(model ? ['-m', model] : [])]
+  return [
+    '-p',
+    prompt,
+    '--effort',
+    o.effort || TRIAGE_EFFORT,
+    '--max-turns',
+    '1',
+    '--permission-mode',
+    'plan',
+    '--no-subagents',
+    '--disable-web-search',
+    '--output-format',
+    'streaming-json',
+    ...(model ? ['-m', model] : [])
+  ]
 }
 
 const SIZES: Size[] = ['T0', 'T1', 'T2', 'T3']

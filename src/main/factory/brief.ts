@@ -1,12 +1,13 @@
 /**
  * The per-turn Factory brief. Role, tier, and phase ride in every prompt so a resumed Grok
- * session does not depend on session/new rules. Hard cap 1,200 characters: the task is cut first,
- * then the note; the rules lines (including plan and reviewer paths) never are.
+ * session does not depend on session/new rules. Hard cap 2,000 characters: the task is cut first,
+ * then the note; the rules lines (including the done contract, plan, and reviewer paths) never are.
  */
 
 import type { Tier } from '../../shared/factory.ts'
+import { DONE_CONTRACT } from '../../shared/factory-done.ts'
 
-export const BRIEF_MAX = 1200
+export const BRIEF_MAX = 2000
 
 export type BriefPhase = 'plan' | 'build' | 'review' | 'trim' | 'fix'
 
@@ -68,6 +69,7 @@ export function buildBrief(input: BriefInput): string {
     'Edit only under the work repo, with absolute paths. Do not edit the brain folder you are running in.',
     'No git push, no gh, no deploy, no publish. Do not commit. Brain commits after review.',
     LIMIT_LINE[input.tier],
+    DONE_CONTRACT,
     PHASE_LINE[input.phase]
   ]
   if (input.phase === 'plan' && input.tier === 'T3') lines.push(SLICES_LINE)
