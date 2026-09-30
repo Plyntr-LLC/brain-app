@@ -9,7 +9,7 @@ import { blankSession, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
 import { SettingsPanel } from './SettingsPanel'
 import { SetupNeeds } from './SetupNeeds'
-import { ForkScreen, PlyntrCodeScreen, PlyntrCreateScreen, PlyntrProjectScreen, type SignedIn } from './PlyntrPath'
+import { PlyntrCodeScreen, PlyntrCreateScreen, PlyntrProjectScreen, type SignedIn } from './PlyntrPath'
 import { WorkPulse } from './WorkPulse'
 
 function TwoApps({ channel }: { channel?: string }) {
@@ -105,7 +105,7 @@ export function FirstRun() {
     setChannel: (channel: string) => void
     join: (row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) => Promise<void>
     pick: (kind: AiKind) => void
-    read: () => { screen: string; buttons: string[]; strip: string; model: string; effort: string }
+    read: () => { screen: string; buttons: string[]; strip: string; model: string; effort: string; checkbox: string; checked: boolean; note: string; channel: string }
   } | null>(null)
   channelRef.current = s.channel
   const [folderCopyBusy, setFolderCopyBusy] = useState(false)
@@ -117,19 +117,19 @@ export function FirstRun() {
   const [storageOwn2, setStorageOwn2] = useState('')
   const [storageSaved, setStorageSaved] = useState(false)
   const skipStorageAsk = useRef(false)
+  /** Bumped on sign-out so a chat or storage step still in flight never lands on top of the entry. */
+  const signOutEpoch = useRef(0)
 
   function defaultBackScreen(current: string, session: Session): string | null {
     switch (current) {
       case 'otp':
         return 'email'
       case 'email':
-      case 'plyntr-code':
       case 'plyntr-create':
       case 'plyntr-company':
       case 'plyntr-project':
-        return 'fork'
       case 'welcome':
-        return 'fork'
+        return 'plyntr-code'
       case 'choice':
         return session.email ? 'otp' : 'welcome'
       case 'name':
@@ -161,7 +161,7 @@ export function FirstRun() {
   function goBack() {
     if (s.screen === 'plyntr-create' && plyntrWizardBack.current?.()) return
     const from = s.screen
-    if (from === 'chat' || from === 'fork') return
+    if (from === 'chat' || from === 'plyntr-code') return
     const prev = navStack.current.pop() ?? defaultBackScreen(from, s)
     if (!prev || prev === from) return
     setErr('')
@@ -169,7 +169,8 @@ export function FirstRun() {
     setFolderCopyBusy(false)
     if (from === 'abapply') folderPutKey.current = ''
     if (from === 'bridge') bridgeOnce.current = ''
-    setS((p) => ({ ...p, screen: prev }))
+    // Back onto the entry is a fresh start: the box stays as it was, anything else is the Plyntr lane again.
+    setS((p) => ({ ...p, screen: prev, ...(prev === 'plyntr-code' && p.channel !== 'local' ? { channel: 'plyntr' } : {}) }))
   }
 
   useEffect(() => {
@@ -191,16 +192,16 @@ export function FirstRun() {
       const signed = pick ? Boolean((await window.brain.ai.signedIn(pick)).signedIn) : false
       const mode = folder ? await window.brain.setup.syncMode(folder).catch(() => '') : ''
       const pathB = mode === 'plyntr' || mode === 'local'
-      let screen = 'fork'
+      let screen = 'plyntr-code'
       const abMissing = !pathB && st.items.some((i) => i.id === 'ab' && !i.present)
       const project = acct.role === 'project' || e.projectSeat
-      if (!acct.signedIn) screen = 'fork'
+      if (!acct.signedIn) screen = 'plyntr-code'
       else if (project && (loginVia === 'hq-sync' || acct.role === 'project')) {
         screen = folder && signed ? 'chat' : 'aipick'
       } else if (pathB && folder && st.ready && signed) screen = 'chat'
       else if (pathB && folder && !st.ready) screen = 'needs'
       else if (pathB && folder) screen = 'aipick'
-      else if (pend?.create || pend?.join) screen = 'fork'
+      else if (pend?.create || pend?.join) screen = 'plyntr-code'
       else if (acct.signedIn && st.ready && signed && folder && !abMissing) {
         const br = await window.brain.setup.bridgeStatus(folder).catch(() => null)
         screen = br?.installed || br?.skipped ? 'chat' : 'bridge'
@@ -219,13 +220,13 @@ export function FirstRun() {
         email,
         abWatching: st.watching,
         path: st.watching ? 'second' : prev.path,
-        channel: mode === 'local' ? 'local' : mode === 'plyntr' ? 'plyntr' : prev.channel,
+        channel: mode === 'local' ? 'local' : mode === 'plyntr' || screen === 'plyntr-code' ? 'plyntr' : prev.channel,
         screen,
         ai: prev.ai || pick
       }))
     })()
       .catch(() => {
-        setS((prev) => ({ ...prev, screen: prev.screen === 'boot' ? 'fork' : prev.screen }))
+        setS((prev) => (prev.screen === 'boot' ? { ...prev, screen: 'plyntr-code', channel: 'plyntr' } : prev))
       })
       .finally(() => {
         ;(window as unknown as { __brainBoot?: boolean }).__brainBoot = true
@@ -275,6 +276,7 @@ export function FirstRun() {
   }
 
   function goChat(patch?: Partial<Session>) {
+    const epoch = signOutEpoch.current
     void (async () => {
       const folder = String(patch?.brainPath || s.brainPath || '').trim()
       const role = String(patch?.role || s.role || '')
@@ -288,6 +290,7 @@ export function FirstRun() {
             setStorageOwn('')
             setStorageOwn2('')
             setStorageSaved(false)
+            if (epoch !== signOutEpoch.current) return
             go('storage-ask', patch)
             return
           }
@@ -295,6 +298,8 @@ export function FirstRun() {
       } catch {
         /* Storage error still opens chat. */
       }
+      // Signed out while the storage check ran: stay on the entry.
+      if (epoch !== signOutEpoch.current) return
       go('chat', patch)
     })()
   }
@@ -383,11 +388,13 @@ export function FirstRun() {
 
   useEffect(() => {
     if (s.screen !== 'aiwork' || !s.ai) return
+    const epoch = signOutEpoch.current
     setAway('ai-login')
     void window.brain.ai
       .loginWait(s.ai as AiKind)
       .then((r) => {
         setAway(null)
+        if (epoch !== signOutEpoch.current) return
         if (r.signedIn) startChat()
         else if (r.detail) setErr(r.detail)
       })
@@ -957,6 +964,12 @@ export function FirstRun() {
         setPlyntrCreate(row)
         go('plyntr-create', { channel: 'plyntr', role: 'owner', ai: 'grok' })
       },
+      async logOut() {
+        await logOut()
+      },
+      show(screen: string) {
+        go(screen)
+      },
       async click(label: string) {
         const btn = [...document.querySelectorAll('[data-setup-button]')].find(
           (node) => (node.textContent || '').trim() === label
@@ -984,7 +997,11 @@ export function FirstRun() {
           primaryDisabled: Boolean(primary?.disabled),
           role: app?.getAttribute('data-setup-role') || '',
           path: app?.getAttribute('data-setup-path') || '',
-          radios: document.querySelectorAll('[data-setup-screen="needs"] input[name="setup-cli"]').length
+          radios: document.querySelectorAll('[data-setup-screen="needs"] input[name="setup-cli"]').length,
+          checkbox: el?.querySelector('[data-setup-check]')?.getAttribute('data-setup-check') || '',
+          checked: Boolean((el?.querySelector('[data-setup-check]') as HTMLInputElement | null)?.checked),
+          note: [...(el?.querySelectorAll('.note, .muted') || [])].map((node) => (node.textContent || '').trim()).join(' '),
+          channel: channelRef.current || ''
         }
       }
     }
@@ -1035,11 +1052,12 @@ export function FirstRun() {
   }
 
   async function logOut() {
+    signOutEpoch.current += 1
     await window.brain.auth.logout()
     navStack.current = []
     setShowInvite(false)
     setLoginVia('')
-    setS((prev) => ({ ...blankSession(prev.path, prev.dryRun), screen: 'fork' }))
+    setS((prev) => ({ ...blankSession(prev.path, prev.dryRun), screen: 'plyntr-code', channel: 'plyntr' }))
   }
 
   async function afterProject(res: {
@@ -1186,7 +1204,7 @@ export function FirstRun() {
             <button type="button" className="runmeta-v">{prettyEffort(undefined, s.ai || 'grok')}</button>
           </div>
           ) : null}
-          {s.screen !== 'chat' && s.screen !== 'fork' && s.screen !== 'boot' ? (
+          {s.screen !== 'chat' && s.screen !== 'plyntr-code' && s.screen !== 'boot' ? (
             <div className="setup-back-row">
               <button type="button" className="ghost setup-back" onClick={() => goBack()}>
                 Back
@@ -1205,35 +1223,26 @@ export function FirstRun() {
               <h1>Opening…</h1>
             </div>
           )}
-          {s.screen === 'fork' && (
-            <div data-setup-screen="fork">
-            <ForkScreen
-              pendingCreate={Boolean(plyntrCreate)}
-              pendingJoin={plyntrJoin}
-              err={err}
-              onSignIn={() => {
-                setLoginVia('')
-                go('email')
-              }}
-              onCode={() => {
-                setLoginVia('')
-                setCodeStartsInEmail(false)
-                go('plyntr-code', { channel: 'plyntr' })
-              }}
-              onLocal={() => {
-                setLoginVia('')
-                setCodeStartsInEmail(false)
-                go('plyntr-code', { channel: 'local' })
-              }}
-              onContinueCreate={() => void openPlyntrCreate()}
-              onContinueJoin={() => void continuePlyntrJoin()}
-            />
-            </div>
-          )}
           {s.screen === 'plyntr-code' && (
             <div data-setup-screen="plyntr-code">
             <PlyntrCodeScreen
               local={s.channel === 'local'}
+              onLocalChange={(on) => setS((p) => ({ ...p, channel: on ? 'local' : 'plyntr' }))}
+              lead={
+                <>
+                  {plyntrCreate ? (
+                    <button className="primary" type="button" data-setup-button="Continue company brain setup" onClick={() => void openPlyntrCreate()}>
+                      Continue company brain setup
+                    </button>
+                  ) : null}
+                  {plyntrJoin ? (
+                    <button className="primary" type="button" data-setup-button="Continue joining this brain" onClick={() => void continuePlyntrJoin()}>
+                      Continue joining this brain
+                    </button>
+                  ) : null}
+                  {err ? <p className="note">{err}</p> : null}
+                </>
+              }
               startInEmail={codeStartsInEmail}
               onJoin={finishPlyntrJoin}
               onAgency={s.channel === 'local' ? undefined : finishAgencyInvite}
@@ -1246,11 +1255,13 @@ export function FirstRun() {
             </div>
           )}
           {s.screen === 'plyntr-project' && (
+            <div data-setup-screen="plyntr-project">
             <PlyntrProjectScreen
               onJoin={async (row) => {
                 await afterProject(row)
               }}
             />
+            </div>
           )}
           {s.screen === 'plyntr-create' && (
             <div data-setup-screen="plyntr-create">
@@ -1568,7 +1579,7 @@ export function FirstRun() {
                 </button>
                 <button className="linkish" type="button" onClick={() => {
                   setCodeStartsInEmail(false)
-                  go('plyntr-code')
+                  go('plyntr-code', { channel: 'plyntr' })
                 }}>
                   I have an invite code instead
                 </button>
@@ -1719,7 +1730,7 @@ export function FirstRun() {
             </>
           )}
           {s.screen === 'github' && (
-            <>
+            <div data-setup-screen="github">
               <p className="kicker">GitHub · step 1 of 2</p>
               <h1>Company short name, then install our GitHub app.</h1>
               <p className="muted">
@@ -1799,7 +1810,7 @@ export function FirstRun() {
                   Install on GitHub
                 </button>
               </div>
-            </>
+            </div>
           )}
           {s.screen === 'bridge' && (
             <div data-setup-screen="bridge">
@@ -1961,9 +1972,11 @@ export function FirstRun() {
                   type="button"
                   onClick={() => {
                     setAway('ai-login')
+                    const epoch = signOutEpoch.current
                     void window.brain.ai.loginWait(s.ai as AiKind)
                       .then((r) => {
                         setAway(null)
+                        if (epoch !== signOutEpoch.current) return
                         if (r.signedIn) startChat()
                         else if (r.detail) setErr(r.detail)
                       })

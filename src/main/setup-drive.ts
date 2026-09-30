@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, type BrowserWindow } from 'electron'
+import { clearPendingJoinPlyntr, writePendingJoin } from './plyntr-seats'
 import { setupTrace } from './setup-trace'
 
 type Dom = {
@@ -15,10 +16,30 @@ type Dom = {
   role: string
   path: string
   radios: number
+  checkbox: string
+  checked: boolean
+  note: string
+  channel: string
 }
 
 function blankDom(): Dom {
-  return { screen: '', buttons: [], strip: '', model: '', effort: '', h1: '', primary: '', primaryDisabled: false, role: '', path: '', radios: 0 }
+  return {
+    screen: '',
+    buttons: [],
+    strip: '',
+    model: '',
+    effort: '',
+    h1: '',
+    primary: '',
+    primaryDisabled: false,
+    role: '',
+    path: '',
+    radios: 0,
+    checkbox: '',
+    checked: false,
+    note: '',
+    channel: ''
+  }
 }
 
 function sleep(ms: number) {
@@ -104,8 +125,174 @@ function noteScreen(name: string, dom: Dom): void {
     primaryDisabled: dom.primaryDisabled,
     role: dom.role,
     path: dom.path,
-    radios: dom.radios
+    radios: dom.radios,
+    checkbox: dom.checkbox,
+    checked: dom.checked,
+    note: dom.note,
+    channel: dom.channel
   })
+}
+
+/** Types into the entry's one field with a real input event, the way React sees a keyboard. */
+async function typeField(win: BrowserWindow, value: string): Promise<void> {
+  const ok = await js<boolean>(
+    win,
+    `(() => {
+      const el = document.querySelector('[data-setup-screen] .field input')
+      if (!el) return false
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ${JSON.stringify(value)})
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      return true
+    })()`
+  )
+  if (!ok) throw new Error('The entry field was not on screen.')
+  await sleep(100)
+}
+
+async function press(win: BrowserWindow, label: string): Promise<void> {
+  await js(win, `window.__brainDrive.click(${JSON.stringify(label)})`)
+  await sleep(150)
+}
+
+async function tickLocal(win: BrowserWindow): Promise<void> {
+  const ok = await js<boolean>(
+    win,
+    `(() => { const el = document.querySelector('[data-setup-check]'); if (!el) return false; el.click(); return true })()`
+  )
+  if (!ok) throw new Error('The This computer only box was not on screen.')
+  await sleep(150)
+}
+
+async function waitFor(win: BrowserWindow, ok: (dom: Dom) => boolean): Promise<Dom> {
+  let last = blankDom()
+  for (let i = 0; i < 80; i++) {
+    last = await readDom(win)
+    if (ok(last)) return last
+    await sleep(150)
+  }
+  return last
+}
+
+async function toEntry(win: BrowserWindow): Promise<Dom> {
+  // One sign-out. A chat or storage step still in flight must not land on top of the entry afterwards.
+  await js(win, 'window.__brainDrive.logOut()')
+  await waitScreen(win, 'plyntr-code')
+  await sleep(2500)
+  const dom = await readDom(win)
+  if (dom.screen !== 'plyntr-code') {
+    const where = await js<string>(win, `JSON.stringify({ screens: [...document.querySelectorAll('[data-setup-screen]')].map((n) => n.getAttribute('data-setup-screen')), inputs: document.querySelectorAll('input').length, h1: [...document.querySelectorAll('h1')].map((n) => n.textContent) })`)
+    throw new Error(`Sign-out did not land on the entry: ${JSON.stringify(dom)} ${where}`)
+  }
+  return dom
+}
+
+async function reboot(win: BrowserWindow): Promise<void> {
+  await js(win, 'window.__brainBoot = false')
+  win.webContents.reload()
+  await sleep(300)
+  await boot(win)
+  await sleep(300)
+}
+
+/** Clean first boot: the entry, its two buttons, and the unchecked box. */
+async function entryBoot(win: BrowserWindow): Promise<void> {
+  clearPretend()
+  setupTrace({ event: 'run', name: 'entry-boot' })
+  noteScreen('entry-boot', await waitScreen(win, 'plyntr-code'))
+}
+
+/** Email me a code swaps the field in place; I have a code swaps it back. */
+async function entryEmail(win: BrowserWindow): Promise<void> {
+  setupTrace({ event: 'run', name: 'entry-email' })
+  await press(win, 'Email me a code')
+  noteScreen('entry-email', await waitButton(win, 'I have a code'))
+  await press(win, 'I have a code')
+  noteScreen('entry-email-back', await waitButton(win, 'Email me a code'))
+}
+
+/** An address no system knows: project sync answers ok, and the screen asks for an invite. */
+async function entryEmailUnknown(win: BrowserWindow): Promise<void> {
+  setupTrace({ event: 'run', name: 'entry-email-unknown' })
+  await press(win, 'Email me a code')
+  await typeField(win, 'nobody@example.com')
+  await press(win, 'Send code')
+  noteScreen('entry-email-unknown', await waitFor(win, (d) => d.note.includes('invite code')))
+  await press(win, 'I have a code')
+}
+
+/** A known address gets a code, and the six digits sign in through auth:verify. */
+async function entryEmailKnown(win: BrowserWindow): Promise<void> {
+  setupTrace({ event: 'run', name: 'entry-email-known' })
+  await press(win, 'Email me a code')
+  await typeField(win, 'ada@example.com')
+  await press(win, 'Send code')
+  noteScreen('entry-email-known-sent', await waitFor(win, (d) => d.h1 === 'Email me the code.' && d.buttons.includes('Continue')))
+  await typeField(win, '246810')
+  await press(win, 'Continue')
+  noteScreen('entry-email-known', await waitFor(win, (d) => d.screen !== 'plyntr-code' && d.screen !== ''))
+}
+
+/** An Agency Brain invite pasted into the entry takes the agency leg. With the box ticked it never does. */
+async function entryAgency(win: BrowserWindow): Promise<void> {
+  setupTrace({ event: 'run', name: 'entry-agency' })
+  await typeField(win, 'AGNCYTST')
+  await press(win, 'Continue')
+  noteScreen('entry-agency', await waitScreen(win, 'github'))
+  await toEntry(win)
+  setupTrace({ event: 'run', name: 'entry-agency-local' })
+  await tickLocal(win)
+  await typeField(win, 'AGNCYTST')
+  await press(win, 'Continue')
+  noteScreen('entry-agency-local', await waitFor(win, (d) => d.note.length > 0))
+  await tickLocal(win)
+}
+
+/** The box ticked, a join code pasted: the local lane, no watcher. */
+async function entryLocal(win: BrowserWindow): Promise<void> {
+  setupTrace({ event: 'run', name: 'entry-local' })
+  await tickLocal(win)
+  noteScreen('entry-local-ticked', await readDom(win))
+  await typeField(win, 'TESTTEST12')
+  await press(win, 'Continue')
+  noteScreen('entry-local', await waitScreen(win, 'cli'))
+}
+
+/** Back from a screen that used to return to the fork, and sign-out, both land on the entry. */
+async function entryBack(win: BrowserWindow): Promise<void> {
+  setupTrace({ event: 'run', name: 'entry-back' })
+  noteScreen('entry-logout', await toEntry(win))
+  await js(win, `window.__brainDrive.show('plyntr-project')`)
+  await waitScreen(win, 'plyntr-project')
+  await js(win, `document.querySelector('.setup-back')?.click()`)
+  noteScreen('entry-back', await waitScreen(win, 'plyntr-code'))
+}
+
+/** A setup or join under way puts its Continue button above the entry after a restart. */
+async function entryPending(win: BrowserWindow): Promise<void> {
+  setupTrace({ event: 'run', name: 'entry-pending' })
+  await js(win, 'window.__brainDrive.logOut()')
+  await js(
+    win,
+    `window.brain.plyntr.saveCreate({ createId: 'c-entry', wizardStep: 2, label: 'Entry Co', org: 'entry-org', slug: 'entry-co', scoutEmail: 'ada@example.com' })`
+  )
+  await reboot(win)
+  noteScreen('entry-pending-create', await waitScreen(win, 'plyntr-code'))
+  await js(win, 'window.brain.plyntr.clearCreate()')
+  writePendingJoin({
+    brainId: 'entry-join',
+    repo: 'plyntr-fixture/plyntr-fixture-brain',
+    role: 'team',
+    email: 'ada@example.com',
+    name: 'Ada',
+    slug: 'plyntr-fixture',
+    label: 'Plyntr fixture',
+    wizardStep: 5
+  })
+  await reboot(win)
+  noteScreen('entry-pending-join', await waitScreen(win, 'plyntr-code'))
+  clearPendingJoinPlyntr()
+  await reboot(win)
+  noteScreen('entry-pending-none', await waitScreen(win, 'plyntr-code'))
 }
 
 async function waitNeedsReview(win: BrowserWindow): Promise<Dom> {
@@ -120,10 +307,11 @@ async function waitNeedsReview(win: BrowserWindow): Promise<Dom> {
 
 async function joiner(win: BrowserWindow): Promise<void> {
   clearPretend()
+  // The joiner comes in through the entry: sign out, paste the join code, Continue.
+  await toEntry(win)
   setupTrace({ event: 'run', name: 'joiner' })
-  await js(win, `window.__brainDrive.setChannel('plyntr')`)
-  const row = await js<Record<string, string>>(win, `window.brain.plyntr.resolve('TESTTEST12')`)
-  await js(win, `window.__brainDrive.join(${JSON.stringify(row)})`)
+  await typeField(win, 'TESTTEST12')
+  await press(win, 'Continue')
   const dom = await waitScreen(win, 'cli')
   noteScreen('joiner', dom)
   await js(win, `window.__brainDrive.pick('grok')`)
@@ -502,6 +690,10 @@ export async function runSetupDrive(win: BrowserWindow): Promise<void> {
     await boot(win)
     if (process.env.BRAIN_APP_SETUP_RUN === 'signed-out') await signedOut(win)
     else {
+      await entryBoot(win)
+      await entryEmail(win)
+      await entryEmailUnknown(win)
+      await toEntry(win)
       await localOnly(win)
       await joiner(win)
       await gitCases(win)
@@ -513,6 +705,14 @@ export async function runSetupDrive(win: BrowserWindow): Promise<void> {
       await unpicked(win)
       await radioChoice(win)
       await pretendOff(win)
+      await toEntry(win)
+      await entryLocal(win)
+      await toEntry(win)
+      await entryAgency(win)
+      await toEntry(win)
+      await entryEmailKnown(win)
+      await entryBack(win)
+      await entryPending(win)
     }
     setupTrace({ event: 'drive-done', ok: true })
     app.exit(0)

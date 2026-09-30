@@ -1,4 +1,5 @@
 import { API_BASE } from '../shared/contracts'
+import { setupTrace } from './setup-trace'
 export { lookupGithubAccount } from './github-account'
 
 function assertNoSecretLog(): void {
@@ -19,7 +20,27 @@ export type InviteResolve = {
   memberRole?: string
 }
 
+/** The setup drive (dry run plus BRAIN_APP_SETUP_DRIVE) gets fixed Ads2AI answers and never reaches the network.
+ * Plain `npm run dev` still joins Ads2AI for real. */
+export function driveFakes(): boolean {
+  return process.env.BRAIN_APP_DRY_RUN === '1' && process.env.BRAIN_APP_SETUP_DRIVE === '1'
+}
+
+const DRY_EMAIL = 'ada@example.com'
+const DRY_TOKEN = 'dry-agency-token'
+
 export async function resolveInvite(token: string): Promise<InviteResolve> {
+  if (driveFakes()) {
+    setupTrace({ event: 'drive-fake', fn: 'resolveInvite', code: token })
+    if (token !== 'AGNCYTST') throw new Error('not found')
+    return {
+      memberToken: DRY_TOKEN,
+      teamSlug: 'dry-agency',
+      teamName: 'Dry Agency',
+      kind: 'agency',
+      member: { email: DRY_EMAIL, name: 'Ada', role: 'scout' }
+    }
+  }
   const r = await fetch(
     `${API_BASE}/api/team-brain/invite-resolve?token=${encodeURIComponent(token)}`
   )
@@ -34,6 +55,11 @@ export async function resolveInvite(token: string): Promise<InviteResolve> {
 }
 
 export async function requestCode(email: string, timeoutMs = 8000): Promise<{ ok: boolean }> {
+  if (driveFakes()) {
+    setupTrace({ event: 'drive-fake', fn: 'requestCode', email })
+    if (email !== DRY_EMAIL) throw new Error('No Agency Brain account for that email.')
+    return { ok: true }
+  }
   const r = await fetch(`${API_BASE}/api/auth/request-code`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -51,6 +77,11 @@ export async function verifyCode(email: string, code: string): Promise<{
   token: string
   member: { email: string; name?: string }
 }> {
+  if (driveFakes()) {
+    setupTrace({ event: 'drive-fake', fn: 'verifyCode', email })
+    if (email !== DRY_EMAIL || code !== '246810') throw new Error('That code did not work.')
+    return { token: DRY_TOKEN, member: { email: DRY_EMAIL, name: 'Ada' } }
+  }
   const r = await fetch(`${API_BASE}/api/auth/verify-code`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -72,6 +103,7 @@ export async function verifyCode(email: string, code: string): Promise<{
 export async function myTeams(token: string): Promise<{
   teams: { slug: string; name: string; role: string; kind?: string }[]
 }> {
+  if (driveFakes()) return { teams: [{ slug: 'dry-agency', name: 'Dry Agency', role: 'scout', kind: 'agency' }] }
   const r = await fetch(`${API_BASE}/api/team-brain/my-teams`, {
     headers: { Authorization: `Bearer ${token}` }
   })
@@ -102,6 +134,7 @@ export async function installStatus(teamSlug: string): Promise<{
   installed?: boolean
   repoUrl?: string
 }> {
+  if (driveFakes()) return { installed: false }
   const r = await fetch(
     `${API_BASE}/api/team-brain/install-status?team=${encodeURIComponent(teamSlug)}`
   )

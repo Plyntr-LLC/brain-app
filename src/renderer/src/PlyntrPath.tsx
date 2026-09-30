@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { CLIENT_PACKS, packLabel, packLine } from '@shared/client-pack'
 import { inviteTryOrder, slugFromBusinessName } from '@shared/plyntr-invite'
 import { onePerPerson } from '@shared/plyntr-transfer'
@@ -36,59 +36,6 @@ type CreatePending = {
   slug: string
   scoutEmail: string
   brainId?: string
-}
-
-export function ForkScreen({
-  pendingCreate,
-  pendingJoin,
-  err,
-  onSignIn,
-  onCode,
-  onLocal,
-  onContinueCreate,
-  onContinueJoin
-}: {
-  pendingCreate: boolean
-  pendingJoin: boolean
-  err: string
-  onSignIn: () => void
-  onCode: () => void
-  onLocal: () => void
-  onContinueCreate: () => void
-  onContinueJoin: () => void
-}) {
-  return (
-    <>
-      <p className="kicker">Start</p>
-      <h1>Set up Brain on this Mac.</h1>
-      <p>Pick one. Sign in if you already use Brain, paste the code someone sent you, or keep a brain on this computer only.</p>
-      {pendingCreate ? (
-        <button className="primary" type="button" onClick={onContinueCreate}>
-          Continue company brain setup
-        </button>
-      ) : null}
-      {pendingJoin ? (
-        <button className="primary" type="button" onClick={onContinueJoin}>
-          Continue joining this brain
-        </button>
-      ) : null}
-      {err ? <p className="note">{err}</p> : null}
-      <div className="choice-stack">
-      <button className="choice" type="button" data-setup-button="Sign in" onClick={onSignIn}>
-        <h3>Sign in</h3>
-        <p>You already use Brain. We email a sign-in code to the address you were invited with.</p>
-      </button>
-      <button className="choice" type="button" data-setup-button="I have a code" onClick={onCode}>
-        <h3>I have a code</h3>
-        <p>Paste the invite. Agency Brain or Plyntr, same box. We figure out the rest.</p>
-      </button>
-      <button className="choice" type="button" data-setup-button="This computer only" onClick={onLocal}>
-        <h3>This computer only</h3>
-        <p>Copies the brain onto this Mac with no backup and no sharing yet. You can turn on sync later in Settings.</p>
-      </button>
-      </div>
-    </>
-  )
 }
 
 export function PlyntrProjectScreen({
@@ -200,7 +147,9 @@ export function PlyntrCodeScreen({
   onEmailCode,
   onSignedIn,
   startInEmail,
-  local
+  local,
+  onLocalChange,
+  lead
 }: {
   onJoin: (row: { brainId: string; repo: string; slug: string; role: string; email: string; name: string }) => Promise<void>
   onProject?: (row: { email: string; name: string; brainPath: string; teamName: string; roots?: string[] }) => Promise<void>
@@ -217,6 +166,10 @@ export function PlyntrCodeScreen({
   onSignedIn?: (res: SignedIn, email: string) => Promise<void>
   startInEmail?: boolean
   local?: boolean
+  /** The small This computer only box under the code field. */
+  onLocalChange?: (on: boolean) => void
+  /** Continue buttons for a setup or join already under way, shown above the field. */
+  lead?: ReactNode
 }) {
   const [mode, setMode] = useState<'code' | 'email' | 'sent'>(startInEmail ? 'email' : 'code')
   const [code, setCode] = useState('')
@@ -227,13 +180,13 @@ export function PlyntrCodeScreen({
   const [sending, setSending] = useState(false)
   return (
     <>
-      <p className="kicker">{local ? 'This computer only' : 'Your code'}</p>
-      <h1>{mode === 'code' ? 'Paste your code.' : 'Email me the code.'}</h1>
+      <p className="kicker">Start</p>
+      <h1>{mode === 'code' ? 'Enter your code.' : 'Email me the code.'}</h1>
       {mode === 'code' ? (
         <p>
           {local
             ? 'Paste the code from your invite email. This copies your brain onto this Mac. No GitHub needed.'
-            : 'Paste the invite you were sent. Agency Brain or Plyntr, same box.'}
+            : 'Paste the code from your invite or setup email. We work out whether it sets up a new brain, joins one, or signs you in.'}
         </p>
       ) : mode === 'sent' ? (
         <p>Check {email}. Paste that code here.</p>
@@ -242,6 +195,7 @@ export function PlyntrCodeScreen({
           Type the email you were invited with. If no email arrives in a few minutes, ask the person who invited you.
         </p>
       )}
+      {mode === 'code' ? lead : null}
       {mode === 'code' || mode === 'sent' ? (
         <label className="field">
           Code
@@ -253,6 +207,17 @@ export function PlyntrCodeScreen({
           <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" />
         </label>
       )}
+      {mode === 'code' && onLocalChange ? (
+        <label className="tiny">
+          <input
+            type="checkbox"
+            data-setup-check="This computer only"
+            checked={Boolean(local)}
+            onChange={(e) => onLocalChange(e.target.checked)}
+          />{' '}
+          This computer only (no sync or backup; turn on sync later in Settings)
+        </label>
+      ) : null}
       {mode === 'sent' && sentNote ? <p className="muted">{sentNote}</p> : null}
       {err ? <p className="note">{err}</p> : null}
       {sending ? <WorkPulse label="Sending your code" /> : busy ? <WorkPulse label="Checking your code" /> : null}
@@ -287,8 +252,9 @@ export function PlyntrCodeScreen({
                 setSending(false)
               }
             }}
+            data-setup-button="Send code"
           >
-            Email me a code
+            Send code
           </button>
         ) : (
           <button
@@ -347,7 +313,7 @@ export function PlyntrCodeScreen({
                 const line = pickCodeError(misses)
                 setErr(
                   line === CODE_DID_NOT_WORK && /^\d{6}$/.test(code.replace(/[-\s]/g, '')) && !typed && !local
-                    ? `${line} If it is a sign-in code, go back and use Sign in with the email it was sent to.`
+                    ? `${line} If it is a sign-in code, click Email me a code and use the address it was sent to.`
                     : line
                 )
               } catch (e) {
@@ -356,12 +322,22 @@ export function PlyntrCodeScreen({
                 setBusy(false)
               }
             }}
+            data-setup-button="Continue"
           >
             Continue
           </button>
         )}
-        <button className="linkish" type="button" onClick={() => setMode(mode === 'code' ? 'email' : 'code')}>
-          {mode === 'code' ? "I don't have a code" : 'I have a code'}
+        <button
+          className="linkish"
+          type="button"
+          data-setup-button={mode === 'code' ? 'Email me a code' : 'I have a code'}
+          onClick={() => {
+            // Sign-in has no local variant, so the box clears before the email field shows.
+            if (mode === 'code' && local) onLocalChange?.(false)
+            setMode(mode === 'code' ? 'email' : 'code')
+          }}
+        >
+          {mode === 'code' ? 'Email me a code' : 'I have a code'}
         </button>
       </div>
     </>

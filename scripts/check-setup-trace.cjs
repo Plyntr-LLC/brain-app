@@ -114,7 +114,69 @@ async function bundle() {
   if (mod.packShipsFile(real, 'pack-extra/cloudflared')) fail('the real pack list would ship cloudflared')
 }
 
+const ENTRY_BOX = 'This computer only'
+const HEDGE_ASK = 'Ask the person who runs your brain for an invite code.'
+
+function screenRow(run) {
+  const row = lines().find((r) => r.event === 'screen' && r.run === run)
+  if (!row) fail(`missing screen ${run}`)
+  return row
+}
+
+function assertEntry(run, extra) {
+  const row = screenRow(run)
+  const want = ['Continue', 'Email me a code']
+  if (row.screen !== 'plyntr-code' || row.h1 !== 'Enter your code.') fail(`${run} is not the entry ${JSON.stringify(row)}`)
+  if (JSON.stringify(row.buttons) !== JSON.stringify(extra ? [...extra, ...want] : want)) fail(`${run} buttons ${JSON.stringify(row.buttons)}`)
+  if (row.checkbox !== ENTRY_BOX || row.checked !== false) fail(`${run} box ${row.checkbox} ${row.checked}`)
+  if (row.channel !== 'plyntr') fail(`${run} channel ${row.channel}`)
+  return row
+}
+
+function checkEntry() {
+  assertEntry('entry-boot')
+  const email = screenRow('entry-email')
+  if (email.screen !== 'plyntr-code' || email.checkbox !== '' || JSON.stringify(email.buttons) !== JSON.stringify(['Send code', 'I have a code'])) {
+    fail(`entry-email ${JSON.stringify(email)}`)
+  }
+  assertEntry('entry-email-back')
+
+  const unknown = slice('entry-email-unknown')
+  const hedge = screenRow('entry-email-unknown')
+  if (!hedge.note.includes(HEDGE_ASK) || /project|plyntr|agency brain|not found|unknown/i.test(hedge.note)) fail(`hedge note ${hedge.note}`)
+  const fakes = unknown.filter((r) => r.event === 'drive-fake').map((r) => r.fn).sort()
+  if (JSON.stringify(fakes) !== JSON.stringify(['requestCode', 'requestHqCode'])) fail(`unknown email fakes ${fakes}`)
+
+  const known = slice('entry-email-known')
+  const sent = screenRow('entry-email-known-sent')
+  if (sent.note.includes(HEDGE_ASK)) fail('a known address got the hedge')
+  if (!known.some((r) => r.event === 'drive-fake' && r.fn === 'verifyCode')) fail('the six digits never reached auth:verify')
+  if (known.some((r) => r.event === 'drive-fake' && r.fn === 'requestHqCode')) fail('a known address fell back to project sync')
+  const signed = screenRow('entry-email-known')
+  if (!signed.screen || signed.screen === 'plyntr-code') fail(`sign-in stayed on the entry ${JSON.stringify(signed)}`)
+
+  const agency = screenRow('entry-agency')
+  if (agency.screen !== 'github' || agency.channel !== 'agency') fail(`entry-agency ${JSON.stringify(agency)}`)
+  if (!slice('entry-agency').some((r) => r.event === 'drive-fake' && r.fn === 'resolveInvite' && r.code === 'AGNCYTST')) fail('agency invite skipped resolveInvite')
+  const agencyLocal = screenRow('entry-agency-local')
+  if (agencyLocal.screen !== 'plyntr-code' || !agencyLocal.note) fail(`entry-agency-local ${JSON.stringify(agencyLocal)}`)
+  if (slice('entry-agency-local').some((r) => r.event === 'drive-fake')) fail('a local code reached Ads2AI')
+
+  const ticked = screenRow('entry-local-ticked')
+  if (ticked.checked !== true || ticked.channel !== 'local') fail(`entry-local box ${JSON.stringify(ticked)}`)
+  const local = screenRow('entry-local')
+  if (local.screen !== 'cli' || local.channel !== 'local') fail(`entry-local ${JSON.stringify(local)}`)
+  if (slice('entry-local').some((r) => r.event === 'watcher')) fail('entry-local started a watcher')
+
+  assertEntry('entry-logout')
+  assertEntry('entry-back')
+  assertEntry('entry-pending-create', ['Continue company brain setup'])
+  assertEntry('entry-pending-join', ['Continue joining this brain'])
+  assertEntry('entry-pending-none')
+}
+
 function check() {
+  checkEntry()
   const joiner = slice('joiner')
   const watchers = joiner.filter((row) => row.event === 'watcher')
   if (watchers.length !== 1 || watchers[0].fn !== 'startBrainSync') fail(`joiner watchers ${JSON.stringify(watchers)}`)

@@ -436,6 +436,11 @@ async function openAskpassInstall(opts: { dialog: string; echo: string; runLine:
 
 /** Open this CLI’s own sign-in. Browser or Terminal may appear. */
 export async function loginCli(kind: AiKind): Promise<{ ok: boolean; detail: string; marker?: string }> {
+  // The setup drive runs on the person's own Mac; it must never open a real sign-in page.
+  if (process.env.BRAIN_APP_SETUP_DRIVE === '1') {
+    setupTrace({ event: 'login-skipped', kind })
+    return { ok: false, detail: `${kind} sign-in is off in the setup drive.` }
+  }
   const bin = resolveBin(kind)
   if (!bin) return { ok: false, detail: `${kind} is not installed on this computer.` }
   const args = LOGIN_ARGS[kind]

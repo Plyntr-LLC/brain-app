@@ -16,13 +16,10 @@ function fail(step: string, why: string): never {
 }
 
 if (!process.versions.electron) {
-  const buttons = ((): string[] => {
-    const src = readFileSync(join(rootRepo, 'src/renderer/src/PlyntrPath.tsx'), 'utf8')
-    const m = src.match(/function ForkScreen[\s\S]*?choice-stack([\s\S]*?)<\/div>/)
-    if (!m) return []
-    return [...m[1].matchAll(/>(Sign in|I have a code|This computer only)</g)].map((x) => x[1])
-  })()
-  if (buttons.length !== 3) fail('B', 'choice-stack buttons were ' + JSON.stringify(buttons))
+  const entrySrc = readFileSync(join(rootRepo, 'src/renderer/src/PlyntrPath.tsx'), 'utf8')
+  if (entrySrc.includes('function ForkScreen') || entrySrc.includes('storage-ask') || !entrySrc.includes('data-setup-check="This computer only"')) {
+    fail('B', 'the one entry pin failed (fork screen back, storage-ask in PlyntrPath, or no This computer only box)')
+  }
   const settingsSrc = readFileSync(join(rootRepo, 'src/renderer/src/SettingsPanel.tsx'), 'utf8')
   if (!settingsSrc.includes('{localSyncOffer()}\n          {mediaStorageOffer()}')) {
     fail('B', 'MediaStoragePanel is not after localSyncOffer')
@@ -72,7 +69,7 @@ if (!process.versions.electron) {
       ...process.env,
       BRAIN_APP_DRY_RUN: '',
       ELECTRON_RUN_AS_NODE: '',
-      MEDIA_FORK_BUTTONS: String(buttons.length)
+      MEDIA_ENTRY_PIN: '1'
     }
   })
   const cfgPath2 = join(FOLDER, '.team-config', 'media.json')
@@ -281,7 +278,7 @@ const artifact = {
   projectGet: projGet.status,
   dryRun: process.env.BRAIN_APP_DRY_RUN === '1',
   health: health.status,
-  forkButtons: Number(process.env.MEDIA_FORK_BUTTONS || 0)
+  entryPin: process.env.MEDIA_ENTRY_PIN === '1'
 }
 writeFileSync(join(dir, `plyntr-${stamp}.json`), `${JSON.stringify(artifact)}\n`)
 process.stdout.write('MEDIA_LIVE_PASS\n')

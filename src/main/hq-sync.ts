@@ -6,6 +6,8 @@ import { pickSeatForFolder, pickSeatForHqRepo } from './hq-folder'
 import { pathToFileURL } from 'node:url'
 import { app } from 'electron'
 import { parseGithubHqRepo } from './github-repo'
+import { driveFakes } from './ads2ai'
+import { setupTrace } from './setup-trace'
 import { getAccount, loadAccount } from './session-token'
 import { getSettings } from './settings-store'
 import { dryRunOwnerBind, storeBrainOwnerSession } from './plyntr-dry-run'
@@ -411,6 +413,11 @@ export async function hqAgentHealth(folder?: string): Promise<HqAgentHealth> {
 export async function requestHqCode(email: string): Promise<{ ok: boolean }> {
   const key = String(email || '').trim().toLowerCase()
   if (!key.includes('@')) throw new Error('Type your work email first.')
+  // Project sync answers ok for every address, so the setup drive's fake does too.
+  if (driveFakes()) {
+    setupTrace({ event: 'drive-fake', fn: 'requestHqCode', email: key })
+    return { ok: true }
+  }
   const mod = await loadAgent()
   const api = mod.createApi({ origin: HQ_SYNC_ORIGIN, getToken: () => '' })
   const res = await api.json('/auth/code', {
@@ -442,6 +449,7 @@ export async function joinProject(opts: {
   const code = String(opts.code || '').replace(/\s/g, '')
   if (!email.includes('@')) throw new Error('Type the email you were invited with.')
   if (code.length < 4) throw new Error('Type the six-digit code from the second email.')
+  if (driveFakes()) throw new Error('That code did not work.')
   const mod = await loadAgent()
   const out = await mod.exchangeAndCompose({
     origin: HQ_SYNC_ORIGIN,

@@ -221,13 +221,19 @@ function containsSecret(buf: Buffer, secret: Buffer | string): boolean {
   return false
 }
 
-function forkButtons(): string[] {
-  const src = readFileSync(join(rootRepo, 'src/renderer/src/PlyntrPath.tsx'), 'utf8')
-  const start = src.indexOf('className="choice-stack"')
-  if (start < 0) return []
-  const end = src.indexOf('</div>', start)
-  const stack = src.slice(start, end)
-  return [...stack.matchAll(/data-setup-button="([^"]+)"/g)].map((m) => m[1])
+/** One entry: no three-way fork, no fork screen, and storage-ask stays out of the setup path. */
+function entryPinProblems(): string[] {
+  const path = readFileSync(join(rootRepo, 'src/renderer/src/PlyntrPath.tsx'), 'utf8')
+  const run = readFileSync(join(rootRepo, 'src/renderer/src/FirstRun.tsx'), 'utf8')
+  const bad: string[] = []
+  if (path.includes('function ForkScreen') || path.includes('choice-stack')) bad.push('ForkScreen is back')
+  for (const label of ['Sign in', 'This computer only']) {
+    if (path.includes(`data-setup-button="${label}"`)) bad.push(`fork choice ${label}`)
+  }
+  if (path.includes('storage-ask')) bad.push('storage-ask leaked into PlyntrPath')
+  if (run.includes("'fork'")) bad.push('FirstRun still names the fork screen')
+  if (!path.includes('data-setup-check="This computer only"')) bad.push('the This computer only box is missing')
+  return bad
 }
 
 function setupFolder(userData: string, folder: string, brainId: string): void {
@@ -256,20 +262,16 @@ function setupFolder(userData: string, folder: string, brainId: string): void {
   brainsMod.switchBrain(folder)
 }
 
-// --- B: fork fixture and watcher parity ---
-const buttons = forkButtons()
-if (buttons.length !== 3 || buttons[0] !== 'Sign in' || buttons[1] !== 'I have a code' || buttons[2] !== 'This computer only') {
-  fail('B', 'choice-stack buttons were ' + JSON.stringify(buttons))
-}
+// --- B: one entry and watcher parity ---
+const entryBad = entryPinProblems()
+if (entryBad.length) fail('B', 'entry pin: ' + entryBad.join('; '))
 const firstRun = readFileSync(join(rootRepo, 'src/renderer/src/FirstRun.tsx'), 'utf8')
 if (firstRun.includes("go('chat'") && firstRun.split("go('chat'").length !== 2) {
   fail('B', 'FirstRun still has more than one go(chat) site')
 }
 if (!firstRun.includes("goChat(") || !firstRun.includes("storage-ask")) fail('B', 'goChat or storage-ask missing')
 const plyntrPath = readFileSync(join(rootRepo, 'src/renderer/src/PlyntrPath.tsx'), 'utf8')
-if (!plyntrPath.includes('function ForkScreen') || plyntrPath.includes('storage-ask')) {
-  fail('B', 'ForkScreen was edited or storage-ask leaked into PlyntrPath')
-}
+if (plyntrPath.includes('storage-ask')) fail('B', 'storage-ask leaked into PlyntrPath')
 const settingsSrc = readFileSync(join(rootRepo, 'src/renderer/src/SettingsPanel.tsx'), 'utf8')
 for (const needle of [
   '{localSyncOffer()}\n          {mediaStorageOffer()}\n          <div className="set-block">',
@@ -353,7 +355,7 @@ if (!sessionSrc.includes('export async function mediaShouldAsk')) {
 const watchOff = watcher.chooseWatcher({ mode: 'local', abInstalled: false, abWatchingPath: false, mini: false })
 const watchOn = watcher.chooseWatcher({ mode: 'local', abInstalled: false, abWatchingPath: false, mini: false })
 if (watchOff !== watchOn || watchOff !== 'none') fail('B', 'chooseWatcher changed with storage')
-steps.B = { forkButtons: buttons.length, watcherDelta: 0 }
+steps.B = { entryPin: true, watcherDelta: 0 }
 ipc.registerMediaIpc()
 
 async function withPackedHealth(status: number, fn: () => Promise<void>): Promise<void> {
@@ -1643,7 +1645,7 @@ const artifact = {
   tamper: { flipped: 'refused', truncated: 'refused' },
   cap: { before: 409, over: 413, raced: 1 },
   revoke: { state: 410, wiped: true, rotated: true, oldWrapFails: true, downloadRefused: true },
-  forkButtons: 3,
+  entryPin: true,
   watcherDelta: 0,
   rendererChecks,
   network: 0,

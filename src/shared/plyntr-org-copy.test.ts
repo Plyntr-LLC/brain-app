@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { CODE_DID_NOT_WORK, GONE_BRAIN_CODE, ipcErrorText, orgStepCopy, pickCodeError, typedOrgReadyLogin } from './plyntr-org-copy.ts'
+import { CODE_DID_NOT_WORK, CODE_PROJECT_HEDGE, GONE_BRAIN_CODE, ipcErrorText, orgStepCopy, pickCodeError, typedOrgReadyLogin } from './plyntr-org-copy.ts'
 
 test('a typed organization name replaces the company-slug lecture', () => {
   assert.equal(typedOrgReadyLogin('its-a-test-rosene', 'rose-wine'), 'its-a-test-rosene')
@@ -43,4 +43,10 @@ test('several failed code tries show the most useful line, never raw not found',
   assert.equal(pickCodeError(['expired', 'not found']), 'That code has expired. Ask for a fresh one.')
   assert.equal(pickCodeError(['not found', 'Could not make the project folder.']), 'Could not make the project folder.')
   assert.equal(pickCodeError(['That code did not work (HTTP 401)']), CODE_DID_NOT_WORK)
+})
+
+test('the project-sync hedge points an uninvited address at an invite and names no system', () => {
+  assert.match(CODE_PROJECT_HEDGE, /Ask the person who runs your brain for an invite code\.$/)
+  assert.match(CODE_PROJECT_HEDGE, /^If this address has an invite, a code is on its way\./)
+  assert.doesNotMatch(CODE_PROJECT_HEDGE, /project|Plyntr|Agency Brain|not found|unknown/i)
 })

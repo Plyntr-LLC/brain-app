@@ -95,8 +95,9 @@ export const CODE_UNREACHABLE = 'Could not reach sign-in to send a code. Check y
 export const CODE_SENT_MANY =
   'We emailed a code for each place this address is still set up. If you get more than one, use the one for the brain you want to open.'
 
+/** Shown when only project sync answered. It answers ok for every address, so this never says who is invited. */
 export const CODE_PROJECT_HEDGE =
-  'If this address is on a project, a code is on its way. Check that inbox.'
+  'If this address has an invite, a code is on its way. Nothing in a few minutes? Ask the person who runs your brain for an invite code.'
 
 export const CODE_DID_NOT_WORK = 'That code did not work. Check the newest email and type it exactly.'
 
