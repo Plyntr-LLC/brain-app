@@ -169,6 +169,8 @@ export function FirstRun() {
     setFolderCopyBusy(false)
     if (from === 'abapply') folderPutKey.current = ''
     if (from === 'bridge') bridgeOnce.current = ''
+    // Back cancels a chat or storage step still loading, same as sign-out.
+    signOutEpoch.current += 1
     // Back onto the entry is a fresh start: the box stays as it was, anything else is the Plyntr lane again.
     setS((p) => ({ ...p, screen: prev, ...(prev === 'plyntr-code' && p.channel !== 'local' ? { channel: 'plyntr' } : {}) }))
   }
@@ -267,21 +269,25 @@ export function FirstRun() {
     })
   }
 
-  function go(screen: string, patch?: Partial<Session>) {
+  function go(screen: string, patch?: Partial<Session>, epoch?: number) {
+    const at = epoch ?? signOutEpoch.current
     setErr('')
     setS((prev) => {
+      if (at !== signOutEpoch.current) return prev
       if (prev.screen !== screen) navStack.current.push(prev.screen)
       return { ...prev, screen, ...patch }
     })
   }
 
-  function goChat(patch?: Partial<Session>) {
-    const epoch = signOutEpoch.current
+  function goChat(patch?: Partial<Session>, epoch?: number) {
+    const at = epoch ?? signOutEpoch.current
     void (async () => {
       const folder = String(patch?.brainPath || s.brainPath || '').trim()
       const role = String(patch?.role || s.role || '')
+      // The draft chat is the Continue step. Storage is asked on the copied brain.
+      const draft = folder.includes('setup-drafts')
       try {
-        if (!skipStorageAsk.current && folder && window.brain.media?.shouldAsk) {
+        if (!draft && !skipStorageAsk.current && folder && window.brain.media?.shouldAsk) {
           const ask = await window.brain.media.shouldAsk({ folder, role })
           if (ask) {
             setStorageAskErr('')
@@ -290,8 +296,8 @@ export function FirstRun() {
             setStorageOwn('')
             setStorageOwn2('')
             setStorageSaved(false)
-            if (epoch !== signOutEpoch.current) return
-            go('storage-ask', patch)
+            if (at !== signOutEpoch.current) return
+            go('storage-ask', patch, at)
             return
           }
         }
@@ -299,8 +305,8 @@ export function FirstRun() {
         /* Storage error still opens chat. */
       }
       // Signed out while the storage check ran: stay on the entry.
-      if (epoch !== signOutEpoch.current) return
-      go('chat', patch)
+      if (at !== signOutEpoch.current) return
+      go('chat', patch, at)
     })()
   }
 
@@ -929,6 +935,7 @@ export function FirstRun() {
         go(screen)
       },
       bareNeeds() {
+        signOutEpoch.current += 1
         setS((prev) => ({ ...prev, screen: 'needs', ai: undefined, channel: 'local' }))
       },
       async continueAgency() {
@@ -1443,6 +1450,7 @@ export function FirstRun() {
               folderMissing={s.channel === 'local' ? 'code' : 'github'}
               onNeedSignIn={(ai) => go('aiwork', { ai, brainPath: s.brainPath })}
               onReady={async ({ watching, ai, brainPath }) => {
+                const epoch = signOutEpoch.current
                 const pick = ai || s.ai
                 const drafted = String(s.brainPath || '')
                 let path = drafted.includes('setup-drafts') ? drafted : String(brainPath || '') || drafted
@@ -1455,21 +1463,25 @@ export function FirstRun() {
                     email: localJoin.current.email,
                     name: localJoin.current.name
                   })
+                  if (epoch !== signOutEpoch.current) return false
                   path = applied.brainPath || path
                   localJoin.current = null
-                  setS((prev) => ({ ...prev, brainPath: path }))
+                  setS((prev) => (epoch === signOutEpoch.current ? { ...prev, brainPath: path } : prev))
                 }
+                if (epoch !== signOutEpoch.current) return false
                 if (!String(path || '').trim() || !pick) return false
                 const patch = { abWatching: watching || Boolean(path), brainPath: path, ai: pick }
                 const routed = await openChatOrSignIn(pick, path, patch)
+                if (epoch !== signOutEpoch.current) return false
                 if (routed === 'blocked') return false
                 if (routed === 'sign-in') return true
                 if (String(path).includes('setup-drafts')) {
-                  goChat(patch)
+                  goChat(patch, epoch)
                   return true
                 }
-                if (await holdForBridge(patch)) return true
-                goChat(patch)
+                if (await holdForBridge(patch)) return epoch === signOutEpoch.current
+                if (epoch !== signOutEpoch.current) return false
+                goChat(patch, epoch)
                 return true
               }}
               onNeedFolder={() => (s.channel === 'local' ? go('plyntr-code') : go('github'))}
