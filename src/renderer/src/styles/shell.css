@@ -204,6 +204,10 @@
 .settings .set-now .field {
   margin-bottom: 0;
 }
+.set-add { margin-top: 0.75rem; }
+.set-add > .linkish { display: inline-block; }
+.set-add .field { margin-top: 0.55rem; }
+.set-add .tiny { margin: 0.35rem 0 0; }
 .settings .biz > .field {
   margin: 0.55rem 0 0.15rem;
 }

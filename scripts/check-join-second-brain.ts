@@ -502,7 +502,7 @@ function settingsPin(): void {
   const end = text.indexOf('className="biz-wrap"', start)
   if (start < 0 || end < 0) fail('settings', 'slice bounds')
   const slice = text.slice(start, end)
-  for (const needle of ['You are inside', 'Switch brain', 'Add a brain', 'brains.joinSeat', 'auth.requestCode']) {
+  for (const needle of ['You are inside', 'Switch brain', 'Add a brain', "I don't have a code yet", 'brains.joinSeat', 'auth.requestCode']) {
     if (!slice.includes(needle)) fail('settings', `missing ${needle}`)
   }
   for (const needle of ['This computer only', 'auth.verify', 'plyntr.resolve', 'brains.add', 'Add a new company brain']) {

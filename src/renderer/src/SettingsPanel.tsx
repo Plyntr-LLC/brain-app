@@ -219,6 +219,9 @@ export function SettingsPanel({
   const [addCode, setAddCode] = useState('')
   const [addMail, setAddMail] = useState('')
   const [addBusy, setAddBusy] = useState(false)
+  const [addPane, setAddPane] = useState<'shut' | 'code' | 'mail'>('shut')
+  const [addNote, setAddNote] = useState('')
+  const addCodeRef = useRef<HTMLInputElement>(null)
   const addMailReady = useRef(false)
   const joe = email === 'joe@plyntr.com'
   const [shell, setShell] = useState({
@@ -247,6 +250,12 @@ export function SettingsPanel({
     setAddMail(next)
     addMailReady.current = true
   }, [email, shell.email])
+  const focusCode = useRef(false)
+  useEffect(() => {
+    if (addPane !== 'code' || !focusCode.current) return
+    focusCode.current = false
+    addCodeRef.current?.focus()
+  }, [addPane])
   const canAddUsers = joe || !isTeamSeat(seat || role)
   const [plyntrMode, setPlyntrMode] = useState(false)
   const [plyntrBrainId, setPlyntrBrainId] = useState('')
@@ -703,65 +712,96 @@ export function SettingsPanel({
             </select>
           </label>
         ) : null}
-        <label className="field">
-          Add a brain
-          <input
-            value={addCode}
-            onChange={(e) => setAddCode(e.target.value)}
-            placeholder="Enter your code"
-            autoCapitalize="characters"
-            autoCorrect="off"
-          />
-        </label>
-        <label className="field">
-          Email
-          <input value={addMail} onChange={(e) => setAddMail(e.target.value)} placeholder="you@company.com" />
-        </label>
-        <div className="actions tight">
+        <div className="set-add">
           <button
             type="button"
-            className="primary"
-            disabled={addBusy || !addCode.trim()}
+            className="linkish"
+            aria-expanded={addPane !== 'shut'}
             onClick={() => {
-              void (async () => {
-                setAddBusy(true)
-                setNote('')
-                try {
-                  const row = await window.brain.brains.joinSeat({ email: addMail, code: addCode })
-                  setBrains(await window.brain.brains.list())
-                  setAddCode('')
-                  setNote(row.already ? 'That brain is already on this Mac.' : 'That brain is on this Mac.')
-                } catch (err) {
-                  setNote(String((err as Error).message || err))
-                } finally {
-                  setAddBusy(false)
-                }
-              })()
+              setAddPane((pane) => (pane === 'shut' ? 'code' : 'shut'))
+              setAddNote('')
             }}
           >
-            Continue
+            Add a brain
           </button>
-          <button
-            type="button"
-            className="ghost"
-            disabled={addBusy || !addMail.includes('@')}
-            onClick={() => {
-              void (async () => {
-                setAddBusy(true)
-                setNote('')
-                try {
-                  await window.brain.auth.requestCode(addMail)
-                  setNote('Check that email for the code.')
-                } catch (err) {
-                  setNote(String((err as Error).message || err))
-                } finally {
-                  setAddBusy(false)
-                }
-              })()
-            }}
-          >
-            Email me a code
-          </button>
+          {addPane === 'code' ? (
+            <>
+              <label className="field">
+                Code
+                <input
+                  ref={addCodeRef}
+                  value={addCode}
+                  onChange={(e) => setAddCode(e.target.value)}
+                  placeholder="Enter your code"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                />
+              </label>
+              <div className="actions tight">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={addBusy || !addCode.trim()}
+                  onClick={() => {
+                    void (async () => {
+                      setAddBusy(true)
+                      setAddNote('')
+                      try {
+                        const row = await window.brain.brains.joinSeat({ email: addMail, code: addCode })
+                        setBrains(await window.brain.brains.list())
+                        setAddCode('')
+                        setAddPane('shut')
+                        setAddNote(row.already ? 'That brain is already on this Mac.' : 'That brain is on this Mac.')
+                      } catch (err) {
+                        setAddNote(String((err as Error).message || err))
+                      } finally {
+                        setAddBusy(false)
+                      }
+                    })()
+                  }}
+                >
+                  Continue
+                </button>
+              </div>
+              <button type="button" className="linkish" onClick={() => { setAddPane('mail'); setAddNote('') }}>
+                I don't have a code yet
+              </button>
+            </>
+          ) : null}
+          {addPane === 'mail' ? (
+            <>
+              <label className="field">
+                Email
+                <input value={addMail} onChange={(e) => setAddMail(e.target.value)} placeholder="you@company.com" />
+              </label>
+              <div className="actions tight">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={addBusy || !addMail.includes('@')}
+                  onClick={() => {
+                    void (async () => {
+                      setAddBusy(true)
+                      setAddNote('')
+                      try {
+                        await window.brain.auth.requestCode(addMail)
+                        focusCode.current = true
+                        setAddPane('code')
+                        setAddNote('Check that email for the code.')
+                      } catch (err) {
+                        setAddNote(String((err as Error).message || err))
+                      } finally {
+                        setAddBusy(false)
+                      }
+                    })()
+                  }}
+                >
+                  Send code
+                </button>
+              </div>
+            </>
+          ) : null}
+          {addNote ? <p className="tiny" role="status">{addNote}</p> : null}
         </div>
       </div>
 
