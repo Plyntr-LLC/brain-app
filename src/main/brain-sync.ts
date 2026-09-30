@@ -188,3 +188,7 @@ export function stopBrainSync(): void {
   timer = null
   cwd = ''
 }
+
+export function brainSyncCwd(): string {
+  return cwd
+}

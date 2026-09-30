@@ -162,6 +162,8 @@ const brain = {
         agency?: { ok: boolean; detail: string }
         hq?: { ok: boolean; detail: string }
       }>,
+    joinSeat: (opts: { email?: string; code?: string }) =>
+      ipcRenderer.invoke('brains:joinSeat', opts) as Promise<{ ok: boolean; brainPath: string; already?: boolean }>,
     add: (opts: { code: string }) =>
       ipcRenderer.invoke('brains:add', opts) as Promise<{
         ok?: boolean

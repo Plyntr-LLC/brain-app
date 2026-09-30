@@ -282,6 +282,43 @@ export function storeOwnedSeat(id: string, email: string, role: string, token: s
   save({ ...row, brains, slugs, activeId: row.activeId || id })
 }
 
+/** A second brain on this Mac. Keeps the open seat, including when activeId is still empty. */
+export function storeJoinedSeat(id: string, email: string, role: string, token: string, slug = '', repo = ''): void {
+  const row = current()
+  if (!row.shellEmail || !id || !token) return
+  const existing = row.brains.find((b) => b.id === id)
+  if (existing && existing.owner !== row.shellEmail) return
+  const next: BrainRec = {
+    id,
+    email,
+    role,
+    token,
+    owner: row.shellEmail,
+    slug: slug || existing?.slug || '',
+    repo: repo || existing?.repo || ''
+  }
+  const brains = existing ? row.brains.map((b) => (b.id === id ? next : b)) : [...row.brains, next]
+  const slugs = { ...row.slugs }
+  if (next.slug) slugs[next.slug.toLowerCase()] = id
+  save({ ...row, brains, slugs, activeId: row.activeId })
+}
+
+export function forgetJoinedSeat(id: string): void {
+  const row = current()
+  if (!row.shellEmail || !id) return
+  const brains = row.brains.filter((b) => !(b.id === id && b.owner === row.shellEmail))
+  if (brains.length === row.brains.length) return
+  const slugs = { ...row.slugs }
+  for (const key of Object.keys(slugs)) {
+    if (slugs[key] === id) delete slugs[key]
+  }
+  const folders = { ...row.folders }
+  for (const key of Object.keys(folders)) {
+    if (folders[key] === id) delete folders[key]
+  }
+  save({ ...row, brains, slugs, folders, activeId: row.activeId })
+}
+
 export function idForSlug(slug: string): string {
   return current().slugs[String(slug || '').trim().toLowerCase()] || ''
 }

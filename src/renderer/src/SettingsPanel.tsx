@@ -213,6 +213,10 @@ export function SettingsPanel({
   })
   const [phoneBusy, setPhoneBusy] = useState(false)
   const [phoneNote, setPhoneNote] = useState('')
+  const [addCode, setAddCode] = useState('')
+  const [addMail, setAddMail] = useState('')
+  const [addBusy, setAddBusy] = useState(false)
+  const addMailReady = useRef(false)
   const joe = email === 'joe@plyntr.com'
   const [shell, setShell] = useState({
     email: '',
@@ -232,6 +236,13 @@ export function SettingsPanel({
     if (!next.includes('@')) return
     setHqEmail(next)
     hqEmailReady.current = true
+  }, [email, shell.email])
+  useEffect(() => {
+    if (addMailReady.current) return
+    const next = (email || shell.email || '').trim()
+    if (!next.includes('@')) return
+    setAddMail(next)
+    addMailReady.current = true
   }, [email, shell.email])
   const canAddUsers = joe || !isTeamSeat(seat || role)
   const [plyntrMode, setPlyntrMode] = useState(false)
@@ -688,6 +699,66 @@ export function SettingsPanel({
             </select>
           </label>
         ) : null}
+        <label className="field">
+          Add a brain
+          <input
+            value={addCode}
+            onChange={(e) => setAddCode(e.target.value)}
+            placeholder="Enter your code"
+            autoCapitalize="characters"
+            autoCorrect="off"
+          />
+        </label>
+        <label className="field">
+          Email
+          <input value={addMail} onChange={(e) => setAddMail(e.target.value)} placeholder="you@company.com" />
+        </label>
+        <div className="actions tight">
+          <button
+            type="button"
+            className="primary"
+            disabled={addBusy || !addCode.trim()}
+            onClick={() => {
+              void (async () => {
+                setAddBusy(true)
+                setNote('')
+                try {
+                  const row = await window.brain.brains.joinSeat({ email: addMail, code: addCode })
+                  setBrains(await window.brain.brains.list())
+                  setAddCode('')
+                  setNote(row.already ? 'That brain is already on this Mac.' : 'That brain is on this Mac.')
+                } catch (err) {
+                  setNote(String((err as Error).message || err))
+                } finally {
+                  setAddBusy(false)
+                }
+              })()
+            }}
+          >
+            Continue
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            disabled={addBusy || !addMail.includes('@')}
+            onClick={() => {
+              void (async () => {
+                setAddBusy(true)
+                setNote('')
+                try {
+                  await window.brain.auth.requestCode(addMail)
+                  setNote('Check that email for the code.')
+                } catch (err) {
+                  setNote(String((err as Error).message || err))
+                } finally {
+                  setAddBusy(false)
+                }
+              })()
+            }}
+          >
+            Email me a code
+          </button>
+        </div>
       </div>
 
       <div className="biz-wrap">

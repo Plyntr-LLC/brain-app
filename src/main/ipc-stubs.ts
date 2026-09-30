@@ -37,6 +37,7 @@ import { clearPendingJoin, getPendingJoin, pendingFromInvite, setPendingJoin } f
 import { ensurePendingJoinForFolder } from './watch-handoff'
 import { bringAppFront, clipOrgLogin, stopClipboardOrgWatch, watchClipboardOrg } from './bring-front'
 import { setBrainSyncBlockedReason, startBrainSync, stopBrainSync } from './brain-sync'
+import { joinSecondBrain } from './join-second-brain'
 import { publishLocalToGithub, stripOriginToken } from './local-brain'
 import {
   addCompany,
@@ -474,6 +475,10 @@ export function registerStubIpc(): void {
   }
   ipcMain.handle('brains:switch', (_e, selectedFolderId: string) => {
     return switchShellBrain(selectedFolderId)
+  })
+  ipcMain.handle('brains:joinSeat', async (_e, opts: { email?: string; code?: string }) => {
+    const email = String(opts?.email || '').trim().toLowerCase() || shellEmail()
+    return joinSecondBrain({ email, code: String(opts?.code || ''), openFolder: currentBrainFolder() })
   })
   ipcMain.handle('brains:add', async (_e, opts: { code?: string }) => {
     assertJoeSuper('add a company brain')
