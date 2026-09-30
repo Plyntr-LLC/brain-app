@@ -92,7 +92,8 @@ export function FirstRun() {
   const [plyntrJoin, setPlyntrJoin] = useState(false)
   const [codeStartsInEmail, setCodeStartsInEmail] = useState(false)
   const [createGate, setCreateGate] = useState(false)
-  const [sync, setSync] = useState<{ ok: boolean; line: string } | null>(null)
+  const [sync, setSync] = useState<{ ok: boolean; line: string; attention?: boolean; tip?: string } | null>(null)
+  const [discardNote, setDiscardNote] = useState('')
   const [watching, setWatching] = useState(false)
   const [away, setAway] = useState<'github-org' | 'github-install' | 'ai-login' | null>(null)
   const bridgeOnce = useRef('')
@@ -1129,7 +1130,7 @@ export function FirstRun() {
             {s.brainKind === 'project' ? ' · project' : s.brainKind === 'hq' ? ' · HQ' : ''}
           </span>
         ) : null}
-        <span className={`sync-pill ${sync?.ok ? 'on' : ''}`} title={sync?.line || ''}>
+        <span className={`sync-pill ${sync?.ok ? 'on' : ''}`} title={sync?.tip || sync?.line || ''}>
           {sync?.line ||
             (s.abWatching
               ? s.role === 'project' || s.brainKind === 'project'
@@ -1137,6 +1138,19 @@ export function FirstRun() {
                 : 'Agency Brain · watching this folder'
               : 'Folder not syncing')}
         </span>
+        {sync?.attention ? (
+          <button
+            type="button"
+            className="ghost title-set"
+            title={discardNote || 'Drop the commits that exist only on this computer'}
+            onClick={() => {
+              void window.brain.discardSync().then((r) => setDiscardNote(r.ok ? '' : r.detail))
+            }}
+          >
+            Discard my changes
+          </button>
+        ) : null}
+        {sync?.attention && discardNote ? <span className="sync-pill">{discardNote}</span> : null}
         {openBrainAccountLabel(activeSeat) ? <span className="seat-pill">{openBrainAccountLabel(activeSeat)}</span> : null}
         <button type="button" className="ghost title-set" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
           {theme === 'dark' ? 'Light' : 'Dark'}

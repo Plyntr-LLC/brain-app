@@ -31,8 +31,9 @@ const brain = {
       ipcRenderer.removeListener('app:update', h)
     }
   },
-  onSyncHealth: (fn: (ev: { ok: boolean; line: string; lastSync: string; offline: boolean; error: string }) => void) => {
-    const h = (_e: unknown, payload: { ok: boolean; line: string; lastSync: string; offline: boolean; error: string }) =>
+  discardSync: () => ipcRenderer.invoke('sync:discard') as Promise<{ ok: boolean; detail: string }>,
+  onSyncHealth: (fn: (ev: { ok: boolean; line: string; lastSync: string; offline: boolean; error: string; attention?: boolean; tip?: string }) => void) => {
+    const h = (_e: unknown, payload: { ok: boolean; line: string; lastSync: string; offline: boolean; error: string; attention?: boolean; tip?: string }) =>
       fn(payload)
     ipcRenderer.on('sync:health', h)
     return () => {

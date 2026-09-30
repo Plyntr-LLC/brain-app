@@ -79,7 +79,7 @@ export function startTray(getWin: () => BrowserWindow | null): void {
 export function paintTray(health: SyncHealth): void {
   if (!tray) return
   tray.setImage(light(health.ok))
-  tray.setToolTip(health.line)
+  tray.setToolTip(health.tip || health.line)
 }
 
 export async function refreshTray(): Promise<SyncHealth> {

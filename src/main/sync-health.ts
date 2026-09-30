@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { readTeamIdentity, readWatching, watchingHealth } from './agency-brain'
-import { lastBrainSync, lastBrainSyncError } from './brain-sync'
+import { lastBrainSync, lastBrainSyncError, syncAttention } from './brain-sync'
 import { currentBrainFolder } from './brains'
 import { readSyncMode } from './sync-manifest'
 import { AB_OWNS_PLYNTR, plyntrBlockedByAgency } from './watcher-choice'
@@ -36,7 +36,8 @@ export async function readSyncHealth(): Promise<SyncHealth> {
   if (folder && existsSync(join(folder, '.git'))) {
     const ident = readTeamIdentity(folder)
     const last = lastBrainSync(folder)
-    const err = lastBrainSyncError(folder)
+    const att = syncAttention(folder)
+    const err = att ? '' : lastBrainSyncError(folder)
     return paintHealth(
       {
         present: true,
@@ -44,7 +45,9 @@ export async function readSyncHealth(): Promise<SyncHealth> {
         lastSync: last,
         offline: false,
         error: err,
-        openOnly: false
+        openOnly: false,
+        attention: Boolean(att),
+        tip: att ? att.files.join('\n') : ''
       },
       false
     )

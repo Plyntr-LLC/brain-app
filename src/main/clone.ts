@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path'
 import { binEnv } from './ai-cli'
 import { clonePlan } from './setup-folder'
 
+type GitRunner = (cwd: string, args: string[], timeoutMs?: number) => Promise<{ code: number; out: string }>
+
 function git(cwd: string, args: string[], timeoutMs = 120_000): Promise<{ code: number; out: string }> {
   const env = { ...binEnv(), GIT_TERMINAL_PROMPT: '0' }
   const safe = ['-c', 'credential.helper=', ...args]
@@ -32,10 +34,23 @@ function git(cwd: string, args: string[], timeoutMs = 120_000): Promise<{ code: 
   })
 }
 
+let gitRunner: GitRunner = git
+
+/** The sync check replaces this so a fetch never leaves the machine. */
+export function setGitRunnerForCheck(fn: GitRunner | null): void {
+  gitRunner = fn || git
+}
+
+function runGit(cwd: string, args: string[], timeoutMs?: number): Promise<{ code: number; out: string }> {
+  return gitRunner(cwd, args, timeoutMs)
+}
+
 export function redact(s: string): string {
   return s
-    .replace(/x-access-token:[^@]+@/g, 'x-access-token:***@')
-    .replace(/\/\/[^:]+:[^@]+@/g, '//***@')
+    .replace(/https:\/\/x-access-token:[^\s@]+@/gi, 'https://')
+    .replace(/x-access-token:[^\s]+/gi, '')
+    .replace(/x-access-token/gi, '')
+    .replace(/\/\/[^:\s]+:[^@\s]+@/g, '//***@')
     .replace(/Bearer\s+[A-Za-z0-9._\-=]+/gi, 'Bearer ***')
     .replace(/\bpbt_[A-Za-z0-9_-]+/g, 'pbt_***')
 }
@@ -75,9 +90,9 @@ export function removeFailedBrainCheckout(dest: string): void {
 
 async function fillEmptyCheckout(dest: string, cloneUrl: string): Promise<boolean> {
   const branch = await currentBranch(dest)
-  const fetch = await git(dest, ['fetch', cloneUrl, branch])
+  const fetch = await runGit(dest, ['fetch', cloneUrl, branch])
   if (fetch.code !== 0) return false
-  const merge = await git(dest, ['merge', '--ff-only', 'FETCH_HEAD'])
+  const merge = await runGit(dest, ['merge', '--ff-only', 'FETCH_HEAD'])
   if (merge.code !== 0) return false
   return hasBrainMarker(dest)
 }
@@ -89,7 +104,7 @@ export async function cloneBrain(opts: {
   name: string
 }): Promise<{ ok: boolean; dest: string; detail: string }> {
   if (existsSync(opts.dest)) {
-    const probe = await git(opts.dest, ['rev-parse', '--is-inside-work-tree'])
+    const probe = await runGit(opts.dest, ['rev-parse', '--is-inside-work-tree'])
     const isGit = probe.code === 0
     const origin = isGit ? await originHttps(opts.dest) : ''
     const want = opts.cloneUrl.replace(/https:\/\/x-access-token:[^@]+@/i, 'https://').replace(/https:\/\/[^:]+:[^@]+@/i, 'https://')
@@ -102,15 +117,15 @@ export async function cloneBrain(opts: {
       empty: !isGit && dirIsEmpty(opts.dest)
     })
     if (plan === 'reuse') {
-      await git(opts.dest, ['config', 'user.email', opts.email])
-      await git(opts.dest, ['config', 'user.name', opts.name || opts.email.split('@')[0]])
+      await runGit(opts.dest, ['config', 'user.email', opts.email])
+      await runGit(opts.dest, ['config', 'user.name', opts.name || opts.email.split('@')[0]])
       return { ok: true, dest: opts.dest, detail: 'Folder already has this brain. Using it.' }
     }
     if (plan === 'refuse-empty-brain') {
       const filled = await fillEmptyCheckout(opts.dest, opts.cloneUrl).catch(() => false)
       if (filled) {
-        await git(opts.dest, ['config', 'user.email', opts.email])
-        await git(opts.dest, ['config', 'user.name', opts.name || opts.email.split('@')[0]])
+        await runGit(opts.dest, ['config', 'user.email', opts.email])
+        await runGit(opts.dest, ['config', 'user.name', opts.name || opts.email.split('@')[0]])
         return { ok: true, dest: opts.dest, detail: 'Copied the brain files into the folder.' }
       }
       return { ok: false, dest: opts.dest, detail: EMPTY_BRAIN }
@@ -133,41 +148,41 @@ export async function cloneBrain(opts: {
   }
   mkdirSync(dirname(opts.dest), { recursive: true })
   const parent = dirname(opts.dest)
-  const r = await git(parent, ['clone', opts.cloneUrl, opts.dest], 180_000)
+  const r = await runGit(parent, ['clone', opts.cloneUrl, opts.dest], 180_000)
   if (r.code !== 0) return { ok: false, dest: opts.dest, detail: redact(r.out).slice(-800) }
-  const origin = await git(opts.dest, ['remote', 'get-url', 'origin'])
+  const origin = await runGit(opts.dest, ['remote', 'get-url', 'origin'])
   const clean = origin.out
     .trim()
     .replace(/https:\/\/x-access-token:[^@]+@/i, 'https://')
     .replace(/https:\/\/[^:]+:[^@]+@/i, 'https://')
   if (clean.startsWith('https://')) {
-    const set = await git(opts.dest, ['remote', 'set-url', 'origin', clean])
+    const set = await runGit(opts.dest, ['remote', 'set-url', 'origin', clean])
     if (set.code !== 0) return { ok: false, dest: opts.dest, detail: redact(set.out).slice(-400) }
   }
-  await git(opts.dest, ['config', 'user.email', opts.email])
-  await git(opts.dest, ['config', 'user.name', opts.name || opts.email.split('@')[0]])
+  await runGit(opts.dest, ['config', 'user.email', opts.email])
+  await runGit(opts.dest, ['config', 'user.name', opts.name || opts.email.split('@')[0]])
   if (!hasBrainMarker(opts.dest)) return { ok: false, dest: opts.dest, detail: EMPTY_BRAIN }
   return { ok: true, dest: opts.dest, detail: 'Cloned the shared brain onto this computer.' }
 }
 
 export async function gitPull(cwd: string): Promise<{ ok: boolean; detail: string }> {
-  const r = await git(cwd, ['pull', '--ff-only'])
+  const r = await runGit(cwd, ['pull', '--ff-only'])
   return { ok: r.code === 0, detail: redact(r.out).slice(-400) }
 }
 
 export async function gitPushIfDirty(cwd: string): Promise<{ ok: boolean; detail: string }> {
-  const st = await git(cwd, ['status', '--porcelain'])
+  const st = await runGit(cwd, ['status', '--porcelain'])
   if (st.code !== 0) return { ok: false, detail: redact(st.out) }
   if (!st.out.trim()) return { ok: true, detail: 'clean' }
-  await git(cwd, ['add', '-A'])
-  const c = await git(cwd, ['commit', '-m', 'Brain.app sync'])
+  await runGit(cwd, ['add', '-A'])
+  const c = await runGit(cwd, ['commit', '-m', 'Brain.app sync'])
   if (c.code !== 0 && !/nothing to commit/i.test(c.out)) return { ok: false, detail: redact(c.out).slice(-400) }
-  const p = await git(cwd, ['push'])
+  const p = await runGit(cwd, ['push'])
   return { ok: p.code === 0, detail: redact(p.out).slice(-400) }
 }
 
 async function originHttps(cwd: string): Promise<string> {
-  const r = await git(cwd, ['remote', 'get-url', 'origin'])
+  const r = await runGit(cwd, ['remote', 'get-url', 'origin'])
   return r.out.trim().replace(/https:\/\/x-access-token:[^@]+@/i, 'https://').replace(/https:\/\/[^:]+:[^@]+@/i, 'https://')
 }
 
@@ -179,36 +194,95 @@ function withToken(url: string, token: string): string {
 }
 
 async function currentBranch(cwd: string): Promise<string> {
-  const r = await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  const r = await runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
   const b = r.out.trim()
   return b && b !== 'HEAD' ? b : 'main'
 }
 
-export async function gitSyncAuthed(cwd: string, token: string): Promise<{ ok: boolean; detail: string }> {
-  const st = await git(cwd, ['status', '--porcelain'])
-  if (st.code !== 0) return { ok: false, detail: redact(st.out) }
+export type SyncAuthed =
+  | { status: 'ok'; detail: string }
+  | { status: 'attention'; files: string[] }
+  | { status: 'failed'; detail: string }
+
+function failed(out: string, fallback = 'Sync failed.'): SyncAuthed {
+  const detail = redact(out).trim().slice(-400) || fallback
+  return { status: 'failed', detail }
+}
+
+async function bothSides(cwd: string, branch: string): Promise<{ left: number; right: number } | null> {
+  const remote = `origin/${branch}`
+  const have = await runGit(cwd, ['rev-parse', '--verify', '--quiet', remote])
+  if (have.code !== 0) return null
+  const counts = await runGit(cwd, ['rev-list', '--left-right', '--count', `${remote}...HEAD`])
+  if (counts.code !== 0) return null
+  const [l, r] = counts.out.trim().split(/\s+/).map((n) => Number(n))
+  if (!Number.isFinite(l) || !Number.isFinite(r)) return null
+  return { left: l, right: r }
+}
+
+async function divergedFiles(cwd: string, branch: string): Promise<string[]> {
+  const remote = `origin/${branch}`
+  const names = new Set<string>()
+  for (const spec of [`HEAD...${remote}`, `${remote}...HEAD`]) {
+    const diff = await runGit(cwd, ['diff', '--name-only', spec])
+    if (diff.code !== 0) continue
+    for (const line of diff.out.split('\n')) {
+      const name = line.trim()
+      if (name) names.add(name)
+    }
+  }
+  return [...names].slice(0, 20)
+}
+
+export async function gitSyncAuthed(cwd: string, token: string): Promise<SyncAuthed> {
+  const st = await runGit(cwd, ['status', '--porcelain'])
+  if (st.code !== 0) return failed(st.out)
   if (st.out.trim()) {
-    await git(cwd, ['add', '-A'])
-    const c = await git(cwd, ['commit', '-m', 'Brain.app sync'])
-    if (c.code !== 0 && !/nothing to commit/i.test(c.out)) return { ok: false, detail: redact(c.out).slice(-400) }
+    await runGit(cwd, ['add', '-A'])
+    const c = await runGit(cwd, ['commit', '-m', 'Brain.app sync'])
+    if (c.code !== 0 && !/nothing to commit/i.test(c.out)) return failed(c.out)
   }
   const origin = await originHttps(cwd)
   const authed = withToken(origin, token)
   if (!authed) {
     const pull = await gitPull(cwd)
-    if (!pull.ok) return pull
-    return gitPushIfDirty(cwd)
+    if (!pull.ok) return { status: 'failed', detail: pull.detail || 'Sync failed.' }
+    const pushed = await gitPushIfDirty(cwd)
+    return pushed.ok ? { status: 'ok', detail: pushed.detail } : { status: 'failed', detail: pushed.detail || 'Sync failed.' }
   }
   const branch = await currentBranch(cwd)
-  const fetch = await git(cwd, ['fetch', authed, `+refs/heads/${branch}:refs/remotes/origin/${branch}`])
-  if (fetch.code !== 0) return { ok: false, detail: redact(fetch.out).slice(-400) }
-  const merge = await git(cwd, ['merge', '--ff-only', `origin/${branch}`])
-  if (merge.code !== 0) return { ok: false, detail: redact(merge.out).slice(-400) }
-  const ahead = await git(cwd, ['rev-list', '--count', `origin/${branch}..HEAD`])
-  if (ahead.code !== 0) return { ok: false, detail: redact(ahead.out).slice(-400) || 'Could not tell if this folder is ahead of GitHub.' }
+  const fetch = await runGit(cwd, ['fetch', authed, `+refs/heads/${branch}:refs/remotes/origin/${branch}`])
+  if (fetch.code !== 0) return failed(fetch.out)
+  const sides = await bothSides(cwd, branch)
+  if (!sides) return failed('', 'Could not see the other computer.')
+  if (sides.left > 0 && sides.right > 0) {
+    return { status: 'attention', files: await divergedFiles(cwd, branch) }
+  }
+  if (sides.left > 0) {
+    const merge = await runGit(cwd, ['merge', '--ff-only', `origin/${branch}`])
+    if (merge.code !== 0) return failed(merge.out)
+  }
+  if (sides.right === 0 && sides.left === 0) return { status: 'ok', detail: 'clean' }
+  const ahead = await runGit(cwd, ['rev-list', '--count', `origin/${branch}..HEAD`])
+  if (ahead.code !== 0) return failed(ahead.out, 'Could not tell if this folder is ahead of GitHub.')
   const n = Number(ahead.out.trim())
-  if (!Number.isFinite(n)) return { ok: false, detail: 'Could not tell if this folder is ahead of GitHub.' }
-  if (n === 0) return { ok: true, detail: 'clean' }
-  const p = await git(cwd, ['push', authed, `HEAD:refs/heads/${branch}`])
-  return { ok: p.code === 0, detail: redact(p.out).slice(-400) }
+  if (!Number.isFinite(n)) return failed('', 'Could not tell if this folder is ahead of GitHub.')
+  if (n === 0) return { status: 'ok', detail: 'clean' }
+  const p = await runGit(cwd, ['push', authed, `HEAD:refs/heads/${branch}`])
+  if (p.code !== 0) return failed(p.out)
+  return { status: 'ok', detail: redact(p.out).slice(-400) || 'clean' }
+}
+
+/** Drop commits that exist only on this Mac. Refuses a dirty tree. Does not push. */
+export async function discardLocalSync(cwd: string): Promise<{ ok: boolean; detail: string }> {
+  const st = await runGit(cwd, ['status', '--porcelain'])
+  if (st.code !== 0) return { ok: false, detail: redact(st.out).slice(-400) || 'Could not read this folder.' }
+  if (st.out.trim()) return { ok: false, detail: 'Save or leave the open files before discarding.' }
+  const branch = await currentBranch(cwd)
+  const remote = `origin/${branch}`
+  const have = await runGit(cwd, ['rev-parse', '--verify', '--quiet', remote])
+  if (have.code !== 0) return { ok: false, detail: 'Could not see the other computer.' }
+  const reset = await runGit(cwd, ['reset', '--hard', remote])
+  if (reset.code !== 0) return { ok: false, detail: redact(reset.out).slice(-400) || 'Could not discard your changes.' }
+  return { ok: true, detail: 'Discarded your changes.' }
 }

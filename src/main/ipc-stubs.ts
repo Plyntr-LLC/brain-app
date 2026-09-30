@@ -36,7 +36,7 @@ import { acceptBrainCode, bindBrainFolder, initShellVault, listAllowed, logoutSh
 import { clearPendingJoin, getPendingJoin, pendingFromInvite, setPendingJoin } from './join-pending'
 import { ensurePendingJoinForFolder } from './watch-handoff'
 import { bringAppFront, clipOrgLogin, stopClipboardOrgWatch, watchClipboardOrg } from './bring-front'
-import { setBrainSyncBlockedReason, startBrainSync, stopBrainSync } from './brain-sync'
+import { discardDivergedSync, resumeBrainSync, setBrainSyncBlockedReason, startBrainSync, stopBrainSync } from './brain-sync'
 import { joinSecondBrain } from './join-second-brain'
 import { publishLocalToGithub, stripOriginToken } from './local-brain'
 import {
@@ -863,6 +863,14 @@ export function registerStubIpc(): void {
     return result
   })
   ipcMain.handle('hqSync:health', () => readSyncHealth())
+  ipcMain.handle('sync:discard', async () => {
+    const folder = currentBrainFolder()
+    const dropped = await discardDivergedSync(folder)
+    if (dropped.ok) await resumeBrainSync()
+    const { refreshTray } = await import('./tray')
+    await refreshTray()
+    return dropped
+  })
   ipcMain.handle(
     'hqSync:addCompany',
     (

@@ -71,7 +71,8 @@ test('setup lists Agency Brain and still reaches ready without it', () => {
   assert.match(clone, /x-access-token:\$\{t\}@/)
   const sync = readFileSync(new URL('./brain-sync.ts', import.meta.url), 'utf8')
   assert.match(sync, /gitSyncAuthed/)
-  assert.match(sync, /if \(!sync\.ok\)/)
+  assert.match(sync, /sync\.status === 'failed'/)
+  assert.match(sync, /sync\.status === 'attention'/)
   assert.match(sync, /lastFolder/)
 })
 

@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { memberTokenForTeam, readTeamIdentity, readWatching } from './agency-brain'
 import * as ads2ai from './ads2ai'
-import { gitSyncAuthed } from './clone'
+import { discardLocalSync, gitSyncAuthed, type SyncAuthed } from './clone'
 import { isHqMiniFolder } from './hq-sync'
 import { getMemberToken } from './session-token'
 import { plyntrGitToken } from './plyntr-sync'
@@ -14,11 +14,45 @@ import { AB_OWNS_PLYNTR, gitCredentialForMode } from './watcher-choice'
 
 let timer: ReturnType<typeof setInterval> | null = null
 let ticking = false
+let discarding = false
 let cwd = ''
 let lastTick = ''
 let lastFolder = ''
 let lastError = ''
 let lastErrorFolder = ''
+let attentionFolder = ''
+let attentionFiles: string[] = []
+let tokenForCheck: (() => string) | null = null
+let reachedGitForCheck = false
+
+export function setCwdForCheck(folder: string): void {
+  cwd = folder
+}
+
+export function setTokenForCheck(fn: (() => string) | null): void {
+  tokenForCheck = fn
+}
+
+export function tickReachedGitForCheck(): boolean {
+  return reachedGitForCheck
+}
+
+export function resetTickReachedForCheck(): void {
+  reachedGitForCheck = false
+}
+
+export function syncAttention(folder?: string): { files: string[] } | null {
+  if (!attentionFolder) return null
+  if (folder && folder !== attentionFolder) return null
+  return { files: attentionFiles }
+}
+
+function clearAttention(folder: string): void {
+  if (!folder || folder === attentionFolder) {
+    attentionFolder = ''
+    attentionFiles = []
+  }
+}
 
 function abOwns(folder: string): boolean {
   const w = readWatching()
@@ -29,8 +63,28 @@ function dryRun(): boolean {
   return process.env.BRAIN_APP_DRY_RUN === '1'
 }
 
+function noteAuthed(folder: string, sync: SyncAuthed): void {
+  if (sync.status === 'attention') {
+    attentionFolder = folder
+    attentionFiles = sync.files
+    if (lastErrorFolder === folder) {
+      lastError = ''
+    }
+    return
+  }
+  clearAttention(folder)
+  if (sync.status === 'failed') {
+    noteError(folder, sync.detail || 'Sync failed.')
+    return
+  }
+  lastError = ''
+  lastErrorFolder = folder
+  lastTick = new Date().toISOString()
+  lastFolder = folder
+}
+
 async function tick(): Promise<void> {
-  if (ticking || dryRun()) return
+  if (ticking || discarding || dryRun()) return
   if (!cwd || !existsSync(join(cwd, '.git'))) return
   if (abOwns(cwd)) {
     const parsed = readSyncManifest(cwd)
@@ -48,6 +102,17 @@ async function tick(): Promise<void> {
   }
   if (cwd !== folder) {
     ticking = false
+    return
+  }
+  if (tokenForCheck) {
+    const token = tokenForCheck()
+    try {
+      reachedGitForCheck = true
+      const sync = await gitSyncAuthed(folder, token)
+      if (cwd === folder) noteAuthed(folder, sync)
+    } finally {
+      ticking = false
+    }
     return
   }
   const manifest = readSyncManifest(folder)
@@ -110,17 +175,57 @@ async function tick(): Promise<void> {
   try {
     const sync = await gitSyncAuthed(folder, token)
     if (cwd !== folder) return
-    if (!sync.ok) {
-      noteError(folder, sync.detail || 'Sync failed.')
-      return
-    }
-    lastError = ''
-    lastErrorFolder = folder
-    lastTick = new Date().toISOString()
-    lastFolder = folder
+    noteAuthed(folder, sync)
   } finally {
     ticking = false
   }
+}
+
+/** Drop this Mac's commits when two computers diverged, then sync once. */
+export async function discardDivergedSync(folder: string): Promise<{ ok: boolean; detail: string }> {
+  const f = String(folder || '')
+  if (!f) return { ok: false, detail: 'No folder is open.' }
+  if (abOwns(f)) return { ok: false, detail: 'Agency Brain is syncing this folder.' }
+  if (attentionFolder !== f) return { ok: false, detail: 'Nothing to discard.' }
+  if (ticking) return { ok: false, detail: 'Sync is still running.' }
+  if (discarding) return { ok: false, detail: 'Already discarding.' }
+  discarding = true
+  try {
+    const dropped = await discardLocalSync(f)
+    if (!dropped.ok) return dropped
+    clearAttention(f)
+    return dropped
+  } finally {
+    discarding = false
+  }
+}
+
+export async function resumeBrainSync(): Promise<void> {
+  await tick()
+}
+
+/** Check only. Holds the discard lock so a tick must not touch git. */
+export function holdDiscardForCheck(): () => void {
+  discarding = true
+  return () => {
+    discarding = false
+  }
+}
+
+/** Check only. Holds the tick lock so discard must refuse. */
+export function holdTickForCheck(): () => void {
+  ticking = true
+  return () => {
+    ticking = false
+  }
+}
+
+export function tickForCheck(): Promise<void> {
+  return tick()
+}
+
+export function noteSyncForCheck(folder: string, sync: SyncAuthed): void {
+  noteAuthed(folder, sync)
 }
 
 function noteError(folder: string, msg: string): void {
