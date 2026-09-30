@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url'
 import { buildTriageCases, readCases, sizeFromStats, type TriageCase } from '../src/main/factory/eval/cases.ts'
 import { CONFIGS, dryLine } from '../src/main/factory/eval/configs.ts'
 import { bugNamed, gradeReview, triageError } from '../src/main/factory/eval/grade.ts'
-import { pickCases } from '../src/main/factory/eval/runner.ts'
+import { keyGuard, pickCases, runTriage } from '../src/main/factory/eval/runner.ts'
+import { JEV_TRIAGE_QUESTIONS } from '../src/main/factory/triage-jev.ts'
 import { splitOf } from '../src/main/factory/eval/split.ts'
 import { opusArgs } from '../src/main/factory/opus.ts'
 import { triage } from '../src/main/factory/triage.ts'
@@ -15,6 +16,18 @@ import { triage } from '../src/main/factory/triage.ts'
 // job on a fixture repo with a fake claude. Prints EVAL_CHECK_PASS only if every check passes.
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+// No live Jev: the key is gone and any typesafe.ai fetch is recorded and refused.
+delete process.env.TYPESAFE_API_KEY
+const liveJev: string[] = []
+const realFetch = globalThis.fetch
+globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+  const url = String(input instanceof Request ? input.url : input)
+  if (/typesafe\.ai/.test(url)) {
+    liveJev.push(url)
+    throw new Error('live Jev refused in checks')
+  }
+  return realFetch(input, init)
+}) as typeof fetch
 const temp = mkdtempSync(join(tmpdir(), 'eval-check-'))
 const results: { name: string; ok: boolean; detail: string }[] = []
 const check = (name: string, ok: boolean, detail = '') => results.push({ name, ok, detail })
@@ -54,7 +67,7 @@ process.stdout.write(JSON.stringify({ type: 'end', usage: { input_tokens: 7, out
 )
 
 const baseEnv: NodeJS.ProcessEnv = { ...process.env, EVAL_CLAUDE_BIN: claudeBin, EVAL_GROK_BIN: grokBin }
-for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_TRANSLATOR_API_KEY', 'XAI_API_KEY', 'GROK_API_KEY']) delete baseEnv[k]
+for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_TRANSLATOR_API_KEY', 'XAI_API_KEY', 'GROK_API_KEY', 'TYPESAFE_API_KEY']) delete baseEnv[k]
 const brain = join(temp, 'brain')
 mkdirSync(brain)
 const runner = (args: string[], env: NodeJS.ProcessEnv = baseEnv) =>
@@ -90,7 +103,7 @@ for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_TRANSLATOR_API_KEY', 'XAI_API
 
 // --dry prints argv for every registry config.
 {
-  const tri = runner(['triage', '--dry', '--config', 'rules,grok-default-low,grok-default-medium,grok-4.7-low,grok-low-emptycwd'])
+  const tri = runner(['triage', '--dry', '--config', 'rules,grok-default-low,grok-default-medium,grok-4.7-low,grok-low-emptycwd,jev'])
   const rev = runner(['review', '--dry', '--config', 'opus-medium,opus-low,sonnet-high,sonnet-medium'])
   check('dry rules says no spawn', /^rules: no spawn$/m.test(tri.stdout), tri.stdout)
   check('dry grok-4.7-low passes -m grok-4.7', /grok-4\.7-low: .*"-m","grok-4\.7"/.test(tri.stdout))
@@ -175,6 +188,52 @@ check('ladder: 11 files is T3', sizeFromStats(Array.from({ length: 11 }, (_, i) 
   const r = runner(['triage', '--repo', repo, '--config', 'rules,grok-low-emptycwd', '--ids', id, '--split', splitOf(id), ...(splitOf(id) === 'holdout' ? ['--confirm'] : [])])
   check('triage job records grok-fake-eval from the end event; rules spawn nothing', r.status === 0 && /grok-fake-eval/.test(r.stdout) && spawns().filter((l) => l.startsWith('grok ')).length === 1, r.stdout.slice(0, 600) + r.stderr.slice(-300))
 }
+
+// Jev triage: --dry spawns nothing, the in-process job calls Jev (never grok), and the key guard allows TypeSafe only.
+{
+  const before = spawns().length
+  const dry = runner(['triage', '--dry', '--config', 'jev'])
+  check('EV jev dry', dry.stdout.includes('jev: POST https://api.typesafe.ai/v1/systemone (no spawn) timeout=10000ms') && spawns().length === before, dry.stdout + dry.stderr.slice(0, 300))
+  const all = readCases<TriageCase>(join(repo, 'evals', 'factory', 'triage.jsonl'))
+  const split = splitOf(all[0]?.id || '')
+  const inSplit = all.filter((c) => splitOf(c.id) === split)
+  const asked: { state: unknown; questions: unknown }[] = []
+  const grokBefore = spawns().filter((l) => l.startsWith('grok ')).length
+  const rows = await runTriage({
+    repo,
+    brain,
+    configs: [CONFIGS.jev as never],
+    pick: { split },
+    repeats: 1,
+    deps: {
+      env: baseEnv,
+      grokBin,
+      askJev: async (o) => {
+        asked.push({ state: o.state, questions: o.questions })
+        return { model: 'jev-fake-eval', usage: { input_tokens: 600, output_tokens: 80 }, answers: { size: { choice: 'T3', confidence: 0.9 }, risk: { choice: 'critical', confidence: 0.95 } } }
+      }
+    }
+  })
+  const grokAfter = spawns().filter((l) => l.startsWith('grok ')).length
+  check(
+    'EV jev runTriage',
+    inSplit.length > 0 &&
+      rows.length === inSplit.length &&
+      asked.length === inSplit.length &&
+      asked.every((a) => a.questions === JEV_TRIAGE_QUESTIONS) &&
+      grokAfter === grokBefore &&
+      rows.every((r) => r.got?.size === 'T3' && r.got.risk === 'critical' && r.model === 'jev-fake-eval' && r.usage?.cli === 'jev' && r.usage.inTokens === 600),
+    JSON.stringify({ cases: inSplit.length, rows: rows.length, asked: asked.length, grok: grokAfter - grokBefore, row: rows[0] })
+  )
+  const spawnsBefore = spawns().length
+  const refused = runner(['triage', '--repo', repo, '--config', 'jev'], { ...baseEnv, ANTHROPIC_API_KEY: 'dummy' })
+  check(
+    'EV jev keyGuard',
+    keyGuard({ TYPESAFE_API_KEY: 'dummy' }) === null && keyGuard({ ANTHROPIC_API_KEY: 'dummy' }) !== null && refused.status !== 0 && spawns().length === spawnsBefore && /doppler run/.test(refused.stderr),
+    refused.stderr.slice(0, 200)
+  )
+}
+check('NO_LIVE_JEV', liveJev.length === 0, liveJev.join(' '))
 
 const pass = results.every((r) => r.ok)
 console.log([...results.map((r) => `${r.ok ? 'PASS' : 'FAIL'} ${r.name}${r.ok || !r.detail ? '' : `  ${r.detail}`}`), '', pass ? 'EVAL_CHECK_PASS' : 'EVAL_CHECK_FAIL'].join('\n'))

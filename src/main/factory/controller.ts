@@ -30,6 +30,7 @@ import {
 } from './run-store.ts'
 import { triage, type Size } from './triage.ts'
 import { llmTriage, mergeTriage, TRIAGE_EFFORT, TRIAGE_MODEL } from './triage-llm.ts'
+import { jevTriage, type JevAsk } from './triage-jev.ts'
 import { parseSlices, scheduleSlices } from './slices.ts'
 import { gateFor, gateOpen, withAuto, withGate, withJudgment } from './shadow.ts'
 import { checkTripwire, type Tripwire } from './tripwire.ts'
@@ -81,6 +82,9 @@ export type FactoryDeps = {
   grokBin?: () => string | null
   claudeBin?: () => string | null
   spawnTriage?: SpawnFn
+  /** Jev triage first when set (registerFactoryIpc passes the real one). Unset: Grok only. */
+  askJev?: JevAsk
+  jevTimeoutMs?: number
   spawnOpus?: SpawnFn
   spawnVoice?: SpawnFn
   voiceCheckPath?: string
@@ -484,28 +488,40 @@ function held(run: RunRecord): boolean {
   return run.phase === 'review' && !!run.diff && run.strict?.status === 'fail' && (run.reviewCycles || 0) >= REVIEW_MAX
 }
 
-/** Grok low one-shot, raise-only. Critical raised by the model waits for a Proceed click. */
+/** Jev first, then the Grok low one-shot if Jev misses. Raise-only. Critical raised by the model waits for a Proceed click. */
 async function triageStep(state: Live): Promise<void> {
   const d = need()
   const gen = state.gen
   const run = state.run
   setPhase(state, 'triage', { resumePhase: 'triage', error: undefined })
   const rules = triage(run.task)
-  const res = await withLive(state, { phase: 'triage', cli: 'grok', model: TRIAGE_MODEL || 'grok (CLI default)', effort: TRIAGE_EFFORT }, () => llmTriage({
-    task: run.task,
-    rules,
-    cwd: run.brainPath,
-    env: d.env(run.brainPath),
-    bin: (d.grokBin || (() => resolveBin('grok')))(),
-    parseLine: parseGrokLine,
-    spawnFn: d.spawnTriage
-  }))
-  addUsage(state, res.usage)
+  const ask = d.askJev
+  const jev = ask ? await withLive(state, { phase: 'triage', cli: 'jev', model: 'jev-latest', effort: '' }, () => jevTriage({ task: run.task, ask, timeoutMs: d.jevTimeoutMs })) : null
+  if (jev) addUsage(state, jev.usage)
+  if (jev && stale(state, gen)) {
+    persist(state)
+    return
+  }
+  const grok = jev?.llm
+    ? null
+    : await withLive(state, { phase: 'triage', cli: 'grok', model: TRIAGE_MODEL || 'grok (CLI default)', effort: TRIAGE_EFFORT }, () => llmTriage({
+        task: run.task,
+        rules,
+        cwd: run.brainPath,
+        env: d.env(run.brainPath),
+        bin: (d.grokBin || (() => resolveBin('grok')))(),
+        parseLine: parseGrokLine,
+        spawnFn: d.spawnTriage
+      }))
+  if (grok) addUsage(state, grok.usage)
   if (stale(state, gen)) {
     persist(state)
     return
   }
-  const m = mergeTriage(rules, res.llm, res.why)
+  const by: 'jev' | 'grok' = jev?.llm ? 'jev' : 'grok'
+  const res = jev?.llm ? jev : { llm: grok?.llm || null, why: [jev?.why, grok?.why].filter(Boolean).join('; ') }
+  const m = mergeTriage(rules, res.llm, res.why, by === 'jev' ? 'Jev' : 'Grok')
+  if (jev && !jev.llm && res.llm) m.reasons.push(`Jev skipped: ${jev.why}.`)
   const tier = asTier(m.size)
   const up = (a: Tier, b: Tier) => (Number(b.slice(1)) > Number(a.slice(1)) ? b : a)
   state.run = {
@@ -517,7 +533,7 @@ async function triageStep(state: Live): Promise<void> {
       original: m.original,
       capped: m.capped,
       reasons: m.reasons,
-      llm: res.llm ? { size: res.llm.size, risk: res.llm.risk, reason: res.llm.reason } : { skipped: res.why }
+      llm: res.llm ? { size: res.llm.size, risk: res.llm.risk, reason: res.llm.reason, by } : { skipped: res.why }
     }
   }
   if (m.risk === 'critical' && rules.risk !== 'critical') {

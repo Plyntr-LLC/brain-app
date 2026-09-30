@@ -63,6 +63,18 @@ process.env.GIT_CONFIG_NOSYSTEM = '1'
 process.env.ANTHROPIC_API_KEY = 'fixture-not-a-real-key'
 process.env.ANTHROPIC_TRANSLATOR_API_KEY = 'fixture-not-a-real-key'
 delete process.env.BRAIN_APP_DRY_RUN
+// No live Jev: the key is gone and any typesafe.ai fetch is recorded and refused (NO_LIVE_JEV at the end).
+delete process.env.TYPESAFE_API_KEY
+const liveJev: string[] = []
+const realFetch = globalThis.fetch
+globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+  const url = String(input instanceof Request ? input.url : input)
+  if (/typesafe\.ai/.test(url)) {
+    liveJev.push(url)
+    throw new Error('live Jev refused in checks')
+  }
+  return realFetch(input, init)
+}) as typeof fetch
 const winSent: Record<string, unknown>[] = []
 ;(globalThis as { __brainWindows?: unknown }).__brainWindows = [
   { isDestroyed: () => false, webContents: { send: (_ch: string, p: Record<string, unknown>) => winSent.push(p) } }
@@ -3534,12 +3546,12 @@ setTimeout(() => {
       const ghostAt = actions.lastIndexOf('llm?.skipped')
       const ghost = actions.slice(ghostAt, actions.indexOf(': null', ghostAt))
       const paneOk =
-        card.includes("? 'Model triage did not answer' : 'Grok says this is critical risk'") &&
+        card.includes("? 'Model triage did not answer' : `${run.triage.llm?.by === 'jev' ? 'Jev' : 'Grok'} says this is critical risk`") &&
         (card.match(/Proceed at/g) || []).length === 1 &&
         ghost.includes('Retry triage') &&
         ghost.includes("'retry-triage'") &&
         ghost.includes('className="ghost"') &&
-        !ghost.includes('Grok says this is critical risk')
+        !ghost.includes('says this is critical risk')
       check(
         'RETRY_TRIAGE',
         !threw &&
@@ -3646,6 +3658,245 @@ setTimeout(() => {
         JSON.stringify({ phase: m.run?.phase, plans: m.plans, prompts: m.prompts, err: m.run?.error, tier: m.run?.tier })
       )
     }
+    // Jev triage: first model call, Grok only when Jev misses. Fake askJev, never the network.
+    {
+      const tjev = (await import(src('factory/triage-jev.ts'))) as typeof import('../src/main/factory/triage-jev.ts')
+      type JevAsk = import('../src/main/factory/triage-jev.ts').JevAsk
+      type JevCall = Parameters<JevAsk>[0]
+      const jevCalls: JevCall[] = []
+      let jevSays: (o: JevCall) => ReturnType<JevAsk> = async () => null
+      const fakeJev: JevAsk = (o) => {
+        jevCalls.push(o)
+        return jevSays(o)
+      }
+      const answer = (size: string, risk: string, sc = 0.9, rc = 0.8) => ({
+        model: 'jev-fake-served',
+        usage: { input_tokens: 600, output_tokens: 80 },
+        answers: { size: { type: 'choice', choice: size, confidence: sc }, risk: { type: 'choice', choice: risk, confidence: rc } }
+      })
+      const grokLog = join(temp, 'jev-grok-log.txt')
+      writeFileSync(grokLog, '')
+      process.env.JEV_GROK_LOG = grokLog
+      const logEcho = join(temp, 'jev-echo-grok')
+      writeFileSync(
+        logEcho,
+        `#!/usr/bin/env node
+require('fs').appendFileSync(process.env.JEV_GROK_LOG, Date.now() + '\\n')
+const i = process.argv.indexOf('-p')
+const prompt = i >= 0 ? String(process.argv[i + 1] || '') : ''
+const m = /Rules said: (T[0-3]) \\((none|elevated|critical)\\)/.exec(prompt)
+process.stdout.write(JSON.stringify({ type: 'text', data: JSON.stringify({ size: m ? m[1] : 'T1', risk: m ? m[2] : 'none', reason: 'agrees' }) }) + '\\n')
+process.stdout.write(JSON.stringify({ type: 'end', usage: { input_tokens: 9, output_tokens: 1 }, num_turns: 1, total_cost_usd: 0, modelUsage: { 'grok-fake-served': { costUSD: 0 } } }) + '\\n')
+`
+      )
+      const failGrok = join(temp, 'jev-fail-grok')
+      writeFileSync(failGrok, "#!/usr/bin/env node\nrequire('fs').appendFileSync(process.env.JEV_GROK_LOG, Date.now() + '\\n')\nprocess.exit(3)\n")
+      chmodSync(logEcho, 0o755)
+      chmodSync(failGrok, 0o755)
+      const grokTimes = () => readFileSync(grokLog, 'utf8').trim().split('\n').filter(Boolean).map(Number)
+      const jevRows = (run: Awaited<ReturnType<typeof ctl.settle>>) => (run?.usage || []).filter((u) => u.phase === 'triage' && u.cli === 'jev')
+      const grokRows = (run: Awaited<ReturnType<typeof ctl.settle>>) => (run?.usage || []).filter((u) => u.phase === 'triage' && u.cli === 'grok')
+      const left = (run: Awaited<ReturnType<typeof ctl.settle>>) => run?.phase !== 'triage' && run?.needsProceed !== true
+      const jevGo = async (name: string, task: string, o: { through?: boolean; proceedCritical?: boolean; grok?: string; plan?: string[] } = {}) => {
+        use({ askJev: fakeJev, jevTimeoutMs: 300 })
+        triageBin = o.grok || logEcho
+        const r = evRepo(name)
+        touch(r)
+        claudeSays(o.plan || ['GAPS: 0\nPASS'])
+        const calls0 = jevCalls.length
+        const grok0 = grokTimes().length
+        const p0 = promptCount()
+        const c0 = claudeRows().length
+        const t0 = Date.now()
+        const res = ctl.startRun({ task, workRepo: r, brainPath: brainEv, runThrough: !!o.through, proceedCritical: o.proceedCritical })
+        const id = res.ok ? res.run.id : ''
+        const run = id ? await ctl.settle(id) : null
+        return { res, id, run, t0, jev: jevCalls.length - calls0, grok: grokTimes().length - grok0, grokAt: grokTimes()[grok0], prompts: promptCount() - p0, plans: planSpawns(c0).length }
+      }
+
+      {
+        const task = 'fix the label on the save button'
+        const rules = triageMod.triage(task)
+        jevSays = async () => answer('T3', 'none')
+        const g = await jevGo('jev-raises', task, { plan: ['Plan: the label work.'] })
+        const call = jevCalls.at(-1)
+        const row = jevRows(g.run)[0]
+        check(
+          'JEV_RAISES',
+          rules.size === 'T0' &&
+            rules.risk === 'none' &&
+            g.jev === 1 &&
+            JSON.stringify(call?.state) === JSON.stringify({ task }) &&
+            call?.questions === tjev.JEV_TRIAGE_QUESTIONS &&
+            g.run?.tier === 'T3' &&
+            g.plans === 1 &&
+            g.prompts === 0 &&
+            g.grok === 0 &&
+            row?.model === 'jev-fake-served' &&
+            row.inTokens === 600 &&
+            row.outTokens === 80 &&
+            row.ok === true &&
+            g.run?.triage.llm?.by === 'jev' &&
+            g.run.triage.reasons.some((x) => x.startsWith('Jev raised this to T3')),
+          JSON.stringify({ rules, jev: g.jev, grok: g.grok, plans: g.plans, prompts: g.prompts, row, run: snap(g.run), reasons: g.run?.triage.reasons })
+        )
+        if (g.id) ctl.abandonRun(g.id)
+      }
+      {
+        const task = 'add a new page for Stripe checkout'
+        const rules = triageMod.triage(task)
+        jevSays = async () => answer('T0', 'none')
+        const g = await jevGo('jev-never-lowers', task, { proceedCritical: true, plan: ['Plan: checkout page.'] })
+        check(
+          'JEV_NEVER_LOWERS',
+          rules.size === 'T2' && rules.risk === 'critical' && g.jev === 1 && g.run?.tier === rules.size && g.run?.risk === rules.risk,
+          JSON.stringify({ rules: { size: rules.size, risk: rules.risk }, jev: g.jev, run: snap(g.run), risk: g.run?.risk })
+        )
+        if (g.id) ctl.abandonRun(g.id)
+      }
+      {
+        jevSays = async () => null
+        const g = await jevGo('jev-miss', T1TASK, { through: true })
+        const jr = jevRows(g.run)
+        const gr = grokRows(g.run)
+        check(
+          'JEV_MISS_GROK_RUNS',
+          g.jev === 1 && g.grok === 1 && g.run?.triage.llm?.by === 'grok' && jr.length === 1 && jr[0].ok === false && gr.length === 1 && gr[0].ok === true && left(g.run) && g.prompts > 0,
+          JSON.stringify({ jev: g.jev, grok: g.grok, jr, gr, prompts: g.prompts, run: snap(g.run) })
+        )
+        if (g.id) ctl.abandonRun(g.id)
+      }
+      {
+        jevSays = async () => {
+          throw new Error('network down')
+        }
+        const g = await jevGo('jev-throws', T1TASK, { through: true })
+        const jr = jevRows(g.run)
+        check('JEV_THROWS', g.jev === 1 && g.grok === 1 && jr.length === 1 && jr[0].ok === false && left(g.run), JSON.stringify({ jev: g.jev, grok: g.grok, jr, run: snap(g.run) }))
+        if (g.id) ctl.abandonRun(g.id)
+      }
+      {
+        jevSays = async () => answer('T9', 'none')
+        const g = await jevGo('jev-junk', T1TASK, { through: true })
+        const jr = jevRows(g.run)
+        check('JEV_JUNK', g.jev === 1 && g.grok === 1 && jr.length === 1 && jr[0].ok === false && left(g.run), JSON.stringify({ jev: g.jev, grok: g.grok, jr, run: snap(g.run) }))
+        if (g.id) ctl.abandonRun(g.id)
+      }
+      {
+        let sawAbort = false
+        jevSays = (o) =>
+          new Promise((_resolve, reject) => {
+            o.signal?.addEventListener('abort', () => {
+              sawAbort = true
+              reject(new Error('aborted'))
+            })
+          })
+        const g = await jevGo('jev-hangs', T1TASK, { through: true })
+        const jr = jevRows(g.run)
+        const signal = jevCalls.at(-1)?.signal
+        check(
+          'JEV_HANGS',
+          g.jev === 1 &&
+            g.grok === 1 &&
+            !!g.grokAt &&
+            g.grokAt - g.t0 < 2000 &&
+            sawAbort &&
+            signal?.aborted === true &&
+            jr.length === 1 &&
+            jr[0].ok === false &&
+            !!g.run?.triage.reasons.includes('Jev skipped: Jev timed out after 0.3 s.') &&
+            left(g.run),
+          JSON.stringify({ jev: g.jev, grok: g.grok, after: g.grokAt ? g.grokAt - g.t0 : null, sawAbort, jr, reasons: g.run?.triage.reasons, run: snap(g.run) })
+        )
+        if (g.id) ctl.abandonRun(g.id)
+      }
+      {
+        jevSays = async () => answer('T1', 'critical')
+        const g = await jevGo('jev-critical', T1TASK, { through: true })
+        check(
+          'JEV_CRITICAL_HOLDS',
+          g.jev === 1 && g.grok === 0 && g.run?.phase === 'triage' && g.run.needsProceed === true && g.prompts === 0 && g.run.triage.llm?.by === 'jev' && g.run.risk === 'critical',
+          JSON.stringify({ jev: g.jev, grok: g.grok, prompts: g.prompts, run: snap(g.run) })
+        )
+        if (g.id) ctl.abandonRun(g.id)
+      }
+      {
+        jevSays = async () => null
+        const g = await jevGo('jev-both-miss', T1TASK, { through: true, grok: failGrok })
+        const held = g.run
+        const skipped = String(held?.triage.llm?.skipped || '')
+        jevSays = async () => answer('T1', 'none')
+        const jev0 = jevCalls.length
+        const grok0 = grokTimes().length
+        let threw = ''
+        try {
+          if (g.id) ctl.decideRun(g.id, 'retry-triage')
+        } catch (e) {
+          threw = String((e as Error).message || e)
+        }
+        const after = g.id && !threw ? await ctl.settle(g.id) : null
+        check(
+          'JEV_BOTH_MISS_HOLDS',
+          g.jev === 1 &&
+            g.grok === 1 &&
+            held?.phase === 'triage' &&
+            held.needsProceed === true &&
+            skipped.includes('Jev did not answer') &&
+            skipped.includes('grok exited 3') &&
+            !threw &&
+            jevCalls.length - jev0 === 1 &&
+            grokTimes().length - grok0 === 0 &&
+            left(after) &&
+            after?.triage.llm?.by === 'jev',
+          JSON.stringify({ jev: g.jev, grok: g.grok, held: snap(held), skipped, threw, jevMore: jevCalls.length - jev0, grokMore: grokTimes().length - grok0, after: snap(after) })
+        )
+        if (g.id) ctl.abandonRun(g.id)
+      }
+      {
+        const q = tjev.JEV_TRIAGE_QUESTIONS
+        const prompt = tllm.triagePrompt('x', triageMod.triage('x'))
+        const lits = {
+          T0: 'One-file copy, wording, or style fix. No logic change.',
+          T1: 'Small fix inside existing patterns: up to 3 files, no new dependency, no migration.',
+          T2: 'Standard feature or refactor: new route, component, API, or shared types; up to about 10 files.',
+          T3: 'Program: rewrite, migration, cross-repo work, or many slices across the app.'
+        }
+        const risks = {
+          none: 'None of the others: UI, copy, tests, docs, internal refactors.',
+          elevated: 'API endpoints, config or env, dependencies, runtime behavior (cache, cron, queues), outbound email or SMS, security headers, sessions.',
+          critical: 'Payments, authentication, secrets or keys or encryption, database schema or migrations, user data deletion, access control.'
+        }
+        const runnerSrc = readFileSync(join(rootRepo, 'src', 'main', 'factory', 'eval', 'runner.ts'), 'utf8')
+        check(
+          'JEV_CRITERIA_ONE_SOURCE',
+          q.size.criteria === tllm.SIZE_CRITERIA &&
+            q.risk.criteria === tllm.RISK_CRITERIA &&
+            JSON.stringify(tllm.SIZE_CRITERIA) === JSON.stringify(lits) &&
+            JSON.stringify(tllm.RISK_CRITERIA) === JSON.stringify(risks) &&
+            [...Object.values(lits), ...Object.values(risks)].every((v) => prompt.includes(v)) &&
+            !prompt.includes('one-file copy or style fix') &&
+            !prompt.includes('critical for payments') &&
+            /import \{[^}]*JEV_TRIAGE_QUESTIONS[^}]*\} from '\.\.\/triage-jev\.ts'/.test(runnerSrc) &&
+            runnerSrc.includes('questions: JEV_TRIAGE_QUESTIONS'),
+          prompt
+        )
+      }
+      {
+        const ipcSrc = readFileSync(join(rootRepo, 'src', 'main', 'factory', 'ipc.ts'), 'utf8')
+        const cfg = ipcSrc.slice(ipcSrc.indexOf('configureFactory({'), ipcSrc.indexOf('ipcMain.handle', ipcSrc.indexOf('configureFactory({')))
+        check('JEV_IPC_WIRED', /import \{ askJev \} from '\.\.\/skin\/typesafe'/.test(ipcSrc) && /\baskJev\b/.test(cfg), cfg)
+      }
+      {
+        const pane = readFileSync(join(rootRepo, 'src', 'renderer', 'src', 'FactoryPane.tsx'), 'utf8')
+        check(
+          'JEV_PANE',
+          pane.includes("'Checking size and risk'") && pane.includes("`${run.triage.llm?.by === 'jev' ? 'Jev' : 'Grok'} says this is critical risk`") && !pane.includes('Checking size with Grok')
+        )
+      }
+      delete process.env.JEV_GROK_LOG
+      use()
+      restoreEcho()
+    }
     restoreEcho()
     promptPlan = async () => {}
   }
@@ -3680,6 +3931,8 @@ setTimeout(() => {
   const page = readFileSync(join(rootRepo, 'src/main/phone-page.ts'), 'utf8')
   check('phone page filters factory tabs too', /t\.type !== 'factory'/.test(page))
 }
+
+check('NO_LIVE_JEV', liveJev.length === 0, liveJev.join(' '))
 
 const pass = results.every((r) => r.ok)
 const out = [...results.map((r) => `${r.ok ? 'PASS' : 'FAIL'} ${r.name}${r.ok || !r.detail ? '' : `  ${r.detail}`}`), '', pass ? 'FACTORY_PASS' : 'FACTORY_FAIL'].join('\n')

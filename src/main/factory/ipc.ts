@@ -29,6 +29,7 @@ import { opusEnv } from './opus'
 import { profileLine, readProfile, saveProfile, type ProfilePatch } from './profile'
 import { lastRepo, resolveWorkRepo } from './resolve-repo'
 import { factoryShimDir, setUserDataDir } from './run-store'
+import { askJev } from '../skin/typesafe'
 
 function emit(e: FactoryEvent): void {
   for (const w of BrowserWindow.getAllWindows()) {
@@ -62,7 +63,8 @@ export function registerFactoryIpc(): void {
       info: (tabId) => factoryInfo(tabId)
     },
     emit,
-    env: (repo) => opusEnv(factoryEnv(projectBinEnv(repo), ensureShims(factoryShimDir())))
+    env: (repo) => opusEnv(factoryEnv(projectBinEnv(repo), ensureShims(factoryShimDir()))),
+    askJev
   })
   ipcMain.handle('factory:triage', (_e, text: string) => triageTask(String(text || '')))
   // No work-repo picker: main resolves the repo from the task, then the last Factory repo. Start remembers it.

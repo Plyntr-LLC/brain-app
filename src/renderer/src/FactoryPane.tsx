@@ -309,7 +309,7 @@ export function FactoryPane(props: {
     (run.phase === 'review' && !run.diff)
   const waitLine =
     run.phase === 'triage' && !run.needsProceed && !prepWaiting
-      ? 'Checking size with Grok (up to 8 s)'
+      ? 'Checking size and risk'
       : run.phase === 'plan' && !planWaiting
         ? 'Opus is writing the plan'
         : run.phase === 'review' && !run.diff && run.note
@@ -460,7 +460,7 @@ export function FactoryPane(props: {
           ) : null}
           {run.phase === 'triage' && run.needsProceed ? (
             <div className="factory-trip">
-              <strong>{run.triage.llm?.skipped ? 'Model triage did not answer' : 'Grok says this is critical risk'}</strong>
+              <strong>{run.triage.llm?.skipped ? 'Model triage did not answer' : `${run.triage.llm?.by === 'jev' ? 'Jev' : 'Grok'} says this is critical risk`}</strong>
               <ul>
                 {run.triage.reasons.map((r) => (
                   <li key={r}>{r}</li>

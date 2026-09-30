@@ -21,11 +21,28 @@ export type LlmTriage = { size: Size; risk: Risk; reason: string }
 type LineEvent = { kind: string; data?: string } | null
 export type SpawnFn = (bin: string, args: string[], opts: SpawnOptions) => ChildProcess
 
+export const SIZES: Size[] = ['T0', 'T1', 'T2', 'T3']
+export const RISKS: Risk[] = ['none', 'elevated', 'critical']
+
+/** What each size and risk means. One source: the Grok prompt renders it and Jev's criteria are these objects. */
+export const SIZE_CRITERIA: Record<Size, string> = {
+  T0: 'One-file copy, wording, or style fix. No logic change.',
+  T1: 'Small fix inside existing patterns: up to 3 files, no new dependency, no migration.',
+  T2: 'Standard feature or refactor: new route, component, API, or shared types; up to about 10 files.',
+  T3: 'Program: rewrite, migration, cross-repo work, or many slices across the app.'
+}
+
+export const RISK_CRITERIA: Record<Risk, string> = {
+  none: 'None of the others: UI, copy, tests, docs, internal refactors.',
+  elevated: 'API endpoints, config or env, dependencies, runtime behavior (cache, cron, queues), outbound email or SMS, security headers, sessions.',
+  critical: 'Payments, authentication, secrets or keys or encryption, database schema or migrations, user data deletion, access control.'
+}
+
 export function triagePrompt(task: string, rules: Triage): string {
   return [
     'Size this code change for a software factory. Do not edit files. Do not run tools.',
-    'T0: one-file copy or style fix. T1: small fix in existing patterns (up to 3 files). T2: standard feature (new route, component, API, refactor; up to 10 files). T3: program (rewrite, migration, cross-repo).',
-    'Risk: critical for payments, auth, secrets, database or schema, user data, access control. elevated for API, config, dependencies, runtime behavior, outbound messages, security, sessions. none otherwise.',
+    SIZES.map((k) => `${k}: ${SIZE_CRITERIA[k]}`).join(' '),
+    'Risk: ' + (['critical', 'elevated', 'none'] as Risk[]).map((k) => `${k}: ${RISK_CRITERIA[k]}`).join(' '),
     `Rules said: ${rules.original} (${rules.risk}).`,
     'Answer with one JSON object and nothing else: {"size":"T0|T1|T2|T3","risk":"none|elevated|critical","reason":"one sentence"}',
     '',
@@ -52,8 +69,6 @@ export function grokTriageArgs(prompt: string, o: TriageRun = {}): string[] {
   ]
 }
 
-const SIZES: Size[] = ['T0', 'T1', 'T2', 'T3']
-const RISKS: Risk[] = ['none', 'elevated', 'critical']
 const RISK_RANK: Record<Risk, number> = { none: 0, elevated: 1, critical: 2 }
 
 /** The last JSON object in the text with a valid size and risk, or null. */
@@ -76,13 +91,13 @@ export function parseLlmTriage(text: string): LlmTriage | null {
 }
 
 /** Rules plus model: the higher size and the higher risk, never lower. It may raise to T3. */
-export function mergeTriage(rules: Triage, llm: LlmTriage | null, why?: string): Triage {
+export function mergeTriage(rules: Triage, llm: LlmTriage | null, why?: string, label = 'Grok'): Triage {
   if (!llm) return { ...rules, reasons: [...rules.reasons, `Model triage skipped: ${why || 'no answer'}.`] }
   const reasons = [...rules.reasons]
   const original = RANK[llm.size] > RANK[rules.original] ? llm.size : rules.original
   const risk = RISK_RANK[llm.risk] > RISK_RANK[rules.risk] ? llm.risk : rules.risk
   if (original !== rules.original || risk !== rules.risk) {
-    reasons.push(`Grok raised this to ${original} · risk ${risk}${llm.reason ? `: ${llm.reason}` : '.'}`)
+    reasons.push(`${label} raised this to ${original} · risk ${risk}${llm.reason ? `: ${llm.reason}` : '.'}`)
   }
   return { ...rules, size: original, original, risk, capped: false, reasons }
 }

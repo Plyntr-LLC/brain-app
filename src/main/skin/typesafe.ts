@@ -42,10 +42,13 @@ async function loadKey(): Promise<string | null> {
   }
 }
 
+export type JevReply = { model?: string; answers: Record<string, unknown>; usage?: { input_tokens?: number; output_tokens?: number } }
+
 export async function askJev(opts: {
   state: unknown
   questions: Record<string, unknown>
-}): Promise<{ answers: Record<string, unknown> } | null> {
+  signal?: AbortSignal
+}): Promise<JevReply | null> {
   const key = await warmTypesafeKey()
   if (!key) return null
   const res = await fetch(ENDPOINT, {
@@ -58,7 +61,8 @@ export async function askJev(opts: {
       model: MODEL,
       state: opts.state,
       questions: opts.questions
-    })
+    }),
+    signal: opts.signal
   })
   const text = await res.text()
   if (!res.ok) {
@@ -66,7 +70,7 @@ export async function askJev(opts: {
     return null
   }
   try {
-    return JSON.parse(text) as { answers: Record<string, unknown> }
+    return JSON.parse(text) as JevReply
   } catch {
     return null
   }

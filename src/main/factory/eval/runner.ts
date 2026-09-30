@@ -8,6 +8,8 @@ import { diffText } from '../git-audit.ts'
 import { opusEnv, runOpus, strictPrompt, type SpawnFn } from '../opus.ts'
 import { gitCommonDir } from '../repo-store.ts'
 import { triage } from '../triage.ts'
+import { askJev } from '../../skin/typesafe.ts'
+import { JEV_TRIAGE_QUESTIONS, jevTriage, type JevAsk } from '../triage-jev.ts'
 import { llmTriage, mergeTriage } from '../triage-llm.ts'
 import { caseFile, readCases, type ReviewCase, type TriageCase } from './cases.ts'
 import type { ReviewConfig, TriageConfig } from './configs.ts'
@@ -78,7 +80,7 @@ export type ResultRow = {
   why?: string
 }
 
-export type RunDeps = { env: NodeJS.ProcessEnv; spawnFn?: SpawnFn; grokBin?: string | null; claudeBin?: string | null; opusTimeoutMs?: number }
+export type RunDeps = { env: NodeJS.ProcessEnv; spawnFn?: SpawnFn; grokBin?: string | null; claudeBin?: string | null; opusTimeoutMs?: number; askJev?: JevAsk }
 
 export async function runTriage(o: { repo: string; brain: string; configs: TriageConfig[]; pick: Pick; repeats: number; deps: RunDeps }): Promise<ResultRow[]> {
   const cases = pickCases(readCases<TriageCase>(caseFile(o.repo, 'triage')), o.pick)
@@ -93,6 +95,13 @@ export async function runTriage(o: { repo: string; brain: string; configs: Triag
         if (c.kind === 'rules') {
           const got = { size: rules.size, risk: rules.risk }
           rows.push({ ...base, model: 'rules', ok: true, usage: null, got, triage: gradeTriage(k.expect, got) })
+          continue
+        }
+        if (c.kind === 'jev') {
+          const res = await jevTriage({ task: k.task, ask: o.deps.askJev ?? askJev, questions: JEV_TRIAGE_QUESTIONS, timeoutMs: c.timeoutMs })
+          const m = mergeTriage(rules, res.llm, res.why, 'Jev')
+          const got = { size: m.size, risk: m.risk }
+          rows.push({ ...base, model: res.usage.model, ok: !!res.llm, usage: res.usage, got, triage: gradeTriage(k.expect, got), why: res.llm ? undefined : res.why })
           continue
         }
         const empty = c.cwd === 'empty' ? mkdtempSync(join(tmpdir(), 'factory-eval-cwd-')) : ''

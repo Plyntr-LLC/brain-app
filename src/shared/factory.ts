@@ -52,7 +52,7 @@ export type VerifyRow = { script: string; status: 'pass' | 'fail' | 'skipped'; t
 /** One model call. model is what the CLI said served it (never the configured name); '' when no answer came. */
 export type UsageRow = {
   phase: 'triage' | 'plan' | 'review' | 'build'
-  cli: 'claude' | 'grok' | 'cursor'
+  cli: 'claude' | 'grok' | 'cursor' | 'jev'
   model: string
   effort: string
   inTokens: number
@@ -117,8 +117,8 @@ export type RunRecord = {
     original: string
     capped: boolean
     reasons: string[]
-    /** Model triage: what Grok said, or why it was skipped. */
-    llm?: { size?: string; risk?: string; reason?: string; skipped?: string }
+    /** Model triage: what Jev (else Grok) said, or why both were skipped. */
+    llm?: { size?: string; risk?: string; reason?: string; skipped?: string; by?: 'jev' | 'grok' }
   }
   /** Approve in advance: plan, permission asks, suggested upgrades, and a clean Commit go ahead without a click. Never push or deploy. */
   runThrough?: boolean

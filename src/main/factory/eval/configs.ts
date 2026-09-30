@@ -1,4 +1,5 @@
 import { opusArgs, type OpusRun } from '../opus.ts'
+import { JEV_TRIAGE_TIMEOUT_MS } from '../triage-jev.ts'
 import { grokTriageArgs, TRIAGE_TIMEOUT_MS, type TriageRun } from '../triage-llm.ts'
 
 /**
@@ -6,7 +7,7 @@ import { grokTriageArgs, TRIAGE_TIMEOUT_MS, type TriageRun } from '../triage-llm
  * timeout), built by the same argv builders the Factory uses.
  */
 
-export type TriageConfig = { job: 'triage'; name: string; kind: 'rules' | 'grok'; run?: TriageRun; cwd: 'brain' | 'empty'; timeoutMs: number }
+export type TriageConfig = { job: 'triage'; name: string; kind: 'rules' | 'grok' | 'jev'; run?: TriageRun; cwd: 'brain' | 'empty'; timeoutMs: number }
 export type ReviewConfig = { job: 'review'; name: string; run: OpusRun }
 export type EvalConfig = TriageConfig | ReviewConfig
 
@@ -19,6 +20,7 @@ export const CONFIGS: Record<string, EvalConfig> = {
   'grok-default-medium': grok('grok-default-medium', { effort: 'medium' }),
   'grok-4.7-low': grok('grok-4.7-low', { model: 'grok-4.7' }),
   'grok-low-emptycwd': grok('grok-low-emptycwd', {}, 'empty', 60_000),
+  jev: { job: 'triage', name: 'jev', kind: 'jev', cwd: 'brain', timeoutMs: JEV_TRIAGE_TIMEOUT_MS },
   'opus-medium': opus('opus-medium', {}),
   'opus-low': opus('opus-low', { effort: 'low' }),
   'sonnet-high': opus('sonnet-high', { model: 'sonnet', effort: 'high' }),
@@ -38,6 +40,7 @@ export function configsFor(job: 'triage' | 'review', names: string[]): EvalConfi
 export function dryLine(c: EvalConfig): string {
   if (c.job === 'triage') {
     if (c.kind === 'rules') return `${c.name}: no spawn`
+    if (c.kind === 'jev') return `${c.name}: POST https://api.typesafe.ai/v1/systemone (no spawn) timeout=${c.timeoutMs}ms`
     return `${c.name}: grok ${JSON.stringify(grokTriageArgs('<prompt>', c.run))} cwd=${c.cwd} timeout=${c.timeoutMs}ms`
   }
   return `${c.name}: claude ${JSON.stringify(opusArgs('<prompt>', c.run))}`
