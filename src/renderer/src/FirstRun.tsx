@@ -1144,6 +1144,8 @@ export function FirstRun() {
             className="ghost title-set"
             title={discardNote || 'Drop the commits that exist only on this computer'}
             onClick={() => {
+              const files = sync?.tip ? `\n\n${sync.tip}` : ''
+              if (!window.confirm(`Throw away the changes that exist only on this computer and take the other computer's version? This cannot be undone.${files}`)) return
               void window.brain.discardSync().then((r) => setDiscardNote(r.ok ? '' : r.detail))
             }}
           >
