@@ -96,6 +96,8 @@ export type FactoryDeps = {
   opusMax?: number
   /** Test hook: the Opus review timeout (default OPUS_REVIEW_TIMEOUT_MS). */
   opusTimeoutMs?: number
+  /** Test hook: the conductor's one Grok call. Unset: a real grok-4.6 one-shot. */
+  askConductor?: (prompt: string) => Promise<string>
 }
 
 /** workers: T3 builder tabs open right now (factory-<id>-w<n>). */
@@ -488,6 +490,15 @@ function held(run: RunRecord): boolean {
   return run.phase === 'review' && !!run.diff && run.strict?.status === 'fail' && (run.reviewCycles || 0) >= REVIEW_MAX
 }
 
+/** Which hold the conductor is looking at. Review wins when the strict cap and another hold are both up. */
+export function holdName(run: RunRecord): 'review' | 'voice' | 'tier' | 'proceed' | 'none' {
+  if (held(run)) return 'review'
+  if (run.voice?.status === 'fail' && (run.voiceCycles || 0) >= VOICE_MAX) return 'voice'
+  if (run.phase === 'upgrade') return 'tier'
+  if (run.needsProceed) return 'proceed'
+  return 'none'
+}
+
 /** Jev first, then the Grok low one-shot if Jev misses. Raise-only. Critical raised by the model waits for a Proceed click. */
 async function triageStep(state: Live): Promise<void> {
   const d = need()
@@ -537,15 +548,24 @@ async function triageStep(state: Live): Promise<void> {
     }
   }
   if (m.risk === 'critical' && rules.risk !== 'critical') {
-    setPhase(state, 'triage', { needsProceed: true, resumePhase: 'triage' })
+    await waitOrProceed(state)
     return
   }
   // A missed model answer on rules T0/T1 waits. Approve in advance does not skip it. T2/T3 still plan.
   if (!res.llm && (rules.original === 'T0' || rules.original === 'T1')) {
-    setPhase(state, 'triage', { needsProceed: true, resumePhase: 'triage' })
+    await waitOrProceed(state)
     return
   }
   await afterTriage(state)
+}
+
+/** Proceed card, unless this run's proceed flag is already on. */
+async function waitOrProceed(state: Live): Promise<void> {
+  if (state.run.override?.proceed) {
+    await afterTriage(state)
+    return
+  }
+  setPhase(state, 'triage', { needsProceed: true, resumePhase: 'triage' })
 }
 
 async function afterTriage(state: Live): Promise<void> {
@@ -950,7 +970,7 @@ async function buildSlices(state: Live, gen: number, brainBefore: Record<string,
 
 /** A tripped tripwire. Approve in advance takes a suggested tier. T3 with no approved plan stops this turn and plans. T1 to T2 keeps going. True: go on. */
 async function onTrip(state: Live, trip: Tripwire): Promise<boolean> {
-  if (state.run.runThrough && trip.suggest) {
+  if ((state.run.runThrough || state.run.override?.tier) && trip.suggest) {
     const suggest = trip.suggest
     const hadPlan = state.run.plan?.status === 'approved'
     state.run = { ...state.run, tier: suggest, tripwire: { reasons: trip.reasons, suggest, auto: true } }
@@ -1119,7 +1139,7 @@ async function reviewStep(state: Live): Promise<void> {
     if (row.status === 'fail') {
       const used = state.run.voiceCycles || 0
       saveRunText(state.run.id, 'voice', voiceNotes({ copy: copyAdds(voiceDiff), out: row.tail || '', attempt: Math.min(used + 1, VOICE_MAX), max: VOICE_MAX }))
-      if (used < VOICE_MAX) {
+      if (used < VOICE_MAX || state.run.override?.voice) {
         state.run = { ...state.run, voiceCycles: used + 1 }
         persist(state)
         await buildStep(state, 'fix', `Voice check said REJECT (attempt ${used + 1} of ${VOICE_MAX}).`, false, { voice: true })
@@ -1191,7 +1211,7 @@ async function strictStep(state: Live): Promise<boolean> {
   persist(state)
   // Auto fix + a fresh independent review until REVIEW_MAX; the last fail holds for Joe.
   // Grok/Cursor make the first two review fixes; from the third on, Claude makes the fix.
-  if (cycles < REVIEW_MAX) {
+  if (cycles < REVIEW_MAX || state.run.override?.review) {
     const lead = acc.why === 'FAIL' ? 'The strict reviewer said FAIL.' : `The strict reviewer did not approve: ${acc.why}. Every gap counts.`
     await buildStep(state, 'fix', `${lead}\n${body.slice(0, 700)}`, cycles >= BUILDER_FIX_MAX)
     return false
@@ -1271,6 +1291,18 @@ export function restoreRun(id: string): RunRecord | null {
 
 export function getRun(id: string): RunRecord | null {
   return live.get(id)?.run || loadRun(id)
+}
+
+/** Test hook: the in-flight generation. A status question must leave it alone. */
+export function factoryGen(id: string): number {
+  const state = live.get(id)
+  if (!state) throw new Error('That Factory run is gone.')
+  return state.gen
+}
+
+/** The conductor's injected Grok, when a test set one. */
+export function askConductorHook(): ((prompt: string) => Promise<string>) | undefined {
+  return deps?.askConductor
 }
 
 /** Every run on disk; live ones reload paused. */
@@ -1560,17 +1592,92 @@ function judgeGuide(state: Live): void {
   if (state.run.phase === 'review' && state.run.diff && gateOpen(state.run.shadow)) state.run = { ...state.run, shadow: withJudgment(state.run.shadow, 'guide') }
 }
 
-/** by 'joe': a click (IPC). Only clicks are judgments in the shadow ledger; finishReview's auto-commit is not. */
-export type Actor = { by?: 'joe' }
+/** by 'joe': a click (IPC). Only clicks are judgments in the shadow ledger; finishReview's auto-commit is not. ship: the conductor's commit, which does not bounce on voice or the tripwire. */
+export type Actor = { by?: 'joe'; ship?: boolean }
+
+/** A conductor status or a reply that ran no door. Sent, so the next builder brief does not carry it. */
+export function appendSentNote(id: string, text: string, ack: string): RunRecord {
+  const state = liveFor(id)
+  const body = String(text || '').trim().slice(0, GUIDE_CHARS)
+  const note: GuideNote = { at: Date.now(), text: body, sent: true, ack: String(ack || '').slice(0, 2000) }
+  state.run = { ...state.run, guide: [...(state.run.guide || []), note].slice(-GUIDE_MAX) }
+  return persist(state)
+}
+
+/** guideRun stored a canned ack. The conductor's reply replaces it. */
+export function rewriteGuideAck(id: string, text: string, ack: string): RunRecord {
+  const state = liveFor(id)
+  const body = String(text || '').trim().slice(0, GUIDE_CHARS)
+  const reply = String(ack || '').slice(0, 2000)
+  const guide = [...(state.run.guide || [])]
+  for (let i = guide.length - 1; i >= 0; i--) {
+    if (guide[i].text === body) {
+      guide[i] = { ...guide[i], ack: reply }
+      break
+    }
+  }
+  state.run = { ...state.run, guide }
+  return persist(state)
+}
+
+export type OverrideBoundary = 'review' | 'voice' | 'tier' | 'proceed'
+
+/** Sets one this-run flag. When that hold is already up, takes the path the factory used before the cap. */
+export function setRunOverride(id: string, boundary: OverrideBoundary, on: boolean): RunRecord {
+  const state = liveFor(id)
+  const next = { ...(state.run.override || {}) }
+  if (on) next[boundary] = true
+  else delete next[boundary]
+  state.run = { ...state.run, override: next }
+  persist(state)
+  if (!on) return state.run
+  if (boundary === 'review' && held(state.run)) {
+    if (state.busy) interrupt(state)
+    else state.gen++
+    const cycles = state.run.reviewCycles || 0
+    const body = state.run.strict?.text || ''
+    track(state, buildStep(state, 'fix', `The strict reviewer said FAIL.\n${body.slice(0, 700)}`, cycles >= BUILDER_FIX_MAX))
+  } else if (boundary === 'voice' && state.run.voice?.status === 'fail' && (state.run.voiceCycles || 0) >= VOICE_MAX) {
+    if (state.busy) interrupt(state)
+    else state.gen++
+    const used = state.run.voiceCycles || 0
+    state.run = { ...state.run, voiceCycles: used + 1 }
+    persist(state)
+    track(state, buildStep(state, 'fix', `Voice check said REJECT (attempt ${used + 1} of ${VOICE_MAX}).`, false, { voice: true }))
+  } else if (boundary === 'tier' && state.run.phase === 'upgrade' && state.run.tripwire?.suggest) {
+    return decideRun(id, 'upgrade')
+  } else if (boundary === 'proceed' && state.run.phase === 'triage' && state.run.needsProceed) {
+    return decideRun(id, 'proceed')
+  }
+  return state.run
+}
+
+/** Commit, then push with Push anyway, then deploy. Stops at the first refusal. Kennel push still runs its own gate. */
+export async function shipRun(id: string): Promise<RunRecord> {
+  let committed: RunRecord
+  try {
+    committed = commitRunNow(id, { by: 'joe', ship: true })
+  } catch (e) {
+    const state = liveFor(id)
+    return setPhase(state, state.run.phase, { error: String((e as Error).message || e).slice(0, 300) })
+  }
+  if (committed.phase !== 'done') return committed
+  const pushed = await publishRun(id, { by: 'joe', allowProtected: true })
+  if (!pushed.pushed) return pushed
+  return deployRun(id)
+}
 
 export function commitRunNow(id: string, o: Actor = {}): RunRecord {
   const state = liveFor(id)
   const run = state.run
-  if (run.phase !== 'review' || !run.diff) throw new Error('Commit is only offered after review.')
-  if (run.voice?.status === 'fail') throw new Error(VOICE_HOLD)
+  const ship = o.ship === true
+  const phaseOk = run.phase === 'review' || (ship && run.phase === 'upgrade')
+  if (!phaseOk || (!ship && !run.diff)) throw new Error('Commit is only offered after review.')
+  if (!ship && run.voice?.status === 'fail') throw new Error(VOICE_HOLD)
   const rows = numstat(run.workRepo, run.base)
+  if (ship && !rows.length) throw new Error('Nothing to commit.')
   const trip = checkTripwire(run.tier, rows)
-  if (trip.trip) return setPhase(state, 'upgrade', { tripwire: { reasons: trip.reasons, suggest: trip.suggest }, audit: { brain: run.audit?.brain || [], work: rows } })
+  if (!ship && trip.trip) return setPhase(state, 'upgrade', { tripwire: { reasons: trip.reasons, suggest: trip.suggest }, audit: { brain: run.audit?.brain || [], work: rows } })
   setPhase(state, 'commit')
   try {
     const sha = commitRun(run.workRepo, rows.map((r) => r.path), run.title)

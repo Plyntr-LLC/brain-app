@@ -23,6 +23,7 @@ import {
   type Decision,
   type FactoryEvent
 } from './controller'
+import { conduct } from './conductor'
 import { ensureShims, factoryEnv } from './gates'
 import { gitTop, isGitRepo } from './git-audit'
 import { opusEnv } from './opus'
@@ -89,6 +90,13 @@ export function registerFactoryIpc(): void {
     safe(() => ({ ok: true as const, run: decideRun(String(id), choice, { reason: String(opts?.reason || '') }) }))
   )
   ipcMain.handle('factory:guide', (_e, id: string, text: string) => safe(() => ({ ok: true as const, run: guideRun(String(id), String(text || '')) })))
+  ipcMain.handle('factory:conduct', async (_e, id: string, text: string) => {
+    try {
+      return { ok: true as const, run: await conduct(String(id), String(text || '')) }
+    } catch (e) {
+      return { ok: false as const, error: String((e as Error).message || e) }
+    }
+  })
   ipcMain.handle('factory:profile', (_e, repo: string) =>
     safe(() => {
       const p = readProfile(repoTop(repo))

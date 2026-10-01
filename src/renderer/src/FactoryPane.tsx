@@ -331,7 +331,7 @@ export function FactoryPane(props: {
     setError('')
     // The box clears at once; a refused note comes back (if nothing new was typed) with the reason.
     setNote('')
-    const res = await window.brain.factory.guide(run.id, text)
+    const res = await window.brain.factory.conduct(run.id, text)
     if (!res.ok) {
       setNote((n) => (n.trim() ? n : text))
       setError(res.error)

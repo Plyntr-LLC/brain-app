@@ -183,6 +183,8 @@ test('splitOutside: no block leaves the review as it was; bold heading and caps 
 test('plan prompt carries the done contract verbatim', () => {
   const p = planPrompt({ task: 't', workRepo: '/x', plans: [], reasons: [] })
   assert.ok(p.includes(DONE_CONTRACT))
+  assert.match(p, /before any edit/)
+  assert.equal(p.includes('The fixer adds the named test'), false)
 })
 
 test('splitOutside: a security bullet stays in the review and fails a GAPS 0 PASS', () => {
@@ -204,6 +206,7 @@ test('strictPrompt tells the reviewer where OUTSIDE items go', () => {
   const p = strictPrompt({ task: 't', tier: 'T2', risk: 'none', base: 'abc', diff: 'd', workRepo: '/x' })
   assert.match(p, /OUTSIDE:/)
   assert.match(p, /never OUTSIDE/)
+  assert.match(p, /A green check that only restates the new code is a fail/)
 })
 
 test('splitOutside: a blank line after the bullets ends the block; a defect bullet below stays a gap', () => {

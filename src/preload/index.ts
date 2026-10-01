@@ -958,6 +958,7 @@ const brain = {
       reason?: string
     ) => ipcRenderer.invoke('factory:decide', id, choice, { reason }) as Promise<FactoryResult>,
     guide: (id: string, text: string) => ipcRenderer.invoke('factory:guide', id, text) as Promise<FactoryResult>,
+    conduct: (id: string, text: string) => ipcRenderer.invoke('factory:conduct', id, text) as Promise<FactoryResult>,
     profile: (repo: string) =>
       ipcRenderer.invoke('factory:profile', repo) as Promise<
         { ok: true; profile: RepoProfile; line: string } | { ok: false; error: string }

@@ -174,6 +174,7 @@ export function strictPrompt(o: { task: string; tier: string; risk: string; base
     '',
     DONE_CONTRACT,
     'Where the skill and this contract disagree, follow the contract.',
+    'A green check that only restates the new code is a fail.',
     'Name every real defect with file and line.',
     'Some asks no edit in this repo can close: a person signing off, a live run that costs money or sends mail, a before/after on real data, deploy or ops steps. Put those, and anything the contract calls OUTSIDE, in a block that starts with a line `OUTSIDE:` followed by `- ` bullets, before the GAPS line. They are not gaps and never make it FAIL. A defect in this diff is never OUTSIDE.',
     'End with two lines: GAPS: <n> (how many gaps you found), then exactly PASS or FAIL. PASS only with GAPS: 0.'
@@ -189,7 +190,7 @@ export function planPrompt(o: { task: string; workRepo: string; plans: string[];
     t3
       ? 'Limit T3: no file or line cap; no lockfile changes, no migrations.'
       : 'Limit T2: up to 10 files, 600 changed lines, no lockfile changes, no migrations.',
-    'Give: files to change, steps, tests to run. Keep it short.',
+    'Write the plan before any edit: files, steps, and one check that fails if the behavior is wrong. Do not edit files.',
     ...(t3 ? ['End with one JSON line: {"slices":[{"title":"...","files":["rel/path.ts"]}]}. Paths relative to the work repo; slices that share no files run in parallel.'] : []),
     `Task: ${String(o.task || '').slice(0, 4000)}`,
     ...(o.plans.length ? ['', 'Earlier plans:', ...o.plans.map((p) => `- ${p}`)] : []),

@@ -47,11 +47,11 @@ const SLICE_MAX = 320
 const TASK_FLOOR = 160
 
 const PHASE_LINE: Record<BriefPhase, string> = {
-  plan: 'Write a short plan: files, steps, tests. Do not edit files.',
-  build: 'Make the change now.',
+  plan: 'Write the plan before any edit: files, steps, and one check that fails if the behavior is wrong. Do not edit files.',
+  build: 'Make the change now. Run the check from the plan. Do not add a unit test that restates the change. Do not edit a failing check to make it pass.',
   review: 'Re-read your diff against the task. Fix only real mistakes, then stop.',
   trim: 'Your change is over the limit. Cut it down to fit, then stop.',
-  fix: 'Fix what the reviewer names, then stop.'
+  fix: 'Fix what the reviewer names. Run the check from the plan. Do not add a unit test that restates the change. Do not edit a failing check to make it pass.'
 }
 
 function cut(text: string, max: number): string {

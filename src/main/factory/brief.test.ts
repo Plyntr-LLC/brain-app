@@ -36,6 +36,8 @@ test('T2 plan and fix briefs with a 5,000-char task stay at the cap and keep the
   assert.ok(build.length <= BRIEF_MAX)
   assert.ok(build.includes('Approved plan: /u/factory/runs/run-abc.plan.md. Read it first.'))
   assert.match(build, /Limit T2: up to 10 files, 600/)
+  assert.match(build, /Run the check from the plan/)
+  assert.match(build, /Do not add a unit test that restates the change/)
   const fix = buildBrief({ ...base, tier: 'T2', phase: 'fix', task: 'f'.repeat(5_000), note: 'n'.repeat(5_000), reviewPath: '/u/factory/runs/run-abc.review.md' })
   assert.ok(fix.length <= BRIEF_MAX, String(fix.length))
   assert.match(fix, /Phase: fix\./)
