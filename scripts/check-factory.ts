@@ -3858,8 +3858,8 @@ process.stdout.write(JSON.stringify({ type: 'end', usage: { input_tokens: 9, out
         const lits = {
           T0: 'One-file copy, wording, or style fix. No logic change.',
           T1: 'Small fix inside existing patterns: up to 3 files, no new dependency, no migration.',
-          T2: 'Standard feature or refactor: new route, component, API, or shared types; up to about 10 files.',
-          T3: 'Program: rewrite, migration, cross-repo work, or many slices across the app.'
+          T2: 'One feature or fix that spans several files: new route, component, API, or shared types; up to about 10 files.',
+          T3: 'Two or more separate features or fixes bundled in one task, or a rewrite, migration, cross-repo work, or more than about 10 files.'
         }
         const risks = {
           none: 'None of the others: UI, copy, tests, docs, internal refactors.',
