@@ -510,7 +510,7 @@ export function FactoryPane(props: {
                   <li key={r}>{r}</li>
                 ))}
               </ul>
-              {!run.tripwire.suggest ? <p className="tiny">Over T3, or a lockfile or schema change. Trim the change or stop.</p> : null}
+              {!run.tripwire.suggest ? <p className="tiny">A lockfile or schema change. Trim the change or stop.</p> : null}
               {run.tripwire.suggest === 'T2' || run.tripwire.suggest === 'T3' ? (
                 <p className="tiny">
                   Moving to {run.tripwire.suggest} skips the plan (the work is done) and adds the {run.tripwire.suggest} checks and Opus strict review.

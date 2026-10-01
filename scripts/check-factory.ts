@@ -1415,11 +1415,11 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
   reset2()
 }
 
-// S3 7. Tripwire: T2 over T2 suggests T3; over T3 null; lockfile null; runThrough auto-upgrades T1 -> T2; a lockfile still stops.
+// S3 7. Tripwire: T2 over T2 suggests T3 at any size; lockfile null; runThrough auto-upgrades T1 -> T2; a lockfile still stops.
 {
   const rows = (n: number, lines = 1) => Array.from({ length: n }, (_, i) => ({ path: `src/f${i}.ts`, added: lines, deleted: 0 }))
   check('S3 7 T2 with 11 files suggests T3', tripwire.checkTripwire('T2', rows(11)).suggest === 'T3')
-  check('S3 7 T2 over T3 limits suggests null', tripwire.checkTripwire('T2', rows(41)).suggest === null && tripwire.checkTripwire('T2', rows(11, 300)).suggest === null)
+  check('S3 7 T2 at any size suggests T3', tripwire.checkTripwire('T2', rows(41)).suggest === 'T3' && tripwire.checkTripwire('T2', rows(11, 300)).suggest === 'T3')
   check('S3 7 lockfile suggests null', tripwire.checkTripwire('T2', [...rows(11), { path: 'package-lock.json', added: 1, deleted: 0 }]).suggest === null)
   promptPlan = async () => {
     for (const n of ['a', 'b', 'c', 'd', 'e']) writeFileSync(join(work2, 'src', `${n}.ts`), Array.from({ length: 40 }, (_, i) => `export const ${n}${i} = ${i}`).join('\n') + '\n')
@@ -1439,6 +1439,107 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
   check('S3 7 runThrough with a lockfile change still stops on the card', r2?.phase === 'upgrade' && r2.tripwire?.suggest === null && !r2.tripwire.auto && !r2.commitSha, JSON.stringify({ phase: r2?.phase, trip: r2?.tripwire }))
   ctl.abandonRun(id2)
   reset2()
+}
+
+// T3CAP. T3 has no file or line cap: a size-only trip always offers T3, T3 never trips on size, a lockfile still stops, the card keeps its layout.
+{
+  const many = (n: number) => async (o: { text: string }) => {
+    if (!/Phase: build\./.test(o.text)) return
+    for (let i = 0; i < n; i++) writeFileSync(join(work2, 'src', `cap${i}.ts`), `export const cap${i} = ${i}\n`)
+  }
+  const T3LINE = 'Limit T3: no file or line cap; no lockfile changes, no migrations.'
+
+  promptPlan = many(54)
+  claudeSays(['Plan: many files.', 'GAPS: 0\nPASS'])
+  const res = ctl.startRun({ task: T2TASK, workRepo: work2, brainPath: brainA, runThrough: false })
+  const id = res.ok ? res.run.id : ''
+  await ctl.settle(id)
+  ctl.decideRun(id, 'approve-plan')
+  const card = await ctl.settle(id)
+  check('T3CAP card', card?.phase === 'upgrade' && card.tier === 'T2' && card.tripwire?.suggest === 'T3' && (card.tripwire?.reasons || []).includes('54 files changed. T2 allows 10.'), JSON.stringify({ phase: card?.phase, tier: card?.tier, trip: card?.tripwire, error: card?.error }))
+  let moveErr = ''
+  try {
+    ctl.decideRun(id, 'upgrade')
+  } catch (e) {
+    moveErr = String((e as Error).message || e)
+  }
+  const moved = moveErr ? undefined : await ctl.settle(id)
+  check('T3CAP move', moved?.tier === 'T3' && moved.phase !== 'upgrade' && (moved.phase === 'done' || moved.phase === 'review') && !moved.error, JSON.stringify({ moveErr, phase: moved?.phase, tier: moved?.tier, trip: moved?.tripwire, error: moved?.error }))
+  ctl.abandonRun(id)
+  reset2()
+
+  promptPlan = many(54)
+  claudeSays(['Plan: many files.', 'GAPS: 0\nPASS'])
+  const resA = ctl.startRun({ task: T2TASK, workRepo: work2, brainPath: brainA, runThrough: true })
+  const idA = resA.ok ? resA.run.id : ''
+  const auto = await ctl.settle(idA)
+  check('T3CAP auto', auto?.tier === 'T3' && auto.tripwire?.auto === true && auto.tripwire.suggest === 'T3' && auto.phase !== 'upgrade' && (auto.phase === 'done' || auto.phase === 'review'), JSON.stringify({ phase: auto?.phase, tier: auto?.tier, trip: auto?.tripwire, error: auto?.error }))
+  ctl.abandonRun(idA)
+  reset2()
+
+  const half = (k: number) => Array.from({ length: 27 }, (_, i) => `src/n${k}_${i}.ts`)
+  promptPlan = async (o: { text: string }) => {
+    const m = /Phase: build\./.test(o.text) ? /Your slice (\d+) of \d+/.exec(o.text) : null
+    if (m) for (const rel of half(Number(m[1]) - 1)) writeFileSync(join(work2, rel), `export const v = ${JSON.stringify(rel)}\n`)
+  }
+  t3Says([{ title: 'one', files: half(0) }, { title: 'two', files: half(1) }], 'GAPS: 0\nPASS')
+  const c0 = claudeRows().length
+  const p0 = promptCount()
+  const resN = ctl.startRun({ task: T3TASK, workRepo: work2, brainPath: brainA, runThrough: true })
+  const idN = resN.ok ? resN.run.id : ''
+  const nat = await ctl.settle(idN)
+  const builds = calls.filter((c) => c.fn === 'prompt').slice(p0).map((c) => String(c.o?.text)).filter((t) => /Phase: build\./.test(t))
+  const planner = claudeRows().slice(c0)[0]
+  check(
+    'T3CAP native',
+    nat?.tier === 'T3' && nat.phase !== 'upgrade' && (nat.phase === 'done' || nat.phase === 'review') && !nat.tripwire && (nat.audit?.work.length || 0) >= 54 &&
+      builds.length === 2 && builds.every((t) => t.includes(T3LINE) && !t.includes('up to 40 files')) &&
+      !!planner && planner.argv[1].includes(T3LINE) && !planner.argv[1].includes('up to 40 files'),
+    JSON.stringify({ phase: nat?.phase, trip: nat?.tripwire, files: nat?.audit?.work.length, builds: builds.length, error: nat?.error })
+  )
+  ctl.abandonRun(idN)
+  reset2()
+
+  promptPlan = async (o: { text: string }) => {
+    await many(54)(o)
+    if (/Phase: build\./.test(o.text)) writeFileSync(join(work2, 'package-lock.json'), '{}\n')
+  }
+  claudeSays(['Plan: many files.'])
+  const resL = ctl.startRun({ task: T2TASK, workRepo: work2, brainPath: brainA, runThrough: false })
+  const idL = resL.ok ? resL.run.id : ''
+  await ctl.settle(idL)
+  ctl.decideRun(idL, 'approve-plan')
+  const lock = await ctl.settle(idL)
+  let lockErr = ''
+  try {
+    ctl.decideRun(idL, 'upgrade')
+  } catch (e) {
+    lockErr = String((e as Error).message || e)
+  }
+  check('T3CAP lockfile', lock?.phase === 'upgrade' && lock.tripwire?.suggest === null && lockErr === 'A lockfile or schema change. Trim or stop.', JSON.stringify({ phase: lock?.phase, trip: lock?.tripwire, lockErr }))
+  ctl.abandonRun(idL)
+  reset2()
+  promptPlan = async () => {}
+
+  const tripCard = (src: string) => {
+    const at = src.indexOf("run.phase === 'upgrade' && run.tripwire")
+    const end = src.indexOf('Stop', at)
+    return src.slice(at, src.indexOf('</div>', end) + 6)
+  }
+  const shape = (blk: string) => (blk.match(/<\/?[a-zA-Z]+|className="[^"]+"/g) || []).join(' ')
+  const now = tripCard(readFileSync(join(rootRepo, 'src', 'renderer', 'src', 'FactoryPane.tsx'), 'utf8'))
+  const before = tripCard(execFileSync('/usr/bin/git', ['-C', rootRepo, 'show', 'ca60f34:src/renderer/src/FactoryPane.tsx'], { encoding: 'utf8' }))
+  const acts = now.slice(now.indexOf('className="factory-actions"'))
+  const btns: number[] = []
+  for (const b of ['Move to {run.tripwire.suggest}', 'Trim', 'Stop']) btns.push(acts.indexOf(b, btns.length ? btns[btns.length - 1] + 1 : 0))
+  check(
+    'T3CAP pane',
+    now.includes('className="factory-trip"') && now.includes('Over the {run.tier} limit') && now.includes('run.tripwire.reasons.map') && now.includes('className="factory-actions"') &&
+      btns.every((i, k) => i > 0 && (k === 0 || i > btns[k - 1])) && acts.indexOf('Trim') > btns[0] &&
+      now.includes('<p className="tiny">A lockfile or schema change. Trim the change or stop.</p>') && !now.includes('Over T3') &&
+      shape(now) === shape(before) && before.includes('Over T3'),
+    JSON.stringify({ now: shape(now), before: shape(before) })
+  )
 }
 
 // S3 9. runThrough with voice REJECT does not auto-commit.

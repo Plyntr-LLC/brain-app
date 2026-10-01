@@ -40,19 +40,18 @@ test('T1 with 5 files / 200 lines suggests T2; lockfile suggests null; T2 over i
   assert.equal(checkTripwire('T2', eleven.slice(0, 10)).trip, false)
 })
 
-test('T0 over T1 but inside T2 suggests T2; over T2 suggests T3; over T3 suggests null', () => {
+test('T0 over T1 but inside T2 suggests T2; over T2 suggests T3 at any size', () => {
   assert.equal(checkTripwire('T0', [row('a', 100), row('b', 100)]).suggest, 'T2')
   assert.equal(checkTripwire('T0', [row('a', 400), row('b', 400)]).suggest, 'T3')
-  assert.equal(checkTripwire('T0', [row('a', 1400), row('b', 1400)]).suggest, null)
+  assert.equal(checkTripwire('T0', [row('a', 1400), row('b', 1400)]).suggest, 'T3')
 })
-
-test('T3 limits: 40 files / 2500 lines; over T3, lockfile, or schema suggests null', () => {
-  const forty = Array.from({ length: 40 }, (_, i) => row(`f${i}.ts`, 10))
-  assert.equal(checkTripwire('T3', forty).trip, false)
-  const over = checkTripwire('T3', [...forty, row('g.ts')])
-  assert.equal(over.trip, true)
-  assert.equal(over.suggest, null)
-  assert.equal(checkTripwire('T3', [row('a.ts', 2501)]).suggest, null)
-  assert.equal(checkTripwire('T2', [...forty.slice(0, 12), row('pnpm-lock.yaml')]).suggest, null)
-  assert.equal(checkTripwire('T2', [...forty.slice(0, 12), row('prisma/schema.prisma')]).suggest, null)
+test('T3 has no size cap; a lockfile or schema change still trips with suggest null', () => {
+  const many = Array.from({ length: 41 }, (_, i) => row(`f${i}.ts`, 10))
+  assert.equal(checkTripwire('T3', many).trip, false)
+  assert.equal(checkTripwire('T3', [row('a.ts', 2501)]).trip, false)
+  const lock = checkTripwire('T3', [row('pnpm-lock.yaml')])
+  assert.equal(lock.trip, true)
+  assert.equal(lock.suggest, null)
+  assert.equal(checkTripwire('T2', [...many.slice(0, 12), row('pnpm-lock.yaml')]).suggest, null)
+  assert.equal(checkTripwire('T2', [...many.slice(0, 12), row('prisma/schema.prisma')]).suggest, null)
 })

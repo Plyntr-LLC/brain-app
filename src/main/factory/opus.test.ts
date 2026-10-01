@@ -217,3 +217,10 @@ test('splitOutside: a blank line after the bullets ends the block; a defect bull
   // A blank line right under the heading is spacing, not the end.
   assert.deepEqual(splitOutside('OUTSIDE:\n\n- Split changes\nGAPS: 0\nPASS').outside, ['Split changes'])
 })
+
+test('planPrompt T3 states no file or line cap; T2 keeps its limit', () => {
+  const t3 = planPrompt({ task: 't', workRepo: '/x', plans: [], reasons: [], tier: 'T3' })
+  assert.ok(t3.includes('Limit T3: no file or line cap; no lockfile changes, no migrations.'))
+  assert.ok(!t3.includes('up to 40 files'))
+  assert.ok(planPrompt({ task: 't', workRepo: '/x', plans: [], reasons: [] }).includes('Limit T2: up to 10 files, 600 changed lines, no lockfile changes, no migrations.'))
+})

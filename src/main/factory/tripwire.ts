@@ -8,7 +8,7 @@ export const TIER_LIMITS = {
   T0: { files: 1, lines: 20 },
   T1: { files: 3, lines: 150 },
   T2: { files: 10, lines: 600 },
-  T3: { files: 40, lines: 2500 }
+  T3: { files: Infinity, lines: Infinity }
 } as const
 
 export const LOCKFILES = new Set([
@@ -30,7 +30,7 @@ export const SCHEMA_RE = /(^|\/)(migrations?|prisma|drizzle|db\/schema)\/|\.sql$
 export type Tripwire = {
   trip: boolean
   reasons: string[]
-  /** The smallest tier above this one that fits with no lockfile or schema change. Null over T3, or on a lockfile or schema change. */
+  /** The smallest tier above this one that fits. T3 has no size cap, so this is null only on a lockfile or schema change. */
   suggest: 'T1' | 'T2' | 'T3' | null
   files: number
   lines: number

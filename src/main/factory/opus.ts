@@ -187,7 +187,7 @@ export function planPrompt(o: { task: string; workRepo: string; plans: string[];
     DONE_CONTRACT,
     `Work repo: ${o.workRepo}`,
     t3
-      ? 'Limit T3: up to 40 files, 2500 changed lines, no lockfile changes, no migrations.'
+      ? 'Limit T3: no file or line cap; no lockfile changes, no migrations.'
       : 'Limit T2: up to 10 files, 600 changed lines, no lockfile changes, no migrations.',
     'Give: files to change, steps, tests to run. Keep it short.',
     ...(t3 ? ['End with one JSON line: {"slices":[{"title":"...","files":["rel/path.ts"]}]}. Paths relative to the work repo; slices that share no files run in parallel.'] : []),

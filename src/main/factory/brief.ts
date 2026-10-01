@@ -35,7 +35,7 @@ const LIMIT_LINE: Record<Tier, string> = {
   T0: 'Limit T0: 1 file, 20 changed lines.',
   T1: 'Limit T1: up to 3 files, 150 changed lines, no new dependencies, no migrations.',
   T2: 'Limit T2: up to 10 files, 600 changed lines, no lockfile changes, no migrations.',
-  T3: 'Limit T3: up to 40 files, 2500 changed lines, no lockfile changes, no migrations.'
+  T3: 'Limit T3: no file or line cap; no lockfile changes, no migrations.'
 }
 
 /** T3 plan: the controller reads this JSON line to split the build across builders. */

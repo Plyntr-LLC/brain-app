@@ -44,7 +44,7 @@ test('T2 plan and fix briefs with a 5,000-char task stay at the cap and keep the
 
 test('T3 plan brief asks for the slices JSON line; a T3 worker brief names its files; both fit', () => {
   const plan = buildBrief({ ...base, role: 'planner', tier: 'T3', phase: 'plan', task: 'x'.repeat(10_000) })
-  assert.match(plan, /Limit T3: up to 40 files, 2500 changed lines/)
+  assert.ok(plan.includes('Limit T3: no file or line cap; no lockfile changes, no migrations.'))
   assert.ok(plan.includes('{"slices":[{"title":"...","files":["rel/path.ts"]}]}'))
   assert.ok(plan.length <= BRIEF_MAX)
   assert.doesNotMatch(buildBrief({ ...base, role: 'planner', tier: 'T2', phase: 'plan' }), /"slices"/)

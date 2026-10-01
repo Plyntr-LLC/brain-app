@@ -1453,7 +1453,7 @@ export function decideRun(id: string, choice: Decision, opts: { reason?: string 
   state.gen++
   if (choice === 'upgrade') {
     const next = run.tripwire?.suggest
-    if (!next) throw new Error('Over T3, or a lockfile or schema change. Trim or stop.')
+    if (!next) throw new Error('A lockfile or schema change. Trim or stop.')
     // Moving up from a tripwire skips the plan gate: the work is already done.
     state.run = { ...run, tier: next }
     const trip = checkTripwire(next, run.audit?.work || [])
