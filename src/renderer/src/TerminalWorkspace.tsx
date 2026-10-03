@@ -845,7 +845,7 @@ function ChatPane({
       }
       if (ev.kind === 'status' && ev.data && ev.data.startsWith('work:')) {
         const label = ev.data.slice(5).trim()
-        if (label && !skinOnRef.current) setWaitLabel(label)
+        if (label) setWaitLabel(label)
       }
       if (ev.kind === 'permission' && !ev.detail && kindRef.current === 'grok' && planOnRef.current && cliSidRef.current) {
         void window.brain.slash.grokPlan(cwdRef.current, cliSidRef.current).then((text) => {
@@ -1941,6 +1941,8 @@ function ChatPane({
         busy={busy || compacting || warming}
         waitLabel={compacting ? 'Compacting' : waitLabel}
         waitSec={waitSec}
+        bgTasks={bgTasks}
+        bgNow={bgNow}
         context={ctx}
         permission={permission}
         threadRef={thread}

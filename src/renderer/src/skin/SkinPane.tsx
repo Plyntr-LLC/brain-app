@@ -5,6 +5,7 @@ import { isSkinComponent } from '../../../shared/skin/catalog'
 import type { SkinSpec } from '../../../shared/skin/spec'
 import type { AiKind } from '@shared/contracts'
 import { paintsThreadSpec } from '../../../shared/think-run'
+import { skinActivity, type SkinBgTask } from '../../../shared/agent-label'
 import { cleanThink, stripAnsi, type FileHit } from '../ptyChat'
 import { SkinCard } from './Registry'
 import { SkinTerm } from './SkinTerm'
@@ -25,14 +26,6 @@ function thinkIsLive(messages: Msg[], idx: number, busy: boolean): boolean {
   return true
 }
 
-/** Hide tool-name noise in the pulse; keep Thinking / Writing / Compacting. */
-function busyLabel(waitLabel: string, wantPower: boolean): string {
-  const label = waitLabel || 'Working'
-  if (wantPower) return label
-  if (label === 'Thinking' || label === 'Writing' || label === 'Compacting') return label
-  return 'Working'
-}
-
 export function SkinPane({
   tabId,
   cwd,
@@ -44,6 +37,8 @@ export function SkinPane({
   busy,
   waitLabel,
   waitSec,
+  bgTasks,
+  bgNow,
   context,
   permission,
   threadRef,
@@ -66,6 +61,8 @@ export function SkinPane({
   busy: boolean
   waitLabel: string
   waitSec: number
+  bgTasks: SkinBgTask[]
+  bgNow: number
   context?: { used?: number; total?: number; percent?: number }
   permission: {
     title?: string
@@ -167,10 +164,11 @@ export function SkinPane({
     const s = specFromStreamEvent({ kind: 'permission', ...permission })
     if (s) specs.push({ spec: s })
   }
-  if (busy) {
-    const s = specFromStreamEvent({ kind: 'status', data: 'work:' + busyLabel(waitLabel, wantPower) })
+  const activity = skinActivity({ busy, waitLabel, waitSec, bgTasks, now: bgNow })
+  if (activity.show) {
+    const s = specFromStreamEvent({ kind: 'status', data: 'work:' + activity.label })
     if (s) {
-      s.props.seconds = waitSec
+      s.props.seconds = activity.seconds
       specs.push({ spec: s })
     }
   }

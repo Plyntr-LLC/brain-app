@@ -22,6 +22,9 @@ type Sess = {
   onEvent?: (ev: StreamEvent) => void
   waiting: { resolve: () => void } | null
   text: string
+  /** Thinking streamed this turn. A later full thinking block is not shown again. */
+  thought: string
+  autoThought: string
   dead: boolean
   n: number
   promptGen: number
@@ -59,6 +62,7 @@ function startAuto(s: Sess): void {
   if (s.autoLive) return
   s.autoLive = true
   s.autoText = ''
+  s.autoThought = ''
   markChatBusy(s.tabId, true)
   emitChat({ tabId: s.tabId, cli: 'claude', ev: { kind: 'status', data: 'turn:auto' } })
 }
@@ -81,6 +85,7 @@ function openTurn(s: Sess): NonNullable<Sess['turn']> {
   // A turn with no prompt waiting to be taken is Claude's own (a background task finished).
   const auto = !gens.length && !s.unacked.length && s.promptGen > 0
   s.turn = { gens, auto }
+  s.thought = ''
   if (auto) startAuto(s)
   return s.turn
 }
@@ -102,6 +107,17 @@ function sink(s: Sess): ((ev: StreamEvent) => void) | undefined {
 function emitBg(s: Sess): void {
   const list = [...s.bg.values()].map((t) => ({ label: t.label, at: t.at }))
   emitChat({ tabId: s.tabId, cli: 'claude', ev: { kind: 'status', data: 'bg:' + JSON.stringify(list) } })
+}
+
+/** Thinking is delta.thinking. asText only reads .text, so a thinking chunk would vanish. */
+function claudeDelta(delta: Record<string, unknown>): string {
+  const dType = String(delta.type || '')
+  if (dType === 'signature_delta' || dType === 'redacted_thinking') return ''
+  if (dType === 'thinking_delta' || dType === 'thought_delta') {
+    return typeof delta.thinking === 'string' ? delta.thinking : ''
+  }
+  if (dType === 'text_delta') return typeof delta.text === 'string' ? delta.text : ''
+  return ''
 }
 
 function handleClaude(s: Sess, line: string): void {
@@ -156,12 +172,16 @@ function handleClaude(s: Sess, line: string): void {
     const ev = asRecord(o.event)
     const delta = asRecord(ev.delta)
     const dType = String(delta.type || '')
-    const bit = asText(delta)
+    const bit = claudeDelta(delta)
     if (!bit) return
     const out = sink(s)
     if (!out) return
-    if (dType === 'thinking_delta' || dType === 'thought_delta') out({ kind: 'thought', data: bit })
-    else if (dType === 'text_delta') {
+    if (dType === 'thinking_delta' || dType === 'thought_delta') {
+      const autoThink = !!s.turn?.auto && !(s.active && s.turn.gens.includes(s.active))
+      if (autoThink) s.autoThought += bit
+      else s.thought += bit
+      out({ kind: 'thought', data: bit })
+    } else if (dType === 'text_delta') {
       if (s.turn?.auto && !(s.active && s.turn.gens.includes(s.active))) s.autoText += bit
       else s.text += bit
       out({ kind: 'text', data: bit })
@@ -216,7 +236,15 @@ function handleClaude(s: Sess, line: string): void {
         }
       }
       if (!out) continue
-      if (bt === 'thinking' && asText(b)) out({ kind: 'thought', data: asText(b) })
+      if (bt === 'thinking') {
+        const thinking = typeof b.thinking === 'string' ? b.thinking : ''
+        const already = auto ? s.autoThought : s.thought
+        if (thinking && !already) {
+          if (auto) s.autoThought += thinking
+          else s.thought += thinking
+          out({ kind: 'thought', data: thinking })
+        }
+      }
       if (bt === 'text' && asText(b) && !(auto ? s.autoText : s.text)) {
         if (auto) s.autoText += asText(b)
         else s.text += asText(b)
@@ -231,6 +259,8 @@ function handleClaude(s: Sess, line: string): void {
     if (!s.turn && !result && !s.unacked.length) return
     const t = s.turn || { gens: [], auto: s.unacked.length === 0 }
     s.turn = null
+    s.thought = ''
+    s.autoThought = ''
     s.closing = false
     // Claude marks a turn it started for a finished background task. One that took none of our prompts
     // is its own, even when a prompt was waiting: the prompt keeps waiting for its real answer.
@@ -254,6 +284,7 @@ function handleClaude(s: Sess, line: string): void {
       s.text = s.text || s.autoText || ''
       s.autoLive = false
       s.autoText = ''
+      s.autoThought = ''
     }
     // A turn that only answers interrupted prompts never ends the prompt sent after them.
     if (!s.active || !t.gens.includes(s.active)) return
@@ -264,6 +295,37 @@ function handleClaude(s: Sess, line: string): void {
     s.waiting?.resolve()
     s.waiting = null
   }
+}
+
+/** Run the real Claude parser on one turn and return the events it would show. */
+export function collectClaudeEvents(lines: string[]): StreamEvent[] {
+  const events: StreamEvent[] = []
+  const proc = { stdin: { destroyed: false, write: () => true } } as unknown as Sess['proc']
+  const s: Sess = {
+    tabId: 't',
+    cwd: '/tmp',
+    proc,
+    buf: '',
+    onEvent: (ev) => {
+      events.push(ev)
+    },
+    waiting: null,
+    text: '',
+    thought: '',
+    autoThought: '',
+    dead: false,
+    n: 0,
+    promptGen: 1,
+    unacked: [],
+    carry: [],
+    turn: { gens: [1], auto: false },
+    closing: false,
+    active: 1,
+    bg: new Map(),
+    toolLabels: new Map()
+  }
+  for (const line of lines) handleClaude(s, line)
+  return events
 }
 
 function attach(s: Sess): void {
@@ -366,6 +428,8 @@ async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string;
     buf: '',
     waiting: null,
     text: '',
+    thought: '',
+    autoThought: '',
     dead: false,
     n: 0,
     promptGen: 0,
@@ -400,6 +464,8 @@ export async function claudePrompt(opts: {
         buf: '',
         waiting: null,
         text: '',
+        thought: '',
+        autoThought: '',
         dead: false,
         n: 0,
         promptGen: 0,
@@ -425,6 +491,7 @@ export async function claudePrompt(opts: {
   const gen = ++s.promptGen
   s.onEvent = opts.onEvent
   s.text = ''
+  s.thought = ''
   writeUser(
     s,
     wrapPromptWithHooks({ cwd: opts.cwd, kind: 'claude', sessionId: s.tabId, text: opts.text }),
