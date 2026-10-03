@@ -10,12 +10,12 @@ import {
   appendSentNote,
   askConductorHook,
   decideRun,
+  explainRun,
   getRun,
-  guideRun,
   holdName,
   pauseRun,
+  queueInject,
   resumeRun,
-  rewriteGuideAck,
   setRunOverride,
   shipRun,
   type Decision,
@@ -200,44 +200,88 @@ function askGrok(run: RunRecord, prompt: string): Promise<string> {
   })
 }
 
-/** One Guide send. A status question does not interrupt the run. A bad reply runs no door. */
+type Intent = 'ask' | 'inject' | 'ship' | 'pause' | 'resume' | 'review-on' | 'review-off' | 'voice-on' | 'tier-on' | 'proceed-on' | 'approve-plan'
+
+const INJECT_RE = /we forgot|add it to the run|add this to the (?:run|plan)|put this in the (?:run|plan)|guide the run/i
+
+/** The sentence picks the door. The model does not. */
+export function conductorIntent(text: string): Intent {
+  const t = text.trim()
+  if (t === 'Continue fixing and running the review until approval') return 'review-on'
+  if (t === 'Continue the voice fixes until voice approves') return 'voice-on'
+  if (t === 'Continue past the tier stop') return 'tier-on'
+  if (t === 'Proceed past this hold') return 'proceed-on'
+  if (t === 'Stop') return 'review-off'
+  if (t === "Let's get this live") return 'ship'
+  if (t === 'Approve the plan.') return 'approve-plan'
+  if (t === 'Pause this run.') return 'pause'
+  if (t === 'Resume this run.') return 'resume'
+  if (INJECT_RE.test(t)) return 'inject'
+  return 'ask'
+}
+
+function usableProse(reply: string): boolean {
+  const t = reply.trim()
+  return !!t && !t.startsWith('{') && !t.startsWith('grok exited')
+}
+
+function doorMatches(intent: Intent, action: ConductorAction): boolean {
+  if (intent === 'ask') return action.kind === 'none'
+  if (intent === 'ship') return action.kind === 'ship'
+  if (intent === 'pause') return action.kind === 'pause'
+  if (intent === 'resume') return action.kind === 'resume'
+  if (intent === 'approve-plan') return action.kind === 'decide' && action.choice === 'approve-plan'
+  if (intent === 'review-on') return action.kind === 'override' && action.boundary === 'review' && action.on
+  if (intent === 'review-off') return action.kind === 'override' && action.boundary === 'review' && !action.on
+  if (intent === 'voice-on') return action.kind === 'override' && action.boundary === 'voice' && action.on
+  if (intent === 'tier-on') return action.kind === 'override' && action.boundary === 'tier' && action.on
+  if (intent === 'proceed-on') return action.kind === 'override' && action.boundary === 'proceed' && action.on
+  return false
+}
+
+/** One composer send. A question answers from the run. Only add-to-the-run language files a note. */
 export async function conduct(id: string, text: string): Promise<RunRecord> {
   const body = String(text || '').trim()
   if (!body) throw new Error('Type a note first.')
   const run = getRun(id)
   if (!run) throw new Error('That Factory run is gone.')
   if (TERMINAL_PHASES.includes(run.phase)) throw new Error('This run is over. Start a new run.')
+  const intent = conductorIntent(body)
   const prompt = conductorPrompt(run, body)
-  let raw = ''
+  let action: ConductorAction | null = null
   try {
     const hook = askConductorHook()
-    raw = hook ? await hook(prompt) : await askGrok(run, prompt)
-  } catch (e) {
-    return appendSentNote(id, body, String((e as Error).message || e))
+    const raw = hook ? await hook(prompt) : await askGrok(run, prompt)
+    action = parseConductor(raw)
+  } catch {
+    action = null
   }
-  const action = parseConductor(raw)
-  if (!action) return appendSentNote(id, body, raw.trim() || 'That reply was not a door.')
-  if (action.kind === 'none') return appendSentNote(id, body, action.reply)
-  if (action.kind === 'guide') {
-    guideRun(id, action.text)
-    return rewriteGuideAck(id, action.text, action.reply)
-  }
-  if (action.kind === 'override') {
-    setRunOverride(id, action.boundary, action.on)
-    return appendSentNote(id, body, action.reply)
-  }
-  if (action.kind === 'decide' || action.kind === 'pause' || action.kind === 'resume') {
+  if (intent === 'inject') return queueInject(id, body)
+  const matched = action && doorMatches(intent, action) ? action : null
+  const reply = matched && usableProse(matched.reply) ? matched.reply.trim() : ''
+  if (intent === 'ask') return appendSentNote(id, body, reply || explainRun(getRun(id) || run))
+  if (intent === 'ship') {
     try {
-      if (action.kind === 'decide') decideRun(id, action.choice)
-      else if (action.kind === 'pause') pauseRun(id)
-      else resumeRun(id)
+      await shipRun(id)
     } catch (e) {
       return appendSentNote(id, body, String((e as Error).message || e))
     }
-    return appendSentNote(id, body, action.reply)
+    const shipped = getRun(id)
+    const ack = shipped?.error || shipped?.pushError || shipped?.deployError || reply || 'Committing, then pushing, then deploying.'
+    return appendSentNote(id, body, ack)
   }
-  await shipRun(id)
-  const shipped = getRun(id)
-  const ack = shipped?.error || shipped?.pushError || shipped?.deployError || action.reply
-  return appendSentNote(id, body, ack)
+  try {
+    if (intent === 'pause') pauseRun(id)
+    else if (intent === 'resume') resumeRun(id)
+    else if (intent === 'approve-plan') decideRun(id, 'approve-plan')
+    else if (intent === 'review-on') setRunOverride(id, 'review', true)
+    else if (intent === 'review-off') setRunOverride(id, 'review', false)
+    else if (intent === 'voice-on') setRunOverride(id, 'voice', true)
+    else if (intent === 'tier-on') setRunOverride(id, 'tier', true)
+    else setRunOverride(id, 'proceed', true)
+  } catch (e) {
+    return appendSentNote(id, body, String((e as Error).message || e))
+  }
+  const fallback = intent === 'pause' ? 'Paused.' : intent === 'resume' ? 'Resumed.' : intent === 'approve-plan' ? 'Approving the plan.' : intent === 'review-off' ? 'Stopped.' : 'Review continues.'
+  return appendSentNote(id, body, reply || fallback)
 }

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseGrokLine, resolveBin, type StreamEvent } from '../ai-cli'
@@ -118,6 +118,9 @@ type Live = {
   emptyRetry?: number
   /** Porcelain of the other repos this run could have written, taken before the turn (see healCandidates). */
   otherBefore?: Map<string, Record<string, string>>
+  /** Failed reviews in a row whose diff bytes did not change. A builder that changes the diff resets it. */
+  sameDiff?: number
+  diffHash?: string
 }
 
 export const STRICT_MISSING = 'Opus reviewer not found (claude CLI). Commit is your call.'
@@ -391,11 +394,36 @@ function healEmptyTurn(state: Live): boolean {
   return false
 }
 
+/** A conductor failure. A real Guide ack (filed, noted) is not one of these. */
+function badAck(ack: string | undefined): boolean {
+  const a = String(ack || '').trim()
+  return a.startsWith('grok exited ') || a.startsWith('{')
+}
+
+/** Path, or the folder name as its own word. A prefix such as "simple" does not name simplerealign. */
+function noteNamesRepo(text: string, repo: string): boolean {
+  if (!repo || !text) return false
+  if (text.includes(repo)) return true
+  const base = repo.split(/[\\/]/).filter(Boolean).pop() || ''
+  if (!base) return false
+  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, 'i').test(text)
+}
+
+/** A path or an exact folder name in the sentence. A unique prefix is not enough. */
+function exactNamedRepo(state: Live, text: string): string {
+  const found = resolveWorkRepo({ task: text, brainPath: state.run.brainPath, projectsDir: deps?.projectsDir, aliases: false })
+  if (!found.ok) return ''
+  return noteNamesRepo(text, found.workRepo) ? found.workRepo : ''
+}
+
 /**
  * The work repo follows the repo the task (or Joe's newest Guide note that names one) uniquely
  * names. Never lastRepo, never the brain, never an ambiguous name. A note that only mentions the
  * current or last work repo ("why is it showing mykennel") does not choose it; each note is read
  * once and its answer kept, so a move never flips back. Nothing unique: the run stays put.
+ * A question, and a sent note whose reply was a conductor failure and that does not name its repo,
+ * do not choose it either.
  * On a move: the lock, profile, base, and lastRepo follow; a dirty repo the run has not built in
  * yet waits on Commit/Stash first.
  * 'stop': the caller starts nothing (another run holds the repo, or the new repo waits on prep).
@@ -406,6 +434,11 @@ function reconcileWorkRepo(state: Live): 'go' | 'stop' {
   const ignore = [run.workRepo, lastRepo()].filter(Boolean)
   let pinned = false
   const guide = (run.guide || []).map((g): GuideNote => {
+    if (g.sent && g.repo && badAck(g.ack) && !noteNamesRepo(g.text, g.repo)) {
+      pinned = true
+      return { ...g, repo: '', ask: true }
+    }
+    if (g.ask) return g.repo === undefined ? { ...g, repo: '' } : g
     if (g.repo !== undefined) return g
     pinned = true
     // A note moves the run by a path or a folder name, never by a README or package.json word.
@@ -416,7 +449,7 @@ function reconcileWorkRepo(state: Live): 'go' | 'stop' {
     state.run = { ...state.run, guide }
     persist(state)
   }
-  let hit = [...guide].reverse().find((g) => g.repo)?.repo || ''
+  let hit = [...guide].reverse().find((g) => g.repo && !g.ask)?.repo || ''
   if (!hit) {
     const found = resolveWorkRepo({ task: run.task, brainPath: run.brainPath, projectsDir: deps?.projectsDir })
     if (found.ok) hit = found.workRepo
@@ -718,7 +751,8 @@ async function opusPlan(state: Live): Promise<void> {
 }
 
 /** viaOpus: this turn is the Opus builder (a review fix from BUILDER_FIX_MAX on). Every other turn is the grunt. */
-async function buildStep(state: Live, phase: BriefPhase, note?: string, viaOpus?: boolean, o: { voice?: boolean } = {}): Promise<void> {
+/** adopt: a resume. Work already different from the stored base is verified, not built again. */
+async function buildStep(state: Live, phase: BriefPhase, note?: string, viaOpus?: boolean, o: { voice?: boolean; adopt?: boolean } = {}): Promise<void> {
   state.voiceFix = !!o.voice
   const d = need()
   const gen = state.gen
@@ -726,6 +760,17 @@ async function buildStep(state: Live, phase: BriefPhase, note?: string, viaOpus?
   if (reconcileWorkRepo(state) === 'stop') {
     if (!state.run.needsPrep) setPhase(state, 'paused', { resumePhase: inReview ? 'review' : 'build', error: state.run.error })
     return
+  }
+  if (o.adopt && phase === 'build') {
+    const rows = numstat(state.run.workRepo, state.run.base)
+    if (rows.length) {
+      state.run = { ...state.run, audit: { brain: state.run.audit?.brain || [], work: rows }, error: undefined }
+      // The work is already in the tree. An unsent note must not start another builder from finishReview.
+      markSent(state)
+      persist(state)
+      await verifyStep(state)
+      return
+    }
   }
   const run = state.run
   // Any turn that can change files clears the last strict and voice results: the pipeline runs again.
@@ -1018,7 +1063,7 @@ async function afterTurn(state: Live, phase: BriefPhase, brainBefore: Record<str
       await buildStep(state, phase, `The last turn changed no files in ${state.run.workRepo}. Make the change there.`)
       return
     }
-    setPhase(state, 'paused', { error: 'This turn changed no files in the work repo.', resumePhase: 'build' })
+    setPhase(state, 'paused', { error: `This turn changed no files in ${state.run.workRepo}.`, resumePhase: 'build' })
     return
   }
   if (phase === 'review') state.run = { ...state.run, selfChecked: true }
@@ -1199,6 +1244,8 @@ async function strictStep(state: Live): Promise<boolean> {
   // A verdict comes only from a whole JSON envelope: cut, over-cap, or plain stdout is never read as PASS.
   const acc = res.code === 0 && res.parsed ? reviewAccept(split.review) : { status: 'fail' as const, why: NO_VERDICT }
   if (acc.status === 'pass') {
+    state.sameDiff = 0
+    state.diffHash = undefined
     state.run = { ...state.run, strict: { status: 'pass', text: tail(split.review, 12) } }
     persist(state)
     return true
@@ -1208,10 +1255,20 @@ async function strictStep(state: Live): Promise<boolean> {
   const cycles = (state.run.reviewCycles || 0) + 1
   saveRunText(run.id, 'review', text)
   state.run = { ...state.run, reviewCycles: cycles, strict: { status: 'fail', text: text.slice(-8000) } }
+  const hash = createHash('sha256').update(safeDiff(run.workRepo, run.base)).digest('hex')
+  state.sameDiff = hash === state.diffHash ? (state.sameDiff || 0) + 1 : 0
+  state.diffHash = hash
   persist(state)
   // Auto fix + a fresh independent review until REVIEW_MAX; the last fail holds for Joe.
+  // A box does not skip that hold. Resume is what continues a boxed run.
+  // Two failed reviews in a row with the same diff, then a third, pause. A fix that changes bytes resets the count.
+  const wouldFix = cycles < REVIEW_MAX || !!state.run.override?.review
+  if ((state.sameDiff || 0) >= 2 && wouldFix) {
+    setPhase(state, 'paused', { error: `The diff did not change.\n${text}`.slice(0, 4000), resumePhase: 'review' })
+    return false
+  }
   // Grok/Cursor make the first two review fixes; from the third on, Claude makes the fix.
-  if (cycles < REVIEW_MAX || state.run.override?.review) {
+  if (wouldFix) {
     const lead = acc.why === 'FAIL' ? 'The strict reviewer said FAIL.' : `The strict reviewer did not approve: ${acc.why}. Every gap counts.`
     await buildStep(state, 'fix', `${lead}\n${body.slice(0, 700)}`, cycles >= BUILDER_FIX_MAX)
     return false
@@ -1381,6 +1438,13 @@ function resumeTo(state: Live, target: RunPhase): RunRecord {
     track(state, buildStep(state, 'fix', undefined, false, { voice: run.voice?.status === 'fail' }))
     return state.run
   }
+  // Approve in advance or Ship in advance: Resume runs one more review. A clean pass then commits. A nit does not.
+  if (target === 'review' && run.diff && run.strict?.status === 'fail' && (run.reviewCycles || 0) >= REVIEW_MAX && (run.runThrough || run.shipThrough)) {
+    state.run = { ...state.run, strict: undefined, error: undefined }
+    persist(state)
+    track(state, reviewStep(state))
+    return state.run
+  }
   if (target === 'review' && run.diff) return setPhase(state, 'review')
   if (target === 'verify' || target === 'review') {
     track(state, verifyStep(state))
@@ -1390,7 +1454,7 @@ function resumeTo(state: Live, target: RunPhase): RunRecord {
     run.phase === 'failed' && run.note
       ? run.note
       : 'Resumed after a pause. Check what is already done in the work repo, then finish the task.'
-  track(state, buildStep(state, 'build', note))
+  track(state, buildStep(state, 'build', note, false, { adopt: true }))
   return state.run
 }
 
@@ -1595,11 +1659,37 @@ function judgeGuide(state: Live): void {
 /** by 'joe': a click (IPC). Only clicks are judgments in the shadow ledger; finishReview's auto-commit is not. ship: the conductor's commit, which does not bounce on voice or the tripwire. */
 export type Actor = { by?: 'joe'; ship?: boolean }
 
-/** A conductor status or a reply that ran no door. Sent, so the next builder brief does not carry it. */
+/** Sentences from the run. A conductor failure never becomes the bubble. */
+export function explainRun(run: RunRecord): string {
+  const looked = run.workRepo || ''
+  const found = resolveWorkRepo({ task: run.task, brainPath: run.brainPath, projectsDir: deps?.projectsDir })
+  const named = found.ok && realish(found.workRepo) !== realish(looked) ? found.workRepo : ''
+  const bits = [`The run is ${run.phase}.`]
+  if (run.error) bits.push(run.error)
+  if (looked) bits.push(`It is looking in ${looked}.`)
+  if (named) bits.push(`The task names ${named}.`)
+  return bits.join(' ')
+}
+
+export const INJECT_ACK = 'Filed with the plan. It waits until the run continues.'
+
+/** Add a sentence to the plan. On a paused run it stays paused and unsent until Resume. */
+export function queueInject(id: string, text: string): RunRecord {
+  const state = liveFor(id)
+  const body = String(text || '').trim().slice(0, GUIDE_CHARS)
+  if (!body) throw new Error('Type a note first.')
+  if (TERMINAL_PHASES.includes(state.run.phase)) throw new Error('This run is over. Start a new run.')
+  const named = exactNamedRepo(state, body)
+  const note: GuideNote = { at: Date.now(), text: body, sent: false, repo: named, ack: INJECT_ACK }
+  state.run = { ...state.run, guide: [...(state.run.guide || []), note].slice(-GUIDE_MAX) }
+  return persist(state)
+}
+
+/** A conductor answer. Sent, so the next builder brief does not carry it, and it never chooses a repo. */
 export function appendSentNote(id: string, text: string, ack: string): RunRecord {
   const state = liveFor(id)
   const body = String(text || '').trim().slice(0, GUIDE_CHARS)
-  const note: GuideNote = { at: Date.now(), text: body, sent: true, ack: String(ack || '').slice(0, 2000) }
+  const note: GuideNote = { at: Date.now(), text: body, sent: true, repo: '', ask: true, ack: String(ack || '').slice(0, 2000) }
   state.run = { ...state.run, guide: [...(state.run.guide || []), note].slice(-GUIDE_MAX) }
   return persist(state)
 }

@@ -723,7 +723,7 @@ export function FactoryPane(props: {
               ref={noteRef}
               value={note}
               rows={2}
-              placeholder="Guide this run"
+              placeholder="Ask about this run"
               onChange={(e) => setNote(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {

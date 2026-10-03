@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -53,6 +53,7 @@ let KENNEL_DEPLOY_REFUSAL = ''
 
 const STATUS = "What's happening?"
 const STATUS_REPLY = 'The build is still running.'
+const STATUS_SHIP = 'how far has it gotten'
 const EDIT = 'please make the button blue'
 const EDIT_TEXT = 'make the button blue'
 const EDIT_REPLY = 'Filing that edit.'
@@ -93,6 +94,8 @@ test('plan, strict, and build wording, and the T3 limit stays', () => {
   const send = pane.slice(pane.indexOf('async function sendNote'), pane.indexOf('const voiceHeld'))
   assert.match(send, /factory\.conduct\(/)
   assert.equal(send.includes('factory.guide('), false)
+  assert.match(pane, /placeholder="Ask about this run"/)
+  assert.equal(pane.includes('placeholder="Guide this run"'), false)
 })
 
 function git(cwd: string, args: string[]): string {
@@ -177,10 +180,24 @@ let failsLeft = 1_000_000
 let touch: () => void = () => {}
 let lastPrompt = ''
 let activeId = ''
+let stamp = 0
+
+/** A fix that writes the same bytes pauses on the third unchanged diff. Each turn changes one comment. */
+function stampWork(): void {
+  if (!activeId) return
+  const repo = getRun(activeId)?.workRepo
+  if (!repo) return
+  const file = join(repo, 'src.ts')
+  if (!existsSync(file)) return
+  stamp++
+  const cur = readFileSync(file, 'utf8').replace(/\n\/\*s\d+\*\/$/, '')
+  writeFileSync(file, `${cur.replace(/\n$/, '')}\n/*s${stamp}*/`)
+}
 
 function replyFor(prompt: string): string {
   const joe = (prompt.split('\n').find((l) => l.startsWith('Joe: ')) || '').slice(5)
   if (joe === STATUS) return JSON.stringify({ kind: 'none', reply: STATUS_REPLY })
+  if (joe === STATUS_SHIP) return JSON.stringify({ kind: 'ship', reply: SHIP_REPLY })
   if (joe === EDIT) return JSON.stringify({ kind: 'guide', text: EDIT_TEXT, reply: EDIT_REPLY })
   if (joe === BAD) return JSON.stringify({ kind: 'teleport', phase: 'done', reply: 'no' })
   if (joe === REVIEW_GO) return JSON.stringify({ kind: 'override', boundary: 'review', on: true, reply: 'Review continues.' })
@@ -209,6 +226,7 @@ const deps: FactoryDeps = {
         })
       }
       touch()
+      stampWork()
       return ''
     },
     cancel: () => {
@@ -257,6 +275,7 @@ const deps: FactoryDeps = {
       }
     } else if (!opusPass) result = 'gap\nGAPS: 1\nFAIL'
     let wait: Promise<void> | undefined
+    if (args.includes('bypassPermissions')) stampWork()
     if (armGate && args.includes('bypassPermissions')) {
       armGate = false
       wait = new Promise<void>((r) => {
@@ -384,6 +403,17 @@ test('conductor drives the factory from the guide box', async () => {
   await conduct(activeId, STATUS)
   assert.match(lastPrompt, /"text":"What's happening\?"/)
   assert.match(lastPrompt, /"ack":"The build is still running\."/)
+  const shipAskGen = factoryGen(activeId)
+  await conduct(activeId, STATUS_SHIP)
+  const shipAsk = (runOf().guide || []).find((g) => g.text === STATUS_SHIP)
+  assert.equal(runOf().phase, 'build')
+  assert.equal(factoryGen(activeId), shipAskGen)
+  assert.equal(pubs.length, 0)
+  assert.equal(shipAsk?.sent, true)
+  assert.equal(shipAsk?.ask, true)
+  assert.equal(shipAsk?.repo, '')
+  assert.match(shipAsk?.ack || '', /build/)
+  assert.notEqual(shipAsk?.ack, SHIP_REPLY)
   await conduct(activeId, SHIP)
   assert.equal(runOf().phase, 'build')
   assert.equal(pubs.length, 0)
@@ -396,14 +426,20 @@ test('conductor drives the factory from the guide box', async () => {
   touch = () => writeFileSync(join(editRepo, 'src.ts'), 'export const n = 3\n')
   await until(() => runOf().phase === 'review' && !!runOf().diff, 'edit review')
   const beforeEdit = prompts.length
+  const editGen = factoryGen(activeId)
   await conduct(activeId, EDIT)
   const edited = runOf()
-  const editNote = (edited.guide || []).find((g) => g.text === EDIT_TEXT)
+  const editNote = (edited.guide || []).find((g) => g.text === EDIT)
   assert.ok(editNote)
-  assert.equal((edited.guide || []).some((g) => g.text === EDIT), false)
-  assert.equal(editNote?.ack, EDIT_REPLY)
-  assert.notEqual(editNote?.ack, ACK_NOTED)
-  await until(() => prompts.length > beforeEdit, 'edit turn')
+  assert.equal((edited.guide || []).some((g) => g.text === EDIT_TEXT), false)
+  assert.equal(editNote?.sent, true)
+  assert.equal(editNote?.ask, true)
+  assert.equal(editNote?.repo, '')
+  assert.match(editNote?.ack || '', /review/)
+  assert.notEqual(editNote?.ack, EDIT_REPLY)
+  assert.equal(factoryGen(activeId), editGen)
+  assert.equal(prompts.length, beforeEdit)
+  assert.equal(edited.phase, 'review')
   await settle(activeId)
 
   reset()
@@ -624,6 +660,24 @@ test('conductor drives the factory from the guide box', async () => {
   await conduct(activeId, RESUME)
   assert.equal(runOf().phase, 'review')
   assert.equal((runOf().guide || []).find((g) => g.text === RESUME)?.ack, 'Resumed.')
+
+  reset()
+  const injectRepo = await boot('inject', 'fix typo in footer')
+  touch = () => writeFileSync(join(injectRepo, 'src.ts'), 'export const n = 15\n')
+  await until(() => runOf().phase === 'review' && !!runOf().diff, 'inject review')
+  await conduct(activeId, PAUSE)
+  const injectGen = factoryGen(activeId)
+  const injectPrompts = prompts.length
+  await conduct(activeId, 'we forgot the soffit, add this to the plan')
+  const injected = runOf()
+  const injectNote = (injected.guide || []).find((g) => g.text.includes('soffit'))
+  assert.equal(injected.phase, 'paused')
+  assert.equal(factoryGen(activeId), injectGen)
+  assert.equal(prompts.length, injectPrompts)
+  assert.equal(injectNote?.sent, false)
+  assert.equal(injectNote?.repo, '')
+  assert.match(injectNote?.ack || '', /Filed with the plan/)
+  assert.equal(realpathSync(injected.workRepo), realpathSync(injectRepo))
 
   reset()
   voiceCode = 2

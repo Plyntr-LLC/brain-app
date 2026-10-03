@@ -45,7 +45,8 @@ export const ACK_NOTED = 'Just noted.'
 /** One note Joe sent from the Factory composer. `sent` once a builder or planner brief carried it. */
 /** repo: what this note named when it was first read ('' for nothing), so a later move never re-reads it. */
 /** ack: the reply bubble shown under the note. */
-export type GuideNote = { at: number; text: string; sent?: boolean; repo?: string; ack?: string }
+/** ask: a question. It never chooses the work repo. */
+export type GuideNote = { at: number; text: string; sent?: boolean; repo?: string; ack?: string; ask?: boolean }
 
 export type VerifyRow = { script: string; status: 'pass' | 'fail' | 'skipped'; tail?: string }
 

@@ -115,6 +115,7 @@ const acp = (await import(src('acp-session.ts'))) as typeof import('../src/main/
 const gargs = (await import(src('grok-args.ts'))) as typeof import('../src/main/grok-args.ts')
 const store = (await import(src('factory/run-store.ts'))) as typeof import('../src/main/factory/run-store.ts')
 const ctl = (await import(src('factory/controller.ts'))) as typeof import('../src/main/factory/controller.ts')
+const conductor = (await import(src('factory/conductor.ts'))) as typeof import('../src/main/factory/conductor.ts')
 const gates = (await import(src('factory/gates.ts'))) as typeof import('../src/main/factory/gates.ts')
 const { BRIEF_MAX } = (await import(src('factory/brief.ts'))) as typeof import('../src/main/factory/brief.ts')
 const files = (await import(src('files.ts'))) as typeof import('../src/main/files.ts')
@@ -603,7 +604,19 @@ const json = process.argv[process.argv.indexOf('--output-format') + 1] === 'json
 const envelope = (text) => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, total_cost_usd: 0.0123, usage: { input_tokens: 111, output_tokens: 22, cache_read_input_tokens: 3333, cache_creation_input_tokens: 444 }, modelUsage: { 'claude-fake-served': { costUSD: 0.0123 } } })
 const say = (text) => process.stdout.write(json ? envelope(text) : text + '\\n')
 // The Opus builder (bypassPermissions) never takes a planner or reviewer line from the queue.
+// Each turn appends a new comment so a long review loop does not pause on an unchanged diff.
 if (process.argv.includes('bypassPermissions')) {
+  try {
+    const path = require('path')
+    const srcDir = path.join(process.cwd(), 'src')
+    const names = fs.existsSync(srcDir) ? fs.readdirSync(srcDir).filter((n) => /\\.(ts|js|mjs)$/.test(n)).sort() : []
+    if (names.length) {
+      const file = path.join(srcDir, names[0])
+      const cur = fs.readFileSync(file, 'utf8')
+      const n = (cur.match(/\\/\\*f\\d+\\*\\//g) || []).length + 1
+      fs.writeFileSync(file, cur.replace(/\\s*$/, '') + '\\n/*f' + n + '*/\\n')
+    }
+  } catch {}
   setTimeout(() => { say('Opus built it.'); process.exit(0) }, Number(process.env.FAKE_CLAUDE_BUILD_SLEEP || 0))
 } else setTimeout(answer, Number(process.env.FAKE_CLAUDE_DELAY || 0))
 function answer() {
@@ -1162,9 +1175,71 @@ ctl.configureFactory(fakeDeps)
   check('UX 6 guide note is on the run and marked sent', r5?.guide?.length === 1 && r5.guide[0].text === 'Rename x to count in src/app.ts' && r5.guide[0].sent === true)
   check('UX 9 clean pass after keep fixing is an Opus approval: runThrough + shipThrough commit and push to main', r5?.phase === 'done' && !!r5.commitSha && r5.pushed?.branch === 'main' && pushCalls === push4 + 1, JSON.stringify({ phase: r5?.phase, err: r5?.pushError, pushed: r5?.pushed }))
   if (r5?.phase !== 'done') ctl.abandonRun(id5)
+  reset2()
+
+  // UX 8 two settles on a new run: a nit holds, then Resume with a clean PASS continues. Not the id5 run above.
+  const boxSettle = async (o: { runThrough?: boolean; shipThrough?: boolean }, label: string) => {
+    claudeSays([...Array(shared.REVIEW_MAX).fill(nit), 'GAPS: 0\nPASS'])
+    const head = git(work2, ['rev-parse', 'HEAD']).trim()
+    const pushAt = pushCalls
+    const depAt = deployCalls
+    const res = ctl.startRun({ task: APITASK, workRepo: work2, brainPath: brainA, runThrough: !!o.runThrough, shipThrough: !!o.shipThrough })
+    const id = res.ok ? res.run.id : ''
+    const held = await ctl.settle(id)
+    check(
+      `${label} nit PASS holds at REVIEW_MAX, HEAD unchanged, no push`,
+      held?.phase === 'review' && !!held.diff && held.reviewCycles === shared.REVIEW_MAX && held.strict?.status === 'fail' && !held.commitSha && git(work2, ['rev-parse', 'HEAD']).trim() === head && pushCalls === pushAt,
+      JSON.stringify({ phase: held?.phase, cycles: held?.reviewCycles, strict: held?.strict?.status, error: held?.error })
+    )
+    ctl.resumeRun(id)
+    const done = await ctl.settle(id)
+    return { id, done, pushAt, depAt, head }
+  }
+  {
+    const { id, done, pushAt, depAt } = await boxSettle({ runThrough: true, shipThrough: true }, 'UX 8 both boxes')
+    check(
+      'UX 8 both boxes: Resume with a clean PASS commits and pushes, no deploy',
+      done?.phase === 'done' && !!done.commitSha && done.pushed?.branch === 'main' && pushCalls === pushAt + 1 && deployCalls === depAt && !done.deployed,
+      JSON.stringify({ phase: done?.phase, pushed: done?.pushed, err: done?.pushError, error: done?.error, deploy: done?.deployed })
+    )
+    if (done?.phase !== 'done') ctl.abandonRun(id)
+    reset2()
+  }
+  {
+    const { id, done, pushAt, depAt } = await boxSettle({ runThrough: true }, 'UX 8 approve only')
+    check(
+      'UX 8 approve only: Resume with a clean PASS commits and does not push',
+      done?.phase === 'done' && !!done.commitSha && !done.pushed && pushCalls === pushAt && deployCalls === depAt,
+      JSON.stringify({ phase: done?.phase, pushed: done?.pushed, err: done?.error, sha: done?.commitSha })
+    )
+    if (done?.phase !== 'done') ctl.abandonRun(id)
+    reset2()
+  }
   fakeDeps.publish = publish0
   ctl.configureFactory(fakeDeps)
   reset2()
+}
+
+// A fix that writes the same bytes twice pauses on the third failed review. No third fix, no commit.
+{
+  const stall = repo('stall', { 'package.json': pkg, 'src/a.ts': 'export const a = 0\n' })
+  promptPlan = async (o) => {
+    if (/Phase: (build|fix)\./.test(o.text)) writeFileSync(join(stall, 'src', 'a.ts'), 'export const a = 1\n')
+  }
+  claudeSays(Array(4).fill('Bug at src/a.ts:1\nGAPS: 1\nFAIL'))
+  const head = git(stall, ['rev-parse', 'HEAD']).trim()
+  const p0 = promptCount()
+  const res = ctl.startRun({ task: 'fix typo in the app label', workRepo: stall, brainPath: brainA, shipThrough: true })
+  const id = res.ok ? res.run.id : ''
+  const r = await ctl.settle(id)
+  const turns = promptsFrom(p0)
+  check(
+    'STALL the third unchanged diff pauses with the reviewer line, two fixes, no commit',
+    r?.phase === 'paused' && /The diff did not change/.test(r?.error || '') && /src\/a\.ts:1/.test(r?.error || '') && turns.filter((t) => /Phase: fix\./.test(t)).length === 2 && turns.length === 3 && !r.commitSha && git(stall, ['rev-parse', 'HEAD']).trim() === head,
+    JSON.stringify({ phase: r?.phase, error: r?.error, turns: turns.length, fixes: turns.filter((t) => /Phase: fix\./.test(t)).length })
+  )
+  if (id) ctl.abandonRun(id)
+  promptPlan = async () => {}
 }
 
 // UX 6. Guide while the plan waits: a fresh Opus plan with the note, still waiting, not a reject.
@@ -1814,7 +1889,7 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
   const turnsE = promptsFrom(p4)
   check(
     'GF 1 an empty turn gets one more builder turn, then pauses (not failed); Guide Send starts a builder turn with the note and marks it sent',
-    rE0?.phase === 'paused' && /changed no files/.test(rE0?.error || '') && sent.phase === 'build' && !!noteE?.sent && turnsE.length === 1 && turnsE[0].includes('The label is in src/quote.ts') && rE?.phase !== 'failed' && (rE?.audit?.work || []).some((r) => r.path === 'src/quote.ts'),
+    rE0?.phase === 'paused' && /changed no files/.test(rE0?.error || '') && (rE0?.error || '').includes(quote) && sent.phase === 'build' && !!noteE?.sent && turnsE.length === 1 && turnsE[0].includes('The label is in src/quote.ts') && rE?.phase !== 'failed' && (rE?.audit?.work || []).some((r) => r.path === 'src/quote.ts'),
     JSON.stringify({ before: rE0?.phase, sentPhase: sent.phase, noteSent: noteE?.sent, turns: turnsE.length, after: rE?.phase, error: rE?.error })
   )
   if (idE) ctl.abandonRun(idE)
@@ -1876,6 +1951,58 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
     JSON.stringify({ now: restored?.workRepo, phase: restored?.phase, error: restored?.error })
   )
   if (idO) ctl.abandonRun(idO)
+
+  // Stuck pin: a sent "grok exited" note on simplerealign does not hold the run. A question names both folders.
+  // An add-to-the-run sentence stays unsent while paused. Resume takes the task's repo and the uncommitted file, no builder.
+  // These folders are created here and removed after, so "Plyntr" in earlier and later tasks still means mail-desk.
+  {
+    const simpleRepo = repo('projects/simplerealign', { 'package.json': pkg, 'src/page.ts': 'export const page = 1\n' })
+    const configRepo = repo('projects/plyntr-configurator', { 'package.json': pkg, 'src/ridge.ts': 'export const ridge = 1\n' })
+    promptPlan = async () => {}
+    const pin = ctl.startRun({ task: 'fix typo in the app label', workRepo: simpleRepo, brainPath: brainA })
+    const idP = pin.ok ? pin.run.id : ''
+    const parked = await ctl.settle(idP)
+    const live = ctl.getRun(idP)
+    if (live) {
+      live.task = `Fix the ridge in ${configRepo}`
+      live.guide = [...(live.guide || []), { at: Date.now(), text: 'give me a simple rundown of where the factory stopped', sent: true, ack: 'grok exited 1', repo: simpleRepo }]
+      store.saveRun(live)
+    }
+    fakeDeps.askConductor = async () => '{"action":"none"}'
+    ctl.configureFactory(fakeDeps)
+    const asked = await conductor.conduct(idP, 'what is going on with this run')
+    const askNote = asked.guide?.find((g) => g.text === 'what is going on with this run')
+    check(
+      'PIN a question names the folder it is looking in and the folder the task names',
+      parked?.phase === 'paused' && asked.phase === 'paused' && same(asked.workRepo, simpleRepo) && askNote?.ask === true && askNote.repo === '' && (askNote.ack || '').includes(simpleRepo) && (askNote.ack || '').includes(configRepo),
+      JSON.stringify({ phase: asked.phase, repo: asked.workRepo, ack: askNote?.ack })
+    )
+    const gen = ctl.factoryGen(idP)
+    const pAsk = promptCount()
+    const filed = await conductor.conduct(idP, 'we forgot the soffit, add this to the plan')
+    const soffit = filed.guide?.find((g) => g.text.includes('soffit'))
+    check(
+      'PIN add-to-the-run on a paused run stays paused, unsent, and on simplerealign',
+      filed.phase === 'paused' && ctl.factoryGen(idP) === gen && promptCount() === pAsk && soffit?.sent === false && soffit?.repo === '' && /Filed with the plan/.test(soffit?.ack || '') && same(filed.workRepo, simpleRepo),
+      JSON.stringify({ phase: filed.phase, sent: soffit?.sent, repo: soffit?.repo, ack: soffit?.ack, work: filed.workRepo })
+    )
+    writeFileSync(join(configRepo, 'src', 'soffit.ts'), 'export const soffit = 1\n')
+    claudeSays(['GAPS: 0\nPASS'])
+    const pResume = promptCount()
+    ctl.resumeRun(idP)
+    const moved = await ctl.settle(idP)
+    check(
+      'PIN resume drops the stuck repo, keeps the uncommitted file, and does not start a builder',
+      promptCount() === pResume && same(moved?.workRepo, configRepo) && (moved?.audit?.work || []).some((row) => row.path === 'src/soffit.ts') && (moved?.phase === 'review' || moved?.phase === 'verify' || moved?.phase === 'done'),
+      JSON.stringify({ phase: moved?.phase, repo: moved?.workRepo, prompts: promptCount() - pResume, work: moved?.audit?.work, error: moved?.error })
+    )
+    delete fakeDeps.askConductor
+    ctl.configureFactory(fakeDeps)
+    if (idP) ctl.abandonRun(idP)
+    rmSync(simpleRepo, { recursive: true, force: true })
+    rmSync(configRepo, { recursive: true, force: true })
+    promptPlan = async () => {}
+  }
 
   // WR 1 restore dirty: a run saved mid-plan comes back paused; the dirty mail-desk it moves to waits on Commit/Stash first.
   writeFileSync(join(mailDesk, 'wip.txt'), 'wip\n')
@@ -3354,8 +3481,11 @@ setTimeout(() => {
       const revs = opusReviews(claudeRows().slice(c0))
       check('PM 2 plain run with Ship in advance gets an Opus review at low, then pushes main', revs.length === 1 && revs[0].argv[revs[0].argv.indexOf('--effort') + 1] === 'low' && r?.phase === 'done' && r.pushed?.branch === 'main' && x.at('main') === r.commitSha, JSON.stringify({ revs: revs.length, phase: r?.phase, pushed: r?.pushed, err: r?.pushError }))
       const y = remoteRepo('ev-pm2b')
-      const { r: held } = await evStart(y.r, Array(shared.REVIEW_MAX).fill('Bug\nGAPS: 1\nFAIL'), { ship: true, task: PLAIN })
-      check('PM 2 Ship in advance with REVIEW_MAX fails holds at REVIEW_MAX, no push, remote unchanged', held?.phase === 'review' && held.reviewCycles === shared.REVIEW_MAX && !held.pushed && y.refs() === '', JSON.stringify({ phase: held?.phase, cycles: held?.reviewCycles }))
+      const { id: heldId, r: held } = await evStart(y.r, [...Array(shared.REVIEW_MAX).fill('Bug\nGAPS: 1\nFAIL'), 'GAPS: 0\nPASS'], { ship: true, task: PLAIN })
+      check('PM 2 Ship in advance with REVIEW_MAX fails holds at REVIEW_MAX, no push, remote unchanged', held?.phase === 'review' && held.reviewCycles === shared.REVIEW_MAX && !held.pushed && y.refs() === '', JSON.stringify({ phase: held?.phase, cycles: held?.reviewCycles, error: held?.error }))
+      ctl.resumeRun(heldId)
+      const cont = await ctl.settle(heldId)
+      check('PM 2 Ship in advance resumes past REVIEW_MAX on a clean PASS: commit and push, no deploy', cont?.phase === 'done' && !!cont.commitSha && cont.pushed?.branch === 'main' && y.at('main') === cont.commitSha && !cont.deployed, JSON.stringify({ phase: cont?.phase, pushed: cont?.pushed, err: cont?.pushError, error: cont?.error }))
     }
     // PM 3: Ship in advance off, plain run: no Opus review, no push.
     {
