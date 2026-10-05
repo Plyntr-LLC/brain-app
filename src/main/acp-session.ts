@@ -22,7 +22,7 @@ import {
   killGrokFactoryLeader,
   setGrokFactoryLeaderEnv
 } from './grok-leader'
-import { ensureShims, factoryEnv, factoryWriteBlock, filterFactoryPermission } from './factory/gates'
+import { ensureShims, factoryEnv, factorySessionRules, factoryWriteBlock, filterFactoryPermission, watchOnlyDecision, WATCH_WRITE_REFUSAL } from './factory/gates'
 import { cursorGrokModel, grokUsageBlocked, needOpusError } from './factory/fallback'
 import { factoryCursorAcpArgs } from './grok-args'
 import { realish } from './factory/paths'
@@ -90,7 +90,7 @@ export type Tab = {
   permOptions?: { id: string; label: string }[]
   /** Factory tabs only: where this run's edits may land. */
   /** runThrough: Approve in advance. Asks that pass the Factory filter are allowed without the card. */
-  factory?: { brainPath: string; workRepo: string; runThrough?: boolean }
+  factory?: { brainPath: string; workRepo: string; runThrough?: boolean; watchOnly?: boolean }
 }
 
 export type Pool = {
@@ -316,8 +316,8 @@ export function poolKey(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat
  * session/new params. Chat Grok keeps yoloMode; Factory never sends it. `_meta` is Grok-only: Cursor
  * (Chat or Factory) never gets it; Factory Cursor's rules lead each brief instead. Exported for the fixture check.
  */
-export function sessionNewParams(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat'): Record<string, unknown> {
-  if (lane === 'factory') return kind === 'grok' ? { cwd, mcpServers: [], _meta: { rules: FACTORY_RULES } } : { cwd, mcpServers: [] }
+export function sessionNewParams(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat', rules?: string): Record<string, unknown> {
+  if (lane === 'factory') return kind === 'grok' ? { cwd, mcpServers: [], _meta: { rules: rules || FACTORY_RULES } } : { cwd, mcpServers: [] }
   return kind === 'grok'
     ? { cwd, mcpServers: [], _meta: { yoloMode: true, rules: RULES } }
     : { cwd, mcpServers: [] }
@@ -579,6 +579,7 @@ function acpWriteBlock(pool: Pool, sessionId: string, abs: string): string | nul
     const tabId = pool.bySid.get(sessionId)
     const tab = tabId ? pool.tabs.get(tabId) : undefined
     const ctx = tab?.factory || { brainPath: pool.cwd, workRepo: '' }
+    if (ctx.watchOnly) return WATCH_WRITE_REFUSAL
     return factoryWriteBlock(abs, ctx.brainPath, ctx.workRepo)
   }
   return null
@@ -599,16 +600,17 @@ export function handleReq(pool: Pool, msg: RpcMsg): void {
         return
       }
       const ctx = tab.factory || { brainPath: pool.cwd, workRepo: '' }
-      if (filterFactoryPermission(msg, ctx) === 'reject') {
+      const tool = asRecord(p.toolCall)
+      const decision = watchOnlyDecision(!!ctx.watchOnly, String(tool.kind || '').toLowerCase(), filterFactoryPermission(msg, ctx), !!ctx.runThrough)
+      if (decision === 'reject') {
         const optionId = rejectOption(msg)
         if (optionId) pool.rpc.reply(msg.id, { outcome: { outcome: 'selected', optionId } })
         else pool.rpc.reply(msg.id, { outcome: { outcome: 'cancelled' } })
-        const tool = asRecord(p.toolCall)
         const ev: StreamEvent = { kind: 'status', data: 'work:Refused: ' + String(p.title || tool.title || 'publish or brain edit').slice(0, 70) }
         if (tab.onEvent) tab.onEvent(ev)
         return
       }
-      if (ctx.runThrough) {
+      if (decision === 'allow') {
         const optionId = allowOption(msg)
         if (optionId) {
           pool.rpc.reply(msg.id, { outcome: { outcome: 'selected', optionId } })
@@ -1462,6 +1464,7 @@ export async function factoryWarm(opts: {
 }): Promise<{ sessionId: string; loaded: boolean; builder: 'grok' | 'cursor' }> {
   return withTabLock(opts.tabId, async () => {
     let grokModel: string | undefined
+    if (opts.tabId.endsWith('-orch')) return { ...(await warmFactoryGrok(opts)), builder: 'grok' as const }
     if (opts.builder !== 'cursor') {
       try {
         return { ...(await warmFactoryGrok(opts)), builder: 'grok' as const }
@@ -1497,7 +1500,7 @@ async function warmFactoryGrok(opts: {
 }): Promise<{ sessionId: string; loaded: boolean }> {
   const pool = await bootPool('grok', opts.brainPath, 'factory')
   tabPool.set(opts.tabId, poolKey('grok', opts.brainPath, 'factory'))
-  const factory = { brainPath: opts.brainPath, workRepo: opts.workRepo, runThrough: opts.runThrough === true }
+  const factory = { brainPath: opts.brainPath, workRepo: opts.workRepo, runThrough: opts.runThrough === true, watchOnly: opts.tabId.endsWith('-orch') }
   const have = pool.tabs.get(opts.tabId)
   if (have && (!opts.resumeId || opts.resumeId === have.sessionId)) {
     have.factory = factory
@@ -1521,7 +1524,8 @@ async function warmFactoryGrok(opts: {
     // A new Grok session on a spent account: the credit meter says so before a turn is wasted.
     const billing = await pool.rpc.request('_x.ai/billing', {}, 5_000).catch(() => null)
     if (grokUsageBlocked(asRecord(billing))) throw new Error('Grok credits are used up for this period.')
-    const res = asRecord(await pool.rpc.request('session/new', sessionNewParams('grok', opts.brainPath, 'factory'), 0))
+    const watchRules = factorySessionRules(opts.tabId)
+    const res = asRecord(await pool.rpc.request('session/new', sessionNewParams('grok', opts.brainPath, 'factory', watchRules || undefined), 0))
     sid = String(res.sessionId || '')
     live = readLive(res)
   }
@@ -1555,7 +1559,7 @@ async function warmFactoryCursor(opts: {
     pool = await bootPool('cursor', opts.brainPath, 'factory', opts.workRepo)
   }
   tabPool.set(opts.tabId, key)
-  const factory = { brainPath: opts.brainPath, workRepo: opts.workRepo, runThrough: opts.runThrough === true }
+  const factory = { brainPath: opts.brainPath, workRepo: opts.workRepo, runThrough: opts.runThrough === true, watchOnly: opts.tabId.endsWith('-orch') }
   const have = pool.tabs.get(opts.tabId)
   if (have && (!opts.resumeId || opts.resumeId === have.sessionId)) {
     have.factory = factory
@@ -1624,6 +1628,12 @@ export function registerPoolForCheck(pool: Pool): void {
   for (const id of pool.tabs.keys()) tabPool.set(id, key)
 }
 
+/** Cursor builder turns lead with the builder rules. The watch tab never does. */
+export function factoryPromptText(tabId: string, kind: 'grok' | 'cursor', text: string): string {
+  if (kind === 'cursor' && !tabId.endsWith('-orch')) return `${FACTORY_RULES}\n\n${text}`
+  return text
+}
+
 async function factoryPromptOn(
   pool: Pool,
   tab: Tab,
@@ -1637,7 +1647,7 @@ async function factoryPromptOn(
   tab.promptId = gen
   try {
     let raw: unknown = null
-    const text = pool.kind === 'cursor' ? `${FACTORY_RULES}\n\n${opts.text}` : opts.text
+    const text = factoryPromptText(tab.tabId, pool.kind, opts.text)
     await deliverAcpPrompt(pool.kind, opts.brainPath, tab.sessionId, text, [], {
       request: async (method, params, timeout) => {
         raw = await pool.rpc.request(method, params as never, timeout)
@@ -1681,6 +1691,7 @@ export async function factoryPrompt(opts: {
   } catch (e) {
     if (!grokUsageBlocked(e)) throw e
     if (pool.kind === 'cursor') throw needOpusError(`Cursor could not run: ${String((e as Error)?.message || e)}`)
+    if (opts.tabId.endsWith('-orch')) throw e
   }
   const ctx = tab.factory || { brainPath: opts.brainPath, workRepo: '' }
   const next = await withTabLock(opts.tabId, async () => {

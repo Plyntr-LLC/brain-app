@@ -999,7 +999,7 @@ const brain = {
           | { runId: string; kind: 'run'; run: FactoryRun }
           | {
               runId: string
-              kind: 'stream'
+              kind: 'stream' | 'guide'
               ev: {
                 kind: string
                 data?: string

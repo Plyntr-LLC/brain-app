@@ -13,6 +13,7 @@ import type { Decision, FactoryDeps, StartResult } from './controller.ts'
 import type { SpawnFn } from './opus.ts'
 import { planPrompt, strictPrompt } from './opus.ts'
 import type { ProfilePatch } from './profile.ts'
+import { factorySessionRules, watchOnlyDecision } from './gates.ts'
 import { TIER_LIMITS } from './tripwire.ts'
 
 registerHooks({
@@ -39,6 +40,7 @@ const projects = join(temp, 'projects')
 mkdirSync(userData, { recursive: true })
 mkdirSync(projects, { recursive: true })
 
+let explainRun: (run: RunRecord) => string
 let conduct: (id: string, text: string) => Promise<RunRecord>
 let configureFactory: (next: FactoryDeps) => void
 let startRun: (input: { task: string; workRepo: string; brainPath: string }) => StartResult
@@ -96,6 +98,19 @@ test('plan, strict, and build wording, and the T3 limit stays', () => {
   assert.equal(send.includes('factory.guide('), false)
   assert.match(pane, /placeholder="Ask about this run"/)
   assert.equal(pane.includes('placeholder="Guide this run"'), false)
+  assert.ok(send.indexOf('showOutgoing(') < send.indexOf('factory.conduct('))
+  const guideAt = pane.indexOf("e.kind === 'guide'")
+  const streamAt = pane.indexOf("e.kind !== 'stream'")
+  assert.ok(guideAt > 0 && streamAt > guideAt)
+  assert.equal(pane.slice(guideAt, streamAt).includes('setActivity'), false)
+  assert.match(pane.slice(guideAt, streamAt), /raw: p\.raw/)
+  assert.equal(watchOnlyDecision(true, 'read', 'ask', false), 'allow')
+  assert.equal(watchOnlyDecision(true, 'edit', 'ask', true), 'reject')
+  assert.equal(watchOnlyDecision(false, 'edit', 'ask', false), 'ask')
+  assert.equal(watchOnlyDecision(false, 'edit', 'ask', true), 'allow')
+  assert.equal(factorySessionRules('factory-1'), '')
+  assert.equal(factorySessionRules('factory-1-orch').includes('You are a Factory builder'), false)
+  assert.match(factorySessionRules('factory-1-orch'), /Do not edit/)
 })
 
 function git(cwd: string, args: string[]): string {
@@ -145,6 +160,9 @@ function envelope(result: string): string {
 }
 
 let prompts: string[] = []
+let promptCalls: { tabId: string; text: string }[] = []
+let warms: string[] = []
+let orchMode: 'card' | 'empty' | 'throw' | 'tell' | 'notell' | 'tell-anyway' = 'card'
 let cancels = 0
 let pubs: { allow?: boolean }[] = []
 let publishAllow: boolean | undefined
@@ -194,6 +212,23 @@ function stampWork(): void {
   writeFileSync(file, `${cur.replace(/\n$/, '')}\n/*s${stamp}*/`)
 }
 
+function replyFromCard(prompt: string): string {
+  const cycles = prompt.match(/^reviewCycles: (\d+)$/m)
+  const strict = prompt.match(/^strict: (\S+)$/m)
+  if (!cycles || !strict) return 'no card'
+  return `Strict rejects: ${cycles[1]}. Latest review: ${strict[1]}.`
+}
+
+function orchAnswer(prompt: string): string {
+  lastPrompt = prompt
+  if (orchMode === 'throw') throw new Error('session down')
+  if (orchMode === 'empty') return ''
+  if (orchMode === 'tell') return 'Adding that.\nFACTORY_TELL: add a footer credit'
+  if (orchMode === 'notell') return 'I can add that.'
+  if (orchMode === 'tell-anyway') return 'It is still going.\nFACTORY_TELL: add a footer credit'
+  return replyFromCard(prompt)
+}
+
 function replyFor(prompt: string): string {
   const joe = (prompt.split('\n').find((l) => l.startsWith('Joe: ')) || '').slice(5)
   if (joe === STATUS) return JSON.stringify({ kind: 'none', reply: STATUS_REPLY })
@@ -215,9 +250,16 @@ function replyFor(prompt: string): string {
 
 const deps: FactoryDeps = {
   driver: {
-    warm: async () => ({ sessionId: 'sess' }),
+    warm: async (o) => {
+      warms.push(String(o.tabId || ''))
+      return { sessionId: 'sess' }
+    },
     prompt: async (o) => {
-      prompts.push(String(o.text || ''))
+      const tabId = String(o.tabId || '')
+      const text = String(o.text || '')
+      promptCalls.push({ tabId, text })
+      if (tabId.endsWith('-orch')) return orchAnswer(text)
+      prompts.push(text)
       if (hang) return new Promise(() => {})
       if (armGate) {
         armGate = false
@@ -301,6 +343,9 @@ const deps: FactoryDeps = {
 
 function reset(): void {
   prompts = []
+  promptCalls = []
+  warms = []
+  orchMode = 'card'
   cancels = 0
   pubs = []
   publishAllow = undefined
@@ -350,6 +395,7 @@ async function boot(name: string, task: string, o: { voice?: boolean; remote?: b
 
 test('conductor drives the factory from the guide box', async () => {
   const mods = await loaded
+  explainRun = mods.controller.explainRun
   conduct = mods.conductor.conduct
   configureFactory = mods.controller.configureFactory
   startRun = mods.controller.startRun
@@ -377,7 +423,7 @@ test('conductor drives the factory from the guide box', async () => {
   assert.equal(run.phase, 'build')
   const note = (run.guide || []).find((g) => g.text === STATUS)
   assert.equal(note?.sent, true)
-  assert.equal(note?.ack, STATUS_REPLY)
+  assert.equal(note?.ack, replyFromCard(lastPrompt))
   assert.notEqual(note?.ack, ACK_NOTED)
   assert.equal((run.guide || []).some((g) => !g.sent && g.text === STATUS), false)
   assert.match(lastPrompt, /phase: build/)
@@ -400,9 +446,10 @@ test('conductor drives the factory from the guide box', async () => {
   assert.equal(run.override?.voice, undefined)
   assert.equal(run.override?.tier, undefined)
   assert.equal(run.override?.proceed, undefined)
+  const firstAck = note?.ack || ''
   await conduct(activeId, STATUS)
   assert.match(lastPrompt, /"text":"What's happening\?"/)
-  assert.match(lastPrompt, /"ack":"The build is still running\."/)
+  assert.ok(lastPrompt.includes(firstAck))
   const shipAskGen = factoryGen(activeId)
   await conduct(activeId, STATUS_SHIP)
   const shipAsk = (runOf().guide || []).find((g) => g.text === STATUS_SHIP)
@@ -412,7 +459,7 @@ test('conductor drives the factory from the guide box', async () => {
   assert.equal(shipAsk?.sent, true)
   assert.equal(shipAsk?.ask, true)
   assert.equal(shipAsk?.repo, '')
-  assert.match(shipAsk?.ack || '', /build/)
+  assert.equal(shipAsk?.ack, replyFromCard(lastPrompt))
   assert.notEqual(shipAsk?.ack, SHIP_REPLY)
   await conduct(activeId, SHIP)
   assert.equal(runOf().phase, 'build')
@@ -435,7 +482,7 @@ test('conductor drives the factory from the guide box', async () => {
   assert.equal(editNote?.sent, true)
   assert.equal(editNote?.ask, true)
   assert.equal(editNote?.repo, '')
-  assert.match(editNote?.ack || '', /review/)
+  assert.equal(editNote?.ack, replyFromCard(lastPrompt))
   assert.notEqual(editNote?.ack, EDIT_REPLY)
   assert.equal(factoryGen(activeId), editGen)
   assert.equal(prompts.length, beforeEdit)
@@ -745,4 +792,123 @@ test('conductor drives the factory from the guide box', async () => {
   assert.equal(kennelRun.deployError, KENNEL_DEPLOY_REFUSAL)
   assert.equal((kennelRun.guide || []).find((g) => g.text === SHIP)?.ack, KENNEL_DEPLOY_REFUSAL)
   assert.equal(deploys, 0)
+
+  reset()
+  const cardRepo = await boot('card', 'fix typo in footer')
+  touch = () => writeFileSync(join(cardRepo, 'src.ts'), 'export const n = 12\n')
+  await until(() => runOf().phase === 'review' && !!runOf().diff, 'card review')
+  await settle(activeId)
+  const card = runOf()
+  card.reviewCycles = 2
+  card.strict = { status: 'fail', text: 'gap' }
+  card.live = [{ id: 'c', phase: 'review', cli: 'claude', model: 'opus', effort: 'low', since: 1 }]
+  const ask = 'how many reviews and fails so far?'
+  const gen0 = factoryGen(activeId)
+  const built0 = prompts.length
+  const warms0 = warms.length
+  await conduct(activeId, ask)
+  const asked = (runOf().guide || []).find((g) => g.text === ask)
+  assert.match(lastPrompt, /reviewCycles: 2/)
+  assert.match(lastPrompt, /strict: fail/)
+  assert.equal(asked?.ack, replyFromCard(lastPrompt))
+  assert.equal(factoryGen(activeId), gen0)
+  assert.equal(prompts.length, built0)
+  assert.equal((runOf().guide || []).some((g) => !g.sent), false)
+  assert.equal(warms.filter((t) => t.endsWith('-orch')).length, 1)
+  assert.notEqual(warms.find((t) => t.endsWith('-orch')), card.acpTab)
+  await conduct(activeId, ask)
+  assert.equal(warms.filter((t) => t.endsWith('-orch')).length, 1)
+  assert.equal(warms.length, warms0 + 1)
+  const stripped = lastPrompt.replace(/^reviewCycles:.*$/m, '').replace(/^strict:.*$/m, '')
+  assert.equal(replyFromCard(stripped), 'no card')
+  assert.equal(replyFromCard(stripped).includes('2'), false)
+  assert.equal(replyFromCard(stripped).includes('fail'), false)
+  orchMode = 'empty'
+  const empty = await conduct(activeId, ask)
+  const emptyAck = (empty.guide || []).filter((g) => g.text === ask).pop()?.ack
+  assert.match(emptyAck || '', /2/)
+  assert.match(emptyAck || '', /fail/)
+  assert.match(emptyAck || '', /claude/)
+  assert.notEqual(emptyAck, explainRun(runOf()))
+  orchMode = 'throw'
+  const thrownAsk = await conduct(activeId, 'how many reviews and fails so far?')
+  const thrownAck = (thrownAsk.guide || []).filter((g) => g.text === ask).pop()?.ack
+  assert.match(thrownAck || '', /2/)
+  assert.match(thrownAck || '', /fail/)
+  assert.match(thrownAck || '', /claude/)
+  assert.notEqual(thrownAck, explainRun(runOf()))
+  const later = runOf()
+  later.reviewCycles = 9
+  later.strict = { status: 'pass', text: '' }
+  later.live = [{ id: 'c', phase: 'review', cli: 'claude', model: 'opus', effort: 'low', since: 1 }]
+  orchMode = 'card'
+  await conduct(activeId, ask)
+  const nine = (runOf().guide || []).filter((g) => g.text === ask).pop()?.ack
+  assert.equal(nine, replyFromCard(lastPrompt))
+  assert.match(nine || '', /9/)
+  assert.match(nine || '', /pass/)
+  assert.equal((nine || '').includes('Strict rejects: 2'), false)
+
+  orchMode = 'notell'
+  const gen1 = factoryGen(activeId)
+  const built1 = prompts.length
+  const unsent1 = (runOf().guide || []).filter((g) => !g.sent).length
+  await conduct(activeId, 'add a footer credit to this run')
+  const missed = (runOf().guide || []).find((g) => g.text === 'add a footer credit to this run')
+  assert.equal(factoryGen(activeId), gen1)
+  assert.equal(prompts.length, built1)
+  assert.equal((runOf().guide || []).filter((g) => !g.sent).length, unsent1)
+  assert.match(missed?.ack || '', /did not send that to the factory/)
+
+  orchMode = 'tell'
+  const gen2 = factoryGen(activeId)
+  const warmAtTell = warms.length
+  await conduct(activeId, 'add a footer credit to this run')
+  await until(() => prompts.some((p) => p.includes('footer credit')), 'footer brief')
+  assert.ok(factoryGen(activeId) > gen2)
+  assert.ok(promptCalls.some((c) => c.tabId === runOf().acpTab && c.text.includes('footer credit')))
+  assert.equal((runOf().guide || []).some((g) => (g.ack || '').includes('FACTORY_TELL') || g.text.includes('FACTORY_TELL')), false)
+  assert.equal(warms.length, warmAtTell)
+  await conduct(activeId, PAUSE)
+  await settle(activeId)
+  assert.equal(runOf().phase, 'paused')
+  orchMode = 'tell'
+  const gen3 = factoryGen(activeId)
+  const built3 = prompts.length
+  await conduct(activeId, 'please change the credit line')
+  const queued = (runOf().guide || []).filter((g) => g.text === 'add a footer credit' && !g.sent)
+  assert.equal(queued.length, 1)
+  assert.equal(runOf().phase, 'paused')
+  assert.equal(factoryGen(activeId), gen3)
+  assert.equal(prompts.length, built3)
+
+  orchMode = 'tell-anyway'
+  const gen4 = factoryGen(activeId)
+  const built4 = prompts.length
+  const unsent4 = (runOf().guide || []).filter((g) => !g.sent).length
+  await conduct(activeId, 'how is this factory run going?')
+  assert.equal(factoryGen(activeId), gen4)
+  assert.equal(prompts.length, built4)
+  assert.equal((runOf().guide || []).filter((g) => !g.sent).length, unsent4)
+
+  orchMode = 'throw'
+  const orchBefore = promptCalls.filter((c) => c.tabId.endsWith('-orch')).length
+  await conduct(activeId, PAUSE)
+  await conduct(activeId, REVIEW_GO)
+  await conduct(activeId, VOICE_GO)
+  await conduct(activeId, TIER_GO)
+  await conduct(activeId, PROCEED_GO)
+  await conduct(activeId, STOP)
+  await conduct(activeId, SHIP)
+  assert.equal(runOf().phase, 'paused')
+  await conduct(activeId, APPROVE)
+  assert.equal(runOf().phase, 'paused')
+  const soffit = await conduct(activeId, 'we forgot the soffit, add this to the plan')
+  const soffitNote = (soffit.guide || []).find((g) => g.text.includes('soffit'))
+  assert.equal(soffit.phase, 'paused')
+  assert.equal(soffitNote?.sent, false)
+  assert.match(soffitNote?.ack || '', /Filed with the plan/)
+  await conduct(activeId, RESUME)
+  assert.equal(promptCalls.filter((c) => c.tabId.endsWith('-orch')).length, orchBefore)
+  await settle(activeId)
 })

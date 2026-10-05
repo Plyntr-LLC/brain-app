@@ -42,7 +42,10 @@ import { copyAdds, runVoice, voiceNotes } from './voice.ts'
  * the current phase brief; it never picks tier, pushes, or decides what is next.
  */
 
-export type FactoryEvent = { runId: string; kind: 'run'; run: RunRecord } | { runId: string; kind: 'stream'; ev: StreamEvent }
+export type FactoryEvent =
+  | { runId: string; kind: 'run'; run: RunRecord }
+  | { runId: string; kind: 'stream'; ev: StreamEvent }
+  | { runId: string; kind: 'guide'; ev: StreamEvent }
 
 /**
  * builder on warm: 'cursor' keeps a run that fell back on Factory Cursor. The warm answer says which
@@ -1357,9 +1360,15 @@ export function factoryGen(id: string): number {
   return state.gen
 }
 
-/** The conductor's injected Grok, when a test set one. */
+/** The conductor's injected Grok, when a test set one. Conduct no longer calls it. */
 export function askConductorHook(): ((prompt: string) => Promise<string>) | undefined {
   return deps?.askConductor
+}
+
+/** The factory driver and event bus the orchestrator session uses. */
+export function conductorBridge(): { driver: Driver; emit: (e: FactoryEvent) => void } {
+  const d = need()
+  return { driver: d.driver, emit: d.emit }
 }
 
 /** Every run on disk; live ones reload paused. */
@@ -1669,6 +1678,14 @@ export function explainRun(run: RunRecord): string {
   if (looked) bits.push(`It is looking in ${looked}.`)
   if (named) bits.push(`The task names ${named}.`)
   return bits.join(' ')
+}
+
+/** What a question gets when the session has no prose. The folder sentences stay so a stuck pin still names both repos. */
+export function statusReport(run: RunRecord): string {
+  const live = [...(run.live || [])].pop()
+  const now = live?.cli || run.phase
+  const strict = run.strict?.status || 'none'
+  return `${explainRun(run)} Strict rejects: ${run.reviewCycles || 0}. Latest review: ${strict}. Now: ${now}.`
 }
 
 export const INJECT_ACK = 'Filed with the plan. It waits until the run continues.'

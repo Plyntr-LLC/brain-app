@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { modelsLine, REVIEW_MAX, strictRequired, VOICE_MAX, type FactoryTriage, type LiveCall, type RunPhase, type RunRecord } from '../../shared/factory'
+import { applyFactoryText, showOutgoing, visibleGuide, type Outgoing } from './guide-thread'
 
 type Perm = { title?: string; path?: string; detail?: string; options?: { id: string; label: string }[] }
 type FileHit = { path: string; tool?: string; live: boolean }
@@ -69,6 +70,7 @@ export function FactoryPane(props: {
   const [runThrough, setRunThrough] = useState(true)
   const [shipThrough, setShipThrough] = useState(true)
   const [note, setNote] = useState('')
+  const [pending, setPending] = useState<Outgoing | null>(null)
   const [workRepo, setWorkRepo] = useState('')
   const [repoFrom, setRepoFrom] = useState('')
   const [repoError, setRepoError] = useState('')
@@ -123,9 +125,21 @@ export function FactoryPane(props: {
         if (e.run.phase !== 'build' && !(e.run.phase === 'review' && !e.run.diff)) setFiles((f) => (f.some((x) => x.live) ? f.map((x) => ({ ...x, live: false })) : f))
         return
       }
+      if (e.kind === 'guide') {
+        const ev = e.ev
+        if (ev.kind === 'text' && ev.data) {
+          setPending((p) => {
+            if (!p) return p
+            const next = applyFactoryText({ activity: '', guideAck: p.ack, raw: p.raw }, 'guide', ev.data || '')
+            return { ...p, ack: next.guideAck, raw: next.raw }
+          })
+        }
+        return
+      }
+      if (e.kind !== 'stream') return
       const ev = e.ev
       if (ev.kind === 'permission') setPermission({ title: ev.title, path: ev.path, detail: ev.detail, options: ev.options })
-      else if (ev.kind === 'text' && ev.data) setActivity((a) => (a + ev.data).slice(-1200))
+      else if (ev.kind === 'text' && ev.data) setActivity((a) => applyFactoryText({ activity: a, guideAck: '' }, 'stream', ev.data || '').activity.slice(-1200))
       else if (ev.kind === 'status' && ev.data?.startsWith('work:')) setWork(ev.data.slice(5))
       else if (ev.kind === 'error' && ev.data) setWork(ev.data)
       if (ev.kind === 'file' && ev.path) {
@@ -329,14 +343,16 @@ export function FactoryPane(props: {
     const text = note.trim()
     if (!text || !run) return
     setError('')
-    // The box clears at once; a refused note comes back (if nothing new was typed) with the reason.
+    setPending(showOutgoing(text))
     setNote('')
     const res = await window.brain.factory.conduct(run.id, text)
     if (!res.ok) {
+      setPending(null)
       setNote((n) => (n.trim() ? n : text))
       setError(res.error)
       return
     }
+    setPending(null)
     if (res.run) setRun(res.run)
   }
   const voiceHeld = run.voice?.status === 'fail'
@@ -703,9 +719,9 @@ export function FactoryPane(props: {
             {run.phase === 'done' && run.deployError && !run.deployed ? <span className="factory-err">{run.deployError}</span> : null}
             {run.phase === 'done' && run.pushError && !run.pushed ? <span className="factory-err">{run.pushError}</span> : null}
           </div>
-          {run.guide?.length ? (
+          {visibleGuide(run.guide || [], pending).length ? (
             <div className="thread factory-guide">
-              {run.guide.map((g, i) => (
+              {visibleGuide(run.guide || [], pending).map((g, i) => (
                 <Fragment key={`${i}-${g.at}`}>
                   <div className="bubble me">
                     {g.text}

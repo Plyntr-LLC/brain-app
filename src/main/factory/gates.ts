@@ -36,6 +36,7 @@ export function askPaths(msg: Msg): string[] {
 }
 
 export const OTHER_REPO_WRITE_REFUSAL = 'Factory edits land in the work repo only. This path is in another repo, so Brain refused it.'
+export const WATCH_WRITE_REFUSAL = 'This session only watches the run. It does not edit files.'
 
 /** Git top of the nearest folder that exists at or above p. Empty when none (tmp). */
 function repoTopOf(p: string): string {
@@ -76,6 +77,34 @@ export function factoryWriteBlock(abs: string, brainPath: string, workRepo: stri
   if (!work || underPath(work, target)) return null
   const top = repoTopOf(target)
   return top && top !== work ? OTHER_REPO_WRITE_REFUSAL : null
+}
+
+/** The orchestrator tab watches the run. It does not get the builder's edit rules. */
+export const WATCH_RULES =
+  'You watch this factory run. Answer in sentences. Do not edit files. Do not push, commit, or deploy. To change the work, end with one line FACTORY_TELL: and the instruction.'
+
+/** Empty means this tab is a builder and keeps the builder rules. */
+export function factorySessionRules(tabId: string): string {
+  return tabId.endsWith('-orch') ? WATCH_RULES : ''
+}
+
+const READ_KINDS = new Set(['read', 'search', 'fetch', 'think'])
+
+/**
+ * Watch-only rejects every non-read tool, including when the run would otherwise allow it.
+ * Anything else keeps the filter's answer, then run-through may allow an ask.
+ */
+export function watchOnlyDecision(
+  watchOnly: boolean,
+  kind: string,
+  filtered: 'reject' | 'ask',
+  runThrough: boolean
+): 'reject' | 'ask' | 'allow' {
+  if (watchOnly && !READ_KINDS.has(kind)) return 'reject'
+  if (filtered === 'reject') return 'reject'
+  if (watchOnly && READ_KINDS.has(kind)) return 'allow'
+  if (runThrough) return 'allow'
+  return 'ask'
 }
 
 /** 'reject' for publish verbs and edits outside the work repo (brain or another repo), 'ask' for everything else (the card decides). */

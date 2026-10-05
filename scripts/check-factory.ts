@@ -135,7 +135,7 @@ const check = (name: string, ok: boolean, detail = '') => results.push({ name, o
 
 type Sent = { id: number | string; result?: unknown; error?: { code: number; message: string } }
 type Ev = { kind: string; title?: string; path?: string; data?: string; options?: { id: string; label: string }[] }
-function fakePool(lane: 'chat' | 'factory', cwd: string, factory?: { brainPath: string; workRepo: string; runThrough?: boolean }) {
+function fakePool(lane: 'chat' | 'factory', cwd: string, factory?: { brainPath: string; workRepo: string; runThrough?: boolean; watchOnly?: boolean }) {
   const sent: Sent[] = []
   const events: Ev[] = []
   const tab = {
@@ -318,6 +318,20 @@ const outcome = (s: Sent | undefined) => (s?.result as { outcome?: { outcome?: s
   const c = fakePool('chat', brainA)
   acp.handleReq(c.pool as never, req(11, 'session/request_permission', { sessionId: 'sess-chat', toolCall: { title: 'Edit' }, options: permOpts }))
   check('9 chat always-approve is unchanged (auto allow)', outcome(c.sent[0])?.optionId === 'allow_once')
+  const watch = fakePool('factory', brainA, { brainPath: brainA, workRepo: work, runThrough: true, watchOnly: true })
+  acp.handleReq(watch.pool as never, req(12, 'session/request_permission', { sessionId: 'sess-factory', toolCall: { title: 'Read src/footer.ts', kind: 'read', rawInput: { path: join(work, 'src', 'footer.ts') } }, options: permOpts }))
+  check('9 orch read is allow_once and does not open a card', outcome(watch.sent[0])?.optionId === 'allow_once' && !watch.events.some((e) => e.kind === 'permission'), JSON.stringify({ sent: watch.sent, events: watch.events }))
+  const watchEdit = fakePool('factory', brainA, { brainPath: brainA, workRepo: work, runThrough: true, watchOnly: true })
+  acp.handleReq(watchEdit.pool as never, req(13, 'session/request_permission', { sessionId: 'sess-factory', toolCall: { title: 'Edit src/footer.ts', kind: 'edit', rawInput: { path: join(work, 'src', 'footer.ts') } }, options: permOpts }))
+  check('9 orch edit is reject_once even with approve in advance', outcome(watchEdit.sent[0])?.optionId === 'reject_once', JSON.stringify(watchEdit.sent))
+  const watchWrite = fakePool('factory', brainA, { brainPath: brainA, workRepo: work, watchOnly: true })
+  const orchTarget = join(work, 'src', 'orch-write.ts')
+  acp.handleReq(watchWrite.pool as never, req(14, 'fs/write_text_file', { sessionId: 'sess-factory', path: orchTarget, content: 'export const x = 1\n' }))
+  check('9 orch write to the work repo is refused', watchWrite.sent[0]?.error?.message === gates.WATCH_WRITE_REFUSAL && !existsSync(orchTarget), JSON.stringify(watchWrite.sent))
+  check(
+    '9 orch cursor brief is not the builder rules',
+    acp.factoryPromptText('factory-1-orch', 'cursor', 'hi') === 'hi' && acp.factoryPromptText('factory-1', 'cursor', 'hi').startsWith('You are a Factory builder') && acp.factoryPromptText('factory-1', 'grok', 'hi') === 'hi'
+  )
 }
 
 // 10. Chat ACP writes outside its folder like Terminal; team paths in any brain stay guarded.
@@ -1968,8 +1982,6 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
       live.guide = [...(live.guide || []), { at: Date.now(), text: 'give me a simple rundown of where the factory stopped', sent: true, ack: 'grok exited 1', repo: simpleRepo }]
       store.saveRun(live)
     }
-    fakeDeps.askConductor = async () => '{"action":"none"}'
-    ctl.configureFactory(fakeDeps)
     const asked = await conductor.conduct(idP, 'what is going on with this run')
     const askNote = asked.guide?.find((g) => g.text === 'what is going on with this run')
     check(
@@ -1996,8 +2008,6 @@ const t3Build = async (o: { text: string; tabId?: string }) => {
       promptCount() === pResume && same(moved?.workRepo, configRepo) && (moved?.audit?.work || []).some((row) => row.path === 'src/soffit.ts') && (moved?.phase === 'review' || moved?.phase === 'verify' || moved?.phase === 'done'),
       JSON.stringify({ phase: moved?.phase, repo: moved?.workRepo, prompts: promptCount() - pResume, work: moved?.audit?.work, error: moved?.error })
     )
-    delete fakeDeps.askConductor
-    ctl.configureFactory(fakeDeps)
     if (idP) ctl.abandonRun(idP)
     rmSync(simpleRepo, { recursive: true, force: true })
     rmSync(configRepo, { recursive: true, force: true })
