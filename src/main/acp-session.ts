@@ -187,6 +187,10 @@ function advertisedModel(wanted: string | undefined, models?: Cap[]): string | u
 }
 
 function effortsForModel(modelId?: string, listed?: Cap[], hasEffortOption?: boolean): Cap[] {
+  // A list from the live session is the source of truth. Grok 4.7's id has no effort=
+  // bracket, and the first warm has not always copied config ids yet, so dropping the
+  // list here hid the picker on any chat that was already on that model.
+  if (listed?.length) return listed
   const p = modelId ? parseBracket(modelId) : {}
   if (p.effort) {
     return listed?.length
@@ -1093,6 +1097,7 @@ export async function acpWarm(opts: {
       models: live.models,
       efforts: live.efforts,
       speeds: live.speeds,
+      configIds: live.configIds,
       agentModes: live.agentModes,
       contextTotal: live.contextTotal,
       commands: live.commands,
