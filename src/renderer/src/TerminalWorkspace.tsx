@@ -187,9 +187,11 @@ type Tab = {
   sessionId?: string
   model?: string
   effort?: string
+  speed?: string
   agentMode?: string
   models?: Cap[]
   efforts?: Cap[]
+  speeds?: Cap[]
   agentModes?: Cap[]
   cliSessionId?: string
   alwaysApprove?: boolean
@@ -323,6 +325,7 @@ function savedTab(x: Tab) {
     mode: x.mode,
     model: x.model,
     effort: x.effort,
+    speed: x.speed,
     agentMode: x.agentMode,
     cliSessionId: x.cliSessionId,
     path: x.path,
@@ -347,6 +350,11 @@ function label(kind: AiKind): string {
   if (kind === 'gpt') return 'ChatGPT'
   if (kind === 'cursor') return 'Cursor'
   return 'Grok'
+}
+
+function prettySpeed(id?: string, speeds?: Cap[]): string {
+  if (!id) return 'Default'
+  return speeds?.find((s) => s.id === id)?.label || id
 }
 
 function prettyModel(id?: string, kind?: AiKind, models?: Cap[]): string {
@@ -542,6 +550,7 @@ function ChatPane({
   initialMessages,
   model,
   effort,
+  speed,
   agentMode,
   resumeId,
   alwaysApprove,
@@ -571,6 +580,7 @@ function ChatPane({
   initialMessages?: Msg[]
   model?: string
   effort?: string
+  speed?: string
   agentMode?: string
   resumeId?: string
   alwaysApprove?: boolean
@@ -581,10 +591,12 @@ function ChatPane({
   onCaps: (c: {
     model?: string
     effort?: string
+    speed?: string
     agentMode?: string
     sessionId?: string
     models?: Cap[]
     efforts?: Cap[]
+    speeds?: Cap[]
     agentModes?: Cap[]
   }) => void
   onTranscript: (id: string, messages: Msg[]) => void
@@ -1040,13 +1052,13 @@ function ChatPane({
 
   useEffect(() => {
     if (!cwd) return
-    const key = [id, kind, cwd, model, effort, agentMode, resumeId].join('|')
+    const key = [id, kind, cwd, model, effort, speed, agentMode, resumeId].join('|')
     if (lastWarm.current === key) return
     lastWarm.current = key
     setWarming(true)
     setWaitLabel(`Starting ${kind === 'gpt' ? 'ChatGPT' : kind === 'cursor' ? 'Cursor' : kind === 'claude' ? 'Claude' : 'Grok'}`)
     void window.brain.chat
-      .warm({ tabId: id, kind, cwd, model, effort, agentMode, resumeId })
+      .warm({ tabId: id, kind, cwd, model, effort, speed, agentMode, resumeId })
       .then((r) => {
         const listed = r?.models?.length ? cliModels(kind, r.models) : undefined
         if (listed?.length) setModels(listed)
@@ -1055,10 +1067,12 @@ function ChatPane({
         onCaps({
           model: r?.model,
           effort: r?.effort,
+          speed: r?.speed,
           agentMode: r?.agentMode,
           sessionId: r?.sessionId,
           models: listed,
           efforts: r?.efforts,
+          speeds: r?.speeds,
           agentModes: r?.agentModes
         })
       })
@@ -1066,7 +1080,7 @@ function ChatPane({
         setMessages((m) => [...m, { who: 'brain', text: String((e as Error).message || e) }])
       })
       .finally(() => setWarming(false))
-  }, [id, kind, cwd, model, effort, agentMode, resumeId])
+  }, [id, kind, cwd, model, effort, speed, agentMode, resumeId])
 
   useEffect(() => {
     return () => {
@@ -2223,7 +2237,7 @@ export function TerminalWorkspace({
 }) {
   const setupKind = (s.ai || 'grok') as AiKind
   const [cwd, setCwd] = useState(s.brainPath || '')
-  const [pick, setPick] = useState<null | 'model' | 'effort' | 'folder' | 'agentMode'>(null)
+  const [pick, setPick] = useState<null | 'model' | 'effort' | 'speed' | 'folder' | 'agentMode'>(null)
   const [modelsByKind, setModelsByKind] = useState<Partial<Record<AiKind, Cap[]>>>({})
   const [explorerW, setExplorerW] = useState(() => widthPref('brain-explorer-w', 220))
   const [refsW, setRefsW] = useState(() => widthPref('brain-refs-w', 260))
@@ -2727,6 +2741,12 @@ export function TerminalWorkspace({
     setPick(null)
   }
 
+  function setChatSpeed(id: string) {
+    if (!chatId) return
+    setTabs((all) => all.map((x) => (x.id === chatId ? { ...x, speed: id } : x)))
+    setPick(null)
+  }
+
   function setChatAgentMode(id: string) {
     if (!chatId) return
     setTabs((all) => all.map((x) => (x.id === chatId ? { ...x, agentMode: id } : x)))
@@ -2978,6 +2998,7 @@ export function TerminalWorkspace({
                   resumeId={t.cliSessionId}
                   model={t.model}
                   effort={t.effort}
+                  speed={t.speed}
                   agentMode={t.agentMode}
                   alwaysApprove={t.alwaysApprove}
                   active={t.id === active}
@@ -3004,6 +3025,8 @@ export function TerminalWorkspace({
                                 defaultEffort(x.kind),
                               efforts:
                                 c.efforts && c.efforts.length ? c.efforts : x.efforts && x.efforts.length ? x.efforts : fallbackEfforts(x.kind),
+                              speeds: Array.isArray(c.speeds) ? c.speeds : x.speeds,
+                              speed: c.speed || x.speed,
                               agentMode: c.agentMode || x.agentMode,
                               cliSessionId: c.sessionId || x.cliSessionId,
                               models: c.models?.length ? cliModels(x.kind, c.models) : cliModels(x.kind, x.models),
@@ -3158,6 +3181,18 @@ export function TerminalWorkspace({
                       {e.label}
                     </button>
                   ))}
+                {pick === 'speed' &&
+                  (chatTab?.speeds || []).map((s) => (
+                    <button
+                      type="button"
+                      key={s.id}
+                      className={s.id === chatTab?.speed ? 'on' : ''}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => setChatSpeed(s.id)}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
                 {pick === 'agentMode' &&
                   (chatTab?.agentModes || []).map((m) => (
                     <button
@@ -3202,6 +3237,14 @@ export function TerminalWorkspace({
                 <div className="runmeta-k">Effort</div>
                 <button type="button" className="runmeta-v" onClick={() => setPick((p) => (p === 'effort' ? null : 'effort'))}>
                   {prettyEffort(chatTab?.effort, chatTab?.kind)}
+                </button>
+              </>
+            ) : null}
+            {chatTab?.speeds?.length ? (
+              <>
+                <div className="runmeta-k">Speed</div>
+                <button type="button" className="runmeta-v" onClick={() => setPick((p) => (p === 'speed' ? null : 'speed'))}>
+                  {prettySpeed(chatTab.speed, chatTab.speeds)}
                 </button>
               </>
             ) : null}

@@ -49,11 +49,14 @@ export type Cap = { id: string; label: string }
 export type LiveRun = {
   model?: string
   effort?: string
+  /** Cursor `fast` config. Off is "false", Fast is "true". */
+  speed?: string
   agentMode?: string
   sessionId?: string
   contextTotal?: number
   models?: Cap[]
   efforts?: Cap[]
+  speeds?: Cap[]
   agentModes?: Cap[]
   commands?: SessionCmd[]
   configIds?: string[]
@@ -64,9 +67,11 @@ export type Tab = {
   sessionId: string
   model?: string
   effort?: string
+  speed?: string
   agentMode?: string
   models?: Cap[]
   efforts?: Cap[]
+  speeds?: Cap[]
   agentModes?: Cap[]
   commands?: SessionCmd[]
   configIds?: string[]
@@ -210,8 +215,10 @@ function readLive(res: Record<string, unknown>): LiveRun {
   const modelsBlock = asRecord(res.models)
   let model = typeof modelsBlock.currentModelId === 'string' ? modelsBlock.currentModelId : undefined
   let effort: string | undefined
+  let speed: string | undefined
   let models: Cap[] = capsFromOptions(modelsBlock.availableModels)
   let efforts: Cap[] = []
+  let speeds: Cap[] = []
   const configIds: string[] = []
   const opts = Array.isArray(res.configOptions) ? res.configOptions : []
   for (const o of opts) {
@@ -237,6 +244,16 @@ function readLive(res: Record<string, unknown>): LiveRun {
         }))
       }
     }
+    if (id === 'fast') {
+      if (v) speed = v
+      const more = capsFromOptions(r.options)
+      if (more.length > 1) {
+        speeds = more.map((c) => ({
+          id: c.id,
+          label: c.label.replace(/[\u200b\u200c\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim()
+        }))
+      }
+    }
   }
   const avail = Array.isArray(modelsBlock.availableModels) ? modelsBlock.availableModels : []
   const cur = avail.find((m) => asRecord(m).modelId === model || asRecord(m).id === model)
@@ -256,10 +273,12 @@ function readLive(res: Record<string, unknown>): LiveRun {
   return {
     model,
     effort,
+    speed,
     agentMode,
     contextTotal,
     models: models.length ? models : undefined,
     efforts,
+    speeds,
     agentModes: agentModes.length ? agentModes : undefined,
     configIds: configIds.length ? configIds : undefined
   }
@@ -832,14 +851,17 @@ async function applyConfig(
   tab: Tab,
   model?: string,
   effort?: string,
-  agentMode?: string
+  agentMode?: string,
+  speed?: string
 ): Promise<LiveRun> {
   let live: LiveRun = {
     model: tab.model,
     effort: tab.effort,
+    speed: tab.speed,
     agentMode: tab.agentMode,
     models: tab.models,
     efforts: tab.efforts,
+    speeds: tab.speeds,
     agentModes: tab.agentModes,
     configIds: tab.configIds
   }
@@ -853,8 +875,11 @@ async function applyConfig(
     try {
       const res = await setOption(pool.rpc, tab.sessionId, 'model', modelId)
       const next = readLive(res)
-      live = { ...live, ...next, model: next.model || modelId }
-      if (next.configIds) next.configIds.forEach((id) => configIds.add(id))
+      live = { ...live, ...next, model: next.model || modelId, speed: next.speed, speeds: next.speeds }
+      if (next.configIds) {
+        configIds.clear()
+        next.configIds.forEach((id) => configIds.add(id))
+      }
     } catch {
       live.model = tab.model
     }
@@ -867,16 +892,30 @@ async function applyConfig(
     } catch {
       live.effort = tab.effort
     }
-  } else if (pool.kind === 'cursor' && effort && effort !== tab.effort && configIds.has('effort')) {
-    try {
-      const res = await setOption(pool.rpc, tab.sessionId, 'effort', effort)
-      const next = readLive(res)
-      live = { ...live, ...next, effort: next.effort || tab.effort }
-    } catch {
-      live.effort = tab.effort
+  } else if (pool.kind === 'cursor' && effort && effort !== tab.effort) {
+    const effortId = configIds.has('reasoning_effort') ? 'reasoning_effort' : configIds.has('effort') ? 'effort' : ''
+    if (effortId) {
+      try {
+        const res = await setOption(pool.rpc, tab.sessionId, effortId, effort)
+        const next = readLive(res)
+        live = { ...live, ...next, effort: next.effort || tab.effort }
+      } catch {
+        live.effort = tab.effort
+      }
     }
   } else if (effort && effort === tab.effort) {
     live.effort = tab.effort
+  }
+  if (speed && configIds.has('fast') && speed !== live.speed) {
+    try {
+      const res = await setOption(pool.rpc, tab.sessionId, 'fast', speed)
+      const next = readLive(res)
+      live = { ...live, ...next, speed: next.speed || speed }
+    } catch {
+      live.speed = tab.speed
+    }
+  } else if (speed) {
+    live.speed = live.speed || speed
   }
   if (agentMode && agentMode !== tab.agentMode) {
     const allowed = tab.agentModes?.some((m) => m.id === agentMode)
@@ -910,11 +949,13 @@ function snapshot(tab: Tab): LiveRun {
   return {
     model: tab.model,
     effort: tab.effort,
+    speed: tab.speed,
     agentMode: tab.agentMode,
     sessionId: tab.sessionId,
     contextTotal: tab.contextTotal,
     models: tab.models,
     efforts: tab.efforts || [],
+    speeds: tab.speeds || [],
     agentModes: tab.agentModes,
     commands: tab.commands,
     configIds: tab.configIds
@@ -924,6 +965,8 @@ function snapshot(tab: Tab): LiveRun {
 function assignLive(tab: Tab, live: LiveRun): void {
   if (live.model) tab.model = live.model
   if ('effort' in live) tab.effort = live.effort
+  if ('speed' in live) tab.speed = live.speed
+  if ('speeds' in live) tab.speeds = live.speeds
   if (live.agentMode) tab.agentMode = live.agentMode
   if (live.sessionId) tab.sessionId = live.sessionId
   if (live.contextTotal) tab.contextTotal = live.contextTotal
@@ -968,6 +1011,7 @@ export async function acpWarm(opts: {
   cwd: string
   model?: string
   effort?: string
+  speed?: string
   agentMode?: string
   resumeId?: string
 }): Promise<LiveRun> {
@@ -992,7 +1036,7 @@ export async function acpWarm(opts: {
           /* keep the current session */
         }
       }
-      const live = await applyConfig(pool, have, opts.model, opts.effort, opts.agentMode)
+      const live = await applyConfig(pool, have, opts.model, opts.effort, opts.agentMode, opts.speed)
       assignLive(have, live)
       return snapshot(have)
     }
@@ -1042,9 +1086,11 @@ export async function acpWarm(opts: {
       sessionId,
       model: live.model,
       effort: live.effort,
+      speed: live.speed,
       agentMode: live.agentMode,
       models: live.models,
       efforts: live.efforts,
+      speeds: live.speeds,
       agentModes: live.agentModes,
       contextTotal: live.contextTotal,
       commands: live.commands,
@@ -1062,8 +1108,8 @@ export async function acpWarm(opts: {
       opts = { ...opts, agentMode: 'agent' }
     }
     if (opts.kind === 'grok' && !opts.effort) opts = { ...opts, effort: GROK_DEFAULT_EFFORT }
-    if (opts.model || opts.effort || opts.agentMode) {
-      const applied = await applyConfig(pool, tab, opts.model, opts.effort, opts.agentMode)
+    if (opts.model || opts.effort || opts.agentMode || opts.speed) {
+      const applied = await applyConfig(pool, tab, opts.model, opts.effort, opts.agentMode, opts.speed)
       assignLive(tab, applied)
     }
     return snapshot(tab)

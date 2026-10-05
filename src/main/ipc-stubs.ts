@@ -2096,6 +2096,7 @@ export function registerStubIpc(): void {
         cwd?: string
         model?: string
         effort?: string
+        speed?: string
         agentMode?: string
         resumeId?: string
       }
@@ -2109,6 +2110,7 @@ export function registerStubIpc(): void {
         cwd,
         model: payload.model,
         effort: payload.effort,
+        speed: payload.speed,
         agentMode: payload.agentMode,
         resumeId: payload.resumeId
       })

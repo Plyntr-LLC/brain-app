@@ -24,6 +24,7 @@ export type WarmOpts = {
   cwd: string
   model?: string
   effort?: string
+  speed?: string
   agentMode?: string
   resumeId?: string
   alwaysApprove?: boolean
@@ -37,6 +38,7 @@ export async function warmSession(opts: WarmOpts): Promise<LiveRun> {
       cwd: opts.cwd,
       model: opts.model,
       effort: opts.effort,
+      speed: opts.speed,
       agentMode: opts.agentMode,
       resumeId: opts.resumeId
     })

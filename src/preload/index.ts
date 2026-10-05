@@ -817,6 +817,7 @@ const brain = {
       cwd?: string
       model?: string
       effort?: string
+      speed?: string
       agentMode?: string
       resumeId?: string
     }) =>
@@ -824,11 +825,13 @@ const brain = {
         ok: boolean
         model?: string
         effort?: string
+        speed?: string
         agentMode?: string
         sessionId?: string
         contextTotal?: number
         models?: { id: string; label: string }[]
         efforts?: { id: string; label: string }[]
+        speeds?: { id: string; label: string }[]
         agentModes?: { id: string; label: string }[]
         commands?: { name: string; description: string; hint?: string }[]
       }>,
