@@ -12,6 +12,7 @@ import {
   getRun,
   guideRun,
   holdName,
+  moveToNamedRepo,
   namedRepoFor,
   pauseRun,
   queueInject,
@@ -173,26 +174,34 @@ async function answer(id: string, body: string): Promise<RunRecord> {
   return appendSentNote(id, body, question && !tell ? prose : `${prose} ${NOT_SENT}`)
 }
 
-/** Resume, after a move to the repo the sentence names. The reply says where it runs, or why it did not move. */
+const HOLD_WORD = { review: 'the review hold', voice: 'the voice hold', tier: 'the size limit', proceed: 'Proceed (critical risk)' } as const
+
+/** What the run is doing after a restart, from the run itself. "Resumed" only when it left paused or failed. */
+function restartAck(before: RunRecord, after: RunRecord): string {
+  const moved = realish(after.workRepo) !== realish(before.workRepo)
+  const where = moved ? `Moved to ${after.workRepo}` : `Still in ${after.workRepo}`
+  if (after.needsPrep) return `${where}. It has uncommitted changes: choose Commit first or Stash first.`
+  if (after.phase === 'paused' || after.phase === 'failed') return after.error || `${where}. It did not resume.`
+  const hold = holdName(after)
+  if (hold !== 'none') return `${where}. It is waiting on you: ${HOLD_WORD[hold]}.`
+  if (after.phase === 'plan' && after.plan?.status === 'waiting' && after.plan.text) return `${where}. The plan is waiting for your approval.`
+  return moved ? `Moved to ${after.workRepo} and resumed.` : `Resumed in ${after.workRepo}.`
+}
+
+/** Moves to the repo the sentence names, then resumes. The reply comes from the run that results. */
 function restartDoor(id: string, body: string): RunRecord {
   const before = getRun(id)
+  if (!before) throw new Error('That Factory run is gone.')
   const named = namedRepoFor(id, body)
   appendSentNote(id, body, '', named)
   let after: RunRecord
   try {
-    after = resumeRun(id)
+    if (named && moveToNamedRepo(id) === 'stop') after = getRun(id) || before
+    else after = resumeRun(id)
   } catch (e) {
     return rewriteGuideAck(id, body, String((e as Error).message || e))
   }
-  const moved = !!before && realish(after.workRepo) !== realish(before.workRepo)
-  const ack = after.needsPrep
-    ? `Moved to ${after.workRepo}. It has uncommitted changes: choose Commit first or Stash first.`
-    : after.error && after.phase === 'paused'
-      ? after.error
-      : moved
-        ? `Moved to ${after.workRepo} and resumed.`
-        : `Resumed in ${after.workRepo}.`
-  return rewriteGuideAck(id, body, ack)
+  return rewriteGuideAck(id, body, restartAck(before, after))
 }
 
 async function runDoor(id: string, intent: Intent, body: string): Promise<RunRecord> {

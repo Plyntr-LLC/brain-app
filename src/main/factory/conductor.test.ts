@@ -165,6 +165,7 @@ let promptCalls: { tabId: string; text: string }[] = []
 let warms: string[] = []
 let orchMode: 'card' | 'empty' | 'throw' | 'tell' | 'notell' | 'tell-anyway' = 'card'
 let orchReply: string | null = null
+let buildThrows = false
 let orchHeld: (() => void)[] | null = null
 const orchPending = new Map<string, (raw: string) => void>()
 let cancels = 0
@@ -278,6 +279,7 @@ const deps: FactoryDeps = {
         })
       }
       prompts.push(text)
+      if (buildThrows) throw new Error('builder crashed')
       if (hang) return new Promise(() => {})
       if (armGate) {
         armGate = false
@@ -365,6 +367,7 @@ function reset(): void {
   warms = []
   orchMode = 'card'
   orchReply = null
+  buildThrows = false
   orchHeld = null
   orchPending.clear()
   cancels = 0
@@ -1111,5 +1114,34 @@ test('Joe 2026-10-06 run-ae98e1f8: the conductor restarts in the right repo when
   holdTriage = false
   fireTriage()
   abandonRun(five)
+
+  reset()
+  buildThrows = true
+  const six = start('fix typo in footer', intake)
+  await until(() => runOf().phase === 'failed', 'run 6 failed')
+  buildThrows = false
+  hang = true
+  const seven = start('fix typo in footer', lot)
+  await until(() => runOf().phase === 'build', 'run 7 build')
+  const failedAsk = 'restart it in the lotline repo'
+  await conduct(six, failedAsk)
+  assert.match(ackOf(six, failedAsk), /already running/)
+  assert.equal(ackOf(six, failedAsk).includes('Resumed'), false)
+  assert.equal(getRun(six)?.workRepo, intake)
+  abandonRun(seven)
+  abandonRun(six)
+
+  reset()
+  hang = true
+  raiseCritical = true
+  const eight = start('fix typo in footer', intake)
+  await until(() => runOf().phase === 'triage' && !!runOf().needsProceed, 'run 8 proceed hold')
+  await conduct(eight, PAUSE)
+  const proceedAsk = 'restart it in the lotline repo'
+  await conduct(eight, proceedAsk)
+  assert.equal(getRun(eight)?.workRepo, lot)
+  assert.ok(ackOf(eight, proceedAsk).includes(lot), ackOf(eight, proceedAsk))
+  assert.equal(ackOf(eight, proceedAsk).includes('Resumed'), false)
+  abandonRun(eight)
   configureFactory(deps)
 })

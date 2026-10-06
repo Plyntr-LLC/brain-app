@@ -425,6 +425,14 @@ export function namedRepoFor(id: string, text: string): string {
   return exactNamedRepo(liveFor(id), String(text || ''))
 }
 
+/**
+ * The restart door's move: the run follows the repo its newest Guide note names, even when a resume
+ * would not reconcile (a Proceed hold, a waiting plan, a waiting diff). 'stop': refused or waiting on prep.
+ */
+export function moveToNamedRepo(id: string): 'go' | 'stop' {
+  return reconcileWorkRepo(liveFor(id))
+}
+
 /** The repo the run's task names, or '' when it names none. */
 export function taskRepoOf(run: RunRecord): string {
   const found = resolveWorkRepo({ task: run.task, brainPath: run.brainPath, projectsDir: deps?.projectsDir })
