@@ -43,7 +43,8 @@ mkdirSync(projects, { recursive: true })
 let explainRun: (run: RunRecord) => string
 let conduct: (id: string, text: string) => Promise<RunRecord>
 let configureFactory: (next: FactoryDeps) => void
-let startRun: (input: { task: string; workRepo: string; brainPath: string }) => StartResult
+let startRun: (input: { task: string; workRepo: string; brainPath: string; proceedCritical?: boolean }) => StartResult
+let abandonRun: (id: string) => RunRecord
 let getRun: (id: string) => RunRecord | null
 let decideRun: (id: string, choice: Decision) => RunRecord
 let settle: (id: string) => Promise<RunRecord | null>
@@ -163,6 +164,9 @@ let prompts: string[] = []
 let promptCalls: { tabId: string; text: string }[] = []
 let warms: string[] = []
 let orchMode: 'card' | 'empty' | 'throw' | 'tell' | 'notell' | 'tell-anyway' = 'card'
+let orchReply: string | null = null
+let orchHeld: (() => void)[] | null = null
+const orchPending = new Map<string, (raw: string) => void>()
 let cancels = 0
 let pubs: { allow?: boolean }[] = []
 let publishAllow: boolean | undefined
@@ -222,6 +226,7 @@ function replyFromCard(prompt: string): string {
 function orchAnswer(prompt: string): string {
   lastPrompt = prompt
   if (orchMode === 'throw') throw new Error('session down')
+  if (orchReply !== null) return orchReply
   if (orchMode === 'empty') return ''
   if (orchMode === 'tell') return 'Adding that.\nFACTORY_TELL: add a footer credit'
   if (orchMode === 'notell') return 'I can add that.'
@@ -258,7 +263,20 @@ const deps: FactoryDeps = {
       const tabId = String(o.tabId || '')
       const text = String(o.text || '')
       promptCalls.push({ tabId, text })
-      if (tabId.endsWith('-orch')) return orchAnswer(text)
+      if (tabId.endsWith('-orch')) {
+        // Real ACP cancels the turn still running on this tab when a new prompt arrives (acp-session.ts).
+        orchPending.get(tabId)?.('')
+        if (!orchHeld) return orchAnswer(text)
+        const held = orchHeld
+        return new Promise<string>((done) => {
+          const finish = (raw: string) => {
+            if (orchPending.get(tabId) === finish) orchPending.delete(tabId)
+            done(raw)
+          }
+          orchPending.set(tabId, finish)
+          held.push(() => finish(orchAnswer(text)))
+        })
+      }
       prompts.push(text)
       if (hang) return new Promise(() => {})
       if (armGate) {
@@ -346,6 +364,9 @@ function reset(): void {
   promptCalls = []
   warms = []
   orchMode = 'card'
+  orchReply = null
+  orchHeld = null
+  orchPending.clear()
   cancels = 0
   pubs = []
   publishAllow = undefined
@@ -399,6 +420,7 @@ test('conductor drives the factory from the guide box', async () => {
   conduct = mods.conductor.conduct
   configureFactory = mods.controller.configureFactory
   startRun = mods.controller.startRun
+  abandonRun = mods.controller.abandonRun
   getRun = mods.controller.getRun
   decideRun = mods.controller.decideRun
   settle = mods.controller.settle
@@ -911,4 +933,171 @@ test('conductor drives the factory from the guide box', async () => {
   await conduct(activeId, RESUME)
   assert.equal(promptCalls.filter((c) => c.tabId.endsWith('-orch')).length, orchBefore)
   await settle(activeId)
+})
+
+test('Joe 2026-10-06 run-ae98e1f8: the conductor restarts in the right repo when Joe says so', async () => {
+  const mods = await loaded
+  abandonRun = mods.controller.abandonRun
+  const lotProjects = join(temp, 'lot-projects')
+  mkdirSync(lotProjects, { recursive: true })
+  const folder = (name: string, files: Record<string, string>): string => {
+    const dir = join(lotProjects, name)
+    mkdirSync(dir, { recursive: true })
+    git(dir, ['init', '-q', '-b', 'main'])
+    for (const [rel, body] of Object.entries(files)) writeFileSync(join(dir, rel), body)
+    git(dir, ['add', '-A'])
+    git(dir, ['commit', '-q', '-m', 'init'])
+    return realpathSync(dir)
+  }
+  const intake = folder('360-seo-intake', { 'src.ts': 'export const n = 1\n' })
+  const lot = folder('lotline', { 'README.md': '# LotOffice\n', 'src.ts': 'export const n = 1\n' })
+  const yard = folder('dirty-yard', { 'src.ts': 'export const n = 1\n' })
+  const brain = repo('lot-brain')
+  configureFactory({ ...deps, projectsDir: lotProjects })
+  const task = readFileSync(join(dirname(here), 'testdata/run-ae98e1f8-task.txt'), 'utf8')
+  const ackOf = (id: string, text: string) => ([...(getRun(id)?.guide || [])].reverse().find((g) => g.text === text)?.ack || '')
+  const orchCalls = () => promptCalls.filter((c) => c.tabId.endsWith('-orch')).length
+  const lastOrch = () => [...promptCalls].reverse().find((c) => c.tabId.endsWith('-orch'))?.text || ''
+  const start = (t: string, workRepo: string): string => {
+    const res = startRun({ task: t, workRepo, brainPath: brain, proceedCritical: true })
+    if (!res.ok) throw new Error(res.error)
+    activeId = res.run.id
+    return res.run.id
+  }
+
+  reset()
+  hang = true
+  holdTriage = true
+  const one = start(task, intake)
+  await until(() => triageOpen() && runOf().phase === 'triage', 'incident triage')
+  await conduct(one, PAUSE)
+  assert.equal(getRun(one)?.phase, 'paused')
+  const why = 'why is it working in the 360seo intake project?'
+  await conduct(one, why)
+  assert.equal(getRun(one)?.phase, 'paused')
+  assert.equal(getRun(one)?.workRepo, intake)
+  const card = lastOrch()
+  assert.ok(card.includes(`workRepo: ${intake}`), 'card names the work repo')
+  assert.ok(card.includes(`taskRepo: ${lot}`), 'card names the repo the task names')
+  assert.match(card, /^shipThrough: /m)
+  assert.ok(card.includes(JSON.stringify(task.slice(0, 200)).slice(0, -1)), 'card carries the task')
+  assert.ok(card.includes('Do not run commands or open files'))
+  assert.ok(card.includes('Never say a push will not deploy'))
+  orchReply = 'Moving it.\nFACTORY_TELL: use the lotoffice project'
+  const should = 'it should be in the lotoffice project and it needs to do what i asked in that repo.'
+  await conduct(one, should)
+  orchReply = null
+  const filed = (getRun(one)?.guide || []).find((g) => g.text === 'use the lotoffice project')
+  assert.equal(filed?.sent, false)
+  assert.equal(filed?.repo, lot)
+  assert.match(filed?.ack || '', /Filed with the plan/)
+  assert.equal((filed?.ack || '').includes('did not send'), false)
+  assert.equal(getRun(one)?.phase, 'paused')
+  const restarted = 'get the run restarted in the correct repo'
+  await conduct(one, restarted)
+  assert.equal(getRun(one)?.workRepo, lot)
+  assert.notEqual(getRun(one)?.phase, 'paused')
+  assert.ok(ackOf(one, restarted).includes(lot), ackOf(one, restarted))
+  holdTriage = false
+  fireTriage()
+  abandonRun(one)
+
+  reset()
+  hang = true
+  const two = start('fix typo in footer', intake)
+  await until(() => runOf().phase === 'build' && prompts.length > 0, 'run 2 build')
+  await conduct(two, PAUSE)
+  await conduct(two, 'Resume this run')
+  assert.notEqual(getRun(two)?.phase, 'paused')
+  await conduct(two, PAUSE)
+  const unpause = 'unpause the blasted run and have it use the right repo'
+  await conduct(two, unpause)
+  assert.notEqual(getRun(two)?.phase, 'paused')
+  assert.equal(getRun(two)?.workRepo, intake)
+  assert.equal(ackOf(two, unpause).includes('Resumed'), true, ackOf(two, unpause))
+  await conduct(two, PAUSE)
+  await conduct(two, 'so get it started for petes sake')
+  assert.notEqual(getRun(two)?.phase, 'paused')
+
+  const gen = factoryGen(two)
+  const phase = getRun(two)?.phase
+  const asked = orchCalls()
+  await conduct(two, 'can you restart it?')
+  assert.equal(orchCalls(), asked + 1)
+  assert.equal(getRun(two)?.phase, phase)
+  assert.equal(factoryGen(two), gen)
+  await conduct(two, 'stop adding the footer')
+  assert.equal(orchCalls(), asked + 2)
+  assert.equal(getRun(two)?.override?.review, undefined)
+  orchReply = 'Telling the builder.\nFACTORY_TELL: keep the footer text short'
+  await conduct(two, 'the footer should stay short')
+  orchReply = null
+  await until(() => prompts.some((p) => p.includes('keep the footer text short')), 'tell reached the builder')
+  orchMode = 'empty'
+  await conduct(two, 'the header is wrong')
+  orchMode = 'card'
+  assert.ok(ackOf(two, 'the header is wrong').startsWith('I could not get an answer, so nothing was sent to the run.'), ackOf(two, 'the header is wrong'))
+
+  orchHeld = []
+  const before = orchCalls()
+  const first = conduct(two, 'how many reviews so far?')
+  const second = conduct(two, 'what phase is it in?')
+  await until(() => orchCalls() === before + 1, 'first answer asked')
+  await new Promise((r) => setTimeout(r, 50))
+  assert.equal(orchCalls(), before + 1, 'the second question waits for the first answer')
+  orchHeld.shift()?.()
+  await until(() => orchCalls() === before + 2 && (orchHeld?.length || 0) === 1, 'second answer asked')
+  orchHeld.shift()?.()
+  await Promise.all([first, second])
+  for (const q of ['how many reviews so far?', 'what phase is it in?']) assert.ok(ackOf(two, q).startsWith('Strict rejects:'), `${q}: ${ackOf(two, q)}`)
+  const held = conduct(two, 'what is it doing now?')
+  await until(() => (orchHeld?.length || 0) === 1, 'held answer')
+  await conduct(two, PAUSE)
+  assert.equal(getRun(two)?.phase, 'paused')
+  orchHeld.shift()?.()
+  await held
+  orchHeld = null
+  orchMode = 'throw'
+  await conduct(two, 'how far along is it?')
+  orchMode = 'card'
+  await conduct(two, 'how far along now?')
+  assert.ok(ackOf(two, 'how far along now?').startsWith('Strict rejects:'), ackOf(two, 'how far along now?'))
+
+  const three = start('fix typo in footer', lot)
+  const throwOut = 'so throw it all out and then restart in the lotline repo for crying out loud'
+  await conduct(two, throwOut)
+  assert.match(ackOf(two, throwOut), /already running/)
+  assert.equal(ackOf(two, throwOut).includes('Resumed'), false)
+  assert.equal(getRun(two)?.workRepo, intake)
+  assert.equal(getRun(two)?.phase, 'paused')
+  abandonRun(three)
+  const titled = 'restart it in the lotoffice project'
+  await conduct(two, titled)
+  assert.equal(getRun(two)?.workRepo, lot)
+  assert.notEqual(getRun(two)?.phase, 'paused')
+  abandonRun(two)
+
+  const four = start('fix typo in footer', intake)
+  await until(() => runOf().phase === 'build', 'run 4 build')
+  await conduct(four, PAUSE)
+  await conduct(four, throwOut)
+  assert.equal(getRun(four)?.workRepo, lot)
+  assert.notEqual(getRun(four)?.phase, 'paused')
+  abandonRun(four)
+
+  writeFileSync(join(yard, 'wip.txt'), 'not committed\n')
+  holdTriage = true
+  const five = start('fix typo in footer', intake)
+  await until(() => triageOpen() && runOf().phase === 'triage', 'run 5 triage')
+  await conduct(five, PAUSE)
+  const dirty = 'restart it in dirty-yard'
+  await conduct(five, dirty)
+  assert.equal(getRun(five)?.workRepo, yard)
+  assert.equal(getRun(five)?.needsPrep, 'dirty')
+  assert.match(ackOf(five, dirty), /Commit first|Stash first/)
+  assert.equal(ackOf(five, dirty).includes('Resumed'), false)
+  holdTriage = false
+  fireTriage()
+  abandonRun(five)
+  configureFactory(deps)
 })

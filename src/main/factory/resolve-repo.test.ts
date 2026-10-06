@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { tmpRepo } from './test-git.ts'
 import { gitTop } from './git-audit.ts'
 import { realish } from './paths.ts'
@@ -186,6 +187,47 @@ test('Joe 2026-09-28 run-e50ebcf3: a note that only mentions the current or last
   assert.deepEqual(isnt, { ok: false, error: NAME_THE_REPO })
   const yes = resolveWorkRepo({ task: 'fix the gutter iq footer', brainPath: brain, projectsDir: projects })
   assert.ok(yes.ok && same(yes.workRepo, gutter), JSON.stringify(yes))
+})
+
+test('Joe 2026-10-06 run-ae98e1f8: a title names the repo before a word inside a folder name', () => {
+  const titled = mkdtempSync(join(tmpdir(), 'factory-rr-titled-'))
+  const folders: Record<string, Record<string, string>> = {
+    '360-seo-intake': { 'README.md': 'hello\n' },
+    lotline: { 'README.md': '# LotOffice\n', 'package.json': JSON.stringify({ name: 'lotline' }) },
+    'lotline-network': { 'README.md': '# Lotline\n' },
+    'brain-app': { 'README.md': '# Brain\n' },
+    'agency-brain': { 'README.md': 'hello\n' },
+    'notes-app': { 'README.md': '# Notes\n\nIt needs a login page.\n' },
+    'shared-one': { 'README.md': '# Shared Title\n' },
+    'shared-two': { 'README.md': '# Shared Title\n' },
+    'rep-comms-app': { 'README.md': 'hello\n', 'package.json': JSON.stringify({ name: 'repline' }) },
+    'frisbee-app': { 'README.md': 'hello\n', 'package.json': JSON.stringify({ name: '@club/gameroster' }) },
+    'dealer-core': { 'README.md': '# dealer-core\n', 'package.json': JSON.stringify({ name: 'dealer-core-monorepo' }) }
+  }
+  for (const [name, files] of Object.entries(folders)) {
+    execFileSync('/usr/bin/git', ['clone', '-q', tmpRepo('factory-rr-seed-', files), join(titled, name)], { stdio: 'ignore' })
+  }
+  const at = (task: string, extra: Partial<Parameters<typeof resolveWorkRepo>[0]> = {}) => resolveWorkRepo({ task, brainPath: brain, projectsDir: titled, ...extra })
+  const lot = join(titled, 'lotline')
+  const task = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'testdata/run-ae98e1f8-task.txt'), 'utf8')
+  assert.match(task, /take them through/)
+  const real = at(task, { lastRepo: join(titled, '360-seo-intake') })
+  assert.ok(real.ok && same(real.workRepo, lot) && real.from === 'title', JSON.stringify(real))
+  const brainWord = at('update the brain footer')
+  assert.ok(!brainWord.ok || brainWord.from !== 'title', JSON.stringify(brainWord))
+  assert.deepEqual(at('LotOffice header', { ignore: [lot] }), { ok: false, error: NAME_THE_REPO })
+  assert.deepEqual(at('it needs to do what i asked', { aliases: 'title' }), { ok: false, error: NAME_THE_REPO })
+  const body = at('it needs to do what i asked', { aliases: true })
+  assert.ok(body.ok && same(body.workRepo, join(titled, 'notes-app')), JSON.stringify(body))
+  assert.deepEqual(at('sharedtitle'), { ok: false, error: NAME_THE_REPO })
+  const rep = at('fix the repline inbox')
+  assert.ok(rep.ok && same(rep.workRepo, join(titled, 'rep-comms-app')) && rep.from === 'title', JSON.stringify(rep))
+  const roster = at('gameroster sign-in bug')
+  assert.ok(roster.ok && same(roster.workRepo, join(titled, 'frisbee-app')) && roster.from === 'title', JSON.stringify(roster))
+  const mono = at('dealercoremonorepo')
+  assert.ok(mono.ok && same(mono.workRepo, join(titled, 'dealer-core')) && mono.from === 'title', JSON.stringify(mono))
+  const dealer = at('dealer')
+  assert.ok(!dealer.ok || dealer.from !== 'title', JSON.stringify(dealer))
 })
 
 test('taskPaths reads absolute and ~ paths and drops trailing punctuation', () => {
