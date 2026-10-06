@@ -1513,6 +1513,46 @@ test('the Lead acts: planner verdicts, a planner move, and re-plans after a move
   assert.equal(getRun(f3)?.slices, undefined)
   abandonRun(f3)
 
+  // (j) a not-ready plan stays put through Pause and Resume with Approve in advance on.
+  reset()
+  hang = true
+  planQueue = ['Files: a.ts\nCheck: it works.']
+  const j = begin('add a webhook endpoint feature', intake, { runThrough: true })
+  await until(() => getRun(j)?.plan?.unready === true, 'j not-ready plan')
+  await conduct(j, PAUSE)
+  await conduct(j, 'Resume this run.')
+  await new Promise((r) => setTimeout(r, 60))
+  assert.equal(getRun(j)?.plan?.status, 'waiting')
+  assert.equal(prompts.length, 0, 'Resume did not approve a not-ready plan')
+  abandonRun(j)
+
+  // (k) a redirect while a plan is on screen (no Pause) plans again in the new repo.
+  reset()
+  hang = true
+  const k = begin('add a webhook endpoint feature', intake)
+  await until(() => getRun(k)?.plan?.status === 'waiting' && !!getRun(k)?.plan?.text, 'k plan')
+  mods.controller.guideRun(k, `work in ${lot} instead`)
+  await until(() => plannerCalls().length === 2, 'k planner 2')
+  assert.equal(plannerCwds()[1], lot)
+  await until(() => getRun(k)?.plan?.status === 'waiting' && !!getRun(k)?.plan?.text, 'k plan in lotline')
+  assert.equal(getRun(k)?.workRepo, lot)
+  abandonRun(k)
+
+  // (l) a blocked plan in a repo Joe's note chose: the planner's REPO line does not pull the run away.
+  const other = folder('other-repo', { 'src.ts': 'export const n = 1\n' })
+  reset()
+  hang = true
+  planQueue = [ready, blocked(lot)]
+  const l = begin('add a webhook endpoint feature', intake)
+  await until(() => getRun(l)?.plan?.status === 'waiting' && !!getRun(l)?.plan?.text, 'l plan 1')
+  mods.controller.guideRun(l, `work in ${other}`)
+  await until(() => plannerCalls().length === 2 && getRun(l)?.plan?.status === 'blocked', 'l planner 2 blocked')
+  await new Promise((r) => setTimeout(r, 60))
+  assert.equal(getRun(l)?.workRepo, other)
+  assert.equal(plannerCwds()[1], other)
+  assert.equal(plannerCalls().length, 2)
+  abandonRun(l)
+
   // (h) the first Lead line says how the repo was picked.
   reset()
   hang = true

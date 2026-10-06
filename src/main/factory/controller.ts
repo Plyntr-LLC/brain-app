@@ -787,7 +787,8 @@ async function opusPlan(state: Live): Promise<void> {
     state.run = { ...state.run, planRepo: there }
     persist(state)
     if (reconcileWorkRepo(state) === 'stop') return
-    if (realish(state.run.workRepo) === realish(there)) return opusPlan(state)
+    // Moved anywhere (the planner's repo, or a repo Joe's note names): plan again where the run now is.
+    if (realish(state.run.workRepo) !== realish(run.workRepo)) return opusPlan(state)
     return
   }
   setPhase(state, 'plan', { plan: { ...prev, text: body.slice(0, 8000), by: 'opus', status: 'waiting', unready: verdict === 'ready' ? undefined : true } })
@@ -1491,7 +1492,8 @@ function resumeTo(state: Live, target: RunPhase): RunRecord {
   if (target === 'plan') {
     // A waiting plan comes back as it was; a resume never starts a build.
     if (run.plan?.status === 'waiting' && run.plan.text && !openNotes(run).length) {
-      if (!run.runThrough) return setPhase(state, 'plan', { error: undefined })
+      // Approve in advance only covers a plan the planner called ready.
+      if (!run.runThrough || run.plan.unready) return setPhase(state, 'plan', { error: undefined })
       state.run = { ...run, error: undefined }
       track(state, approvePlan(state))
       return state.run
@@ -1674,6 +1676,12 @@ function guideRoute(state: Live): boolean {
     // The new repo waits on Commit/Stash first: the turn still running in the old repo stops.
     if (state.run.needsPrep && state.busy) interrupt(state)
     return false
+  }
+  // A move dropped the plan on screen and nobody is planning: plan in the new repo now.
+  if (state.run.phase === 'plan' && !state.run.plan && !state.busy) {
+    state.gen++
+    track(state, opusPlan(state))
+    return true
   }
   const run = state.run
   // Failed or paused is not a dead end: Send resumes with the note at once. Tier cards, Proceed, and prep wait.
