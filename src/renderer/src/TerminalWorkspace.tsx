@@ -7,6 +7,8 @@ import { CLAUDE_DEFAULT_MODEL, keepClaudeModel } from '../../shared/claude-defau
 import { defaultEffort, hydrateEffort, normalizeEffort, prettyEffort } from '../../shared/effort'
 import { mdToHtml, tidy, outsideProject, rel, type FileHit } from './ptyChat'
 import { AwayBlock } from './AwayBlock'
+import { ActivityRail } from './ActivityRail'
+import type { Activity } from './factory-activity'
 import { sameCwd } from '../../shared/paths'
 import { APP_SLASH, TUI_ONLY_SLASH } from '../../shared/slash-lanes'
 import { routeLine } from '../../shared/slash-route'
@@ -2249,6 +2251,8 @@ export function TerminalWorkspace({
   tabsRef.current = tabs
   activeRef.current = active
   const [filesByTab, setFilesByTab] = useState<Record<string, FileHit[]>>({})
+  /** A Factory tab's rail: what its run is doing. Missing until the run starts. */
+  const [activityByTab, setActivityByTab] = useState<Record<string, Activity | null>>({})
   const [filesOpen, setFilesOpen] = useState(true)
   const [picker, setPicker] = useState(false)
   const [pausedRuns, setPausedRuns] = useState<{ id: string; title: string; workRepo: string }[]>([])
@@ -2290,6 +2294,7 @@ export function TerminalWorkspace({
   // A Factory tab shows its own run's files; Chat tabs (and everything else) show the last chat's.
   const filesId = tab?.type === 'factory' ? tab.id : chatId
   const hits = filesByTab[filesId] || []
+  const railActivity = tab?.type === 'factory' ? activityByTab[tab.id] || null : null
   const folderName = cwd.split('/').filter(Boolean).pop() || 'Agency Brain'
   const modelChoices = cliModels(
     chatTab?.kind,
@@ -2700,6 +2705,10 @@ export function TerminalWorkspace({
     })
   }, [])
 
+  function onActivity(id: string, activity: Activity | null) {
+    setActivityByTab((m) => (m[id] === activity ? m : { ...m, [id]: activity }))
+  }
+
   function onFiles(id: string, files: FileHit[]) {
     setFilesByTab((m) => ({ ...m, [id]: files }))
   }
@@ -3021,6 +3030,7 @@ export function TerminalWorkspace({
                 cwd={cwd}
                 active={t.id === active}
                 onFiles={onFiles}
+                onActivity={onActivity}
                 onRun={(runId, title) =>
                   setTabs((all) =>
                     all.map((x) => (x.id === t.id ? { ...x, runId, title: title.length > 24 ? title.slice(0, 22) + '...' : title } : x))
@@ -3085,6 +3095,10 @@ export function TerminalWorkspace({
               onPointerDown={(e) => dragWidth('refs', e, refsW, setRefsW)}
             />
           ) : null}
+          {railActivity ? (
+            <ActivityRail activity={railActivity} onPush={() => void window.brain.factory.publish(railActivity.runId)} />
+          ) : (
+            <>
           <h2>In use</h2>
           <ul className="looking looking-log" ref={refsList}>
             {hits.length === 0 && <li className="tiny">{tab?.type === 'factory' ? 'Nothing for this run yet.' : 'Nothing for this chat yet.'}</li>}
@@ -3100,6 +3114,8 @@ export function TerminalWorkspace({
               </li>
             ))}
           </ul>
+            </>
+          )}
           <div className="runmeta" onMouseDown={(e) => e.stopPropagation()}>
             {pick && (powerPickers || pick === 'folder') && (
               <div className="runpick">

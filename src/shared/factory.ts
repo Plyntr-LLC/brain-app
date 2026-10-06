@@ -221,7 +221,10 @@ export type RunEvent =
 
 /** The hold Joe has to answer, or null. One order for the conductor, the thread, and the events. */
 export function holdOf(run: RunRecord): Hold | null {
-  if (run.needsPrep === 'dirty') return { kind: 'dirty', text: `This repo has uncommitted changes (${run.dirtyCount ?? run.dirtyFiles?.length ?? 0} files).` }
+  if (run.needsPrep === 'dirty') {
+    const n = run.dirtyCount ?? run.dirtyFiles?.length ?? 0
+    return { kind: 'dirty', text: `This repo has uncommitted changes (${n} ${n === 1 ? 'file' : 'files'}).` }
+  }
   if (run.phase === 'review' && !!run.diff && run.strict?.status === 'fail' && (run.reviewCycles || 0) >= REVIEW_MAX) {
     return { kind: 'review', text: `Opus has not approved after ${run.reviewCycles} reviews.` }
   }

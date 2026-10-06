@@ -1,0 +1,124 @@
+[
+  {
+    "at": 1791279351961,
+    "kind": "repo",
+    "repo": "/private/var/folders/1j/w8m_jfjx4bg68kw0h023swth0000gn/T/conductor-8UvGTR/events-one",
+    "moved": false
+  },
+  {
+    "at": 1791279352040,
+    "kind": "plan",
+    "status": "waiting",
+    "by": "opus",
+    "text": "Files: src.ts\nCheck: the route answers."
+  },
+  {
+    "at": 1791279352040,
+    "kind": "hold",
+    "hold": "plan",
+    "text": "The plan is waiting for your approval."
+  },
+  {
+    "at": 1791279352049,
+    "kind": "plan",
+    "status": "approved",
+    "by": "opus",
+    "text": "Files: src.ts\nCheck: the route answers."
+  },
+  {
+    "at": 1791279352209,
+    "kind": "turn",
+    "call": 1791279352144,
+    "model": "",
+    "ms": 20,
+    "ok": true,
+    "files": 1,
+    "added": 2,
+    "deleted": 1,
+    "paths": [
+      "src.ts"
+    ]
+  },
+  {
+    "at": 1791279352218,
+    "kind": "test",
+    "rows": [
+      {
+        "script": "typecheck",
+        "status": "skipped"
+      },
+      {
+        "script": "test",
+        "status": "skipped"
+      },
+      {
+        "script": "e2e",
+        "status": "skipped"
+      }
+    ]
+  },
+  {
+    "at": 1791279352294,
+    "kind": "review",
+    "round": 1,
+    "status": "fail",
+    "text": "gap\nGAPS: 1\nFAIL"
+  },
+  {
+    "at": 1791279352440,
+    "kind": "turn",
+    "call": 1791279352376,
+    "model": "",
+    "ms": 18,
+    "ok": true,
+    "files": 2,
+    "added": 3,
+    "deleted": 1,
+    "paths": [
+      "fix.ts",
+      "src.ts"
+    ]
+  },
+  {
+    "at": 1791279352449,
+    "kind": "test",
+    "rows": [
+      {
+        "script": "typecheck",
+        "status": "skipped"
+      },
+      {
+        "script": "test",
+        "status": "skipped"
+      },
+      {
+        "script": "e2e",
+        "status": "skipped"
+      }
+    ]
+  },
+  {
+    "at": 1791279352497,
+    "kind": "review",
+    "round": 2,
+    "status": "pass",
+    "text": "GAPS: 0\nPASS"
+  },
+  {
+    "at": 1791279352622,
+    "kind": "commit",
+    "sha": "7faf1b66b411648ce98c300eaadb08857457d72d",
+    "branch": "main"
+  },
+  {
+    "at": 1791279352622,
+    "kind": "end",
+    "phase": "done"
+  },
+  {
+    "at": 1791279352681,
+    "kind": "push",
+    "ok": true,
+    "text": "origin/main"
+  }
+]

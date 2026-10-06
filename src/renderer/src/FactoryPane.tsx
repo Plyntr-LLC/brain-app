@@ -1,6 +1,9 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { modelsLine, REVIEW_MAX, strictRequired, VOICE_MAX, type FactoryTriage, type LiveCall, type RunPhase, type RunRecord } from '../../shared/factory'
-import { applyFactoryText, showOutgoing, visibleGuide, type Outgoing } from './guide-thread'
+import { applyFactoryText, showOutgoing, type Outgoing } from './guide-thread'
+import { factoryActivity, type Activity } from './factory-activity'
+import { threadItems } from './factory-thread'
+import { FactoryThread } from './FactoryThread'
 
 type Perm = { title?: string; path?: string; detail?: string; options?: { id: string; label: string }[] }
 type FileHit = { path: string; tool?: string; live: boolean }
@@ -14,30 +17,18 @@ function baseName(p: string): string {
   return p.replace(/\\/g, '/').split('/').filter(Boolean).pop() || p
 }
 
-const RAIL: { key: RunPhase; label: string }[] = [
-  { key: 'triage', label: 'Triage' },
-  { key: 'plan', label: 'Plan' },
-  { key: 'build', label: 'Build' },
-  { key: 'verify', label: 'Verify' },
-  { key: 'review', label: 'Review' },
-  { key: 'commit', label: 'Commit' }
-]
-
 const STATUS_WORD: Partial<Record<RunPhase, string>> = {
-  plan: 'plan',
+  triage: 'checking',
+  plan: 'planning',
+  build: 'building',
+  verify: 'testing',
+  review: 'reviewing',
+  commit: 'committing',
   paused: 'paused',
   upgrade: 'needs a decision',
   failed: 'failed',
   abandoned: 'abandoned',
   done: 'done'
-}
-
-function railIndex(run: RunRecord): number {
-  const at = run.phase === 'paused' || run.phase === 'failed' || run.phase === 'upgrade' ? run.resumePhase || 'build' : run.phase
-  if (at === 'done' || at === 'commit') return 5
-  if (at === 'upgrade') return 2
-  const i = RAIL.findIndex((r) => r.key === at)
-  return i < 0 ? 0 : i
 }
 
 /** "review · opus medium · 0:42" for a call in flight. */
@@ -63,8 +54,10 @@ export function FactoryPane(props: {
   onRun: (runId: string, title: string) => void
   /** This run's files go to the right In use rail, keyed by the Factory tab id. */
   onFiles: (id: string, files: FileHit[]) => void
+  /** What the right rail shows for this run (null: no run yet, or the tab closed). */
+  onActivity: (id: string, activity: Activity | null) => void
 }) {
-  const { id, runId, cwd, active, onRun, onFiles } = props
+  const { id, runId, cwd, active, onRun, onFiles, onActivity } = props
   const [run, setRun] = useState<RunRecord | null>(null)
   const [task, setTask] = useState('')
   const [runThrough, setRunThrough] = useState(true)
@@ -97,14 +90,30 @@ export function FactoryPane(props: {
   const [files, setFiles] = useState<FileHit[]>([])
   const runRef = useRef<string>(runId || '')
   const noteRef = useRef<HTMLTextAreaElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
   const onFilesRef = useRef(onFiles)
   onFilesRef.current = onFiles
+  const onActivityRef = useRef(onActivity)
+  onActivityRef.current = onActivity
 
   // In use follows this list; a closed tab leaves nothing behind.
   useEffect(() => {
     onFilesRef.current(id, files)
   }, [id, files])
   useEffect(() => () => onFilesRef.current(id, []), [id])
+
+  // The right rail follows the run: Now, Progress, Team, Changed files, Ship.
+  useEffect(() => {
+    onActivityRef.current(id, run ? factoryActivity(run, pushBlock) : null)
+  }, [id, run, pushBlock])
+  useEffect(() => () => onActivityRef.current(id, null), [id])
+
+  // The thread follows the newest line, the way Chat does.
+  const lines = (run?.events?.length || 0) + (run?.guide?.length || 0) + (pending ? 1 : 0) + (pending?.ack ? 1 : 0)
+  useEffect(() => {
+    const el = bodyRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [lines, run?.phase])
 
   useEffect(() => {
     runRef.current = runId || ''
@@ -310,8 +319,6 @@ export function FactoryPane(props: {
     )
   }
 
-  const idx = railIndex(run)
-  const word = STATUS_WORD[run.phase]
   const live = run.phase !== 'done' && run.phase !== 'abandoned'
   const planWaiting = run.phase === 'plan' && run.plan?.status === 'waiting' && !!run.plan.text
   const prepWaiting = run.phase === 'triage' && run.needsPrep === 'dirty'
@@ -356,57 +363,66 @@ export function FactoryPane(props: {
     if (res.run) setRun(res.run)
   }
   const voiceHeld = run.voice?.status === 'fail'
+  const items = threadItems(run, pending)
   return (
     <div className={`factorywrap run ${active ? 'on' : ''}`}>
       <div className="factory">
         <div className="factory-head">
-          <h3 className="factory-h">{run.title}</h3>
-          <p className="tiny">
+          <div className="factory-titlerow">
+            <h3 className="factory-h">{run.title}</h3>
+            <div className="factory-headbtns">
+              {running ? (
+                <button type="button" className="ghost" onClick={() => void act(window.brain.factory.pause(run.id))}>
+                  Pause
+                </button>
+              ) : null}
+              {live ? (
+                <button type="button" className="ghost" onClick={() => void act(window.brain.factory.abandon(run.id))}>
+                  Abandon run
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <div className="factory-chips">
+            <span className="fchip">
+              {baseName(run.workRepo)}
+              {run.branch ? ` · ${run.branch}` : ''}
+            </span>
+            <span className="fchip">
+              {run.tier} · risk {run.risk}
+            </span>
+            <span className={`fchip status ${run.phase}`}>{STATUS_WORD[run.phase] || run.phase}</span>
+            {run.runThrough ? <span className="fchip">Approve in advance</span> : null}
+            {run.shipThrough ? <span className="fchip">{opusReviews ? 'Ship in advance' : 'Ship in advance waits for an Opus review'}</span> : null}
+          </div>
+          <p className="tiny factory-meta">
             Work repo: <strong>{baseName(run.workRepo)}</strong> {run.workRepo}
             {run.builder ? ` · Builder: ${BUILDER_NAME[run.builder]}` : ''}
             {run.usage?.length ? ` · ${usageLine(run.usage)}` : ''}
             {calls.map((c) => ` · ${nowLine(c)}`).join('')}
             {modelsLine(run.usage) ? ` · Models: ${modelsLine(run.usage)}` : ''}
           </p>
-          <div className="phaserail">
-            {RAIL.map((r, i) => (
-              <span
-                key={r.key}
-                className={
-                  r.key === 'plan' && run.tier !== 'T2' && run.tier !== 'T3'
-                    ? 'phase past'
-                    : `phase ${i === idx ? 'on' : ''} ${i < idx || run.phase === 'done' ? 'past' : ''}`
-                }
-              >
-                {r.label}
-              </span>
-            ))}
-            {word ? <span className={`phase-word ${run.phase}`}>{word}</span> : null}
-            <span className="phase-chip">
-              {run.tier} · risk {run.risk}
-            </span>
-          </div>
         </div>
-        <div className="factory-body">
-          {run.runThrough ? (
-            <p className="tiny">
-              Approved in advance. Brain commits a clean review.{run.shipThrough ? ' It never deploys.' : ' It never pushes or deploys.'}
-            </p>
+        <div className="factory-body" ref={bodyRef}>
+          <FactoryThread items={items} />
+          {run.audit?.brain.length ? (
+            <div className="factory-brain">
+              <strong>Brain changed (not reverted)</strong>
+              <ul>
+                {run.audit.brain.map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
+              </ul>
+            </div>
           ) : null}
-          {run.shipThrough ? (
-            <p className="tiny">
-              {opusReviews
-                ? 'Ship in advance. After an Opus review with no gaps, Brain commits and pushes this branch. It never deploys.'
-                : 'Ship in advance. Brain does not push a run with no Opus review. It never deploys.'}
-              {opusReviews ? '' : ' Ship in advance waits for an Opus review with no gaps.'}
-            </p>
-          ) : null}
-          {run.pushWarn && !run.pushed ? <p className="tiny">{run.pushWarn}</p> : null}
-          {run.moved ? <p className="tiny">{run.moved}</p> : null}
-          {run.tripwire?.auto ? <p className="tiny">Moved to {run.tier} in advance: {run.tripwire.reasons.join(' ')}</p> : null}
+          {run.phase === 'plan' && run.audit?.work.length ? <p className="factory-warn">The plan turn changed files.</p> : null}
+          {run.verifyArtifact ? <p className="tiny factory-note">Verify output: {run.verifyArtifact}</p> : null}
+          {run.pushWarn && !run.pushed ? <p className="tiny factory-note">{run.pushWarn}</p> : null}
+          {run.moved ? <p className="tiny factory-note">{run.moved}</p> : null}
+          {run.tripwire?.auto ? <p className="tiny factory-note">Moved to {run.tier} in advance: {run.tripwire.reasons.join(' ')}</p> : null}
           {run.tier === 'T3' && run.slices?.length ? (
-            <div className="factory-audit">
-              <strong>Slices</strong>
+            <details className="factory-slices">
+              <summary>Split into {run.slices.length} jobs</summary>
               <ul>
                 {run.slices.map((sl, i) => (
                   <li key={`${i}-${sl.title}`}>
@@ -414,10 +430,16 @@ export function FactoryPane(props: {
                   </li>
                 ))}
               </ul>
+            </details>
+          ) : null}
+          {running && (work || waitLine) ? (
+            <div className="factory-liveline">
+              <span className="dot live" />
+              <span>{[waitLine, work].filter(Boolean).join(' · ')}</span>
             </div>
           ) : null}
           {permission ? (
-            <div className="skin-perm">
+            <div className="skin-perm factory-ask">
               <p className="skin-perm-title">{permission.title || 'Allow this?'}</p>
               {permission.path ? <p className="tiny">{permission.path}</p> : null}
               {permission.detail ? <pre className="skin-perm-detail">{permission.detail}</pre> : null}
@@ -442,13 +464,6 @@ export function FactoryPane(props: {
                   </button>
                 ))}
               </div>
-            </div>
-          ) : null}
-          {running && (work || activity || waitLine) ? (
-            <div className="factory-activity">
-              {waitLine ? <p className="tiny">{waitLine}</p> : null}
-              {work ? <p className="tiny">{work}</p> : null}
-              {activity ? <pre>{activity}</pre> : null}
             </div>
           ) : null}
           {prepWaiting ? (
@@ -495,9 +510,8 @@ export function FactoryPane(props: {
             </div>
           ) : null}
           {planWaiting && run.plan ? (
-            <div className="factory-plan">
-              <strong>Plan by {run.plan.by === 'opus' ? 'Opus' : 'Grok'}</strong>
-              <pre>{run.plan.text}</pre>
+            <div className="factory-plan factory-trip">
+              <strong>The plan by {run.plan.by === 'opus' ? 'Opus' : 'Grok'} is ready. Approve it, or reject it with a reason.</strong>
               <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why reject? (optional)" spellCheck={false} />
               <div className="factory-actions">
                 <button type="button" className="primary" onClick={() => void act(window.brain.factory.decide(run.id, 'approve-plan'))}>
@@ -547,79 +561,6 @@ export function FactoryPane(props: {
               </div>
             </div>
           ) : null}
-          {run.audit ? (
-            <div className="factory-audit">
-              <strong>Work repo changes</strong>
-              {run.phase === 'plan' && run.audit.work.length ? <p className="factory-warn">The plan turn changed files.</p> : null}
-              {run.audit.work.length ? (
-                <ul>
-                  {run.audit.work.map((w) => (
-                    <li key={w.path}>
-                      {w.path} <span className="tiny">+{w.added} -{w.deleted}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="tiny">None yet.</p>
-              )}
-              {run.audit.brain.length ? (
-                <div className="factory-brain">
-                  <strong>Brain changed (not reverted)</strong>
-                  <ul>
-                    {run.audit.brain.map((p) => (
-                      <li key={p}>{p}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          {run.verify?.length || run.strict || run.voice || run.followUps?.length ? (
-            <div className="factory-verify">
-              {(run.verify || []).map((v) => (
-                <div key={v.script} className={`verify-row ${v.status}`}>
-                  <span>npm run {v.script}</span>
-                  <span>{v.status}</span>
-                  {v.status === 'fail' && v.tail ? <pre>{v.tail}</pre> : null}
-                </div>
-              ))}
-              {run.strict ? (
-                <div className={`verify-row ${run.strict.status === 'missing' ? 'skipped' : run.strict.status}`}>
-                  <span>Opus strict review</span>
-                  <span>{run.strict.status === 'missing' ? 'skipped' : run.strict.status}</span>
-                  {run.strict.status === 'fail' ? <pre>{run.strict.text}</pre> : null}
-                  {run.strict.status === 'missing' ? <p className="tiny">{run.strict.text}</p> : null}
-                </div>
-              ) : null}
-              {run.followUps?.length ? (
-                <div className="tiny">
-                  Follow-ups outside this change (not gaps):
-                  <ul>
-                    {run.followUps.map((f, i) => (
-                      <li key={i}>{f}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-              {run.voice ? (
-                <div className={`verify-row ${run.voice.status}`}>
-                  <span>Voice check</span>
-                  <span>{run.voice.status}</span>
-                  {run.voiceCycles ? (
-                    <p className="tiny">
-                      {run.voice.status === 'fail' && run.voiceCycles >= VOICE_MAX
-                        ? `Voice has not approved after ${VOICE_MAX} fixes.`
-                        : `Voice attempts: ${run.voiceCycles} of ${VOICE_MAX}`}
-                    </p>
-                  ) : null}
-                  {run.voice.status === 'fail' && run.voice.tail ? <pre>{run.voice.tail}</pre> : null}
-                  {run.voice.status === 'skipped' && run.voice.tail ? <p className="tiny">{run.voice.tail}</p> : null}
-                </div>
-              ) : null}
-              {run.verifyArtifact ? <p className="tiny">Verify output: {run.verifyArtifact}</p> : null}
-            </div>
-          ) : null}
-          {run.phase === 'review' && run.diff ? <pre className="factory-diff">{run.diff}</pre> : null}
           {strictHeld ? (
             <div className="factory-trip">
               <strong>{`Opus has not approved after ${REVIEW_MAX - 1} fixes. Gaps still count.`}</strong>
@@ -646,92 +587,104 @@ export function FactoryPane(props: {
               </div>
             </div>
           ) : null}
-          {run.error ? <p className="factory-err">{run.error}</p> : null}
-          {error ? <p className="factory-err">{error}</p> : null}
-          <div className="factory-actions">
-            {run.phase === 'review' && run.diff ? (
-              <button type="button" className="primary" disabled={voiceHeld} onClick={() => void act(window.brain.factory.commit(run.id))}>
-                {strictHeld ? 'Commit anyway' : 'Commit'}
-              </button>
-            ) : null}
-            {run.phase === 'review' && run.diff && voiceHeld ? (
-              <>
-                <button type="button" className="ghost" onClick={() => void act(window.brain.factory.decide(run.id, 'fix-copy'))}>
-                  Fix copy
-                </button>
-                <span className="tiny">Voice check said REJECT. Fix the copy before Commit.</span>
-              </>
-            ) : null}
-            {running ? (
-              <button type="button" className="ghost" onClick={() => void act(window.brain.factory.pause(run.id))}>
-                Pause
-              </button>
-            ) : null}
-            {run.phase === 'paused' || run.phase === 'failed' ? (
-              <button type="button" className="primary" onClick={() => void act(window.brain.factory.resume(run.id))}>
-                Resume
-              </button>
-            ) : null}
-            {live ? (
-              <button type="button" className="ghost" onClick={() => void act(window.brain.factory.abandon(run.id))}>
-                Abandon run
-              </button>
-            ) : null}
-            {run.phase === 'done' && run.commitSha && !run.pushed ? (
-              <>
-                <span className="tiny">
-                  Committed {run.commitSha.slice(0, 7)}
-                  {run.branch ? ` on ${run.branch}` : ''}. Not pushed.
-                </span>
-                <button type="button" className="primary" disabled={!!pushBlock} onClick={() => void act(window.brain.factory.publish(run.id))}>
-                  Push
-                </button>
-                {pushAnyway && run.branch ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const kennel = /mykennel/i.test(run.workRepo)
-                      const ask = `Brain normally never pushes ${run.branch}. Push this commit to ${run.profile?.publish.remote || 'origin'}/${run.branch}?${kennel ? ' Brain runs the Kennel gate first (a fresh Opus 5.5 medium review) and pushes only if it approves.' : ''}`
-                      if (!window.confirm(ask)) return
-                      void act(window.brain.factory.publishAnyway(run.id))
-                    }}
-                  >
-                    {`Push to ${run.branch} anyway…`}
-                  </button>
-                ) : null}
-                {pushBlock ? <span className="tiny">{pushBlock}</span> : null}
-              </>
-            ) : null}
-            {run.phase === 'done' && run.pushed ? (
-              <span className="tiny">
-                Committed {run.pushed.sha.slice(0, 7)}. Pushed to {run.pushed.remote}/{run.pushed.branch}.
-                {run.deployed ? ' Deployed.' : ''}
-              </span>
-            ) : null}
-            {run.phase === 'done' && run.pushed && !run.deployed ? (
-              <>
-                <button type="button" className="primary" disabled={!!deployBlock} onClick={() => void act(window.brain.factory.deploy(run.id))}>
-                  Deploy
-                </button>
-                {deployBlock ? <span className="tiny">{deployBlock}</span> : null}
-              </>
-            ) : null}
-            {run.phase === 'done' && run.deployError && !run.deployed ? <span className="factory-err">{run.deployError}</span> : null}
-            {run.phase === 'done' && run.pushError && !run.pushed ? <span className="factory-err">{run.pushError}</span> : null}
-          </div>
-          {visibleGuide(run.guide || [], pending).length ? (
-            <div className="thread factory-guide">
-              {visibleGuide(run.guide || [], pending).map((g, i) => (
-                <Fragment key={`${i}-${g.at}`}>
-                  <div className="bubble me">
-                    {g.text}
-                    {g.sent ? null : <p className="tiny">Queued until this step finishes.</p>}
-                  </div>
-                  {g.ack ? <div className="bubble">{g.ack}</div> : null}
-                </Fragment>
-              ))}
+          {run.followUps?.length ? (
+            <div className="tiny factory-note">
+              Follow-ups outside this change (not gaps):
+              <ul>
+                {run.followUps.map((f, i) => (
+                  <li key={i}>{f}</li>
+                ))}
+              </ul>
             </div>
           ) : null}
+          {run.phase === 'review' && run.diff ? (
+            <div className="factory-trip factory-ready">
+              <strong>
+                {voiceHeld
+                  ? run.voiceCycles && run.voiceCycles >= VOICE_MAX
+                    ? `Voice has not approved after ${VOICE_MAX} fixes.`
+                    : 'Voice check said REJECT. Fix the copy before Commit.'
+                  : strictHeld
+                    ? 'Commit anyway is your call.'
+                    : 'Reviewed. Ready to commit.'}
+              </strong>
+              {voiceHeld && run.voice?.tail ? <pre className="fcard-body">{run.voice.tail}</pre> : null}
+              <details className="factory-changes">
+                <summary>See changes</summary>
+                <pre className="factory-diff">{run.diff}</pre>
+              </details>
+              <div className="factory-actions">
+                <button type="button" className="primary" disabled={voiceHeld} onClick={() => void act(window.brain.factory.commit(run.id))}>
+                  {strictHeld ? 'Commit anyway' : 'Commit'}
+                </button>
+                {voiceHeld ? (
+                  <button type="button" className="ghost" onClick={() => void act(window.brain.factory.decide(run.id, 'fix-copy'))}>
+                    Fix copy
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+          {run.phase === 'paused' || run.phase === 'failed' ? (
+            <div className="factory-trip">
+              <strong>{run.phase === 'failed' ? 'The run failed.' : 'The run is paused.'}</strong>
+              {run.error ? <p className="factory-err">{run.error}</p> : null}
+              <div className="factory-actions">
+                <button type="button" className="primary" onClick={() => void act(window.brain.factory.resume(run.id))}>
+                  Resume
+                </button>
+              </div>
+            </div>
+          ) : run.error ? (
+            <p className="factory-err">{run.error}</p>
+          ) : null}
+          {run.phase === 'done' && run.commitSha ? (
+            <div className="factory-trip factory-ship">
+              <div className="factory-actions">
+                {!run.pushed ? (
+                  <>
+                    <span className="tiny">
+                      Committed {run.commitSha.slice(0, 7)}
+                      {run.branch ? ` on ${run.branch}` : ''}. Not pushed.
+                    </span>
+                    <button type="button" className="primary" disabled={!!pushBlock} onClick={() => void act(window.brain.factory.publish(run.id))}>
+                      Push
+                    </button>
+                    {pushAnyway && run.branch ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const kennel = /mykennel/i.test(run.workRepo)
+                          const ask = `Brain normally never pushes ${run.branch}. Push this commit to ${run.profile?.publish.remote || 'origin'}/${run.branch}?${kennel ? ' Brain runs the Kennel gate first (a fresh Opus 5.5 medium review) and pushes only if it approves.' : ''}`
+                          if (!window.confirm(ask)) return
+                          void act(window.brain.factory.publishAnyway(run.id))
+                        }}
+                      >
+                        {`Push to ${run.branch} anyway…`}
+                      </button>
+                    ) : null}
+                    {pushBlock ? <span className="tiny">{pushBlock}</span> : null}
+                  </>
+                ) : (
+                  <span className="tiny">
+                    Committed {run.pushed.sha.slice(0, 7)}. Pushed to {run.pushed.remote}/{run.pushed.branch}.
+                    {run.deployed ? ' Deployed.' : ''}
+                  </span>
+                )}
+                {run.pushed && !run.deployed ? (
+                  <>
+                    <button type="button" className="primary" disabled={!!deployBlock} onClick={() => void act(window.brain.factory.deploy(run.id))}>
+                      Deploy
+                    </button>
+                    {deployBlock ? <span className="tiny">{deployBlock}</span> : null}
+                  </>
+                ) : null}
+                {run.deployError && !run.deployed ? <span className="factory-err">{run.deployError}</span> : null}
+                {run.pushError && !run.pushed ? <span className="factory-err">{run.pushError}</span> : null}
+              </div>
+            </div>
+          ) : null}
+          {error ? <p className="factory-err">{error}</p> : null}
         </div>
         {live ? (
           <div className="factory-compose">
@@ -739,7 +692,7 @@ export function FactoryPane(props: {
               ref={noteRef}
               value={note}
               rows={2}
-              placeholder="Ask about this run"
+              placeholder="Talk to the team: ask, redirect, add something, or say go"
               onChange={(e) => setNote(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
