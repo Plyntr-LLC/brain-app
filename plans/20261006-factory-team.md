@@ -9,7 +9,7 @@ Mockups: `plans/mockups/20261006-factory/index.html` (A team chat, B pipeline bo
 | Moment | What Joe saw | Cause |
 | --- | --- | --- |
 | Start | Work began in 360-seo-intake | "take" inside a folder name beat "lotoffice" (fixed in `54fcd32`) |
-| Plan | Plan "approved" with empty text | Opus planned in the wrong repo; an empty plan was accepted |
+| Plan | The "plan" was approved | Opus wrote that it could not plan (wrong repo, the code is in lotline); Approve in advance approved that refusal as a plan (correction 2026-10-06: an earlier note here said the plan was empty; the text sits in 360-seo-intake's run store) |
 | Build | "This turn changed no files", run paused | An empty turn pauses instead of retrying or asking |
 | Chat | Same status card 3 times; "I did not send that" | Answers cancelled each other; directions needed magic words (fixed in `54fcd32`) |
 | Chat | "Type exactly `Resume this run.`" | Exact-phrase doors (fixed in `54fcd32`) |
@@ -29,7 +29,7 @@ Mockups: `plans/mockups/20261006-factory/index.html` (A team chat, B pipeline bo
 
 ## Scope and phases (each phase: xhigh-gate plan and diff, a prerelease pack only on Joe's yes)
 
-1. **Lead acts (behavior, ~1 day).** Holds become Lead questions with buttons; empty turn retries once with a nudge before asking; an empty plan is never approved; a repo move before any build re-plans in the new repo (backlog `factory-replan-on-repo-move`); the Lead states the repo and its confidence in its first message.
+1. **Lead acts (behavior, ~1 day).** Holds become Lead questions with buttons; empty turn retries once with a nudge before asking; a planner that says it cannot plan is never approved (in advance or not) and, when it names the right repo, the run moves there and re-plans; a repo move before any build re-plans in the new repo (backlog `factory-replan-on-repo-move`); the Lead states the repo and its confidence in its first message.
 2. **Push that works (~0.5 day).** Host-deploy detection, Push always runs on Joe's click, preview-branch option, Ship in advance stops at Ready for deploying branches (backlog `factory-ship-in-advance-host-deploy-warn`).
 3. **Tester that tests (~0.5 day).** tsc fallback, stated skips, the test summary as a card.
 4. **The Factory tab (UI, ~1.5 days).** The chosen direction. The thread is built from run events the controller already records (guide, usage, live, verify, strict, audit), plus a new event list where they are missing.
@@ -41,9 +41,14 @@ Rigor: high. Factory runs push to production repos (lotline main is Vercel produ
 - 2026-10-06 Joe: layout **A** ("Option A is fantastic"). Build it with C's job checklist as the rail's Progress box.
 - 2026-10-06 Joe: the other tabs get the same idea: "the right side bar would show what it is doing rather than showing In use files." Mockup D. Chat tabs already receive what the rail needs: `status` `work:<label>` (current tool action), `plan` steps with status (Grok and Cursor ACP), `thought` vs `text`, `permission`, `context` use, and `file` hits.
 
+- 2026-10-06 Joe: mockup D is approved ("the mockup for other tabs is great"). "The whole app is going to need a bit of a touchup to have this redesign." Remove the bottom-left Settings button (Settings is at the top right). "Also touching" shows only the repo, 1 to 3 lines unless expanded; files only after a click.
+
 ## Order of work (revised for A and D)
+
+0. **Left sidebar touch-up** (Unit 1): no bottom-left Settings; "Also touching" as repo lines, files on click. Adds `scripts/render-ui.ts`, which renders real components with the app's CSS and screenshots them; every later screen uses it.
 
 1. **Run events and one rail component.** A run keeps a timeline of events (repo chosen, plan, each build turn's files, test rows, each review round's verdict and findings, each hold, commit, push). One `ActivityRail` component renders Now, Plan or Progress, Done so far, Files (folded), Session. Factory and Chat feed it different data.
 2. **Factory tab as A.** The thread from guide notes plus run events, with Planner, Builder, Tester and Reviewer cards; every current hold rendered as a Lead question with the existing buttons; the rail with Progress, Team, Changed files, Ship.
 3. **Chat tabs as D.** The right rail swaps In use for the activity rail; the model, effort, folder pickers stay at the bottom of the rail.
 4. **Lead acts** (phase 1 above). 5. **Push that works** (phase 2 above). 6. **Tester that tests** (phase 3 above).
+7. **App-wide touch-up**: the title bar, tabs, Chat thread, Settings panel and intake screens move to the A/D look (cards, the same rail parts, the same type scale). Mocked first and shown to Joe before code, screen by screen.
