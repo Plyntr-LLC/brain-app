@@ -60,7 +60,7 @@ export function verifyLabel(row: { script: string }): string {
 
 /** One model call. model is what the CLI said served it (never the configured name); '' when no answer came. */
 export type UsageRow = {
-  phase: 'triage' | 'plan' | 'review' | 'build'
+  phase: 'triage' | 'plan' | 'review' | 'build' | 'approve'
   cli: 'claude' | 'grok' | 'cursor' | 'jev'
   model: string
   effort: string
@@ -76,6 +76,11 @@ export type UsageRow = {
   at: number
 }
 
+/** Model calls in usage rows: a folded approver row counts each of its calls (turns). */
+export function callCount(rows: UsageRow[] | undefined): number {
+  return (rows || []).reduce((n, r) => n + (r.phase === 'approve' ? Math.max(1, r.turns) : 1), 0)
+}
+
 /** A model call in flight. id is per call, so a new turn on the same tab never loses its row. */
 export type LiveCall = { id: string; phase: UsageRow['phase']; cli: UsageRow['cli']; model: string; effort: string; since: number; tab?: string }
 
@@ -89,6 +94,15 @@ export function modelsLine(rows: UsageRow[] | undefined): string {
   }
   return seen.join('; ')
 }
+
+/** Who answers a builder's permission ask: a model on the signed-in Claude CLI, or nobody (the card, or Approve in advance). */
+export type Approver = 'fable' | 'opus' | 'off'
+export const APPROVERS: Approver[] = ['fable', 'opus', 'off']
+export const APPROVER_NAME: Record<Approver, string> = { fable: 'Fable', opus: 'Opus 5.5', off: 'No model' }
+
+/** One ask the approver answered. card: it handed the call to Joe (ASK, or no answer). */
+export type AskLog = { n: number; at: number; title: string; decision: 'allow' | 'deny' | 'card'; by: string; why: string; repeat?: boolean }
+export const ASK_LOG_MAX = 40
 
 /** The loop's own ship call at the last finishReview, whatever the checkboxes say. */
 export type ShadowGate = { id: string; wouldShip: boolean; strict: 'pass' | 'held' | 'missing' | 'none'; model: string; at: number }
@@ -129,10 +143,14 @@ export type RunRecord = {
     /** Model triage: what Jev (else Grok) said, or why both were skipped. */
     llm?: { size?: string; risk?: string; reason?: string; skipped?: string; by?: 'jev' | 'grok' }
   }
-  /** Approve in advance: plan, permission asks, suggested upgrades, and a clean Commit go ahead without a click. Never push or deploy. */
+  /** Approve in advance: plan, suggested upgrades, and a clean Commit go ahead without a click; with no approver, permission asks too. Never push or deploy. */
   runThrough?: boolean
   /** Ship in advance: after a clean Opus pass (no gaps), commit and push. Never deploys; protected branches are refused. */
   shipThrough?: boolean
+  /** Who answers the builder's permission asks. Missing (runs before 0.1.124) means off. */
+  approver?: Approver
+  /** What the approver did on this run: counts, and the last ASK_LOG_MAX answers. */
+  asks?: { allowed: number; denied: number; carded: number; log: AskLog[] }
   /** Joe's notes after Start (last 20, each cut at 800). Unsent ones ride in the next builder or planner brief. */
   guide?: GuideNote[]
   /** Model triage raised risk to critical after Start: waits for a Proceed click. */
@@ -239,6 +257,7 @@ export type RunEvent =
   | { at: number; kind: 'push'; ok: boolean; text: string }
   | { at: number; kind: 'deploy'; ok: boolean; text: string }
   | { at: number; kind: 'hold'; hold: HoldKind; text: string }
+  | { at: number; kind: 'ask'; n: number; decision: 'deny' | 'card'; title: string; by: string; text: string }
   | { at: number; kind: 'end'; phase: 'done' | 'abandoned' }
 
 /** The hold Joe has to answer, or null. One order for the conductor, the thread, and the events. */

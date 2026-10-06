@@ -13,7 +13,7 @@ import type { Decision, FactoryDeps, StartResult } from './controller.ts'
 import type { SpawnFn } from './opus.ts'
 import { planPrompt, strictPrompt } from './opus.ts'
 import type { ProfilePatch } from './profile.ts'
-import { factorySessionRules, watchOnlyDecision } from './gates.ts'
+import { askRoute, factorySessionRules } from './gates.ts'
 import { TIER_LIMITS } from './tripwire.ts'
 
 registerHooks({
@@ -120,10 +120,11 @@ test('plan, strict, and build wording, and the T3 limit stays', () => {
   assert.ok(guideAt > 0 && streamAt > guideAt)
   assert.equal(pane.slice(guideAt, streamAt).includes('setActivity'), false)
   assert.match(pane.slice(guideAt, streamAt), /raw: p\.raw/)
-  assert.equal(watchOnlyDecision(true, 'read', 'ask', false), 'allow')
-  assert.equal(watchOnlyDecision(true, 'edit', 'ask', true), 'reject')
-  assert.equal(watchOnlyDecision(false, 'edit', 'ask', false), 'ask')
-  assert.equal(watchOnlyDecision(false, 'edit', 'ask', true), 'allow')
+  const route = (watchOnly: boolean, kind: string, runThrough: boolean) => askRoute({ watchOnly, kind, filtered: 'ask', runThrough, fast: false })
+  assert.equal(route(true, 'read', false), 'allow')
+  assert.equal(route(true, 'edit', true), 'reject')
+  assert.equal(route(false, 'edit', false), 'card')
+  assert.equal(route(false, 'edit', true), 'allow')
   assert.equal(factorySessionRules('factory-1'), '')
   assert.equal(factorySessionRules('factory-1-orch').includes('You are a Factory builder'), false)
   assert.match(factorySessionRules('factory-1-orch'), /Do not edit/)

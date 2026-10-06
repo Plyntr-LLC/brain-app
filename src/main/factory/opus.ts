@@ -20,13 +20,16 @@ export type SpawnFn = (bin: string, args: string[], opts: SpawnOptions) => Child
  * parsed: stdout was one whole Claude result envelope and text is its `result`. Otherwise text is the
  * raw stdout tail for a person to read, and no verdict, plan, or build may be taken from it.
  */
-export type OpusResult = { found: boolean; code: number; text: string; last: string; parsed: boolean; usage: UsageRow }
+export type OpusResult = { found: boolean; code: number; text: string; last: string; parsed: boolean; usage: UsageRow; isError?: boolean }
 
 /** Stdout kept for the JSON envelope. Over this, the answer is not read at all. */
 export const OPUS_JSON_MAX = 16 * 1024 * 1024
 const RAW_TAIL = 400_000
 
-export type OpusRun = { model?: string; effort?: string }
+/** slim: no tools, no MCP, no skills, no saved session (the ask approver: a small answer, nothing to act with). */
+export type OpusRun = { model?: string; effort?: string; slim?: boolean }
+
+const SLIM = ['--tools', '', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence']
 
 /**
  * Strict review effort. Opus 5.5 low matched or beat medium on the Factory reviewer eval (held-out 13/14 vs
@@ -37,7 +40,7 @@ export const STRICT_EFFORT = 'low'
 
 /** Factory Opus plan and build run at medium (same as the Kennel merge gate). Claude has no xhigh. */
 export function opusArgs(prompt: string, o: OpusRun = {}): string[] {
-  return ['-p', prompt, '--model', o.model || 'opus', '--effort', o.effort || 'medium', '--permission-mode', 'plan', '--output-format', 'json']
+  return ['-p', prompt, '--model', o.model || 'opus', '--effort', o.effort || 'medium', '--permission-mode', 'plan', ...(o.slim ? SLIM : []), '--output-format', 'json']
 }
 
 /**
@@ -98,7 +101,7 @@ export function runOpus(o: {
       const env = over || code !== 0 ? null : parseClaudeEnvelope(text)
       const raw = text.slice(-RAW_TAIL).trim() || err.trim()
       const body = env ? String(env.result || '').trim() : raw
-      resolve({ found: true, code, text: body, last: lastLine(body), parsed: !!env, usage: claudeRow(base(), env) })
+      resolve({ found: true, code, text: body, last: lastLine(body), parsed: !!env, usage: claudeRow(base(), env), ...(env?.is_error ? { isError: true } : {}) })
     }
     let child: ChildProcess
     try {

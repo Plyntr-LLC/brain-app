@@ -3,7 +3,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { accessSync, constants as fsConstants, existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseGrokLine, resolveBin, type StreamEvent } from '../ai-cli'
-import { ACK_FILED, ACK_NOTED, BUILDER_FIX_MAX, TSC_ROW, verifyLabel, VOICE_MAX, type Builder, type GuideNote, type LiveCall, type Slice, type Tier, type UsageRow } from '../../shared/factory.ts'
+import { ACK_FILED, ACK_NOTED, APPROVERS, ASK_LOG_MAX, BUILDER_FIX_MAX, TSC_ROW, verifyLabel, VOICE_MAX, type Approver, type AskLog, type Builder, type GuideNote, type LiveCall, type Slice, type Tier, type UsageRow } from '../../shared/factory.ts'
+import { askKey, judgeAsk, JUDGE_EFFORT, JUDGE_MODEL, type AskFacts, type AskVerdict } from './approver.ts'
 import { upsertLog } from './brain-log.ts'
 import { buildBrief, type BriefPhase } from './brief.ts'
 import { isNeedOpus } from './fallback.ts'
@@ -54,7 +55,7 @@ export type FactoryEvent =
  * then builds with Opus. onBuilder: a Grok turn hopped to Cursor mid-turn.
  */
 export type Driver = {
-  warm: (o: { tabId: string; brainPath: string; workRepo: string; resumeId?: string; runThrough?: boolean; builder?: 'grok' | 'cursor' }) => Promise<{ sessionId: string; builder?: 'grok' | 'cursor' }>
+  warm: (o: { tabId: string; brainPath: string; workRepo: string; resumeId?: string; runThrough?: boolean; approver?: Approver; builder?: 'grok' | 'cursor' }) => Promise<{ sessionId: string; builder?: 'grok' | 'cursor' }>
   prompt: (o: {
     tabId: string
     brainPath: string
@@ -104,6 +105,8 @@ export type FactoryDeps = {
   opusTimeoutMs?: number
   /** Test hook: the conductor's one Grok call. Unset: a real grok-4.6 one-shot. */
   askConductor?: (prompt: string) => Promise<string>
+  /** Test hook: the ask approver's timeout (default JUDGE_TIMEOUT_MS). */
+  judgeTimeoutMs?: number
 }
 
 /** workers: T3 builder tabs open right now (factory-<id>-w<n>). */
@@ -129,6 +132,8 @@ type Live = {
   /** Failed reviews in a row whose diff bytes did not change. A builder that changes the diff resets it. */
   sameDiff?: number
   diffHash?: string
+  /** The approver's ALLOW and DENY answers on this run, by askKey. ASK and misses are never kept. */
+  judged?: Map<string, AskVerdict>
 }
 
 export const STRICT_MISSING = 'Opus reviewer not found (claude CLI). Commit is your call.'
@@ -263,7 +268,7 @@ export function triageTask(text: string, hints?: { files?: number; lines?: numbe
 }
 
 /** workRepo is optional: main resolves it from the task, then the last Factory repo. runThrough: Approve in advance. shipThrough: Ship in advance. */
-export type StartInput = { task: string; workRepo?: string; brainPath: string; proceedCritical?: boolean; runThrough?: boolean; shipThrough?: boolean }
+export type StartInput = { task: string; workRepo?: string; brainPath: string; proceedCritical?: boolean; runThrough?: boolean; shipThrough?: boolean; approver?: Approver }
 export type StartResult =
   | { ok: true; run: RunRecord }
   | { ok: false; error: string; needsProceed?: boolean; runId?: string }
@@ -302,6 +307,7 @@ export function startRun(input: StartInput): StartResult {
     repoFrom: { from: found.from, ...(found.word ? { word: found.word } : {}) },
     ...(input.runThrough ? { runThrough: true } : {}),
     ...(input.shipThrough ? { shipThrough: true } : {}),
+    ...(input.approver && APPROVERS.includes(input.approver) ? { approver: input.approver } : {}),
     phase: 'triage',
     resumePhase: 'triage',
     profile: runProfile(readProfile(workRepo)),
@@ -652,6 +658,7 @@ async function ensureWarm(state: Live, gen: number): Promise<boolean> {
     workRepo: run.workRepo,
     resumeId: run.grokSessionId,
     runThrough: run.runThrough,
+    approver: run.approver,
     ...(run.builder === 'cursor' ? { builder: 'cursor' as const } : {})
   })
   if (stale(state, gen)) return false
@@ -1003,6 +1010,7 @@ async function buildSlices(state: Live, gen: number, brainBefore: Record<string,
               brainPath: run.brainPath,
               workRepo: run.workRepo,
               runThrough: run.runThrough,
+              approver: run.approver,
               ...(state.run.builder === 'cursor' ? { builder: 'cursor' as const } : {})
             })
             if (w.builder === 'cursor' && !stale(state, gen)) setBuilder(state, 'cursor')
@@ -1455,6 +1463,64 @@ export function factoryGen(id: string): number {
 }
 
 /** The conductor's injected Grok, when a test set one. Conduct no longer calls it. */
+/** The run whose builder owns this tab: the main tab, or a T3 worker (acpTab-w<n>). */
+function stateForTab(tabId: string): Live | undefined {
+  for (const s of live.values()) {
+    const main = s.run.acpTab
+    if (tabId === main || (tabId.startsWith(main + '-w') && /^\d+$/.test(tabId.slice(main.length + 2)))) return s
+  }
+  return undefined
+}
+
+function recordAsk(state: Live, f: AskFacts, v: AskVerdict): void {
+  const a = state.run.asks || { allowed: 0, denied: 0, carded: 0, log: [] }
+  const entry: AskLog = {
+    n: a.allowed + a.denied + a.carded + 1,
+    at: Date.now(),
+    title: (f.title || f.kind || 'tool call').slice(0, 200),
+    decision: v.decision,
+    by: v.by,
+    why: v.why.slice(0, 300),
+    ...(v.repeat ? { repeat: true } : {})
+  }
+  const asks = {
+    allowed: a.allowed + (v.decision === 'allow' ? 1 : 0),
+    denied: a.denied + (v.decision === 'deny' ? 1 : 0),
+    carded: a.carded + (v.decision === 'card' ? 1 : 0),
+    log: [...a.log, entry].slice(-ASK_LOG_MAX)
+  }
+  state.run = { ...state.run, asks }
+}
+
+/**
+ * The run's approver answers one builder ask (acp-session calls this for every ask the filter let
+ * through and the fast path did not). A repeat of an ALLOW or DENY gets the same answer without a call.
+ */
+export async function judgeFactoryAsk(tabId: string, facts: AskFacts, signal: AbortSignal): Promise<AskVerdict> {
+  const state = stateForTab(tabId)
+  if (!state) return { decision: 'card', why: 'No Factory run owns this tab.', by: 'Brain' }
+  const approver = state.run.approver
+  if (!approver || approver === 'off') return { decision: 'card', why: 'This run has no approver.', by: 'Brain' }
+  const key = askKey(facts)
+  const seen = state.judged?.get(key)
+  let v: AskVerdict
+  if (seen) v = { decision: seen.decision, why: seen.why, by: seen.by, repeat: true }
+  else {
+    const d = need()
+    const run = state.run
+    const bin = (d.claudeBin || (() => resolveBin('claude')))()
+    v = await withLive(state, { phase: 'approve', cli: 'claude', model: JUDGE_MODEL[approver], effort: JUDGE_EFFORT, tab: tabId }, () =>
+      judgeAsk({ facts, run, approver, bin, env: d.env(run.workRepo), spawnFn: d.spawnOpus, signal, timeoutMs: d.judgeTimeoutMs })
+    )
+    if (v.usage) addUsage(state, v.usage)
+    if (v.decision !== 'card') (state.judged ||= new Map()).set(key, v)
+  }
+  // A cancelled ask got no card and no answer: nothing to count.
+  if (!signal.aborted) recordAsk(state, facts, v)
+  if (live.get(state.run.id) === state) persist(state)
+  return v
+}
+
 export function askConductorHook(): ((prompt: string) => Promise<string>) | undefined {
   return deps?.askConductor
 }

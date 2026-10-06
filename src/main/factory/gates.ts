@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { currentBranch, hasRemote, headSha } from './git-audit.ts'
 import { realish, underPath } from './paths.ts'
+import type { Approver } from '../../shared/factory.ts'
 
 /** Publish verbs the model never runs (Push is a person's click, done by Brain). Matched against a permission ask's title and raw input. */
 export const DENY_CMD_RE =
@@ -90,21 +91,19 @@ export function factorySessionRules(tabId: string): string {
 
 const READ_KINDS = new Set(['read', 'search', 'fetch', 'think'])
 
+export type AskRoute = 'reject' | 'allow' | 'judge' | 'card'
+
 /**
- * Watch-only rejects every non-read tool, including when the run would otherwise allow it.
- * Anything else keeps the filter's answer, then run-through may allow an ask.
+ * Where a Factory permission ask goes. Watch-only rejects every non-read tool. The filter's reject always
+ * stands. With no approver (off, or a run from before 0.1.124): Approve in advance allows, else the card.
+ * With an approver: fast asks are allowed, the rest go to the model.
  */
-export function watchOnlyDecision(
-  watchOnly: boolean,
-  kind: string,
-  filtered: 'reject' | 'ask',
-  runThrough: boolean
-): 'reject' | 'ask' | 'allow' {
-  if (watchOnly && !READ_KINDS.has(kind)) return 'reject'
-  if (filtered === 'reject') return 'reject'
-  if (watchOnly && READ_KINDS.has(kind)) return 'allow'
-  if (runThrough) return 'allow'
-  return 'ask'
+export function askRoute(o: { watchOnly: boolean; kind: string; filtered: 'reject' | 'ask'; runThrough: boolean; approver?: Approver; fast: boolean }): AskRoute {
+  if (o.watchOnly && !READ_KINDS.has(o.kind)) return 'reject'
+  if (o.filtered === 'reject') return 'reject'
+  if (o.watchOnly) return 'allow'
+  if (!o.approver || o.approver === 'off') return o.runThrough ? 'allow' : 'card'
+  return o.fast ? 'allow' : 'judge'
 }
 
 /** 'reject' for publish verbs and edits outside the work repo (brain or another repo), 'ask' for everything else (the card decides). */

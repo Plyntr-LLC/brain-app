@@ -399,6 +399,69 @@ async function main() {
     check(`f ${role} folded and short`, !!card && !card.open && card.getBoundingClientRect().height < 200, card ? `${card.open} ${card.getBoundingClientRect().height}` : 'no card')
   }
 
+  // (g) the ask approver: the intake's Asks select, the run chip, the rail row, a refusal card, a worker's card.
+  {
+    const wrap = document.createElement('section')
+    wrap.className = 'stage'
+    wrap.innerHTML = '<p class="stage-title">g. intake with the Asks select</p><div class="stage-row"><div class="stage-pane"></div><aside class="refs stage-rail"></aside></div>'
+    document.getElementById('root')!.appendChild(wrap)
+    const pane = wrap.querySelector('.stage-pane') as HTMLElement
+    createRoot(pane).render(<FactoryPane id="tab-intake" cwd="/Users/joe/Projects/agency-brain" active onRun={() => undefined} onFiles={() => undefined} onActivity={() => undefined} />)
+    await tick(80)
+    const sel = pane.querySelector<HTMLSelectElement>('.factory-checks select')
+    const checks = () => pane.querySelector('.factory-checks')?.textContent || ''
+    check('g the Asks select defaults to Fable, with Opus 5.5 and No model', !!sel && sel.value === 'fable' && [...(sel?.options || [])].map((o) => o.value).join(',') === 'fable,opus,off', sel ? sel.value : 'no select')
+    check('g with a model deciding, Approve in advance does not claim the asks', checks().includes('Approve in advance (plan and a clean Commit go ahead; never deploys)') && !checks().includes('plan, asks,'), checks())
+    const labels = [...pane.querySelectorAll('.factory-checks label')].map((l) => (l.textContent || '').slice(0, 24))
+    check('g the Asks row sits in the checks block, before Approve in advance and Ship in advance', labels[0].startsWith('Asks:') && labels[1].startsWith('Approve in advance') && labels[2].startsWith('Ship in advance'), JSON.stringify(labels))
+    if (sel) {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(sel, 'off')
+      sel.dispatchEvent(new Event('change', { bubbles: true }))
+      await tick()
+    }
+    check('g with No model, Approve in advance covers the asks again', checks().includes('plan, asks, and a clean Commit go ahead'), checks())
+    if (sel) {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(sel, 'fable')
+      sel.dispatchEvent(new Event('change', { bubbles: true }))
+      await tick()
+    }
+  }
+  const ap = await mount(
+    'g. a run Fable approves',
+    run({
+      phase: 'build',
+      runThrough: true,
+      approver: 'fable',
+      asks: {
+        allowed: 12,
+        denied: 1,
+        carded: 1,
+        log: [
+          { n: 13, at: now + 3, title: 'Run railway up', decision: 'deny', by: 'Fable', why: 'It deploys the project to a remote host.' },
+          { n: 14, at: now + 4, title: 'Run psql "$DATABASE_URL" -c "drop table x"', decision: 'card', by: 'Fable', why: 'Fable says a person should decide: it drops a table.' }
+        ]
+      },
+      events: [
+        { at: now + 1, kind: 'repo', repo: '/Users/joe/Projects/lotline', moved: false, from: 'given' },
+        { at: now + 3, kind: 'ask', n: 13, decision: 'deny', title: 'Run railway up', by: 'Fable', text: 'It deploys the project to a remote host.' },
+        { at: now + 4, kind: 'ask', n: 14, decision: 'card', title: 'Run psql "$DATABASE_URL" -c "drop table x"', by: 'Fable', text: 'Fable says a person should decide: it drops a table.' }
+      ]
+    })
+  )
+  await tick(60)
+  const chips = [...ap.el.querySelectorAll('.factory-chips .fchip')].map((c) => c.textContent || '')
+  check('g the run chip says who decides asks and the counts', chips.includes('Fable decides asks · 12 allowed, 1 refused, 1 to you'), JSON.stringify(chips))
+  const apTitles = items(ap.el).map(label)
+  check('g the thread shows the refusal and the hand-off as reviewer cards', apTitles.includes('reviewer:Refused: Run railway up') && apTitles.some((t) => t.startsWith('reviewer:Handed to you: Run psql')), apTitles.join(' | '))
+  const team = ap.activity()?.team || []
+  const approverRow = team.find((t) => t.role === 'Approver')
+  check('g the rail team lists the approver with its counts', approverRow?.who === 'Fable' && approverRow.note === '12 allowed, 1 refused, 1 to you', JSON.stringify(approverRow))
+  emit({ runId: ap.r.id, kind: 'stream', ev: { kind: 'permission', title: 'Run psql "$DATABASE_URL" -c "drop table x"', detail: 'Fable says a person should decide: it drops a table.', options: [{ id: 'allow_once', label: 'Allow' }, { id: 'reject_once', label: 'Reject' }], requestId: '7', tabId: `factory-${ap.r.id}-w2` } })
+  await tick()
+  check('g the hand-off card shows the reason', (ap.el.querySelector('.factory-ask .skin-perm-detail')?.textContent || '').includes('it drops a table'))
+  const answered = await click(ap.el, 'Reject')
+  check('g a worker card answers the worker tab, not the main tab', same(answered, 'skin.decide', `factory-${ap.r.id}-w2`, 'reject_once'), JSON.stringify(answered))
+
   document.getElementById('out')!.textContent = JSON.stringify(results)
 }
 

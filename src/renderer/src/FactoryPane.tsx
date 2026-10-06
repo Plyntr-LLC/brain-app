@@ -1,12 +1,21 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { modelsLine, REVIEW_MAX, strictRequired, VOICE_MAX, type FactoryTriage, type LiveCall, type RunPhase, type RunRecord } from '../../shared/factory'
+import { APPROVER_NAME, APPROVERS, callCount, modelsLine, REVIEW_MAX, strictRequired, VOICE_MAX, type Approver, type FactoryTriage, type LiveCall, type RunPhase, type RunRecord } from '../../shared/factory'
 import { applyFactoryText, showOutgoing, type Outgoing } from './guide-thread'
 import type { Activity } from './activity'
 import { factoryActivity } from './factory-activity'
 import { threadItems } from './factory-thread'
 import { FactoryThread } from './FactoryThread'
 
-type Perm = { title?: string; path?: string; detail?: string; options?: { id: string; label: string }[] }
+type Perm = { title?: string; path?: string; detail?: string; options?: { id: string; label: string }[]; tabId?: string }
+
+const ASK_CHOICE: Record<Approver, string> = { fable: 'Fable decides each ask', opus: 'Opus 5.5 decides each ask', off: 'No model: the card, or Approve in advance' }
+
+/** "Fable decides asks · 12 allowed, 1 refused, 1 to you" */
+function askChip(run: RunRecord): string {
+  const a = run.asks
+  const counts = a ? [`${a.allowed} allowed`, ...(a.denied ? [`${a.denied} refused`] : []), ...(a.carded ? [`${a.carded} to you`] : [])].join(', ') : ''
+  return `${APPROVER_NAME[run.approver || 'off']} decides asks${counts ? ` · ${counts}` : ''}`
+}
 type FileHit = { path: string; tool?: string; live: boolean }
 
 const BUILDER_NAME = { grok: 'Grok', cursor: 'Cursor Grok', opus: 'Opus' } as const
@@ -44,7 +53,8 @@ function usageLine(rows: NonNullable<RunRecord['usage']>): string {
   const secs = Math.round(rows.reduce((n, r) => n + r.ms, 0) / 1000)
   const t = tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens)
   const time = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`
-  return `${rows.length} model call${rows.length === 1 ? '' : 's'}, ${t} tokens, ${time}`
+  const calls = callCount(rows)
+  return `${calls} model call${calls === 1 ? '' : 's'}, ${t} tokens, ${time}`
 }
 
 export function FactoryPane(props: {
@@ -63,6 +73,7 @@ export function FactoryPane(props: {
   const [task, setTask] = useState('')
   const [runThrough, setRunThrough] = useState(true)
   const [shipThrough, setShipThrough] = useState(true)
+  const [approver, setApprover] = useState<Approver>('fable')
   const [note, setNote] = useState('')
   const [pending, setPending] = useState<Outgoing | null>(null)
   const [workRepo, setWorkRepo] = useState('')
@@ -148,7 +159,7 @@ export function FactoryPane(props: {
       }
       if (e.kind !== 'stream') return
       const ev = e.ev
-      if (ev.kind === 'permission') setPermission({ title: ev.title, path: ev.path, detail: ev.detail, options: ev.options })
+      if (ev.kind === 'permission') setPermission({ title: ev.title, path: ev.path, detail: ev.detail, options: ev.options, tabId: ev.tabId })
       else if (ev.kind === 'text' && ev.data) setActivity((a) => applyFactoryText({ activity: a, guideAck: '' }, 'stream', ev.data || '').activity.slice(-1200))
       else if (ev.kind === 'status' && ev.data?.startsWith('work:')) setWork(ev.data.slice(5))
       else if (ev.kind === 'error' && ev.data) setWork(ev.data)
@@ -228,7 +239,7 @@ export function FactoryPane(props: {
     setBusy(true)
     setError('')
     try {
-      const res = await window.brain.factory.start({ task, brainPath: cwd, runThrough, shipThrough, proceedCritical })
+      const res = await window.brain.factory.start({ task, brainPath: cwd, runThrough, shipThrough, proceedCritical, approver })
       if (res.ok) {
         runRef.current = res.run.id
         setRun(res.run)
@@ -293,8 +304,23 @@ export function FactoryPane(props: {
               </label>
             ) : null}
             <label className="tiny">
+              <span aria-hidden="true" />
+              <span>
+                Asks:{' '}
+                <select value={approver} onChange={(e) => setApprover(e.target.value as Approver)}>
+                  {APPROVERS.map((a) => (
+                    <option key={a} value={a}>
+                      {ASK_CHOICE[a]}
+                    </option>
+                  ))}
+                </select>
+              </span>
+            </label>
+            <label className="tiny">
               <input type="checkbox" checked={runThrough} onChange={(e) => setRunThrough(e.target.checked)} />
-              <span>Approve in advance (plan, asks, and a clean Commit go ahead; never deploys)</span>
+              <span>
+                {approver === 'off' ? 'Approve in advance (plan, asks, and a clean Commit go ahead; never deploys)' : 'Approve in advance (plan and a clean Commit go ahead; never deploys)'}
+              </span>
             </label>
             <label className="tiny">
               <input type="checkbox" checked={shipThrough} onChange={(e) => setShipThrough(e.target.checked)} />
@@ -395,6 +421,7 @@ export function FactoryPane(props: {
             </span>
             <span className={`fchip status ${run.phase}`}>{STATUS_WORD[run.phase] || run.phase}</span>
             {run.runThrough ? <span className="fchip">Approve in advance</span> : null}
+            {run.approver && run.approver !== 'off' ? <span className="fchip">{askChip(run)}</span> : null}
             {run.shipThrough ? <span className="fchip">{opusReviews ? 'Ship in advance' : 'Ship in advance waits for an Opus review'}</span> : null}
           </div>
           <p className="tiny factory-meta">
@@ -458,7 +485,7 @@ export function FactoryPane(props: {
                     key={o.id}
                     className={i === 0 ? 'primary' : 'ghost'}
                     onClick={() => {
-                      void window.brain.skin.decide(run.acpTab, o.id)
+                      void window.brain.skin.decide(permission.tabId || run.acpTab, o.id)
                       setPermission(null)
                     }}
                   >

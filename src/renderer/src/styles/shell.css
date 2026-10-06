@@ -2132,6 +2132,7 @@ button.runmeta-v:hover { color: var(--orange-deep); }
 }
 .factory-checks label { display: contents; }
 .factory-checks input[type='checkbox'] { margin: 0.18rem 0 0; width: 1rem; height: 1rem; }
+.factory-checks select { display: inline-block; width: auto; margin: 0 0 0 0.3rem; padding: 2px 6px; font: inherit; }
 .factory-warn { color: var(--warn); margin: 0.3rem 0; font-size: 0.85rem; }
 .factory-guide .bubble { white-space: pre-wrap; font-size: 0.88rem; }
 .factory-compose { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 0.45rem; margin-top: 0.8rem; border-top: 1px solid var(--line); padding-top: 0.75rem; }
@@ -2191,6 +2192,7 @@ details.fcard > summary.fcard-title { cursor: pointer; }
 .w-builder { background: #c45f00; }
 .w-tester { background: #2c6e3a; }
 .w-reviewer { background: #2f5d86; }
+.w-approver { background: #6b5a2e; }
 .factory-liveline { display: flex; align-items: center; gap: 0.5rem; margin: 0.3rem 0 0.4rem; color: var(--muted); font-size: 0.8rem; }
 .factory-liveline .dot,
 .rail-mark { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--line); }

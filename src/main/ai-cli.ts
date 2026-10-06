@@ -109,6 +109,8 @@ export type StreamEvent =
       detail?: string
       options?: { id: string; label: string }[]
       requestId?: string
+      /** Factory: the builder tab that asked (a T3 worker is not the run's main tab). */
+      tabId?: string
     }
   | { kind: 'plan'; steps?: { title: string; status?: string }[] }
   | { kind: 'mode'; mode: string }

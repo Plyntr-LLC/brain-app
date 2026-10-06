@@ -11,8 +11,9 @@ const cut = (s: string | undefined, n: number): string => String(s || '').slice(
 
 /**
  * The run's event list after one persist: prev is the last persisted run, next the one about to be
- * saved. Same array back when nothing happened. Within one persist the order is repo, plan, turn, test,
- * review, voice, commit, push, deploy, hold, end. A builder turn (a build usage row, matched once by
+ * saved. Same array back when nothing happened. Within one persist the order is repo, plan, turn, ask, test,
+ * review, voice, commit, push, deploy, hold, end. An approver's refusal or hand-off to Joe is an ask event;
+ * its allows are only counted on the run. A builder turn (a build usage row, matched once by
  * its at) is told when the controller writes the audit after it, when the run leaves build, or when it
  * stops. A fix turn runs in review, so it waits for its own audit, never the one before it.
  */
@@ -47,6 +48,14 @@ export function nextEvents(prev: RunRecord | undefined, next: RunRecord, at: num
         deleted: work.reduce((n, w) => n + w.deleted, 0),
         paths: work.slice(0, PATHS).map((w) => w.path)
       })
+    }
+  }
+
+  if (next.asks && next.asks !== prev?.asks) {
+    const told = new Set(had.flatMap((e) => (e.kind === 'ask' ? [e.n] : [])))
+    for (const a of next.asks.log) {
+      if (a.decision === 'allow' || told.has(a.n)) continue
+      add.push({ at, kind: 'ask', n: a.n, decision: a.decision, title: a.title, by: a.by, text: cut(a.why, TAIL) })
     }
   }
 

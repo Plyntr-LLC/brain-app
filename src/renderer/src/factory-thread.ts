@@ -102,6 +102,16 @@ function fromEvent(e: RunEvent, i: number, run: RunRecord, lastPlan: number): Th
       return { key, at: e.at, role: 'lead', text: e.ok ? 'Deployed.' : `Deploy failed: ${e.text}` }
     case 'hold':
       return { key, at: e.at, role: 'lead', text: e.text }
+    case 'ask':
+      return {
+        key,
+        at: e.at,
+        role: 'reviewer',
+        text: e.decision === 'deny' ? `Refused: ${e.title}` : `Handed to you: ${e.title}`,
+        meta: `${e.by} · ask approver`,
+        body: e.text || undefined,
+        tone: e.decision === 'deny' ? 'fail' : 'info'
+      }
     case 'end':
       return { key, at: e.at, role: 'lead', text: e.phase === 'done' ? 'Done.' : 'Abandoned.' }
   }

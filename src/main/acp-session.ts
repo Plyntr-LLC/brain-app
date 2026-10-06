@@ -22,7 +22,9 @@ import {
   killGrokFactoryLeader,
   setGrokFactoryLeaderEnv
 } from './grok-leader'
-import { ensureShims, factoryEnv, factorySessionRules, factoryWriteBlock, filterFactoryPermission, watchOnlyDecision, WATCH_WRITE_REFUSAL } from './factory/gates'
+import { askRoute, ensureShims, factoryEnv, factorySessionRules, factoryWriteBlock, filterFactoryPermission, WATCH_WRITE_REFUSAL } from './factory/gates'
+import { askFacts, fastAllow, type AskFacts, type AskVerdict } from './factory/approver'
+import type { Approver } from '../shared/factory'
 import { cursorGrokModel, grokUsageBlocked, needOpusError } from './factory/fallback'
 import { factoryCursorAcpArgs } from './grok-args'
 import { realish } from './factory/paths'
@@ -89,8 +91,10 @@ export type Tab = {
   permId?: number | string
   permOptions?: { id: string; label: string }[]
   /** Factory tabs only: where this run's edits may land. */
-  /** runThrough: Approve in advance. Asks that pass the Factory filter are allowed without the card. */
-  factory?: { brainPath: string; workRepo: string; runThrough?: boolean; watchOnly?: boolean }
+  /** runThrough: Approve in advance. approver: the model that answers asks the filter lets through (askRoute). */
+  factory?: { brainPath: string; workRepo: string; runThrough?: boolean; watchOnly?: boolean; approver?: Approver }
+  /** Factory asks the approver is deciding right now, by request id. No card and no permId while one runs. */
+  judging?: Map<string, { id: number | string; ctl: AbortController }>
 }
 
 export type Pool = {
@@ -589,6 +593,119 @@ function acpWriteBlock(pool: Pool, sessionId: string, abs: string): string | nul
   return null
 }
 
+/** The card for Joe: the ask waits in permId until a click. note: why the approver handed it over. */
+function permissionCard(pool: Pool, tab: Tab, msg: RpcMsg, note?: string): void {
+  const p = asRecord(msg.params)
+  const rawOpts = Array.isArray(p.options) ? p.options : []
+  const options = rawOpts
+    .map((o) => {
+      const r = asRecord(o)
+      const id = String(r.optionId || r.kind || '')
+      const label = String(r.name || r.label || r.kind || id)
+      return id ? { id, label } : null
+    })
+    .filter((o): o is { id: string; label: string } => Boolean(o))
+  tab.permId = msg.id!
+  tab.permOptions = options
+  tab.planAsk = false
+  const tool = asRecord(p.toolCall)
+  const title = String(p.title || tool.title || 'Allow this?')
+  const path = String(asRecord(tool.rawInput).target_file || asRecord(tool.rawInput).path || tool.path || '')
+  const ev: StreamEvent = {
+    kind: 'permission',
+    title,
+    path,
+    options,
+    requestId: String(msg.id),
+    ...(note ? { detail: note } : {}),
+    ...(pool.lane === 'factory' ? { tabId: tab.tabId } : {})
+  }
+  captureEvent({ cli: pool.kind, sessionId: tab.sessionId, ev, transport: 'acp' })
+  if (tab.onEvent) tab.onEvent(ev)
+  else broadcast(tab, ev)
+}
+
+export type FactoryJudge = (o: { tabId: string; facts: AskFacts; signal: AbortSignal }) => Promise<AskVerdict>
+let factoryJudge: FactoryJudge | null = null
+
+/** The Factory controller answers judged asks (it knows the run, its task and its approver). */
+export function setFactoryJudge(fn: FactoryJudge | null): void {
+  factoryJudge = fn
+}
+
+/** Ends every judge still running on this tab: each ask gets cancelled, and its late verdict is dropped. */
+function endJudging(pool: Pool, tab: Tab): void {
+  for (const { id, ctl } of tab.judging?.values() || []) {
+    ctl.abort()
+    try {
+      pool.rpc.reply(id, { outcome: { outcome: 'cancelled' } })
+    } catch {
+      /* the CLI is gone */
+    }
+  }
+  tab.judging?.clear()
+}
+
+/**
+ * A Factory ask the filter let through and the fast path did not: the approver decides. ALLOW is
+ * allow_once, DENY is reject_once, ASK or any miss is Joe's card with the reason. One reply per ask.
+ */
+function judgeFactoryAsk(pool: Pool, tab: Tab, msg: RpcMsg, facts: AskFacts): void {
+  const id = msg.id!
+  const key = String(id)
+  const title = (facts.title || facts.kind || 'tool call').slice(0, 70)
+  const say = (data: string) => tab.onEvent?.({ kind: 'status', data: 'work:' + data })
+  const judge = factoryJudge
+  if (!judge) {
+    say(`No approver is running. Your call: ${title}`)
+    permissionCard(pool, tab, msg, 'No approver is running in this app.')
+    return
+  }
+  const ctl = new AbortController()
+  if (!tab.judging) tab.judging = new Map()
+  tab.judging.set(key, { id, ctl })
+  say(`Checking: ${title}`)
+  const failed = (e: unknown): AskVerdict => ({ decision: 'card', why: `The approver failed: ${String((e as Error)?.message || e).slice(0, 160)}`, by: 'Brain' })
+  let pending: Promise<AskVerdict>
+  try {
+    pending = judge({ tabId: tab.tabId, facts, signal: ctl.signal })
+  } catch (e) {
+    pending = Promise.resolve(failed(e))
+  }
+  void pending.catch(failed).then((v) => {
+    // Cancel, close, or a reset answered it already.
+    if (tab.judging?.get(key)?.ctl !== ctl) return
+    tab.judging?.delete(key)
+    if (pool.tabs.get(tab.tabId) !== tab) {
+      try {
+        pool.rpc.reply(id, { outcome: { outcome: 'cancelled' } })
+      } catch {
+        /* the CLI is gone */
+      }
+      return
+    }
+    const again = v.repeat ? ' (same as before)' : ''
+    if (v.decision === 'allow') {
+      const optionId = allowOption(msg)
+      if (optionId) {
+        pool.rpc.reply(id, { outcome: { outcome: 'selected', optionId } })
+        say(`${v.by} allowed${again}: ${title}`)
+        return
+      }
+      permissionCard(pool, tab, msg, `${v.by} allowed this, but the ask has no allow-once option.`)
+      return
+    }
+    if (v.decision === 'deny') {
+      const optionId = rejectOption(msg)
+      pool.rpc.reply(id, optionId ? { outcome: { outcome: 'selected', optionId } } : { outcome: { outcome: 'cancelled' } })
+      say(`${v.by} refused${again}: ${title}${v.why ? `. ${v.why}` : ''}`.slice(0, 300))
+      return
+    }
+    say(`Your call: ${title}. ${v.why}`.slice(0, 300))
+    permissionCard(pool, tab, msg, v.why)
+  })
+}
+
 /** Agent-to-client requests. Exported for the fixture check. */
 export function handleReq(pool: Pool, msg: RpcMsg): void {
   if (msg.id == null) return
@@ -605,7 +722,19 @@ export function handleReq(pool: Pool, msg: RpcMsg): void {
       }
       const ctx = tab.factory || { brainPath: pool.cwd, workRepo: '' }
       const tool = asRecord(p.toolCall)
-      const decision = watchOnlyDecision(!!ctx.watchOnly, String(tool.kind || '').toLowerCase(), filterFactoryPermission(msg, ctx), !!ctx.runThrough)
+      const facts = askFacts(msg)
+      const decision = askRoute({
+        watchOnly: !!ctx.watchOnly,
+        kind: facts.kind,
+        filtered: filterFactoryPermission(msg, ctx),
+        runThrough: !!ctx.runThrough,
+        approver: ctx.approver,
+        fast: fastAllow(facts, ctx)
+      })
+      if (decision === 'judge') {
+        judgeFactoryAsk(pool, tab, msg, facts)
+        return
+      }
       if (decision === 'reject') {
         const optionId = rejectOption(msg)
         if (optionId) pool.rpc.reply(msg.id, { outcome: { outcome: 'selected', optionId } })
@@ -619,7 +748,8 @@ export function handleReq(pool: Pool, msg: RpcMsg): void {
         if (optionId) {
           pool.rpc.reply(msg.id, { outcome: { outcome: 'selected', optionId } })
           const tool = asRecord(p.toolCall)
-          const ev: StreamEvent = { kind: 'status', data: 'work:Allowed in advance: ' + String(p.title || tool.title || 'tool call').slice(0, 60) }
+          const lead = ctx.approver && ctx.approver !== 'off' ? 'Allowed: ' : 'Allowed in advance: '
+          const ev: StreamEvent = { kind: 'status', data: 'work:' + lead + String(p.title || tool.title || 'tool call').slice(0, 60) }
           if (tab.onEvent) tab.onEvent(ev)
           return
         }
@@ -636,27 +766,7 @@ export function handleReq(pool: Pool, msg: RpcMsg): void {
       pool.rpc.reply(msg.id, { outcome: { outcome: 'cancelled' } })
       return
     }
-    const rawOpts = Array.isArray(p.options) ? p.options : []
-    const options = rawOpts
-      .map((o) => {
-        const r = asRecord(o)
-        const id = String(r.optionId || r.kind || '')
-        const label = String(r.name || r.label || r.kind || id)
-        return id ? { id, label } : null
-      })
-      .filter((o): o is { id: string; label: string } => Boolean(o))
-    tab.permId = msg.id
-    tab.permOptions = options
-    tab.planAsk = false
-    const tool = asRecord(p.toolCall)
-    const title = String(p.title || tool.title || 'Allow this?')
-    const path = String(
-      asRecord(tool.rawInput).target_file || asRecord(tool.rawInput).path || tool.path || ''
-    )
-    const ev: StreamEvent = { kind: 'permission', title, path, options, requestId: String(msg.id) }
-    captureEvent({ cli: pool.kind, sessionId: tab.sessionId, ev, transport: 'acp' })
-    if (tab.onEvent) tab.onEvent(ev)
-    else broadcast(tab, ev)
+    permissionCard(pool, tab, msg)
     return
   }
   if (msg.method === 'fs/read_text_file') {
@@ -1398,6 +1508,7 @@ export function acpCancel(tabId: string): boolean {
   const pool = key ? pools.get(key) : undefined
   const tab = pool?.tabs.get(tabId)
   if (!pool || !tab) return false
+  endJudging(pool, tab)
   try {
     pool.rpc.notify('session/cancel', { sessionId: tab.sessionId })
   } catch {
@@ -1412,6 +1523,7 @@ export function acpClose(tabId: string): void {
   const pool = key ? pools.get(key) : undefined
   const tab = pool?.tabs.get(tabId)
   if (!pool || !tab) return
+  endJudging(pool, tab)
   pool.tabs.delete(tabId)
   pool.bySid.delete(tab.sessionId)
   try {
@@ -1465,6 +1577,7 @@ export async function factoryWarm(opts: {
   workRepo: string
   resumeId?: string
   runThrough?: boolean
+  approver?: Approver
   builder?: 'grok' | 'cursor'
 }): Promise<{ sessionId: string; loaded: boolean; builder: 'grok' | 'cursor' }> {
   return withTabLock(opts.tabId, async () => {
@@ -1488,6 +1601,17 @@ export async function factoryWarm(opts: {
   })
 }
 
+/** A Factory tab's rules: where edits land, Approve in advance, the approver, and watch-only for the orchestrator tab. */
+function factoryCtx(opts: { tabId: string; brainPath: string; workRepo: string; runThrough?: boolean; approver?: Approver }): NonNullable<Tab['factory']> {
+  return {
+    brainPath: opts.brainPath,
+    workRepo: opts.workRepo,
+    runThrough: opts.runThrough === true,
+    watchOnly: opts.tabId.endsWith('-orch'),
+    ...(opts.approver && opts.approver !== 'off' ? { approver: opts.approver } : {})
+  }
+}
+
 /** Closes this Factory tab wherever it lives. Returns its model (the Grok family for the Cursor pick). */
 function dropFactoryTab(tabId: string): string | undefined {
   const key = tabPool.get(tabId)
@@ -1502,10 +1626,11 @@ async function warmFactoryGrok(opts: {
   workRepo: string
   resumeId?: string
   runThrough?: boolean
+  approver?: Approver
 }): Promise<{ sessionId: string; loaded: boolean }> {
   const pool = await bootPool('grok', opts.brainPath, 'factory')
   tabPool.set(opts.tabId, poolKey('grok', opts.brainPath, 'factory'))
-  const factory = { brainPath: opts.brainPath, workRepo: opts.workRepo, runThrough: opts.runThrough === true, watchOnly: opts.tabId.endsWith('-orch') }
+  const factory = factoryCtx(opts)
   const have = pool.tabs.get(opts.tabId)
   if (have && (!opts.resumeId || opts.resumeId === have.sessionId)) {
     have.factory = factory
@@ -1549,6 +1674,7 @@ async function warmFactoryCursor(opts: {
   workRepo: string
   resumeId?: string
   runThrough?: boolean
+  approver?: Approver
   grokModel?: string
 }): Promise<{ sessionId: string; loaded: boolean }> {
   const key = poolKey('cursor', opts.brainPath, 'factory')
@@ -1564,7 +1690,7 @@ async function warmFactoryCursor(opts: {
     pool = await bootPool('cursor', opts.brainPath, 'factory', opts.workRepo)
   }
   tabPool.set(opts.tabId, key)
-  const factory = { brainPath: opts.brainPath, workRepo: opts.workRepo, runThrough: opts.runThrough === true, watchOnly: opts.tabId.endsWith('-orch') }
+  const factory = factoryCtx(opts)
   const have = pool.tabs.get(opts.tabId)
   if (have && (!opts.resumeId || opts.resumeId === have.sessionId)) {
     have.factory = factory
@@ -1702,7 +1828,7 @@ export async function factoryPrompt(opts: {
   const next = await withTabLock(opts.tabId, async () => {
     const grokModel = dropFactoryTab(opts.tabId)
     try {
-      return await warmFactoryCursor({ tabId: opts.tabId, brainPath: opts.brainPath, workRepo: ctx.workRepo, runThrough: ctx.runThrough, grokModel })
+      return await warmFactoryCursor({ tabId: opts.tabId, brainPath: opts.brainPath, workRepo: ctx.workRepo, runThrough: ctx.runThrough, approver: ctx.approver, grokModel })
     } catch (e) {
       dropFactoryTab(opts.tabId)
       throw needOpusError(`Cursor could not run: ${String((e as Error)?.message || e)}`)

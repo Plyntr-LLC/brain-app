@@ -135,7 +135,7 @@ const check = (name: string, ok: boolean, detail = '') => results.push({ name, o
 
 type Sent = { id: number | string; result?: unknown; error?: { code: number; message: string } }
 type Ev = { kind: string; title?: string; path?: string; data?: string; options?: { id: string; label: string }[] }
-function fakePool(lane: 'chat' | 'factory', cwd: string, factory?: { brainPath: string; workRepo: string; runThrough?: boolean; watchOnly?: boolean }) {
+function fakePool(lane: 'chat' | 'factory', cwd: string, factory?: { brainPath: string; workRepo: string; runThrough?: boolean; watchOnly?: boolean; approver?: 'fable' | 'opus' | 'off' }) {
   const sent: Sent[] = []
   const events: Ev[] = []
   const tab = {
@@ -4173,6 +4173,277 @@ process.stdout.write(JSON.stringify({ type: 'end', usage: { input_tokens: 9, out
     const pane = readFileSync(join(rootRepo, 'src', 'renderer', 'src', 'FactoryPane.tsx'), 'utf8')
     check('EV h Approve in advance and Ship in advance still default on', /const \[runThrough, setRunThrough\] = useState\(true\)/.test(pane) && /const \[shipThrough, setShipThrough\] = useState\(true\)/.test(pane))
   }
+  ctl.configureFactory(fakeDeps)
+}
+
+// AP. The ask approver: real permission messages through handleReq with a fake judge, the controller's
+// judge with a fake claude, the Cursor hop, cancel and close mid-judge, worker cards, and the Start path.
+{
+  type Verdict = Awaited<ReturnType<typeof ctl.judgeFactoryAsk>>
+  const judgeCalls: { tabId: string; kind: string; input: string }[] = []
+  let answer: () => Promise<Verdict> = async () => ({ decision: 'allow', why: 'ok', by: 'Fable' })
+  acp.setFactoryJudge((o) => {
+    judgeCalls.push({ tabId: o.tabId, kind: o.facts.kind, input: o.facts.input })
+    return answer()
+  })
+  const later = () => {
+    let resolve!: (v: Verdict) => void
+    const p = new Promise<Verdict>((r) => (resolve = r))
+    return { p, resolve }
+  }
+  const tick = () => new Promise((r) => setTimeout(r, 25))
+  const apCtx = { brainPath: brainA, workRepo: work, runThrough: true, approver: 'fable' as const }
+  const always = [{ optionId: 'allow_always', name: 'Always allow', kind: 'allow_always' }, ...permOpts]
+  const execAsk = (id: number, command: string, options = permOpts) =>
+    req(id, 'session/request_permission', { sessionId: 'sess-factory', toolCall: { title: `Run ${command}`, kind: 'execute', rawInput: { command } }, options })
+  const permId = (tab: unknown) => (tab as { permId?: unknown }).permId
+
+  {
+    const f = fakePool('factory', brainA, apCtx)
+    const d = later()
+    answer = () => d.p
+    const n0 = judgeCalls.length
+    acp.handleReq(f.pool as never, execAsk(501, 'railway up', always))
+    await tick()
+    check('AP 1 Approve in advance + Fable: an execute ask goes to the judge, nothing is replied first', judgeCalls.length === n0 + 1 && judgeCalls[n0].kind === 'execute' && judgeCalls[n0].tabId === f.tab.tabId && f.sent.length === 0, JSON.stringify({ judgeCalls, sent: f.sent }))
+    check('AP 1 while the judge runs there is no permId and no permission card', permId(f.tab) === undefined && !f.events.some((e) => e.kind === 'permission'))
+    d.resolve({ decision: 'allow', why: 'Runs the repo deploy dry run.', by: 'Fable' })
+    await tick()
+    check('AP 1 ALLOW replies allow_once once, never allow_always', f.sent.length === 1 && outcome(f.sent[0])?.optionId === 'allow_once', JSON.stringify(f.sent))
+    check('AP 1 the stream says Fable allowed it', f.events.some((e) => e.kind === 'status' && /Fable allowed: Run railway up/.test(String(e.data))))
+  }
+  {
+    const f = fakePool('factory', brainA, apCtx)
+    answer = async () => ({ decision: 'deny', why: 'It deploys.', by: 'Fable' })
+    const n0 = judgeCalls.length
+    acp.handleReq(f.pool as never, execAsk(502, 'ls'))
+    await tick()
+    check('AP 2 even `ls` is judged (execute is never fast); DENY replies reject_once', judgeCalls.length === n0 + 1 && outcome(f.sent[0])?.optionId === 'reject_once' && f.sent.length === 1, JSON.stringify(f.sent))
+    check('AP 2 the stream says Fable refused it, with the reason', f.events.some((e) => e.kind === 'status' && /Fable refused: Run ls\. It deploys\./.test(String(e.data))))
+  }
+  {
+    const f = fakePool('factory', brainA, apCtx)
+    answer = async () => ({ decision: 'card', why: 'Fable says a person should decide: it drops a table.', by: 'Fable' })
+    acp.handleReq(f.pool as never, execAsk(503, 'psql -c "drop table x"'))
+    await tick()
+    const card = f.events.find((e) => e.kind === 'permission') as (Ev & { detail?: string; tabId?: string }) | undefined
+    check('AP 3 ASK: no reply, permId set, a card with the reason and this tab', f.sent.length === 0 && permId(f.tab) === 503 && !!card && card.tabId === f.tab.tabId && /drops a table/.test(String(card.detail)), JSON.stringify({ sent: f.sent, card }))
+  }
+  {
+    for (const [name, fn] of [
+      ['throws', () => {
+        throw new Error('judge blew up')
+      }],
+      ['rejects', () => Promise.reject(new Error('judge rejected'))]
+    ] as const) {
+      const f = fakePool('factory', brainA, apCtx)
+      answer = fn as () => Promise<Verdict>
+      acp.handleReq(f.pool as never, execAsk(504, 'npm test'))
+      await tick()
+      check(`AP 4 a judge that ${name} ends at the card, never an answer`, f.sent.length === 0 && f.events.some((e) => e.kind === 'permission') && permId(f.tab) === 504, JSON.stringify(f.sent))
+    }
+  }
+  {
+    const n0 = judgeCalls.length
+    const push = fakePool('factory', brainA, apCtx)
+    acp.handleReq(push.pool as never, execAsk(505, 'git push origin main'))
+    const brainEdit = fakePool('factory', brainA, apCtx)
+    acp.handleReq(brainEdit.pool as never, req(506, 'session/request_permission', { sessionId: 'sess-factory', toolCall: { title: 'Edit AGENTS.md', kind: 'edit', rawInput: { path: join(brainA, 'AGENTS.md') } }, options: permOpts }))
+    const watch = fakePool('factory', brainA, { ...apCtx, watchOnly: true })
+    acp.handleReq(watch.pool as never, execAsk(507, 'npm test'))
+    await tick()
+    check(
+      'AP 5 push, a brain edit, and a watch-tab command are refused without asking the judge',
+      judgeCalls.length === n0 && outcome(push.sent[0])?.optionId === 'reject_once' && outcome(brainEdit.sent[0])?.optionId === 'reject_once' && outcome(watch.sent[0])?.optionId === 'reject_once',
+      JSON.stringify({ push: push.sent, brainEdit: brainEdit.sent, watch: watch.sent })
+    )
+    const edit = fakePool('factory', brainA, apCtx)
+    acp.handleReq(edit.pool as never, req(508, 'session/request_permission', { sessionId: 'sess-factory', toolCall: { title: 'Edit src/footer.ts', kind: 'edit', rawInput: { path: join(work, 'src', 'footer.ts') } }, options: permOpts }))
+    await tick()
+    check('AP 5 a work-repo edit is fast: allow_once with no judge call', judgeCalls.length === n0 && outcome(edit.sent[0])?.optionId === 'allow_once', JSON.stringify(edit.sent))
+    const old = fakePool('factory', brainA, { brainPath: brainA, workRepo: work, runThrough: true })
+    acp.handleReq(old.pool as never, execAsk(509, 'railway up'))
+    const card = fakePool('factory', brainA, { brainPath: brainA, workRepo: work })
+    acp.handleReq(card.pool as never, execAsk(510, 'railway up'))
+    await tick()
+    check('AP 5 no approver keeps today: Approve in advance allows, otherwise the card', judgeCalls.length === n0 && outcome(old.sent[0])?.optionId === 'allow_once' && card.sent.length === 0 && card.events.some((e) => e.kind === 'permission'))
+  }
+  {
+    const apCwd = join(temp, 'ap-pool')
+    mkdirSync(apCwd, { recursive: true })
+    for (const how of ['cancel', 'close'] as const) {
+      const f = fakePool('factory', apCwd, apCtx)
+      Object.assign(f.pool.rpc, { dead: false, notify: () => {}, kill: () => {}, request: async () => ({}) })
+      acp.registerPoolForCheck(f.pool as never)
+      const d = later()
+      answer = () => d.p
+      acp.handleReq(f.pool as never, execAsk(520, 'npm test'))
+      await tick()
+      if (how === 'cancel') acp.acpCancel(f.tab.tabId)
+      else acp.acpClose(f.tab.tabId)
+      d.resolve({ decision: 'allow', why: 'late', by: 'Fable' })
+      await tick()
+      check(`AP 6 ${how} mid-judge: exactly one cancelled reply, the late ALLOW is dropped`, f.sent.length === 1 && outcome(f.sent[0])?.outcome === 'cancelled', JSON.stringify(f.sent))
+      acp.acpClose(f.tab.tabId)
+    }
+  }
+
+  // The controller's judge: a fake claude that answers by command, counting its calls.
+  const apLog = join(temp, 'ap-claude.log')
+  const apClaude = join(temp, 'ap-claude')
+  writeFileSync(
+    apClaude,
+    `#!/usr/bin/env node
+const fs = require('fs')
+const p = process.argv[process.argv.indexOf('-p') + 1] || ''
+fs.appendFileSync(${JSON.stringify(apLog)}, JSON.stringify({ argv: process.argv.slice(2).filter((a) => a.length < 60) }) + '\\n')
+const out = (result) => process.stdout.write(JSON.stringify({ type: 'result', result, num_turns: 1, total_cost_usd: 0.04, usage: { input_tokens: 2, output_tokens: 6 }, modelUsage: { 'claude-fable-5-1': { costUSD: 0.04 } } }))
+if (p.includes('Input: {"command":"railway up"}')) out('It deploys.\\nDENY')
+else if (p.includes('Input: {"command":"npm test"}')) out('Runs the tests.\\nALLOW')
+else if (p.includes('Input: {"command":"psql drop"}')) out('Drops a table.\\nASK')
+else if (p.includes('Input: {"command":"junk"}')) console.log('not json')
+else if (p.includes('Input: {"command":"hang"}')) setTimeout(() => {}, 60000)
+else out('Unsure.')
+`
+  )
+  chmodSync(apClaude, 0o755)
+  const apCalls = () => (existsSync(apLog) ? readFileSync(apLog, 'utf8').trim().split('\n').filter(Boolean).length : 0)
+  const facts = (command: string) => ({ kind: 'execute', title: `Run ${command}`, input: JSON.stringify({ command }), content: '', paths: [] })
+  const sig = () => new AbortController().signal
+  ctl.configureFactory({ ...fakeDeps, claudeBin: () => apClaude, judgeTimeoutMs: 500 })
+  {
+    promptPlan = () => new Promise(() => {})
+    const apRepo = repo('ap-work', { 'package.json': pkg, 'src/a.ts': 'export const a = 0\n' })
+    const res = ctl.startRun({ task: 'Fix the a constant in ap-work', workRepo: apRepo, brainPath: brainA, runThrough: true, approver: 'fable' })
+    const id = res.ok ? res.run.id : ''
+    for (let i = 0; i < 100 && !calls.some((c) => c.fn === 'prompt' && (c.o as { tabId?: string })?.tabId === 'factory-' + id); i++) await tick()
+    const warmCall = calls.find((c) => c.fn === 'warm' && (c.o as { tabId?: string }).tabId === 'factory-' + id)
+    check('AP 7 the run keeps approver fable and its warm call carries it', res.ok && res.run.approver === 'fable' && (warmCall?.o as { approver?: string })?.approver === 'fable', JSON.stringify({ res: res.ok, warm: warmCall?.o }))
+    const c0 = apCalls()
+    const allow1 = await ctl.judgeFactoryAsk('factory-' + id, facts('npm test'), sig())
+    const allow2 = await ctl.judgeFactoryAsk('factory-' + id, facts('npm test'), sig())
+    const c1 = apCalls()
+    check('AP 7 ALLOW from the fake claude; the same ask again is answered without a new call', allow1.decision === 'allow' && allow2.decision === 'allow' && allow2.repeat === true && c1 === c0 + 1, JSON.stringify({ allow1, allow2, calls: c1 - c0 }))
+    const deny = await ctl.judgeFactoryAsk(`factory-${id}-w1`, facts('railway up'), sig())
+    check('AP 7 a T3 worker tab (acpTab-w1) finds the run; DENY', deny.decision === 'deny' && deny.why === 'It deploys.', JSON.stringify(deny))
+    const ask1 = await ctl.judgeFactoryAsk('factory-' + id, facts('psql drop'), sig())
+    const ask2 = await ctl.judgeFactoryAsk('factory-' + id, facts('psql drop'), sig())
+    check('AP 7 ASK goes to the card and is not remembered (two calls)', ask1.decision === 'card' && ask2.decision === 'card' && !ask2.repeat && apCalls() === c1 + 3, JSON.stringify({ ask1, ask2, calls: apCalls() - c1 }))
+    const junk = await ctl.judgeFactoryAsk('factory-' + id, facts('junk'), sig())
+    const hang = await ctl.judgeFactoryAsk('factory-' + id, facts('hang'), sig())
+    const none = await ctl.judgeFactoryAsk('factory-nobody', facts('npm test'), sig())
+    check('AP 7 junk, a hang past the timeout, and an unknown tab all go to the card', junk.decision === 'card' && hang.decision === 'card' && none.decision === 'card' && /No Factory run owns/.test(none.why), JSON.stringify({ junk, hang, none }))
+    const argv = readFileSync(apLog, 'utf8').trim().split('\n').map((l) => (JSON.parse(l) as { argv: string[] }).argv)[0]
+    check('AP 7 the controller judge runs claude --model fable --effort low in plan mode with no tools', argv[argv.indexOf('--model') + 1] === 'fable' && argv[argv.indexOf('--effort') + 1] === 'low' && argv[argv.indexOf('--permission-mode') + 1] === 'plan' && argv[argv.indexOf('--tools') + 1] === '', JSON.stringify(argv))
+    const r = ctl.getRun(id)
+    const approveRows = (r?.usage || []).filter((u) => u.phase === 'approve')
+    const askEvents = (r?.events || []).filter((e) => e.kind === 'ask')
+    check(
+      'AP 7 the run counts each answer, folds approver usage, and the thread gets the refusal and the hand-offs only',
+      r?.asks?.allowed === 2 && r.asks.denied === 1 && r.asks.carded === 4 && approveRows.length === 2 && approveRows[0].model === 'claude-fable-5-1' && approveRows[0].turns === 4 && approveRows[1].turns === 2 && askEvents.length === 5 && askEvents.every((e) => e.kind === 'ask' && e.decision !== ('allow' as never)),
+      JSON.stringify({ asks: r?.asks && { ...r.asks, log: r.asks.log.map((l) => `${l.n}:${l.decision}`) }, approveRows, askEvents: askEvents.length })
+    )
+    ctl.abandonRun(id)
+    await ctl.settle(id)
+  }
+  {
+    const fIpc = (await import(src('factory/ipc.ts'))) as typeof import('../src/main/factory/ipc.ts')
+    fIpc.registerFactoryIpc()
+    const fipc = (globalThis as { __fipc?: Map<string, (...a: unknown[]) => unknown> }).__fipc
+    ctl.configureFactory({ ...fakeDeps, claudeBin: () => apClaude, judgeTimeoutMs: 500 })
+    promptPlan = () => new Promise(() => {})
+    const startIpc = fipc?.get('factory:start')
+    const started: Record<string, string | undefined> = {}
+    for (const [name, approver] of [['fable', 'fable'], ['missing', undefined], ['yolo', 'yolo']] as const) {
+      const r = repo(`ap-ipc-${name}`, { 'package.json': pkg, 'src/a.ts': 'export const a = 0\n' })
+      const out = (await startIpc?.({}, { task: `Fix the a constant in ${r}/src/a.ts`, brainPath: brainA, runThrough: true, ...(approver ? { approver } : {}) })) as { ok: boolean; run?: { id: string; approver?: string } }
+      started[name] = out?.ok ? String(out.run?.approver) : 'start failed'
+      if (out?.run?.id) {
+        ctl.abandonRun(out.run.id)
+        await ctl.settle(out.run.id)
+      }
+    }
+    check('AP 8 factory:start keeps fable; an omitted or unknown approver stays missing (off)', started.fable === 'fable' && started.missing === 'undefined' && started.yolo === 'undefined', JSON.stringify(started))
+    const pane = readFileSync(join(rootRepo, 'src', 'renderer', 'src', 'FactoryPane.tsx'), 'utf8')
+    check(
+      'AP 8 FactoryPane sends approver on Start, defaults to fable, and a card answers its own tab',
+      /useState<Approver>\('fable'\)/.test(pane) && /factory\.start\(\{[^}]*\bapprover\b[^}]*\}\)/.test(pane) && /skin\.decide\(permission\.tabId \|\| run\.acpTab/.test(pane)
+    )
+    const preload = readFileSync(join(rootRepo, 'src', 'preload', 'index.ts'), 'utf8')
+    check('AP 8 the preload start type carries approver', /start: \(p: \{[^}]*approver\?: Approver[^}]*\}\)/.test(preload))
+  }
+  {
+    // The mid-turn hop: Grok says its weekly usage is spent, the run moves to Factory Cursor, and the
+    // Cursor tab keeps the approver, so its next command is judged, not allowed.
+    const hopCwd = join(temp, 'ap-hop-brain')
+    mkdirSync(hopCwd, { recursive: true })
+    const tabId = 'factory-aphop'
+    const grokTab = { tabId, sessionId: 'grok-hop', promptId: null, appTools: [], text: '', alwaysApprove: false, factory: { brainPath: hopCwd, workRepo: work, runThrough: true, approver: 'fable' as const } }
+    const grokPool = {
+      kind: 'grok' as const,
+      lane: 'factory' as const,
+      cwd: hopCwd,
+      boot: Promise.resolve(),
+      tabs: new Map([[tabId, grokTab]]),
+      bySid: new Map([[grokTab.sessionId, tabId]]),
+      rpc: {
+        dead: false,
+        request: async (method: string) => {
+          if (method === 'session/prompt') throw new Error('You have hit your weekly usage limit for Grok. It resets Monday.')
+          return {}
+        },
+        notify: () => {},
+        kill: () => {},
+        reply: () => {},
+        error: () => {}
+      }
+    }
+    const cursorSent: Sent[] = []
+    const cursorPool = {
+      kind: 'cursor' as const,
+      lane: 'factory' as const,
+      cwd: hopCwd,
+      workRepo: work,
+      boot: Promise.resolve(),
+      tabs: new Map(),
+      bySid: new Map(),
+      rpc: {
+        dead: false,
+        request: async (method: string) => {
+          if (method === 'session/new')
+            return { sessionId: 'cur-hop', models: { currentModelId: 'cursor-grok-4.7[effort=xhigh]', availableModels: [{ modelId: 'cursor-grok-4.7[effort=xhigh]', name: 'Cursor Grok 4.7' }] } }
+          if (method === 'session/prompt') return { stopReason: 'end_turn' }
+          return {}
+        },
+        notify: () => {},
+        kill: () => {},
+        reply: (id: number | string, result: unknown) => cursorSent.push({ id, result }),
+        error: () => {}
+      }
+    }
+    acp.registerPoolForCheck(grokPool as never)
+    acp.registerPoolForCheck(cursorPool as never)
+    let hopped = ''
+    let err = ''
+    try {
+      await acp.factoryPrompt({ tabId, brainPath: hopCwd, text: 'Role: builder. Tier: T1. Phase: build.', onEvent: () => {}, onBuilder: (b) => (hopped = b) })
+    } catch (e) {
+      err = String((e as Error).message || e)
+    }
+    const ctab = cursorPool.tabs.get(tabId) as { factory?: { approver?: string } } | undefined
+    check('AP 9 the Grok-to-Cursor hop keeps approver fable on the Cursor tab', hopped === 'cursor' && ctab?.factory?.approver === 'fable', JSON.stringify({ hopped, err, factory: ctab?.factory }))
+    const n0 = judgeCalls.length
+    acp.setFactoryJudge((o) => {
+      judgeCalls.push({ tabId: o.tabId, kind: o.facts.kind, input: o.facts.input })
+      return Promise.resolve({ decision: 'deny', why: 'no', by: 'Fable' })
+    })
+    acp.handleReq(cursorPool as never, req(530, 'session/request_permission', { sessionId: 'cur-hop', toolCall: { title: 'Run railway up', kind: 'execute', rawInput: { command: 'railway up' } }, options: permOpts }))
+    await tick()
+    check('AP 9 an execute on the Cursor tab after the hop is judged (refused), not allowed in advance', judgeCalls.length === n0 + 1 && judgeCalls[n0].tabId === tabId && outcome(cursorSent[0])?.optionId === 'reject_once', JSON.stringify(cursorSent))
+    acp.factoryClose(tabId)
+  }
+  acp.setFactoryJudge(null)
+  promptPlan = async () => {}
   ctl.configureFactory(fakeDeps)
 }
 

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AiKind } from '../shared/contracts'
-import type { FactoryTriage, RepoProfile, RunRecord as FactoryRun } from '../shared/factory'
+import type { Approver, FactoryTriage, RepoProfile, RunRecord as FactoryRun } from '../shared/factory'
 import type { MediaAddResult, MediaEnableResult, MediaLibraryResult, MediaStatus } from '../shared/media'
 
 type FactoryResult = { ok: true; run: FactoryRun | null } | { ok: false; error: string }
@@ -938,7 +938,7 @@ const brain = {
   },
   factory: {
     triage: (text: string) => ipcRenderer.invoke('factory:triage', text) as Promise<FactoryTriage>,
-    start: (p: { task: string; brainPath: string; runThrough?: boolean; shipThrough?: boolean; proceedCritical?: boolean }) =>
+    start: (p: { task: string; brainPath: string; runThrough?: boolean; shipThrough?: boolean; proceedCritical?: boolean; approver?: Approver }) =>
       ipcRenderer.invoke('factory:start', p) as Promise<
         { ok: true; run: FactoryRun } | { ok: false; error: string; needsProceed?: boolean; runId?: string }
       >,
@@ -1010,6 +1010,7 @@ const brain = {
                 detail?: string
                 options?: { id: string; label: string }[]
                 requestId?: string
+                tabId?: string
               }
             }
       ) => void

@@ -1,4 +1,4 @@
-import type { UsageRow } from '../../shared/factory.ts'
+import { callCount, type UsageRow } from '../../shared/factory.ts'
 
 /**
  * Usage rows from what the CLIs print: Claude's `--output-format json` envelope and the Grok CLI's
@@ -106,8 +106,26 @@ export function acpRow(base: RowBase, o: { model?: string; usage?: Record<string
   })
 }
 
+/**
+ * Approver calls by the same model in a row fold into one row (turns = calls), so a run with many asks
+ * never pushes its build and review rows out of USAGE_MAX.
+ */
 export function withUsage(rows: UsageRow[] | undefined, row: UsageRow): UsageRow[] {
-  return [...(rows || []), row].slice(-USAGE_MAX)
+  const all = rows || []
+  const last = all.at(-1)
+  if (row.phase !== 'approve') return [...all, row].slice(-USAGE_MAX)
+  if (last?.phase !== 'approve' || last.model !== row.model || last.cli !== row.cli) return [...all, { ...row, turns: 1 }].slice(-USAGE_MAX)
+  const merged: UsageRow = {
+    ...row,
+    inTokens: last.inTokens + row.inTokens,
+    outTokens: last.outTokens + row.outTokens,
+    cacheRead: last.cacheRead + row.cacheRead,
+    cacheWrite: last.cacheWrite + row.cacheWrite,
+    costEq: last.costEq + row.costEq,
+    ms: last.ms + row.ms,
+    turns: last.turns + 1
+  }
+  return [...all.slice(0, -1), merged]
 }
 
 export function usageTotals(rows: UsageRow[] | undefined): { tokens: number; ms: number; calls: number; costEq: number } {
@@ -115,7 +133,7 @@ export function usageTotals(rows: UsageRow[] | undefined): { tokens: number; ms:
   return {
     tokens: all.reduce((n, r) => n + r.inTokens + r.outTokens + r.cacheRead + r.cacheWrite, 0),
     ms: all.reduce((n, r) => n + r.ms, 0),
-    calls: all.length,
+    calls: callCount(all),
     costEq: all.reduce((n, r) => n + r.costEq, 0)
   }
 }

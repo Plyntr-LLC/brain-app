@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { projectBinEnv } from '../ai-cli'
-import { factoryCancel, factoryInfo, factoryClose, factoryPrompt, factorySetEffort, factoryWarm } from '../acp-session'
+import { factoryCancel, factoryInfo, factoryClose, factoryPrompt, factorySetEffort, factoryWarm, setFactoryJudge } from '../acp-session'
+import { APPROVERS, type Approver } from '../../shared/factory'
 import {
   abandonRun,
   commitRunNow,
@@ -11,6 +12,7 @@ import {
   detachRun,
   getRun,
   guideRun,
+  judgeFactoryAsk,
   listFactoryRuns,
   pauseRun,
   publishAnywayFor,
@@ -68,18 +70,20 @@ export function registerFactoryIpc(): void {
     env: (repo) => opusEnv(factoryEnv(projectBinEnv(repo), ensureShims(factoryShimDir()))),
     askJev
   })
+  setFactoryJudge((o) => judgeFactoryAsk(o.tabId, o.facts, o.signal))
   ipcMain.handle('factory:triage', (_e, text: string) => triageTask(String(text || '')))
   // No work-repo picker: main resolves the repo from the task, then the last Factory repo. Start remembers it.
   ipcMain.handle(
     'factory:start',
-    (_e, p: { task: string; brainPath: string; runThrough?: boolean; shipThrough?: boolean; proceedCritical?: boolean }) =>
+    (_e, p: { task: string; brainPath: string; runThrough?: boolean; shipThrough?: boolean; proceedCritical?: boolean; approver?: Approver }) =>
       safe(() =>
         startRun({
           task: String(p?.task || ''),
           brainPath: String(p?.brainPath || ''),
           runThrough: Boolean(p?.runThrough),
           shipThrough: Boolean(p?.shipThrough),
-          proceedCritical: Boolean(p?.proceedCritical)
+          proceedCritical: Boolean(p?.proceedCritical),
+          ...(APPROVERS.includes(p?.approver as Approver) ? { approver: p.approver } : {})
         })
       )
   )

@@ -1,7 +1,7 @@
-import { holdOf, strictRequired, type LiveCall, type RunPhase, type RunRecord } from '../../shared/factory'
+import { APPROVER_NAME, holdOf, strictRequired, type LiveCall, type RunPhase, type RunRecord } from '../../shared/factory'
 import type { Activity, RailState } from './activity'
 
-const ROLE: Record<LiveCall['phase'], string> = { triage: 'Lead', plan: 'Planner', build: 'Builder', review: 'Reviewer' }
+const ROLE: Record<LiveCall['phase'], string> = { triage: 'Lead', plan: 'Planner', build: 'Builder', review: 'Reviewer', approve: 'Approver' }
 const ORDER: RunPhase[] = ['triage', 'plan', 'build', 'verify', 'review', 'commit', 'done']
 
 /** Where the run is, reading a paused or failed run at the phase it resumes to. */
@@ -43,7 +43,8 @@ export function factoryActivity(run: RunRecord, pushBlock: string | null): Activ
     { label: 'Push', state: push, ...(push === 'ask' ? { note: 'waiting on you' } : {}) }
   ]
 
-  const busy = (phase: LiveCall['phase']) => live?.phase === phase
+  const busy = (phase: LiveCall['phase']) => (run.live || []).some((c) => c.phase === phase)
+  const asks = run.asks
   const team: NonNullable<Activity['team']> = [
     { role: 'Lead', who: 'Grok 4.6', state: done || run.phase === 'abandoned' ? 'done' : 'live', note: hold ? 'waiting on you' : 'listening' },
     ...(planned ? [{ role: 'Planner', who: lastModel(run, 'plan', 'Opus'), state: busy('plan') ? ('live' as const) : plan === 'done' ? ('done' as const) : ('todo' as const), note: busy('plan') ? 'writing the plan' : plan === 'done' ? 'plan approved' : 'not yet' }] : []),
@@ -51,6 +52,16 @@ export function factoryActivity(run: RunRecord, pushBlock: string | null): Activ
     { role: 'Tester', who: 'repo scripts', state: run.phase === 'verify' ? 'live' : fails ? 'fail' : run.verify?.length ? 'done' : 'todo', note: run.verify?.length ? `${passes} passed${fails ? `, ${fails} failed` : ''}` : 'not yet' },
     ...(strictRequired(run)
       ? [{ role: 'Reviewer', who: lastModel(run, 'review', 'Opus'), state: busy('review') ? ('live' as const) : run.strict?.status === 'pass' ? ('done' as const) : run.strict?.status === 'fail' ? ('fail' as const) : ('todo' as const), note: busy('review') ? 'reviewing' : run.strict ? `round ${(run.reviewCycles || 0) + (run.strict.status === 'pass' ? 1 : 0)}: ${run.strict.status}` : 'not yet' }]
+      : []),
+    ...(run.approver && run.approver !== 'off'
+      ? [
+          {
+            role: 'Approver',
+            who: APPROVER_NAME[run.approver],
+            state: busy('approve') ? ('live' as const) : asks ? ('done' as const) : ('todo' as const),
+            note: busy('approve') ? 'checking an ask' : asks ? `${asks.allowed} allowed${asks.denied ? `, ${asks.denied} refused` : ''}${asks.carded ? `, ${asks.carded} to you` : ''}` : 'no asks yet'
+          }
+        ]
       : [])
   ]
 
