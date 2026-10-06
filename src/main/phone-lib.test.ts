@@ -383,8 +383,24 @@ test('explorer lists files outside the watched brain folder', () => {
     join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/ptyChat.ts'),
     'utf8'
   )
-  assert.match(src, /Also touching/)
-  assert.match(src, /awayGroups/)
+  const away = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/AwayBlock.tsx'), 'utf8')
+  const firstRun = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/FirstRun.tsx'), 'utf8')
+  assert.match(away, /Also touching/)
+  assert.match(away, /awayGroups/)
+  assert.match(away, /outsideProject/)
+  // The sidebar's only away list is AwayBlock: no leftover file dump beside it.
+  assert.equal(src.match(/<AwayBlock/g)?.length, 1)
+  for (const gone of ['awayGroups', 'Also touching', 'className="away"', 'className={`flink turn', 'invite-dock', 'showInvite', 'settings-toggle']) {
+    assert.equal(src.includes(gone), false, `TerminalWorkspace.tsx still has ${gone}`)
+  }
+  // Settings lives in the title bar, never behind a condition.
+  const at = firstRun.indexOf('className="ghost title-set settings-toggle"')
+  assert.ok(at > 0, 'title-bar Settings button')
+  const before = firstRun.slice(0, at)
+  const logOutEnd = before.lastIndexOf(') : null}')
+  assert.ok(logOutEnd > before.lastIndexOf('Log out'), 'Settings comes after the Log out conditional closes')
+  assert.equal(/&& \(|\? \(/.test(before.slice(logOutEnd + ') : null}'.length)), false, 'nothing conditional opens before Settings')
+  assert.equal(/showInvite=\{|setShowInvite=\{/.test(firstRun.slice(firstRun.indexOf('<TerminalWorkspace'), firstRun.indexOf('<TerminalWorkspace') + 300)), false)
   assert.match(src, /outsideProject/)
   assert.match(src, /sameCwd\(saved.cwd/)
   assert.match(pty, /export \{ outsideProject \}/)

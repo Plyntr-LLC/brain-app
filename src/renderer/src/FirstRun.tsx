@@ -2033,7 +2033,7 @@ export function FirstRun() {
                   </button>
                 </div>
               ) : null}
-              <TerminalWorkspace session={s} showInvite={showInvite} setShowInvite={setShowInvite} railOpen={railOpen} setRailOpen={setRailOpen} libraryAsk={libraryAsk} />
+              <TerminalWorkspace session={s} railOpen={railOpen} setRailOpen={setRailOpen} libraryAsk={libraryAsk} />
             </div>
           )}
         </section>

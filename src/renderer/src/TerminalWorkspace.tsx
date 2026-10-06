@@ -5,7 +5,8 @@ import '@xterm/xterm/css/xterm.css'
 import type { AiKind, Session } from '@shared/contracts'
 import { CLAUDE_DEFAULT_MODEL, keepClaudeModel } from '../../shared/claude-defaults'
 import { defaultEffort, hydrateEffort, normalizeEffort, prettyEffort } from '../../shared/effort'
-import { mdToHtml, tidy, outsideProject, type FileHit } from './ptyChat'
+import { mdToHtml, tidy, outsideProject, rel, type FileHit } from './ptyChat'
+import { AwayBlock } from './AwayBlock'
 import { sameCwd } from '../../shared/paths'
 import { APP_SLASH, TUI_ONLY_SLASH } from '../../shared/slash-lanes'
 import { routeLine } from '../../shared/slash-route'
@@ -412,17 +413,6 @@ function fallbackEfforts(kind?: AiKind): Cap[] {
     { id: 'high', label: 'High' },
     { id: 'xhigh', label: 'Extra high' }
   ]
-}
-
-function rel(root: string, abs: string): string {
-  if (!root) return abs
-  const a = root.replace(/\\/g, '/').replace(/\/$/, '')
-  const b = abs.replace(/\\/g, '/')
-  if (b === a || b.startsWith(a + '/')) {
-    const r = b.slice(a.length).replace(/^\//, '')
-    return r || b.split('/').pop() || b
-  }
-  return b.split('/').pop() || b
 }
 
 function hitLabel(cwd: string, abs: string): string {
@@ -2221,15 +2211,11 @@ const KINDS: { id: AiKind; name: string }[] = [
 
 export function TerminalWorkspace({
   session: s,
-  showInvite,
-  setShowInvite,
   railOpen,
   setRailOpen,
   libraryAsk
 }: {
   session: Session
-  showInvite: boolean
-  setShowInvite: (v: boolean) => void
   railOpen: boolean
   setRailOpen: (v: boolean) => void
   /** Bumped by Settings → See files to open the stored-file library tab. */
@@ -2304,17 +2290,6 @@ export function TerminalWorkspace({
   // A Factory tab shows its own run's files; Chat tabs (and everything else) show the last chat's.
   const filesId = tab?.type === 'factory' ? tab.id : chatId
   const hits = filesByTab[filesId] || []
-  const awayGroups = (() => {
-    const map = new Map<string, FileHit[]>()
-    for (const h of hits) {
-      const root = outsideProject(cwd, h.path)
-      if (!root) continue
-      const list = map.get(root) || []
-      list.push(h)
-      map.set(root, list)
-    }
-    return [...map.entries()]
-  })()
   const folderName = cwd.split('/').filter(Boolean).pop() || 'Agency Brain'
   const modelChoices = cliModels(
     chatTab?.kind,
@@ -2945,30 +2920,7 @@ export function TerminalWorkspace({
             </button>
           </h2>
           <div className="ftree">{renderTree(cwd)}</div>
-          {awayGroups.length > 0 ? (
-            <div className="away">
-              <h3>Also touching</h3>
-              {awayGroups.map(([root, files]) => (
-                <div key={root}>
-                  <p className="place" title={root}>
-                    {root.split('/').filter(Boolean).pop() || root}
-                  </p>
-                  {files.map((h) => (
-                    <span key={h.path} className={`flink turn${h.live ? ' live' : ''}`}>
-                      {rel(root, h.path)}
-                    </span>
-                  ))}
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {s.path !== 'join' && (
-            <div className="invite-dock">
-              <button className="primary rail-btn settings-toggle" type="button" onClick={() => setShowInvite(!showInvite)}>
-                Settings
-              </button>
-            </div>
-          )}
+          <AwayBlock cwd={cwd} hits={hits} />
           {railOpen ? (
             <button
               type="button"

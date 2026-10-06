@@ -1270,12 +1270,38 @@ button.linkish.cmdval { color: var(--ink); font-size: 0.88rem; text-decoration: 
   font-weight: 700;
   color: var(--orange-deep);
 }
-.explorer .away .place {
-  margin: 0.35rem 0 0.1rem;
-  font-size: 0.68rem;
-  color: var(--muted);
+.explorer .away .away-line {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.14rem 0.2rem;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
 }
-.invite-dock { flex-shrink: 0; }
+.explorer .away .away-line:hover { background: var(--hover); }
+.explorer .away .away-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer .away .away-count { flex: none; font-size: 0.68rem; font-weight: 500; color: var(--muted); }
+.explorer .away .away-line.live .away-name::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 0.35rem;
+  border-radius: 50%;
+  background: var(--orange);
+  vertical-align: middle;
+}
+.explorer .away .away-more { color: var(--muted); font-weight: 500; }
+.explorer .away .away-repo > span.flink { padding-left: 1.1rem; }
 .explorer .fnode { line-height: 1.25; }
 .explorer button.flink,
 .explorer span.flink,
@@ -1303,7 +1329,6 @@ button.linkish.cmdval { color: var(--ink); font-size: 0.88rem; text-decoration: 
 .explorer span.flink.turn { color: var(--orange-deep); font-weight: 700; }
 .explorer button.flink.turn.live,
 .explorer span.flink.turn.live { color: var(--orange); }
-.invite-dock { padding: 0.7rem 0.75rem 0.9rem; border-top: 1px solid var(--line); }
 .refs {
   display: flex;
   flex-direction: column;
@@ -1531,11 +1556,6 @@ button.runmeta-v:hover { color: var(--orange-deep); }
 }
 .invitehead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
 .inviterow { display: grid; grid-template-columns: 1fr 1fr 7rem auto; gap: 0.35rem; }
-.rail-btn {
-  margin-top: 1rem;
-  width: 100%;
-  font-size: 0.82rem;
-}
 .skin-switch {
   display: flex;
   gap: 0;
@@ -1856,8 +1876,7 @@ button.runmeta-v:hover { color: var(--orange-deep); }
 /* Model/Effort/Mode labels are small muted text: keep them on solid paper so any vibrancy stays >= 4.5:1. */
 :root.glass .runmeta { background: var(--paper); }
 :root.glass .runmeta,
-:root.glass .explorer .away,
-:root.glass .invite-dock { border-top-color: var(--glass-line); }
+:root.glass .explorer .away { border-top-color: var(--glass-line); }
 :root.glass .runmeta { box-shadow: inset 0 1px 0 var(--glass-edge); }
 :root.glass .app.chat-on .main > [data-setup-screen='chat'] > .actions {
   background: var(--glass-sheen), var(--glass-chrome);
