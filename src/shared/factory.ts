@@ -195,8 +195,46 @@ export type RunRecord = {
   /** This run only. The conductor sets a boundary when Joe names it. The factory holds listen. */
   override?: { review?: boolean; voice?: boolean; tier?: boolean; proceed?: boolean }
   shadow?: Shadow
+  /** What the team did, newest last (cap 300). Full text sits in the work repo's store; userData keeps it without text. */
+  events?: RunEvent[]
   createdAt: number
   updatedAt: number
+}
+
+export type HoldKind = 'dirty' | 'review' | 'voice' | 'tier' | 'proceed' | 'plan' | 'paused' | 'failed'
+
+/** Something the run waits on Joe for. The Factory thread asks it; the run's events record each one. */
+export type Hold = { kind: HoldKind; text: string }
+
+export type RunEvent =
+  | { at: number; kind: 'repo'; repo: string; moved: boolean }
+  | { at: number; kind: 'plan'; status: 'waiting' | 'approved'; by: 'grok' | 'opus'; text: string }
+  | { at: number; kind: 'turn'; call: number; model: string; ms: number; ok: boolean; files: number; added: number; deleted: number; paths: string[] }
+  | { at: number; kind: 'test'; rows: VerifyRow[] }
+  | { at: number; kind: 'review'; round: number; status: 'pass' | 'fail' | 'missing'; text: string }
+  | { at: number; kind: 'voice'; status: VerifyRow['status']; text: string }
+  | { at: number; kind: 'commit'; sha: string; branch?: string }
+  | { at: number; kind: 'push'; ok: boolean; text: string }
+  | { at: number; kind: 'deploy'; ok: boolean; text: string }
+  | { at: number; kind: 'hold'; hold: HoldKind; text: string }
+  | { at: number; kind: 'end'; phase: 'done' | 'abandoned' }
+
+/** The hold Joe has to answer, or null. One order for the conductor, the thread, and the events. */
+export function holdOf(run: RunRecord): Hold | null {
+  if (run.needsPrep === 'dirty') return { kind: 'dirty', text: `This repo has uncommitted changes (${run.dirtyCount ?? run.dirtyFiles?.length ?? 0} files).` }
+  if (run.phase === 'review' && !!run.diff && run.strict?.status === 'fail' && (run.reviewCycles || 0) >= REVIEW_MAX) {
+    return { kind: 'review', text: `Opus has not approved after ${run.reviewCycles} reviews.` }
+  }
+  if (run.voice?.status === 'fail' && (run.voiceCycles || 0) >= VOICE_MAX) return { kind: 'voice', text: `Voice has not approved after ${VOICE_MAX} fixes.` }
+  if (run.phase === 'upgrade') return { kind: 'tier', text: (run.tripwire?.reasons || []).join(' ') || `Over the ${run.tier} limit.` }
+  if (run.needsProceed) {
+    const by = run.triage.llm?.skipped ? 'Model triage did not answer.' : `${run.triage.llm?.by === 'jev' ? 'Jev' : 'Grok'} says this is critical risk.`
+    return { kind: 'proceed', text: by }
+  }
+  if (run.phase === 'plan' && run.plan?.status === 'waiting' && !!run.plan.text && !run.runThrough) return { kind: 'plan', text: 'The plan is waiting for your approval.' }
+  if (run.phase === 'paused') return { kind: 'paused', text: run.error || 'Paused.' }
+  if (run.phase === 'failed') return { kind: 'failed', text: run.error || 'The run failed.' }
+  return null
 }
 
 export type FactoryTriage = {

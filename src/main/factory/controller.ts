@@ -11,6 +11,7 @@ import { deploy as gitDeploy, deployBlock, isKennelGated, publish as gitPublish,
 import { auditTurn, commitRun, currentBranch, diffText, dirtyPaths, gitTop, headSha, isClean, isGitRepo, numstat, porcelain, stashAll } from './git-audit.ts'
 import { OPUS_PLAN_TIMEOUT_MS, OPUS_REVIEW_TIMEOUT_MS, planPrompt, REVIEW_MAX, reviewAccept, runOpus, splitOutside, STRICT_EFFORT, strictNeeded, strictPrompt, type SpawnFn } from './opus.ts'
 import { realish } from './paths.ts'
+import { nextEvents } from './run-events.ts'
 import { detectProfile, readProfile, runProfile } from './profile.ts'
 import { lastRepo, rememberRepo, resolveWorkRepo } from './resolve-repo.ts'
 import {
@@ -106,6 +107,8 @@ export type FactoryDeps = {
 /** workers: T3 builder tabs open right now (factory-<id>-w<n>). */
 type Live = {
   run: RunRecord
+  /** The run as last persisted: nextEvents compares against it. Missing until a new run's first persist. */
+  saved?: RunRecord
   gen: number
   warm: boolean
   busy: Promise<void> | null
@@ -157,7 +160,10 @@ function titleOf(task: string): string {
 }
 
 function persist(state: Live): RunRecord {
+  const events = nextEvents(state.saved, state.run, Date.now())
+  if (events !== (state.run.events || []) && events.length) state.run = { ...state.run, events }
   state.run = saveRun(state.run)
+  state.saved = state.run
   if (TERMINAL_PHASES.includes(state.run.phase)) logToBrain(state.run)
   need().emit({ runId: state.run.id, kind: 'run', run: state.run })
   return state.run
@@ -1348,7 +1354,7 @@ export function restoreRun(id: string): RunRecord | null {
   if (have) return have.run
   const run = loadRun(id)
   if (!run) return null
-  const state: Live = { run, gen: 0, warm: false, busy: null }
+  const state: Live = { run, saved: run, gen: 0, warm: false, busy: null }
   live.set(id, state)
   if (TERMINAL_PHASES.includes(run.phase)) return run
   if (!holdsLock(run.workRepo, run.id)) {

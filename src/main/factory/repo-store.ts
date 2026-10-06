@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
-import type { RunRecord } from '../../shared/factory.ts'
+import type { RunEvent, RunRecord } from '../../shared/factory.ts'
 import { realGit } from './gates.ts'
+import { eventsWithoutText, hasText } from './run-events.ts'
 
 /**
  * Project code a run touches (diff, review, plan, test and deploy output, notes that quote them) lives
@@ -20,6 +21,7 @@ export type RunCode = {
   error?: string
   pushError?: string
   deployError?: string
+  events?: RunEvent[]
 }
 
 const LINE_MAX = 200
@@ -90,6 +92,12 @@ export function splitCode(run: RunRecord): { meta: RunRecord; code: RunCode } {
       meta[k] = firstLine(run[k])
     }
   }
+  // Only a timeline that still has its text moves: a userData copy (text already gone) must never
+  // overwrite the repo store's full one when migrate splits a loaded record again.
+  if (run.events?.some(hasText)) {
+    code.events = run.events
+    meta.events = eventsWithoutText(run.events)
+  }
   return { meta, code }
 }
 
@@ -106,6 +114,7 @@ export function joinCode(meta: RunRecord, code: RunCode | null): RunRecord {
   for (const k of ['error', 'pushError', 'deployError'] as const) {
     if (code[k] != null && run[k] != null && String(code[k]).startsWith(String(run[k]))) run[k] = code[k]
   }
+  if (code.events?.length) run.events = code.events
   return run
 }
 

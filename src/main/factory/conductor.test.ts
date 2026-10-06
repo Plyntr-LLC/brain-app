@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { ACK_NOTED, REVIEW_MAX, VOICE_MAX, type RunRecord } from '../../shared/factory.ts'
+import { ACK_NOTED, holdOf, REVIEW_MAX, VOICE_MAX, type RunEvent, type RunRecord } from '../../shared/factory.ts'
 import { buildBrief } from './brief.ts'
 import type { Decision, FactoryDeps, StartResult } from './controller.ts'
 import type { SpawnFn } from './opus.ts'
@@ -166,6 +166,7 @@ let warms: string[] = []
 let orchMode: 'card' | 'empty' | 'throw' | 'tell' | 'notell' | 'tell-anyway' = 'card'
 let orchReply: string | null = null
 let buildThrows = false
+let stampOff = false
 let orchHeld: (() => void)[] | null = null
 const orchPending = new Map<string, (raw: string) => void>()
 let cancels = 0
@@ -207,7 +208,7 @@ let stamp = 0
 
 /** A fix that writes the same bytes pauses on the third unchanged diff. Each turn changes one comment. */
 function stampWork(): void {
-  if (!activeId) return
+  if (!activeId || stampOff) return
   const repo = getRun(activeId)?.workRepo
   if (!repo) return
   const file = join(repo, 'src.ts')
@@ -368,6 +369,7 @@ function reset(): void {
   orchMode = 'card'
   orchReply = null
   buildThrows = false
+  stampOff = false
   orchHeld = null
   orchPending.clear()
   cancels = 0
@@ -1144,4 +1146,152 @@ test('Joe 2026-10-06 run-ae98e1f8: the conductor restarts in the right repo when
   assert.equal(ackOf(eight, proceedAsk).includes('Resumed'), false)
   abandonRun(eight)
   configureFactory(deps)
+})
+
+test('holdOf agrees with holdName and names the other holds', async () => {
+  const mods = await loaded
+  const holdName = mods.controller.holdName
+  const base: RunRecord = {
+    id: 'h',
+    title: 't',
+    task: 't',
+    brainPath: '/b',
+    workRepo: '/w',
+    tier: 'T2',
+    risk: 'none',
+    triage: { size: 'T2', original: 'T2', capped: false, reasons: [] },
+    phase: 'build',
+    base: 'x',
+    acpTab: 'a',
+    createdAt: 0,
+    updatedAt: 0
+  }
+  const cases: [string, Partial<RunRecord>, string | null, string][] = [
+    ['review cap', { phase: 'review', diff: 'd', strict: { status: 'fail', text: 'g' }, reviewCycles: REVIEW_MAX }, 'review', 'review'],
+    ['voice cap', { voice: { script: 'voice', status: 'fail' }, voiceCycles: VOICE_MAX }, 'voice', 'voice'],
+    ['upgrade', { phase: 'upgrade', tripwire: { reasons: ['too big'], suggest: 'T3' } }, 'tier', 'tier'],
+    ['proceed', { phase: 'triage', needsProceed: true }, 'proceed', 'proceed'],
+    ['dirty', { phase: 'triage', needsPrep: 'dirty', dirtyCount: 3 }, 'dirty', 'none'],
+    ['plan waiting', { phase: 'plan', plan: { text: 'p', by: 'opus', status: 'waiting', rejects: 0, reasons: [] } }, 'plan', 'none'],
+    ['plan approved in advance', { phase: 'plan', runThrough: true, plan: { text: 'p', by: 'opus', status: 'waiting', rejects: 0, reasons: [] } }, null, 'none'],
+    ['paused', { phase: 'paused', error: 'This turn changed no files in /w.' }, 'paused', 'none'],
+    ['failed', { phase: 'failed', error: 'boom' }, 'failed', 'none'],
+    ['strict fail under the cap', { phase: 'review', diff: 'd', strict: { status: 'fail', text: 'g' }, reviewCycles: 1 }, null, 'none']
+  ]
+  for (const [name, patch, kind, legacy] of cases) {
+    const run = { ...base, ...patch }
+    assert.equal(holdOf(run)?.kind ?? null, kind, name)
+    assert.equal(holdName(run), legacy, name)
+  }
+  assert.equal(holdOf({ ...base, phase: 'paused', error: 'This turn changed no files in /w.' })?.text, 'This turn changed no files in /w.')
+})
+
+test('a run keeps a timeline of what the team did', async () => {
+  const mods = await loaded
+  conduct = mods.conductor.conduct
+  configureFactory = mods.controller.configureFactory
+  startRun = mods.controller.startRun
+  getRun = mods.controller.getRun
+  decideRun = mods.controller.decideRun
+  dropMemory = mods.controller.dropMemory
+  abandonRun = mods.controller.abandonRun
+  mods.store.setUserDataDir(() => userData)
+  configureFactory(deps)
+  const commonDir = (dir: string) => git(dir, ['rev-parse', '--git-common-dir']).trim()
+  const codeJson = (dir: string, id: string) => JSON.parse(readFileSync(join(dir, commonDir(dir), 'brain-factory', id, 'code.json'), 'utf8')) as { events?: RunEvent[] }
+  const metaJson = (id: string) => JSON.parse(readFileSync(join(userData, 'factory', 'runs', `${id}.json`), 'utf8')) as RunRecord
+  const begin = (task: string, workRepo: string, o: { shipThrough?: boolean } = {}): string => {
+    const res = (startRun as unknown as (i: object) => StartResult)({ task, workRepo, brainPath: repo(`${baseName(workRepo)}-brain`), ...o })
+    if (!res.ok) throw new Error(res.error)
+    activeId = res.run.id
+    return res.run.id
+  }
+  const baseName = (p: string) => p.split('/').pop() || p
+
+  reset()
+  failsLeft = 1
+  opusPass = false
+  const one = repo('events-one')
+  addRemote(one)
+  let turnNo = 0
+  touch = () => {
+    turnNo++
+    writeFileSync(join(one, turnNo === 1 ? 'src.ts' : 'fix.ts'), `export const turn = ${turnNo}\n`)
+  }
+  const id1 = begin('add a webhook endpoint feature', one, { shipThrough: true })
+  await until(() => runOf().phase === 'plan' && runOf().plan?.status === 'waiting' && !!runOf().plan?.text, 'events plan')
+  decideRun(id1, 'approve-plan')
+  await until(() => runOf().phase === 'done' && !!runOf().pushed, 'events pushed')
+  const ev = getRun(id1)?.events || []
+  writeFileSync('/tmp/factory-fix/u2/events.json', JSON.stringify(ev, null, 2))
+  const label = (e: RunEvent) =>
+    e.kind === 'plan' ? `plan(${e.status})` : e.kind === 'review' ? `review(${e.status},${e.round})` : e.kind === 'hold' ? `hold(${e.hold})` : e.kind === 'end' ? `end(${e.phase})` : e.kind === 'push' ? `push(${e.ok ? 'ok' : 'fail'})` : e.kind
+  assert.deepEqual(ev.map(label), ['repo', 'plan(waiting)', 'hold(plan)', 'plan(approved)', 'turn', 'test', 'review(fail,1)', 'turn', 'test', 'review(pass,2)', 'commit', 'end(done)', 'push(ok)'])
+  const turns = ev.filter((e): e is Extract<RunEvent, { kind: 'turn' }> => e.kind === 'turn')
+  assert.ok(turns[0].paths.includes('src.ts') && !turns[0].paths.includes('fix.ts'), JSON.stringify(turns[0].paths))
+  assert.ok(turns[1].paths.includes('src.ts') && turns[1].paths.includes('fix.ts') && turns[1].files >= 2, JSON.stringify(turns[1].paths))
+  const buildAts = (getRun(id1)?.usage || []).filter((u) => u.phase === 'build').map((u) => u.at)
+  assert.notEqual(turns[0].call, turns[1].call)
+  assert.ok(turns.every((t) => buildAts.includes(t.call)))
+  const reviews = ev.filter((e): e is Extract<RunEvent, { kind: 'review' }> => e.kind === 'review')
+  assert.match(reviews[0].text, /GAPS: 1/)
+  assert.match(reviews[1].text, /GAPS: 0/)
+  const plan = ev.find((e): e is Extract<RunEvent, { kind: 'plan' }> => e.kind === 'plan')
+  assert.match(plan?.text || '', /Files: src\.ts/)
+  const onDisk = metaJson(id1).events || []
+  assert.equal(onDisk.length, ev.length)
+  assert.ok(onDisk.every((e) => !('text' in e) || e.text === ''), 'userData events carry no text')
+  const inRepo = codeJson(one, id1).events || []
+  assert.deepEqual(inRepo, ev)
+  dropMemory()
+  const back = mods.controller.restoreRun(id1)
+  assert.deepEqual(back?.events, ev)
+
+  reset()
+  const two = repo('events-two')
+  writeFileSync(join(two, 'package.json'), JSON.stringify({ name: 'events-two', scripts: { typecheck: 'tsc --noEmit' } }))
+  git(two, ['add', '-A'])
+  git(two, ['commit', '-q', '-m', 'scripts'])
+  let scriptCalls = 0
+  configureFactory({ ...deps, runScript: async () => (++scriptCalls === 1 ? { code: 1, out: 'boom in src.ts' } : { code: 0, out: 'ok' }) })
+  touch = () => writeFileSync(join(two, 'src.ts'), 'export const n = 22\n')
+  const id2 = begin('fix typo in footer', two)
+  await until(() => (getRun(id2)?.events || []).some((e) => e.kind === 'test' && e.rows.some((r) => r.status === 'fail')), 'events test fail')
+  const failed = (getRun(id2)?.events || []).find((e): e is Extract<RunEvent, { kind: 'test' }> => e.kind === 'test' && e.rows.some((r) => r.status === 'fail'))!
+  assert.match(failed.rows.find((r) => r.status === 'fail')?.tail || '', /boom in src\.ts/)
+  const repoFail = (codeJson(two, id2).events || []).find((e): e is Extract<RunEvent, { kind: 'test' }> => e.kind === 'test' && e.rows.some((r) => r.status === 'fail'))
+  assert.match(repoFail?.rows.find((r) => r.status === 'fail')?.tail || '', /boom in src\.ts/)
+  assert.equal(JSON.stringify(metaJson(id2)).includes('boom in src.ts'), false)
+  abandonRun(id2)
+  configureFactory(deps)
+
+  reset()
+  const three = repo('events-three')
+  writeFileSync(join(three, 'scratch.txt'), 'not committed\n')
+  stampOff = true
+  const id3 = begin('fix typo in footer', three)
+  await until(() => getRun(id3)?.needsPrep === 'dirty', 'events dirty')
+  decideRun(id3, 'prep-stash')
+  await until(() => getRun(id3)?.phase === 'paused' && /changed no files/.test(getRun(id3)?.error || ''), 'events empty pause')
+  assert.equal(getRun(id3)?.audit?.work.length, 0, 'the builder wrote nothing')
+  const lot = join(projects, 'lotline')
+  if (!existsSync(join(lot, '.git'))) {
+    mkdirSync(lot, { recursive: true })
+    git(lot, ['init', '-q', '-b', 'main'])
+    writeFileSync(join(lot, 'src.ts'), 'export const n = 1\n')
+    git(lot, ['add', '-A'])
+    git(lot, ['commit', '-q', '-m', 'init'])
+  }
+  hang = true
+  stampOff = false
+  const id4 = begin('fix typo in footer', lot)
+  await until(() => getRun(id4)?.phase === 'build', 'events lock holder')
+  await conduct(id3, 'restart it in the lotline repo')
+  assert.equal(getRun(id3)?.phase, 'paused')
+  const holds = (getRun(id3)?.events || []).filter((e): e is Extract<RunEvent, { kind: 'hold' }> => e.kind === 'hold')
+  assert.deepEqual(holds.map((h) => h.hold), ['dirty', 'paused', 'paused'])
+  assert.match(holds[1].text, /changed no files/)
+  assert.match(holds[2].text, /already running/)
+  abandonRun(id4)
+  abandonRun(id3)
 })
