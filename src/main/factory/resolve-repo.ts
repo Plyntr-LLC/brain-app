@@ -16,7 +16,8 @@ export const NAME_THE_REPO = 'Name the code repo in the task (a path or the Proj
 export const BRAIN_IS_WORK = 'That repo is the brain itself. Factory does not edit the brain. Name the code repo in the task.'
 
 export type RepoFrom = 'given' | 'path' | 'project' | 'title' | 'name' | 'last'
-export type ResolvedRepo = { ok: true; workRepo: string; from: RepoFrom } | { ok: false; error: string }
+/** word: what in the task picked it (a path, a folder name, a title, or one of its names). */
+export type ResolvedRepo = { ok: true; workRepo: string; from: RepoFrom; word?: string } | { ok: false; error: string }
 
 export type ResolveInput = {
   task: string
@@ -273,7 +274,7 @@ export function resolveWorkRepo(o: ResolveInput): ResolvedRepo {
 
   for (const p of taskPaths(o.task, o.home)) {
     const hit = repoAt(nearestDir(p))
-    if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'path' }
+    if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'path', word: p }
   }
   // The task named a path in the brain and nothing else: refuse rather than fall back to another repo.
   const namedBrain = sawBrain
@@ -296,7 +297,7 @@ export function resolveWorkRepo(o: ResolveInput): ResolvedRepo {
       const name = byName.get(`${v}-${toks[i + 1]}`)
       if (!name || !keep(name)) continue
       const hit = repoAt(join(projects, name))
-      if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'project' }
+      if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'project', word: `${toks[i]} ${toks[i + 1]}` }
     }
   }
   for (const tok of toks) {
@@ -305,7 +306,7 @@ export function resolveWorkRepo(o: ResolveInput): ResolvedRepo {
       const name = byName.get(v)
       if (!name || name.length < 3) continue
       const hit = repoAt(join(projects, name))
-      if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'project' }
+      if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'project', word: tok }
     }
   }
   // Words from the task with paths taken out (paths already had their turn).
@@ -322,7 +323,7 @@ export function resolveWorkRepo(o: ResolveInput): ResolvedRepo {
     const name = titleHit(tok, aliases, okName)
     if (!name) continue
     const hit = repoAt(join(projects, name), true)
-    if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'title' }
+    if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'title', word: tok }
   }
   // One of its names.
   // Stopwords never pick here either: `work` must not find lotline-network before `email` finds mail-desk.
@@ -332,7 +333,7 @@ export function resolveWorkRepo(o: ResolveInput): ResolvedRepo {
       const name = nameHit(v, names, okName)
       if (!name) continue
       const hit = repoAt(join(projects, name), true)
-      if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'name' }
+      if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'name', word: tok }
     }
   }
   // What the folder's README or package.json says. Stopwords never pick a repo here; notes skip it.
@@ -342,7 +343,7 @@ export function resolveWorkRepo(o: ResolveInput): ResolvedRepo {
       const name = aliasHit(v, aliases, okName)
       if (!name) continue
       const hit = repoAt(join(projects, name), true)
-      if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'name' }
+      if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'name', word: tok }
     }
   }
 

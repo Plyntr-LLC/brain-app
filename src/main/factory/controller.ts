@@ -9,7 +9,7 @@ import { buildBrief, type BriefPhase } from './brief.ts'
 import { isNeedOpus } from './fallback.ts'
 import { deploy as gitDeploy, deployBlock, isKennelGated, publish as gitPublish, publishBlock, pushWarn, type PublishTarget, type PushOverride } from './gates.ts'
 import { auditTurn, commitRun, currentBranch, diffText, dirtyPaths, gitTop, headSha, isClean, isGitRepo, numstat, porcelain, stashAll } from './git-audit.ts'
-import { OPUS_PLAN_TIMEOUT_MS, OPUS_REVIEW_TIMEOUT_MS, planPrompt, REVIEW_MAX, reviewAccept, runOpus, splitOutside, STRICT_EFFORT, strictNeeded, strictPrompt, type SpawnFn } from './opus.ts'
+import { OPUS_PLAN_TIMEOUT_MS, OPUS_REVIEW_TIMEOUT_MS, planPrompt, planVerdict, REVIEW_MAX, reviewAccept, runOpus, splitOutside, STRICT_EFFORT, strictNeeded, strictPrompt, type SpawnFn } from './opus.ts'
 import { realish } from './paths.ts'
 import { nextEvents } from './run-events.ts'
 import { detectProfile, readProfile, runProfile } from './profile.ts'
@@ -297,6 +297,7 @@ export function startRun(input: StartInput): StartResult {
     tier: asTier(t.size),
     risk: t.risk,
     triage: { size: t.size, original: t.original, capped: t.capped, reasons: t.reasons },
+    repoFrom: { from: found.from, ...(found.word ? { word: found.word } : {}) },
     ...(input.runThrough ? { runThrough: true } : {}),
     ...(input.shipThrough ? { shipThrough: true } : {}),
     phase: 'triage',
@@ -478,6 +479,7 @@ function reconcileWorkRepo(state: Live): 'go' | 'stop' {
     persist(state)
   }
   let hit = [...guide].reverse().find((g) => g.repo && !g.ask)?.repo || ''
+  if (!hit && run.planRepo) hit = run.planRepo
   if (!hit) {
     const found = resolveWorkRepo({ task: run.task, brainPath: run.brainPath, projectsDir: deps?.projectsDir })
     if (found.ok) hit = found.workRepo
@@ -507,6 +509,11 @@ function reconcileWorkRepo(state: Live): 'go' | 'stop' {
     // Runs saved before 0.1.89 have no history: the repo it is leaving goes in first.
     repos: withRepo(withRepo(state.run.repos, run.workRepo, run.base), next, base),
     pushWarn: warnFor(state.run, next)
+  }
+  // A plan written for the old repo does not travel: a planned run that changed nothing there plans again here.
+  if (planned(run.tier) && !run.diff && !run.audit?.work?.length && state.run.plan) {
+    const stopped = run.phase === 'paused' || run.phase === 'failed'
+    state.run = { ...state.run, plan: undefined, slices: undefined, ...(stopped ? { resumePhase: 'plan' as RunPhase } : {}) }
   }
   // A restored or paused run reads the phase it will resume, not 'paused'.
   const at = run.phase === 'paused' ? run.resumePhase : run.phase
@@ -697,7 +704,7 @@ function snap(repo: string): Record<string, string> {
 /** The plan is approved (click or Approve in advance): T3 reads its slices, then build starts. */
 async function approvePlan(state: Live): Promise<void> {
   const plan = state.run.plan
-  if (!plan?.text) return
+  if (!plan?.text || plan.status === 'blocked') return
   let slices: Slice[] | undefined
   if (state.run.tier === 'T3') {
     let text = plan.text
@@ -770,12 +777,34 @@ async function opusPlan(state: Live): Promise<void> {
     setPhase(state, 'paused', { plan: prev, resumePhase: 'plan', error: `${why} Paused.`, guide })
     return
   }
-  const body = res.text.trim()
+  const { verdict, repo, body } = planVerdict(res.text)
   saveRunText(run.id, 'plan', body)
-  setPhase(state, 'plan', { plan: { ...prev, text: body.slice(0, 8000), by: 'opus', status: 'waiting' } })
+  if (verdict === 'blocked') {
+    // The planner says it cannot plan here. Never approved. If it names the right repo, move there once and plan again.
+    setPhase(state, 'plan', { plan: { ...prev, text: body.slice(0, 8000), by: 'opus', status: 'blocked', unready: undefined } })
+    const there = plannerRepo(state, repo)
+    if (!there) return
+    state.run = { ...state.run, planRepo: there }
+    persist(state)
+    if (reconcileWorkRepo(state) === 'stop') return
+    if (realish(state.run.workRepo) === realish(there)) return opusPlan(state)
+    return
+  }
+  setPhase(state, 'plan', { plan: { ...prev, text: body.slice(0, 8000), by: 'opus', status: 'waiting', unready: verdict === 'ready' ? undefined : true } })
   // Joe guided while Opus wrote: one more fresh plan with the note before anything is approved.
   if (openNotes(state.run).length) return opusPlan(state)
-  if (state.run.runThrough) await approvePlan(state)
+  // Only a plan the planner called ready goes ahead in advance.
+  if (state.run.runThrough && verdict === 'ready') await approvePlan(state)
+}
+
+/** The repo a blocked planner named, when the run may move there: a git repo, not the brain, not this one, and the run's first planner move. */
+function plannerRepo(state: Live, named: string): string {
+  if (!named || state.run.planRepo) return ''
+  const path = named.trim()
+  if (!path.startsWith('/') || !existsSync(path) || !isGitRepo(path)) return ''
+  const top = gitTop(path)
+  if (!top || realish(top) === realish(state.run.brainPath) || realish(top) === realish(state.run.workRepo)) return ''
+  return top
 }
 
 /** viaOpus: this turn is the Opus builder (a review fix from BUILDER_FIX_MAX on). Every other turn is the grunt. */
@@ -789,6 +818,8 @@ async function buildStep(state: Live, phase: BriefPhase, note?: string, viaOpus?
     if (!state.run.needsPrep) setPhase(state, 'paused', { resumePhase: inReview ? 'review' : 'build', error: state.run.error })
     return
   }
+  // A move dropped the old repo's plan: plan here before building anything.
+  if (phase === 'build' && planned(state.run.tier) && !state.run.plan && !state.run.diff && !state.run.audit?.work?.length) return opusPlan(state)
   if (o.adopt && phase === 'build') {
     const rows = numstat(state.run.workRepo, state.run.base)
     if (rows.length) {
@@ -1527,7 +1558,8 @@ export function decideRun(id: string, choice: Decision, opts: { reason?: string 
     return state.run
   }
   if (choice === 'approve-plan' || choice === 'reject-plan') {
-    if (run.phase !== 'plan' || run.plan?.status !== 'waiting' || !run.plan.text) throw new Error('This run is not waiting on a plan.')
+    if (choice === 'approve-plan' && run.phase === 'plan' && run.plan?.status === 'blocked') throw new Error('The planner could not plan here. Re-plan, or abandon the run.')
+    if (run.phase !== 'plan' || (run.plan?.status !== 'waiting' && run.plan?.status !== 'blocked') || !run.plan.text) throw new Error('This run is not waiting on a plan.')
     state.gen++
     if (choice === 'approve-plan') {
       track(state, approvePlan(state))

@@ -35,24 +35,36 @@ function testCard(rows: VerifyRow[]): Pick<ThreadItem, 'text' | 'meta' | 'body' 
   return { text, meta, body, tone: fail.length ? 'fail' : ran ? 'ok' : 'info' }
 }
 
+/** The Lead's repo line, with how the repo was picked so a wrong pick is plain at once. */
+function repoLine(e: Extract<RunEvent, { kind: 'repo' }>): string {
+  const head = `${e.moved ? 'Moved to' : 'Working in'} ${name(e.repo)} (${e.repo}).`
+  if (e.planner) return `${head} The planner said the code is there.`
+  if (e.moved) return head
+  if (e.from === 'title') return `${head} "${e.word}" in your task is ${name(e.repo)}'s name.`
+  if (e.from === 'path' || e.from === 'project' || e.from === 'given') return `${head} You named it.`
+  if (e.from === 'name') return `${head} Picked from "${e.word}" in your task. Say the right one if it is wrong.`
+  if (e.from === 'last') return `${head} No repo was named in the task, so this is the last Factory repo. Say the right one if it is wrong.`
+  return head
+}
+
 /** The plan waiting on Joe's Approve stays open, with its full text; every other plan folds. */
-const waiting = (run: RunRecord) => run.phase === 'plan' && run.plan?.status === 'waiting' && !!run.plan.text
+const onScreen = (run: RunRecord) => run.phase === 'plan' && (run.plan?.status === 'waiting' || run.plan?.status === 'blocked') && !!run.plan.text
 
 function fromEvent(e: RunEvent, i: number, run: RunRecord, lastPlan: number): ThreadItem {
   const key = `e${i}`
   switch (e.kind) {
     case 'repo':
-      return { key, at: e.at, role: 'lead', text: `${e.moved ? 'Moved to' : 'Working in'} ${name(e.repo)} (${e.repo}).` }
+      return { key, at: e.at, role: 'lead', text: repoLine(e) }
     case 'plan':
       return {
         key,
         at: e.at,
         role: 'planner',
-        text: e.status === 'approved' ? 'Plan approved' : 'Plan ready',
+        text: e.status === 'approved' ? 'Plan approved' : e.status === 'blocked' ? 'Could not plan here' : 'Plan ready',
         meta: e.by === 'opus' ? 'Opus' : 'Grok',
-        tone: e.status === 'approved' ? 'ok' : 'info',
+        tone: e.status === 'approved' ? 'ok' : e.status === 'blocked' ? 'fail' : 'info',
         // The newest plan event is the plan on screen: its event text is cut at 6000, run.plan has it all.
-        ...(i === lastPlan && e.status === 'waiting' && waiting(run) ? { open: true, body: run.plan?.text } : { body: e.text || undefined })
+        ...(i === lastPlan && e.status !== 'approved' && onScreen(run) ? { open: true, body: run.plan?.text } : { body: e.text || undefined })
       }
     case 'turn':
       return {
@@ -101,11 +113,11 @@ function fromFields(run: RunRecord): ThreadItem[] {
       key: 'f-plan',
       at: run.plan.approvedAt || start,
       role: 'planner',
-      text: run.plan.status === 'approved' ? 'Plan approved' : 'Plan ready',
+      text: run.plan.status === 'approved' ? 'Plan approved' : run.plan.status === 'blocked' ? 'Could not plan here' : 'Plan ready',
       meta: run.plan.by === 'opus' ? 'Opus' : 'Grok',
       body: run.plan.text,
-      tone: run.plan.status === 'approved' ? 'ok' : 'info',
-      ...(waiting(run) ? { open: true } : {})
+      tone: run.plan.status === 'approved' ? 'ok' : run.plan.status === 'blocked' ? 'fail' : 'info',
+      ...(onScreen(run) ? { open: true } : {})
     })
   }
   const work = run.audit?.work || []

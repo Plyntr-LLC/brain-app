@@ -222,6 +222,13 @@ async function main() {
   const longCards = [...longPlan.el.querySelectorAll<HTMLDetailsElement>('[data-role="planner"] details.fcard')]
   check('b a 7000-character waiting plan opens with all of it', longText.length > 7000 && !!longCards[1]?.open && (longCards[1].querySelector('.fcard-body')?.textContent || '').length === longText.length)
   check('b the earlier plan stays folded', !!longCards[0] && !longCards[0].open)
+  const blockedPlan = await mount('b. blocked plan', run({ phase: 'plan', plan: { text: 'The code is in lotline, not here.', by: 'opus', status: 'blocked', rejects: 0, reasons: [] } }))
+  check('b blocked plan has no Approve plan', !btn(blockedPlan.el, 'Approve plan') && (blockedPlan.el.textContent || '').includes('The planner could not plan here.'))
+  typeInto(blockedPlan.el.querySelector('.factory-plan input') as HTMLInputElement, 'use lotline')
+  await tick()
+  check('b blocked plan Re-plan with the note', same(await click(blockedPlan.el, 'Re-plan'), 'decide', blockedPlan.r.id, 'reject-plan', 'use lotline'))
+  const unready = await mount('b. plan with no verdict', run({ phase: 'plan', runThrough: true, plan: { text: 'Files: a.ts', by: 'opus', status: 'waiting', rejects: 0, reasons: [], unready: true } }))
+  check('b not-ready plan says so and has Approve plan', (unready.el.textContent || '').includes('The planner did not say the plan is ready.') && same(await click(unready.el, 'Approve plan'), 'decide', unready.r.id, 'approve-plan'))
   const oldPlan = await mount('b. plan, saved before events', run({ phase: 'plan', plan: { text: 'Files: old.ts', by: 'opus', status: 'waiting', rejects: 0, reasons: [] } }))
   check('b a waiting plan with no timeline is open too', !!oldPlan.el.querySelector<HTMLDetailsElement>('[data-role="planner"] details.fcard')?.open)
   check('b Approve plan', same(await click(plan.el, 'Approve plan'), 'decide', plan.r.id, 'approve-plan'))

@@ -189,6 +189,8 @@ let pubs: { allow?: boolean }[] = []
 let publishAllow: boolean | undefined
 let deploys = 0
 let opusSeen: string[][] = []
+let opusCwd: string[] = []
+let planQueue: string[] = []
 let trace: string[] = []
 let hang = false
 let armGate = false
@@ -336,8 +338,9 @@ const deps: FactoryDeps = {
     }
     return child(JSON.stringify({ type: 'text', data: payload }) + '\n', 0, wait)
   }) as unknown as FactoryDeps['spawnTriage'],
-  spawnOpus: ((_bin: string, args: string[]) => {
+  spawnOpus: ((_bin: string, args: string[], opts?: { cwd?: string }) => {
     opusSeen.push(args)
+    opusCwd.push(String(opts?.cwd || ''))
     trace.push('opus')
     const prompt = String(args[args.indexOf('-p') + 1] || '')
     const effortAt = args.indexOf('--effort')
@@ -345,7 +348,8 @@ const deps: FactoryDeps = {
     // Strict review is effort low. A review-cap fix is an Opus build (medium, bypassPermissions)
     // and must not use up the one allowed strict fail. Kennel's gate is medium and follows opusPass.
     let result = 'GAPS: 0\nPASS'
-    if (prompt.includes('Write the implementation plan')) result = 'Files: src.ts\nCheck: the route answers.\n'
+    // A planner that follows the prompt ends with its verdict; queued answers stand in for other planners.
+    if (prompt.includes('Write the implementation plan')) result = planQueue.length ? String(planQueue.shift()) : 'Files: src.ts\nCheck: the route answers.\nPLAN: READY\n'
     else if (effort === 'low') {
       if (!(opusPass || failsLeft <= 0)) {
         result = 'gap\nGAPS: 1\nFAIL'
@@ -392,6 +396,8 @@ function reset(): void {
   publishAllow = undefined
   deploys = 0
   opusSeen = []
+  opusCwd = []
+  planQueue = []
   trace = []
   hang = false
   armGate = false
@@ -1309,4 +1315,218 @@ test('a run keeps a timeline of what the team did', async () => {
   assert.match(holds[2].text, /already running/)
   abandonRun(id4)
   abandonRun(id3)
+})
+
+test('the Lead acts: planner verdicts, a planner move, and re-plans after a move', async () => {
+  const mods = await loaded
+  const { planVerdict } = await import('./opus.ts')
+  const { parseSlices } = await import('./slices.ts')
+  const { threadItems } = await import('../../renderer/src/factory-thread.ts')
+  conduct = mods.conductor.conduct
+  configureFactory = mods.controller.configureFactory
+  startRun = mods.controller.startRun
+  getRun = mods.controller.getRun
+  decideRun = mods.controller.decideRun
+  dropMemory = mods.controller.dropMemory
+  abandonRun = mods.controller.abandonRun
+  mods.store.setUserDataDir(() => userData)
+  const lp = join(temp, 'lead-projects')
+  mkdirSync(lp, { recursive: true })
+  const folder = (name: string, files: Record<string, string>): string => {
+    const dir = join(lp, name)
+    mkdirSync(dir, { recursive: true })
+    git(dir, ['init', '-q', '-b', 'main'])
+    for (const [rel, body] of Object.entries(files)) writeFileSync(join(dir, rel), body)
+    git(dir, ['add', '-A'])
+    git(dir, ['commit', '-q', '-m', 'init'])
+    return realpathSync(dir)
+  }
+  const intake = folder('360-seo-intake', { 'src.ts': 'export const n = 1\n' })
+  const lot = folder('lotline', { 'README.md': '# LotOffice\n', 'src.ts': 'export const n = 1\n' })
+  const plain = join(lp, 'plain-folder')
+  mkdirSync(plain, { recursive: true })
+  const brain = repo('lead-brain')
+  configureFactory({ ...deps, projectsDir: lp })
+  const refusal =
+    "I couldn't plan any edits because the work repo you gave me is the wrong one. `" + intake + '` contains only `index.html`.\nThe Lot Office code is in the sibling repo `' + lot + '`.'
+  const blocked = (repoLine?: string) => `${refusal}\n${repoLine ? `REPO: ${repoLine}\n` : ''}PLAN: BLOCKED`
+  const ready = 'Files: src.ts\nCheck: the webhook answers.\nPLAN: READY'
+  const begin = (task: string, workRepo: string | undefined, o: { runThrough?: boolean } = {}): string => {
+    const res = (startRun as unknown as (i: object) => StartResult)({ task, ...(workRepo ? { workRepo } : {}), brainPath: brain, proceedCritical: true, ...o })
+    if (!res.ok) throw new Error(res.error)
+    activeId = res.run.id
+    return res.run.id
+  }
+  const plannerCalls = () => opusSeen.filter((a) => String(a[a.indexOf('-p') + 1] || '').includes('Write the implementation plan'))
+  const plannerCwds = () => opusSeen.map((a, i) => (String(a[a.indexOf('-p') + 1] || '').includes('Write the implementation plan') ? opusCwd[i] : '')).filter(Boolean)
+  const statuses = (id: string) => (getRun(id)?.events || []).flatMap((e) => (e.kind === 'plan' ? [`plan:${e.status}`] : e.kind === 'repo' && e.moved ? [`repo:moved${e.planner ? ':planner' : ''}`] : []))
+
+  // (i) the prompt asks for the verdict.
+  const t2p = planPrompt({ task: 't', workRepo: '/x', plans: [], reasons: [], tier: 'T2' })
+  assert.ok(t2p.includes('PLAN: READY') && t2p.includes('REPO: <absolute path>') && t2p.includes('PLAN: BLOCKED'), 'T2 prompt asks for the verdict')
+  const t3p = planPrompt({ task: 't', workRepo: '/x', plans: [], reasons: [], tier: 'T3' })
+  assert.match(t3p, /PLAN: READY, after the slices JSON line/)
+
+  // (g) a T3 plan with the slices line then PLAN: READY still parses its slices.
+  const t3text = 'Steps.\n{"slices":[{"title":"a","files":["a.ts"]},{"title":"b","files":["b.ts"]}]}\nPLAN: READY'
+  const v = planVerdict(t3text)
+  assert.equal(v.verdict, 'ready')
+  assert.deepEqual(parseSlices(v.body).map((x) => x.title), ['a', 'b'])
+
+  // (a) the REPO-line move.
+  reset()
+  hang = true
+  planQueue = [blocked(lot), ready]
+  const a = begin('add a webhook endpoint feature', intake, { runThrough: true })
+  assert.equal(getRun(a)?.tier, 'T2')
+  await until(() => plannerCalls().length >= 1, 'planner 1 ran')
+  await until(() => prompts.length > 0, 'builder after the second plan')
+  assert.equal(plannerCwds()[0], intake)
+  assert.equal(plannerCwds()[1], lot)
+  assert.equal(getRun(a)?.workRepo, lot)
+  assert.deepEqual(statuses(a), ['plan:blocked', 'repo:moved:planner', 'plan:waiting', 'plan:approved'])
+  const planPath = (/Approved plan: (\S+)\. Read it first\./.exec(prompts[0]) || [])[1] || ''
+  assert.ok(planPath, 'the brief names the plan file')
+  const onDisk = readFileSync(planPath, 'utf8')
+  assert.ok(onDisk.includes('Check: the webhook answers.') && !onDisk.includes("couldn't plan"), onDisk)
+  assert.equal(/PLAN:|REPO:/.test(getRun(a)?.plan?.text || ''), false)
+  assert.equal((getRun(a)?.events || []).some((e) => e.kind === 'plan' && /PLAN:|REPO:/.test(e.text)), false)
+  assert.equal(getRun(a)?.guide?.length || 0, 0)
+  const items = threadItems(getRun(a)!, null)
+  assert.equal(items.some((it) => it.role === 'joe'), false)
+  assert.ok(items.some((it) => it.role === 'lead' && it.text.includes('The planner said the code is there.')))
+  abandonRun(a)
+
+  // (a2) no ping-pong.
+  reset()
+  hang = true
+  planQueue = [blocked(lot), blocked(intake)]
+  const a2 = begin('add a webhook endpoint feature', intake, { runThrough: true })
+  await until(() => getRun(a2)?.plan?.status === 'blocked' && plannerCalls().length === 2, 'second planner blocked')
+  await new Promise((r) => setTimeout(r, 60))
+  assert.equal(getRun(a2)?.workRepo, lot)
+  assert.equal(plannerCalls().length, 2)
+  assert.equal(prompts.length, 0)
+  abandonRun(a2)
+
+  // (b) blocked in place: never approved, Re-plan carries the reason.
+  reset()
+  hang = true
+  planQueue = [blocked()]
+  const b = begin('add a webhook endpoint feature', intake, { runThrough: true })
+  await until(() => getRun(b)?.plan?.status === 'blocked', 'blocked plan')
+  assert.equal(holdOf(getRun(b)!)?.text, 'The planner could not plan here.')
+  const before = JSON.stringify(getRun(b)?.plan)
+  assert.throws(() => decideRun(b, 'approve-plan'), /could not plan here/)
+  assert.equal(JSON.stringify(getRun(b)?.plan), before)
+  await conduct(b, 'Approve the plan.')
+  const door = [...(getRun(b)?.guide || [])].reverse().find((g) => g.text === 'Approve the plan.')
+  assert.match(door?.ack || '', /could not plan here/)
+  assert.notEqual(door?.ack, 'Approving the plan.')
+  ;(decideRun as unknown as (id: string, c: string, o: { reason: string }) => RunRecord)(b, 'reject-plan', { reason: 'try again' })
+  await until(() => plannerCalls().length === 2, 'planner 2 after Re-plan')
+  assert.match(String(plannerCalls()[1][plannerCalls()[1].indexOf('-p') + 1]), /try again/)
+  assert.equal(prompts.length, 0)
+  abandonRun(b)
+
+  // (c) no verdict with Approve in advance: it waits, says why, and builds on Approve.
+  reset()
+  hang = true
+  planQueue = ['Files: a.ts\nCheck: it works.']
+  const c = begin('add a webhook endpoint feature', intake, { runThrough: true })
+  await until(() => getRun(c)?.plan?.status === 'waiting' && !!getRun(c)?.plan?.text, 'plan without a verdict')
+  await new Promise((r) => setTimeout(r, 60))
+  assert.equal(getRun(c)?.plan?.unready, true)
+  assert.equal(prompts.length, 0)
+  const notReady = 'The planner did not say the plan is ready. Read it, then approve or re-plan.'
+  assert.equal(holdOf(getRun(c)!)?.text, notReady)
+  assert.ok((getRun(c)?.events || []).some((e) => e.kind === 'hold' && e.text === notReady))
+  decideRun(c, 'approve-plan')
+  await until(() => prompts.length > 0, 'build after approve')
+  abandonRun(c)
+
+  // (d) READY with Approve in advance builds with no click.
+  reset()
+  hang = true
+  const d = begin('add a webhook endpoint feature', intake, { runThrough: true })
+  await until(() => prompts.length > 0, 'ready plan built in advance')
+  abandonRun(d)
+
+  // (e) a REPO line that must not move the run.
+  for (const [label, target] of [['brain', brain], ['missing', '/nonexistent/lotline'], ['current', intake], ['not git', plain]] as const) {
+    reset()
+    hang = true
+    planQueue = [blocked(target)]
+    const e = begin('add a webhook endpoint feature', intake, { runThrough: true })
+    await until(() => getRun(e)?.plan?.status === 'blocked', `blocked (${label})`)
+    await new Promise((r) => setTimeout(r, 40))
+    assert.equal(getRun(e)?.workRepo, intake, label)
+    assert.equal(plannerCalls().length, 1, label)
+    abandonRun(e)
+  }
+
+  // (f) a T2 move before any build plans again in the new repo; after building it keeps its plan.
+  reset()
+  hang = true
+  const f = begin('add a webhook endpoint feature', intake)
+  await until(() => getRun(f)?.plan?.status === 'waiting' && !!getRun(f)?.plan?.text, 'f plan')
+  decideRun(f, 'approve-plan')
+  await until(() => prompts.length > 0, 'f build started')
+  await conduct(f, PAUSE)
+  const builtBefore = prompts.length
+  await conduct(f, 'restart it in the lotline repo')
+  await until(() => plannerCalls().length === 2, 'f re-plan')
+  assert.equal(plannerCwds()[1], lot)
+  await until(() => getRun(f)?.plan?.status === 'waiting' && !!getRun(f)?.plan?.text, 'f new plan waiting')
+  assert.equal(getRun(f)?.workRepo, lot)
+  assert.equal(prompts.length, builtBefore)
+  abandonRun(f)
+
+  reset()
+  touch = () => writeFileSync(join(intake, 'src.ts'), 'export const n = 7\n')
+  const f2 = begin('add a webhook endpoint feature', intake)
+  await until(() => getRun(f2)?.plan?.status === 'waiting' && !!getRun(f2)?.plan?.text, 'f2 plan')
+  decideRun(f2, 'approve-plan')
+  await until(() => getRun(f2)?.phase === 'review' && !!getRun(f2)?.diff, 'f2 reviewed diff')
+  await conduct(f2, PAUSE)
+  const planners = plannerCalls().length
+  await conduct(f2, 'restart it in the lotline repo')
+  await new Promise((r) => setTimeout(r, 80))
+  assert.equal(plannerCalls().length, planners, 'a run that changed files keeps its plan')
+  assert.equal(getRun(f2)?.plan?.status, 'approved')
+  abandonRun(f2)
+  git(intake, ['checkout', '--', '.'])
+
+  // (f3) a T3 move before any build drops its slices and plans again.
+  reset()
+  hang = true
+  planQueue = ['Steps.\n{"slices":[{"title":"a","files":["a.ts"]},{"title":"b","files":["b.ts"]}]}\nPLAN: READY']
+  const f3 = begin('redesign the webhook feature', intake)
+  assert.equal(getRun(f3)?.tier, 'T3')
+  await until(() => getRun(f3)?.plan?.status === 'waiting' && !!getRun(f3)?.plan?.text, 'f3 plan')
+  decideRun(f3, 'approve-plan')
+  await until(() => (getRun(f3)?.slices?.length || 0) === 2 && prompts.length > 0, 'f3 slices built')
+  await conduct(f3, PAUSE)
+  await conduct(f3, 'restart it in the lotline repo')
+  await until(() => plannerCalls().length === 2, 'f3 re-plan')
+  assert.equal(plannerCwds()[1], lot)
+  assert.equal(getRun(f3)?.slices, undefined)
+  abandonRun(f3)
+
+  // (h) the first Lead line says how the repo was picked.
+  reset()
+  hang = true
+  const joeTask = readFileSync(join(dirname(here), 'testdata/run-ae98e1f8-task.txt'), 'utf8')
+  const h1 = begin(joeTask, undefined)
+  assert.deepEqual(getRun(h1)?.repoFrom, { from: 'title', word: 'lotoffice' })
+  assert.match(threadItems(getRun(h1)!, null)[0].text, /^Working in lotline \(.+\)\. "lotoffice" in your task is lotline's name\.$/)
+  abandonRun(h1)
+  const h2 = begin(`fix typo in ${join(intake, 'src.ts')}`, undefined)
+  assert.match(threadItems(getRun(h2)!, null)[0].text, /You named it\.$/)
+  abandonRun(h2)
+  const h3 = begin('fix typo', undefined)
+  assert.equal(getRun(h3)?.repoFrom?.from, 'last')
+  assert.match(threadItems(getRun(h3)!, null)[0].text, /No repo was named in the task, so this is the last Factory repo\. Say the right one if it is wrong\.$/)
+  abandonRun(h3)
+  configureFactory(deps)
 })

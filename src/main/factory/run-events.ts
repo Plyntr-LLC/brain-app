@@ -20,7 +20,10 @@ export function nextEvents(prev: RunRecord | undefined, next: RunRecord, at: num
   const had = next.events || NONE
   const add: RunEvent[] = []
 
-  if (!prev || prev.workRepo !== next.workRepo) add.push({ at, kind: 'repo', repo: next.workRepo, moved: !!prev })
+  if (!prev || prev.workRepo !== next.workRepo) {
+    const why = !prev && next.repoFrom ? { from: next.repoFrom.from, ...(next.repoFrom.word ? { word: next.repoFrom.word } : {}) } : {}
+    add.push({ at, kind: 'repo', repo: next.workRepo, moved: !!prev, ...why, ...(prev && next.planRepo === next.workRepo ? { planner: true } : {}) })
+  }
 
   const plan = next.plan
   if (plan?.text && (plan.status !== prev?.plan?.status || plan.text !== prev?.plan?.text)) {

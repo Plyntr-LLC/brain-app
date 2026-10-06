@@ -322,17 +322,18 @@ export function FactoryPane(props: {
 
   const live = run.phase !== 'done' && run.phase !== 'abandoned'
   const planWaiting = run.phase === 'plan' && run.plan?.status === 'waiting' && !!run.plan.text
+  const planBlocked = run.phase === 'plan' && run.plan?.status === 'blocked' && !!run.plan.text
   const prepWaiting = run.phase === 'triage' && run.needsPrep === 'dirty'
   const running =
     run.phase === 'build' ||
     run.phase === 'verify' ||
     (run.phase === 'triage' && !run.needsProceed && !prepWaiting) ||
-    (run.phase === 'plan' && !planWaiting) ||
+    (run.phase === 'plan' && !planWaiting && !planBlocked) ||
     (run.phase === 'review' && !run.diff)
   const waitLine =
     run.phase === 'triage' && !run.needsProceed && !prepWaiting
       ? 'Checking size and risk'
-      : run.phase === 'plan' && !planWaiting
+      : run.phase === 'plan' && !planWaiting && !planBlocked
         ? 'Opus is writing the plan'
         : run.phase === 'review' && !run.diff && run.note
           ? `${BUILDER_NAME[run.builder || 'grok']} is fixing: ${run.note.split('\n')[0].slice(0, 140)}`
@@ -512,7 +513,11 @@ export function FactoryPane(props: {
           ) : null}
           {planWaiting && run.plan ? (
             <div className="factory-plan factory-trip">
-              <strong>The plan by {run.plan.by === 'opus' ? 'Opus' : 'Grok'} is above. Approve it, or reject it with a reason.</strong>
+              <strong>
+                {run.plan.unready
+                  ? 'The planner did not say the plan is ready. Read it above, then approve it or re-plan with a reason.'
+                  : `The plan by ${run.plan.by === 'opus' ? 'Opus' : 'Grok'} is above. Approve it, or reject it with a reason.`}
+              </strong>
               <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why reject? (optional)" spellCheck={false} />
               <div className="factory-actions">
                 <button type="button" className="primary" onClick={() => void act(window.brain.factory.decide(run.id, 'approve-plan'))}>
@@ -531,6 +536,25 @@ export function FactoryPane(props: {
                 </button>
               </div>
               <p className="tiny">Rejects: {run.plan.rejects} of 3</p>
+            </div>
+          ) : null}
+          {planBlocked && run.plan ? (
+            <div className="factory-plan factory-trip">
+              <strong>The planner could not plan here. Its reason is above. Re-plan with a note, or abandon the run.</strong>
+              <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="A note for the next plan (optional)" spellCheck={false} />
+              <div className="factory-actions">
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={() => {
+                    const why = reason
+                    setReason('')
+                    void act(window.brain.factory.decide(run.id, 'reject-plan', why))
+                  }}
+                >
+                  Re-plan
+                </button>
+              </div>
             </div>
           ) : null}
           {run.phase === 'upgrade' && run.tripwire ? (

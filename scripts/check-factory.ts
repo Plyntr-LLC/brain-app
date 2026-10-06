@@ -639,13 +639,16 @@ try { plan = JSON.parse(fs.readFileSync(process.env.FAKE_CLAUDE_PLAN, 'utf8')) }
 const next = plan.shift()
 fs.writeFileSync(process.env.FAKE_CLAUDE_PLAN, JSON.stringify(plan))
 const line = next == null ? 'no plan line' : String(next)
+// A planner that follows the prompt ends with PLAN: READY unless the queued answer gives its own verdict.
+const planner = String(process.argv[process.argv.indexOf('-p') + 1] || '').includes('Write the implementation plan')
+const verdict = (t) => (planner && !/^PLAN: (READY|BLOCKED)$/.test(String(t).trim().split('\\n').pop() || '') ? t + '\\nPLAN: READY' : t)
 // @@raw:<text> plain stdout; @@pad:<n>:<text> n chars before text in result; @@sleep:<ms>; @@exit:<code>:<text>
 const m = /^@@(raw|pad|sleep|exit):(?:(\\d+):)?([\\s\\S]*)$/.exec(line)
-if (!m) say(line)
+if (!m) say(verdict(line))
 else if (m[1] === 'raw') process.stdout.write(m[3] + '\\n')
-else if (m[1] === 'pad') say('x'.repeat(Number(m[2])) + '\\n' + m[3])
+else if (m[1] === 'pad') say(verdict('x'.repeat(Number(m[2])) + '\\n' + m[3]))
 else if (m[1] === 'exit') { say(m[3]); process.exit(Number(m[2])) }
-else if (m[1] === 'sleep') { setTimeout(() => say(m[2] ? m[3] : 'late'), Number(m[2] || m[3])) }
+else if (m[1] === 'sleep') { setTimeout(() => say(verdict(m[2] ? m[3] : 'late')), Number(m[2] || m[3])) }
 }
 `
 const installClaude = () => {

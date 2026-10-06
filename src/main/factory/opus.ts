@@ -191,12 +191,41 @@ export function planPrompt(o: { task: string; workRepo: string; plans: string[];
       ? 'Limit T3: no file or line cap; no lockfile changes, no migrations.'
       : 'Limit T2: up to 10 files, 600 changed lines, no lockfile changes, no migrations.',
     'Write the plan before any edit: files, steps, and one check that fails if the behavior is wrong. Do not edit files.',
-    ...(t3 ? ['End with one JSON line: {"slices":[{"title":"...","files":["rel/path.ts"]}]}. Paths relative to the work repo; slices that share no files run in parallel.'] : []),
+    ...(t3 ? ['Then one JSON line: {"slices":[{"title":"...","files":["rel/path.ts"]}]}. Paths relative to the work repo; slices that share no files run in parallel.'] : []),
+    t3
+      ? 'When the plan can be written, the very last line is exactly PLAN: READY, after the slices JSON line.'
+      : 'When the plan can be written, the very last line is exactly PLAN: READY.',
+    'When it cannot (this is the wrong repo, or nothing here can make the change): write why; if you know the right repo, add a line REPO: <absolute path>; the very last line is exactly PLAN: BLOCKED.',
     `Task: ${String(o.task || '').slice(0, 4000)}`,
     ...(o.plans.length ? ['', 'Earlier plans:', ...o.plans.map((p) => `- ${p}`)] : []),
     ...(o.reasons.filter(Boolean).length ? ['', 'Why they were rejected:', ...o.reasons.filter(Boolean).map((r) => `- ${r}`)] : []),
     ...(o.guide?.filter(Boolean).length ? ['', "Joe's notes for this plan:", ...o.guide.filter(Boolean).map((g) => `- ${g}`)] : [])
   ].join('\n')
+}
+
+/**
+ * The planner's verdict from its last non-empty line, and the plan without the verdict line (and
+ * without the REPO line of a blocked plan). null: the planner gave no verdict.
+ */
+export function planVerdict(text: string): { verdict: 'ready' | 'blocked' | null; repo: string; body: string } {
+  const lines = String(text || '').trimEnd().split('\n')
+  const last = (lines[lines.length - 1] || '').trim()
+  const verdict = last === 'PLAN: READY' ? 'ready' : last === 'PLAN: BLOCKED' ? 'blocked' : null
+  if (!verdict) return { verdict, repo: '', body: String(text || '').trim() }
+  const rest = lines.slice(0, -1)
+  let repo = ''
+  if (verdict === 'blocked') {
+    for (let i = rest.length - 1; i >= 0; i--) {
+      const m = /^\s*REPO:\s*(\S.*?)\s*$/.exec(rest[i])
+      if (m) {
+        repo = m[1]
+        rest.splice(i, 1)
+        break
+      }
+      if (rest[i].trim()) break
+    }
+  }
+  return { verdict, repo, body: rest.join('\n').trim() }
 }
 
 /** PASS or FAIL from the last non-empty line, else null. */

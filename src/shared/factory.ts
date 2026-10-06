@@ -154,7 +154,10 @@ export type RunRecord = {
   plan?: {
     text: string
     by: 'grok' | 'opus'
-    status: 'waiting' | 'approved'
+    /** blocked: the planner said it cannot plan here; it is never approved. */
+    status: 'waiting' | 'approved' | 'blocked'
+    /** The planner gave no PLAN: READY line: it waits for Joe even with Approve in advance on. */
+    unready?: boolean
     rejects: number
     reasons: string[]
     approvedAt?: number
@@ -195,6 +198,10 @@ export type RunRecord = {
   /** This run only. The conductor sets a boundary when Joe names it. The factory holds listen. */
   override?: { review?: boolean; voice?: boolean; tier?: boolean; proceed?: boolean }
   shadow?: Shadow
+  /** The repo a blocked planner named (REPO: line). The run moves there once, after Joe's notes, before the task. */
+  planRepo?: string
+  /** How Start picked the work repo: the resolver step and the word that matched. */
+  repoFrom?: { from: string; word?: string }
   /** What the team did, newest last (cap 300). Full text sits in the work repo's store; userData keeps it without text. */
   events?: RunEvent[]
   createdAt: number
@@ -207,8 +214,8 @@ export type HoldKind = 'dirty' | 'review' | 'voice' | 'tier' | 'proceed' | 'plan
 export type Hold = { kind: HoldKind; text: string }
 
 export type RunEvent =
-  | { at: number; kind: 'repo'; repo: string; moved: boolean }
-  | { at: number; kind: 'plan'; status: 'waiting' | 'approved'; by: 'grok' | 'opus'; text: string }
+  | { at: number; kind: 'repo'; repo: string; moved: boolean; from?: string; word?: string; planner?: boolean }
+  | { at: number; kind: 'plan'; status: 'waiting' | 'approved' | 'blocked'; by: 'grok' | 'opus'; text: string }
   | { at: number; kind: 'turn'; call: number; model: string; ms: number; ok: boolean; files: number; added: number; deleted: number; paths: string[] }
   | { at: number; kind: 'test'; rows: VerifyRow[] }
   | { at: number; kind: 'review'; round: number; status: 'pass' | 'fail' | 'missing'; text: string }
@@ -233,6 +240,10 @@ export function holdOf(run: RunRecord): Hold | null {
   if (run.needsProceed) {
     const by = run.triage.llm?.skipped ? 'Model triage did not answer.' : `${run.triage.llm?.by === 'jev' ? 'Jev' : 'Grok'} says this is critical risk.`
     return { kind: 'proceed', text: by }
+  }
+  if (run.phase === 'plan' && run.plan?.status === 'blocked') return { kind: 'plan', text: 'The planner could not plan here.' }
+  if (run.phase === 'plan' && run.plan?.status === 'waiting' && !!run.plan.text && run.plan.unready) {
+    return { kind: 'plan', text: 'The planner did not say the plan is ready. Read it, then approve or re-plan.' }
   }
   if (run.phase === 'plan' && run.plan?.status === 'waiting' && !!run.plan.text && !run.runThrough) return { kind: 'plan', text: 'The plan is waiting for your approval.' }
   if (run.phase === 'paused') return { kind: 'paused', text: run.error || 'Paused.' }
