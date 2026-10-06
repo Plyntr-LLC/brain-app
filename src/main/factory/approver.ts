@@ -60,13 +60,14 @@ function secretish(p: string): boolean {
 
 /**
  * True when the ask needs no model: thinking; a read or search that names paths, all inside the work repo or
- * the brain and none in .git or .env*; an edit, delete or move whose every path (realpath, so a symlink out
- * of the repo is followed) is inside the work repo and not in .git or .env*. Everything else is judged.
+ * the brain and none in .git or .env*; an edit or delete whose every path (realpath, so a symlink out of the
+ * repo is followed) is inside the work repo and not in .git or .env*. Everything else is judged, a move too:
+ * askPaths never reads its destination.
  */
 export function fastAllow(f: AskFacts, ctx: { brainPath: string; workRepo: string }): boolean {
   if (f.kind === 'think') return true
   const reads = f.kind === 'read' || f.kind === 'search'
-  const edits = f.kind === 'edit' || f.kind === 'delete' || f.kind === 'move'
+  const edits = f.kind === 'edit' || f.kind === 'delete'
   if ((!reads && !edits) || !f.paths.length || !ctx.workRepo) return false
   const work = realish(ctx.workRepo)
   const brain = ctx.brainPath ? realish(ctx.brainPath) : ''

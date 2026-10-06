@@ -41,6 +41,8 @@ test('fast path never covers commands, secrets, .git, symlinks out, escapes, tmp
   assert.equal(fast('execute', join(work, 'src', 'a.ts')), false)
   assert.equal(fast('fetch', join(work, 'src', 'a.ts')), false)
   assert.equal(fast('other', join(work, 'src', 'a.ts')), false)
+  assert.equal(fastAllow(ask('move', { path: join(work, 'src', 'a.ts'), destination: join(outside, 'a.ts') }), ctx), false)
+  assert.equal(fast('move', join(work, 'src', 'a.ts')), false)
   assert.equal(fast(''), false)
   assert.equal(fast('edit'), false)
   assert.equal(fast('read'), false)
