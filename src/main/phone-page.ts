@@ -421,7 +421,7 @@ export function phonePageHtml(): string {
       qbox.innerHTML = list.length
         ? ('<p class="tiny">Queued. Runs after this turn.</p>' + list.map(function (q) {
             const extra = (q.names || []).length ? ' · ' + esc(q.names.join(', ')) : ''
-            return '<div class="followq-row"><span>' + esc(q.text || 'Attachment') + extra + '</span>' +
+            return '<div class="followq-row"><span>' + esc(q.label || q.text || 'Attachment') + extra + '</span>' +
               '<button type="button" class="linkish" data-qnow="' + esc(q.id) + '">Send now</button>' +
               '<button type="button" class="linkish" data-qedit="' + esc(q.id) + '">Edit</button>' +
               '<button type="button" class="linkish" data-qdrop="' + esc(q.id) + '">Delete</button></div>'

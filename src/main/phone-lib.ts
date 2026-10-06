@@ -302,7 +302,8 @@ export function chatTransport(kind: string): 'acp' | 'stream-json' | 'app-server
 }
 
 export type PhoneAttach = { path: string; name: string; mime: string }
-export type PhoneQueueItem = { id: string; text: string; names: string[]; files?: PhoneAttach[] }
+/** label: what the row shows when it differs from text (a folded paste). */
+export type PhoneQueueItem = { id: string; text: string; label?: string; names: string[]; files?: PhoneAttach[] }
 
 export function shownPhoneLine(text: string, files?: { name: string }[]): string {
   const line = String(text || '').trim()

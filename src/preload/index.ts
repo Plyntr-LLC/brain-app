@@ -1081,7 +1081,7 @@ const brain = {
     },
     reportQueue: (
       tabId: string,
-      items: { id: string; text: string; names: string[]; files?: { path: string; name: string; mime: string }[] }[]
+      items: { id: string; text: string; label?: string; names: string[]; files?: { path: string; name: string; mime: string }[] }[]
     ) => {
       ipcRenderer.send('phone:reportQueue', tabId, items)
     }

@@ -1211,6 +1211,7 @@ export function registerPhoneIpc(): void {
       ? items.map((row) => ({
           id: String(row?.id || ''),
           text: String(row?.text || ''),
+          ...(row?.label ? { label: String(row.label) } : {}),
           names: Array.isArray(row?.names) ? row.names.map((n) => String(n || '')).filter(Boolean) : [],
           files: Array.isArray(row?.files)
             ? row.files

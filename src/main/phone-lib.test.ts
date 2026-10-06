@@ -445,3 +445,9 @@ test('sealJson roundtrips and query tokens are ignored', () => {
   const third = rateHit(1200, second.next, 1000, 2)
   assert.equal(third.ok, false)
 })
+
+test('a queued paste shows its folded line on the phone and edits as the full text', () => {
+  const page = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'phone-page.ts'), 'utf8')
+  assert.match(page, /esc\(q\.label \|\| q\.text \|\| 'Attachment'\)/)
+  assert.match(page, /say\.value = item\.text \|\| ''/)
+})

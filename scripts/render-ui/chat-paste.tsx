@@ -231,6 +231,8 @@ async function main() {
   await enter()
   check('(i) while busy the paste queues', sends().length === n && paneA.querySelectorAll('.followq-row').length === 1)
   check('(i) the queued row shows the token, not the text', (paneA.querySelector('.followq-row span')?.textContent || '') === tok1)
+  const report = [...calls].reverse().find((c) => c.path === 'phone.reportQueue')?.args[1] as { text: string; label?: string }[] | undefined
+  check('(i) the phone gets the full text to edit and the token to show', report?.length === 1 && report[0].text === one && report[0].label === tok1, JSON.stringify(report?.map((r) => [r.text.slice(0, 20), r.label])))
   emit({ kind: 'done' })
   await tick(80)
   check('(i) the drained send carries the paste', sends()[n] === one, JSON.stringify((sends()[n] || '').slice(0, 40)))
@@ -251,6 +253,23 @@ async function main() {
   n = sends().length
   await enter()
   check('(i2) the edited send carries the paste', sends()[n] === two, JSON.stringify((sends()[n] || '').slice(0, 40)))
+  emit({ kind: 'done' })
+  await tick()
+
+  // (l) /edit-prompt brings the last message back with its paste
+  typeInto('see ')
+  paste(one)
+  await tick()
+  await enter()
+  emit({ kind: 'done' })
+  await tick()
+  typeInto('/edit-prompt')
+  await tick()
+  await enter()
+  check('(l) /edit-prompt restores the token and its chip', box().value === `see ${tok1}` && chips().length === 1, JSON.stringify(box().value))
+  n = sends().length
+  await enter()
+  check('(l) the edited prompt sends the paste', sends()[n] === `see ${one}`, JSON.stringify((sends()[n] || '').slice(0, 40)))
   emit({ kind: 'done' })
   await tick()
 

@@ -752,7 +752,9 @@ export function ChatPane({
       id,
       next.map((q) => ({
         id: q.id,
-        text: q.text,
+        // The phone has no paste chips: it gets the full text to edit and the folded line to show.
+        text: expandPastes(q.text, q.pastes || []),
+        ...(q.pastes?.length ? { label: q.text } : {}),
         names: (q.files || []).map((f) => f.name),
         files: (q.files || []).map((f) => ({ path: f.path, name: f.name, mime: f.mime }))
       }))
@@ -1444,8 +1446,10 @@ export function ChatPane({
     }
     if (name === 'edit-prompt') {
       const last = [...messages].reverse().find((m) => m.who === 'me')
-      if (last) setSay(last.text)
-      else note('No prompt to edit yet.')
+      if (last) {
+        setSay(last.text)
+        keepPastes(last.pastes || [])
+      } else note('No prompt to edit yet.')
       return true
     }
     if (name === 'multiline') {
