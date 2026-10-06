@@ -1,0 +1,64 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>E · App touch-up: Chat tab</title>
+<link rel="stylesheet" href="base.css">
+<style>
+.top{height:40px}.top .brand{font-size:14px}.top .sync{display:inline-flex;align-items:center;gap:6px;font-weight:500;font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 10px;background:var(--card)}
+.top .icon{width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:7px;background:var(--card);font-size:13px}
+.tabs{height:36px}.tabs div{padding:8px 14px;font-size:12.5px}.tabs .on{box-shadow:inset 0 -2px 0 var(--orange)}
+.body{display:grid;grid-template-columns:220px 1fr 300px;min-height:0}
+.left{background:var(--chrome);border-right:1px solid var(--line);padding:12px 10px;display:flex;flex-direction:column}
+.left h3{margin:0 0 8px;font-size:15px}.tree div{padding:2px 4px;font-size:12.5px;border-radius:4px}.tree .d{color:var(--deep);font-weight:600}
+.away{margin-top:auto;border-top:1px solid var(--line);padding-top:8px}.away h4{margin:0 0 4px;font-size:11px;color:var(--deep)}
+.away .r{display:flex;justify-content:space-between;font-size:12px;font-weight:600;padding:2px 4px}.away .r span:last-child{color:var(--muted);font-weight:500}
+.chat{display:flex;flex-direction:column;min-height:0;background:var(--card);border-right:1px solid var(--line)}
+.msgs{flex:1;overflow:auto;padding:18px 26px;display:flex;flex-direction:column;gap:14px;max-width:820px;width:100%;margin:0 auto}
+.me{align-self:flex-end;background:var(--paper);border:1px solid var(--soft);border-radius:12px;padding:8px 13px;max-width:560px;font-size:13.5px}
+.ai{display:flex;gap:10px}.ai .b{flex:1;min-width:0;font-family:"Source Serif 4",Georgia,serif;font-size:14.5px;line-height:1.55}
+.ai .b p{margin:0 0 8px}.ai .b ol{margin:4px 0 8px;padding-left:20px}
+.think{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;margin:0 0 6px}
+.acts{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 8px}.acts span{font-size:11.5px;border:1px solid var(--soft);border-radius:6px;padding:2px 7px;background:#fffefb;color:var(--muted)}
+.note{font-size:12px;color:var(--muted);border-left:3px solid var(--warnline);padding-left:8px}
+.rail{overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px;background:var(--paper)}
+.rail h5{margin:0 0 6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.box{background:var(--card);border:1px solid var(--soft);border-radius:10px;padding:9px 11px}
+.now{border-color:var(--okline);background:var(--okbg)}
+.meta{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:12px}.meta b{font-weight:600}
+.compose{border-top:1px solid var(--line)}.compose textarea{border-radius:10px}
+.callout{position:absolute;font:600 11px "Schibsted Grotesk",sans-serif;background:#1a1612;color:#fff;border-radius:6px;padding:4px 7px;max-width:220px}
+</style></head>
+<body><div class="win" style="position:relative">
+<div class="top"><span class="brand">agency-brain</span><span class="tag">Owner</span><span class="sync"><span class="dot ok"></span>Synced 2 min ago</span><span class="sp"></span><span class="icon" title="Dark">◐</span><span class="btn sm">Log out</span><span class="btn sm">Settings</span></div>
+<div class="tabs"><div class="on">Grok</div><div>Terminal</div><div>LotOffice · nav, ShedPro</div><div>+</div></div>
+<div class="body">
+ <aside class="left"><h3>agency-brain</h3>
+  <div class="tree"><div class="d">▸ clients</div><div class="d">▸ context</div><div>▸ projects</div><div>▸ skills</div><div>AGENTS.md</div><div>CLAUDE.md</div></div>
+  <div class="away"><h4>Also touching</h4><div class="r"><span>lotline</span><span>26</span></div><div class="r"><span>mail-desk</span><span>2</span></div></div>
+ </aside>
+ <section class="chat">
+  <div class="msgs">
+   <div class="me">What's the goal for Maple Street Bakery, and what should this week's update cover?</div>
+   <div class="ai"><span class="who w-lead">G</span><div class="b">
+    <div class="think">Thought for 12 s · show</div>
+    <div class="acts"><span>✓ read clients/maple-street-bakery/context.md</span><span>✓ read skills/weekly-report/SKILL.md</span></div>
+    <p>Maple Street Bakery’s goal is <b>20 catering inquiries a month</b>.</p>
+    <p>They are a neighborhood bakery. Brightside runs Google Ads for catering orders on a <b>$900/month</b> budget. The owner prefers the update by <b>email on Mondays</b>.</p>
+    <p>This week’s update should be five short lines:</p>
+    <ol><li><b>What ran</b>: the catering ads live this week.</li><li><b>What worked</b>: the ads or searches that brought inquiries.</li><li><b>What we changed</b>: budget, keyword or ad edits inside the $900 cap.</li><li><b>What’s next</b>: the one change aimed at the 20-inquiry goal.</li><li><b>One question</b> for the owner.</li></ol>
+    <p class="note">There is no performance log yet, so those lines still need this week’s numbers. Nothing goes to them until you say yes.</p>
+   </div></div>
+  </div>
+  <div class="compose"><textarea placeholder="Message, drop a file, or / for commands"></textarea><span class="btn">Attach</span><span class="btn pri">Send</span></div>
+ </section>
+ <aside class="rail">
+  <div class="box now"><h5>Now</h5><b style="font-size:13px">Idle. Waiting for your next message.</b></div>
+  <div class="box"><h5>Done so far</h5><div class="small">9:31 &nbsp;Read the client file<br>9:31 &nbsp;Read the weekly-report skill</div></div>
+  <details class="box"><summary><h5 style="display:inline">Files · 2</h5></summary></details>
+  <div class="box"><h5>Session</h5><div class="meta"><span>Model</span><b>Grok 4.7</b><span>Effort</span><b>High</b><span>Context</span><b>19%</b><span>Folder</span><b>agency-brain</b></div></div>
+ </aside>
+</div>
+<div class="callout" style="top:6px;left:250px">1. Title bar: one row, sync as a pill, theme as an icon</div>
+<div class="callout" style="top:170px;left:520px">2. Thinking folds to one line with its time; tool steps become small chips</div>
+<div class="callout" style="top:290px;left:930px">3. Answers read as text, not grey boxes</div>
+<div class="callout" style="top:470px;left:30px">4. Sidebar: no bottom Settings; Also touching as repo lines (built)</div>
+<div class="callout" style="top:120px;left:1150px">5. Right rail D (built)</div>
+</div></body></html>
