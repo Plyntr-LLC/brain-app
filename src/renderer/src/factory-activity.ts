@@ -1,16 +1,5 @@
 import { holdOf, strictRequired, type LiveCall, type RunPhase, type RunRecord } from '../../shared/factory'
-
-export type RailState = 'done' | 'live' | 'ask' | 'fail' | 'todo'
-
-/** What the right rail shows for a Factory run. */
-export type Activity = {
-  runId: string
-  now: { text: string; since?: number; tone: 'live' | 'ask' | 'done' | 'idle' }
-  progress: { label: string; state: RailState; note?: string }[]
-  team: { role: string; who: string; state: RailState; note: string }[]
-  files: { path: string; added: number; deleted: number }[]
-  ship?: { line: string; block: string | null; pushed: boolean }
-}
+import type { Activity, RailState } from './activity'
 
 const ROLE: Record<LiveCall['phase'], string> = { triage: 'Lead', plan: 'Planner', build: 'Builder', review: 'Reviewer' }
 const ORDER: RunPhase[] = ['triage', 'plan', 'build', 'verify', 'review', 'commit', 'done']
@@ -46,7 +35,7 @@ export function factoryActivity(run: RunRecord, pushBlock: string | null): Activ
     hold?.kind === 'review' || hold?.kind === 'voice' ? 'ask' : stuck(4) || (run.strict?.status === 'pass' && !fixing ? 'done' : run.phase === 'review' ? 'live' : at > 4 ? 'done' : 'todo')
   const push: RailState = run.pushed ? 'done' : done && run.commitSha ? (run.pushError ? 'fail' : 'ask') : 'todo'
 
-  const progress: Activity['progress'] = [
+  const progress: NonNullable<Activity['progress']> = [
     ...(planned ? [{ label: 'Plan', state: plan }] : []),
     { label: 'Build', state: build, ...(fixing ? { note: 'fixing review gaps' } : {}) },
     { label: 'Test', state: test, ...(run.verify?.length ? { note: `${passes} passed${fails ? `, ${fails} failed` : ''}` } : {}) },
@@ -55,7 +44,7 @@ export function factoryActivity(run: RunRecord, pushBlock: string | null): Activ
   ]
 
   const busy = (phase: LiveCall['phase']) => live?.phase === phase
-  const team: Activity['team'] = [
+  const team: NonNullable<Activity['team']> = [
     { role: 'Lead', who: 'Grok 4.6', state: done || run.phase === 'abandoned' ? 'done' : 'live', note: hold ? 'waiting on you' : 'listening' },
     ...(planned ? [{ role: 'Planner', who: lastModel(run, 'plan', 'Opus'), state: busy('plan') ? ('live' as const) : plan === 'done' ? ('done' as const) : ('todo' as const), note: busy('plan') ? 'writing the plan' : plan === 'done' ? 'plan approved' : 'not yet' }] : []),
     { role: 'Builder', who: lastModel(run, 'build', run.builder || 'grok'), state: busy('build') ? 'live' : run.audit?.work.length ? 'done' : 'todo', note: busy('build') ? 'building' : `${run.audit?.work.length || 0} files changed` },

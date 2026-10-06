@@ -8,7 +8,8 @@ import { defaultEffort, hydrateEffort, normalizeEffort, prettyEffort } from '../
 import { mdToHtml, tidy, outsideProject, rel, type FileHit } from './ptyChat'
 import { AwayBlock } from './AwayBlock'
 import { ActivityRail } from './ActivityRail'
-import type { Activity } from './factory-activity'
+import { railFor, type Activity } from './activity'
+import { chatActivity, fileAction, nextAction, type ActionState } from './chat-activity'
 import { sameCwd } from '../../shared/paths'
 import { APP_SLASH, TUI_ONLY_SLASH } from '../../shared/slash-lanes'
 import { routeLine } from '../../shared/slash-route'
@@ -532,7 +533,7 @@ function Rich({ text }: { text: string }) {
   )
 }
 
-function ChatPane({
+export function ChatPane({
   id,
   kind,
   cwd,
@@ -561,6 +562,7 @@ function ChatPane({
   onDelete,
   onOpenTerm,
   onBusy,
+  onActivity,
   onPowerPickers
 }: {
   id: string
@@ -601,6 +603,8 @@ function ChatPane({
   onDelete: () => void
   onOpenTerm: () => void
   onBusy: (id: string, busy: boolean) => void
+  /** What the right rail shows for this chat: Now, its Plan, Done so far, Files. */
+  onActivity: (id: string, activity: Activity | null) => void
   onPowerPickers?: () => void
 }) {
   const [messages, setMessages] = useState<Msg[]>(
@@ -610,6 +614,11 @@ function ChatPane({
   const [busy, setBusy] = useState(false)
   const [warming, setWarming] = useState(false)
   const [waitLabel, setWaitLabel] = useState('Working')
+  // The right rail: this turn's actions (work: labels and file events), its plan steps, and its files.
+  const [action, setAction] = useState<ActionState>({ log: [] })
+  const [railSteps, setRailSteps] = useState<{ title: string; status?: string }[]>([])
+  const [turnAt, setTurnAt] = useState(0)
+  const [railFiles, setRailFiles] = useState<FileHit[]>([])
   const [waitSec, setWaitSec] = useState(0)
   /** Background work the agent started (another AI, a long command), with when it began. */
   const [bgTasks, setBgTasks] = useState<{ label: string; at: number }[]>([])
@@ -688,6 +697,19 @@ function ChatPane({
     busyRef.current = next
     setBusy(next)
   }
+
+  function reportFiles(files: FileHit[]) {
+    onFilesRef.current(id, files)
+    setRailFiles(files)
+  }
+
+  const onActivityRef = useRef(onActivity)
+  onActivityRef.current = onActivity
+  // Only real changes reach the workspace: the rail runs its own timer from since.
+  useEffect(() => {
+    onActivityRef.current(id, chatActivity({ busy, turnAt, action, permission, steps: railSteps, files: railFiles }))
+  }, [id, busy, turnAt, action, permission, railSteps, railFiles])
+  useEffect(() => () => onActivityRef.current(id, null), [id])
 
   useEffect(() => {
     if (!active) return
@@ -770,6 +792,7 @@ function ChatPane({
       }
       if (ev.kind === 'plan' && ev.steps?.length) {
         const steps = ev.steps
+        setRailSteps(steps)
         setMessages((msgs) => {
           const next = [...msgs]
           let lastMe = -1
@@ -850,6 +873,7 @@ function ChatPane({
       if (ev.kind === 'status' && ev.data && ev.data.startsWith('work:')) {
         const label = ev.data.slice(5).trim()
         if (label) setWaitLabel(label)
+        if (label) setAction((a) => nextAction(a, label, Date.now()))
       }
       if (ev.kind === 'permission' && !ev.detail && kindRef.current === 'grok' && planOnRef.current && cliSidRef.current) {
         void window.brain.slash.grokPlan(cwdRef.current, cliSidRef.current).then((text) => {
@@ -867,13 +891,14 @@ function ChatPane({
       }
       if (ev.kind === 'file' && ev.path) {
         const hit = { path: ev.path, tool: ev.tool, live: true }
+        setAction((a) => nextAction(a, fileAction(hit.path, hit.tool), Date.now()))
         if (!skinOnRef.current) {
           const base = ev.path.replace(/\\/g, '/').split('/').filter(Boolean).pop() || ev.path
           setWaitLabel(ev.tool ? `${ev.tool} · ${base}` : `Reading ${base}`)
         }
         if (!filesRef.current.some((f) => f.path === hit.path)) {
           filesRef.current = [...filesRef.current, hit]
-          onFilesRef.current(id, filesRef.current)
+          reportFiles(filesRef.current)
         }
       }
       if (ev.kind === 'done' || ev.kind === 'error') {
@@ -890,7 +915,7 @@ function ChatPane({
         compactingRef.current = false
         setCompacting(false)
         filesRef.current = filesRef.current.map((f) => ({ ...f, live: false }))
-        onFilesRef.current(id, filesRef.current)
+        reportFiles(filesRef.current)
         if (ev.kind === 'error' && ev.data) {
           setMessages((m) => [...m, { who: 'err', text: ev.data || '' }])
         }
@@ -1199,7 +1224,7 @@ function ChatPane({
       setPlanOn(false)
       setMessages([{ who: 'brain', text: greeting }])
       filesRef.current = []
-      onFiles(id, [])
+      reportFiles([])
       void resetCli()
         .then(() => {
           if (skinOn) setTuiGen((g) => g + 1)
@@ -1389,7 +1414,7 @@ function ChatPane({
       setPlanOn(false)
       setMessages([{ who: 'brain', text: greeting }])
       filesRef.current = []
-      onFiles(id, [])
+      reportFiles([])
       void resetCli()
         .then(() => {
           if (skinOn) setTuiGen((g) => g + 1)
@@ -1763,7 +1788,7 @@ function ChatPane({
   function mergeSkinFiles(hits: FileHit[], live: boolean) {
     if (!live) {
       filesRef.current = filesRef.current.map((f) => ({ ...f, live: false }))
-      onFiles(id, filesRef.current)
+      reportFiles(filesRef.current)
       return
     }
     let next = filesRef.current
@@ -1773,7 +1798,7 @@ function ChatPane({
       else next = next.map((f, j) => (j === i ? { ...f, live: true } : f))
     }
     filesRef.current = next
-    onFiles(id, next)
+    reportFiles(next)
   }
 
   async function sendText(t: string, opts?: { cancel?: boolean; fromQueue?: boolean; files?: Attach[] }) {
@@ -1798,9 +1823,12 @@ function ChatPane({
       return
     }
     filesRef.current = []
-    onFiles(id, [])
+    reportFiles([])
     markBusy(true)
     setWaitLabel('Working')
+    setAction({ log: [] })
+    setRailSteps([])
+    setTurnAt(Date.now())
     turn.current = { think: false, answer: false }
     if (!opts?.fromQueue) {
       pinBottom.current = true
@@ -2294,7 +2322,7 @@ export function TerminalWorkspace({
   // A Factory tab shows its own run's files; Chat tabs (and everything else) show the last chat's.
   const filesId = tab?.type === 'factory' ? tab.id : chatId
   const hits = filesByTab[filesId] || []
-  const railActivity = tab?.type === 'factory' ? activityByTab[tab.id] || null : null
+  const railActivity = railFor(tab, lastChatId, activityByTab)
   const folderName = cwd.split('/').filter(Boolean).pop() || 'Agency Brain'
   const modelChoices = cliModels(
     chatTab?.kind,
@@ -3010,6 +3038,7 @@ export function TerminalWorkspace({
                   onDelete={() => closeTab(t.id)}
                   onOpenTerm={() => addTerm()}
                   onBusy={(id, on) => setBusyTabs((m) => (m[id] === on ? m : { ...m, [id]: on }))}
+                  onActivity={onActivity}
                   onPowerPickers={() => setPowerPickers(true)}
                 />
               ))}
@@ -3096,7 +3125,11 @@ export function TerminalWorkspace({
             />
           ) : null}
           {railActivity ? (
-            <ActivityRail activity={railActivity} onPush={() => void window.brain.factory.publish(railActivity.runId)} />
+            <ActivityRail
+              activity={railActivity}
+              onPush={railActivity.runId ? () => void window.brain.factory.publish(railActivity.runId || '') : undefined}
+              openFile={{ open: (p) => void openFile(p), canOpen: (p) => !outsideProject(cwd, p) }}
+            />
           ) : (
             <>
           <h2>In use</h2>

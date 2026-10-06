@@ -2097,3 +2097,14 @@ details.fcard > summary.fcard-title { cursor: pointer; }
 .rail-more { margin-top: 0.2rem; padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 0.74rem; cursor: pointer; }
 .rail-ship { border-color: var(--warn-line); background: var(--warn-bg); }
 .rail-ship button { margin-top: 0.45rem; }
+.rail-steps .rail-row.done .rail-label { color: var(--muted); font-weight: 500; }
+.rail-steps .rail-row.live .rail-label { color: var(--orange-deep); }
+.rail-logline { display: grid; grid-template-columns: 2.6rem 1fr; gap: 0.35rem; padding: 0.12rem 0; font-size: 0.76rem; }
+.rail-time { color: var(--muted); }
+.rail-logtext { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-fold { display: block; width: 100%; padding: 0; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+.rail-fold h5 { margin: 0; }
+.rail-fold[aria-expanded='true'] h5 { margin-bottom: 0.35rem; }
+button.rail-file { display: flex; width: 100%; padding: 0.08rem 0; border: 0; background: none; font: inherit; font-size: 0.74rem; color: var(--ink); text-align: left; cursor: pointer; }
+button.rail-file:hover .rail-path { text-decoration: underline; }
+.rail-file.live .rail-path { color: var(--orange-deep); font-weight: 600; }

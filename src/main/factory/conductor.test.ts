@@ -110,8 +110,8 @@ test('plan, strict, and build wording, and the T3 limit stays', () => {
   for (const kept of ['What should change?', 'Approve in advance (plan, asks, and a clean Commit go ahead; never deploys)', 'Ship in advance: after an Opus review', '>\n                Start\n']) assert.ok(intake.includes(kept), kept)
   // The right rail: a Factory tab with a run shows ActivityRail; everything else keeps In use.
   const ws = readFileSync(join(root, 'src/renderer/src/TerminalWorkspace.tsx'), 'utf8')
-  assert.match(ws, /const railActivity = tab\?\.type === 'factory' \? activityByTab\[tab\.id\] \|\| null : null/)
-  assert.match(ws, /\{railActivity \? \(\s*<ActivityRail activity=\{railActivity\}/)
+  assert.match(ws, /const railActivity = railFor\(tab, lastChatId, activityByTab\)/)
+  assert.match(ws, /\{railActivity \? \(\s*<ActivityRail\s+activity=\{railActivity\}/)
   assert.match(ws, /<h2>In use<\/h2>/)
   assert.match(ws, /onActivity=\{onActivity\}/)
   assert.ok(send.indexOf('showOutgoing(') < send.indexOf('factory.conduct('))

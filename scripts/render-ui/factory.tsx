@@ -179,6 +179,8 @@ async function main() {
   check('a commit, done, pushed', titles[10].startsWith(`lead:Committed ${sha.slice(0, 7)}`) && titles[11] === 'lead:Done.' && titles[12] === 'lead:Pushed to origin/main.', titles.slice(10).join(' | '))
   check('a no raw activity box, no phase rail, no open diff', !a.el.querySelector('.factory-activity, .phaserail') && [...a.el.querySelectorAll('.factory-diff')].every((d) => d.closest('details')))
   check('a rail fed from onActivity equals factoryActivity(run)', JSON.stringify(a.activity()) === JSON.stringify(factoryActivity(a.r, null)))
+  const shownPath = a.rail.querySelector<HTMLElement>('.rail-files .rail-path')
+  check('a Factory changed files show without a click', !!shownPath && shownPath.offsetHeight > 0 && ['fix.ts', 'src.ts'].includes(shownPath.textContent || '') && !a.rail.querySelector('.rail-fold'))
   check('a rail Ship shows pushed, no Push', (a.rail.querySelector('.rail-ship')?.textContent || '').includes('Pushed 959aaee') && !a.rail.querySelector('.rail-ship button'))
 
   // (b) every question card, label to call.

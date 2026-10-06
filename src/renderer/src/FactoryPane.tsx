@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { modelsLine, REVIEW_MAX, strictRequired, VOICE_MAX, type FactoryTriage, type LiveCall, type RunPhase, type RunRecord } from '../../shared/factory'
 import { applyFactoryText, showOutgoing, type Outgoing } from './guide-thread'
-import { factoryActivity, type Activity } from './factory-activity'
+import type { Activity } from './activity'
+import { factoryActivity } from './factory-activity'
 import { threadItems } from './factory-thread'
 import { FactoryThread } from './FactoryThread'
 
