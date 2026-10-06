@@ -138,6 +138,14 @@ async function main() {
   await tick(3000)
   check('(viii) a 3-second busy wait sends no rail updates', activityCalls === before, `${activityCalls - before} calls`)
 
+  // (xii) a background job while the turn is busy: the turn's action stays in Now.
+  const BG = 'Started in the background: asking Grok 4.6 (xhigh)'
+  emit({ kind: 'status', data: 'bg:' + JSON.stringify([{ label: BG, at: Date.now() - 90000 }]) })
+  await tick()
+  check('(xii) busy with a background job: Now stays on the action', now() === 'Read clients/summit/context.md' && timer() && !!rail.querySelector('.rail-now.live'), now())
+  emit({ kind: 'status', data: 'bg:[]' })
+  await tick()
+
   // (iv) permission while busy
   emit({ kind: 'permission', title: 'Edit report.html', path: `${CWD}/clients/summit/reports/a.html`, options: [{ id: 'allowOnce', label: 'Allow' }, { id: 'skip', label: 'Skip' }] })
   await tick(80)
@@ -167,6 +175,25 @@ async function main() {
   await tick(80)
   check('(v) done: idle, no timer', now() === 'Idle. Waiting for your next message.' && !!rail.querySelector('.rail-now.idle') && !timer(), now())
   check('(v) Plan stays until the next send', stepRows().length === 4)
+
+  // (xiii) the turn is over and a background job runs: Now shows it with a timer instead of Idle.
+  emit({ kind: 'status', data: 'bg:' + JSON.stringify([{ label: BG, at: Date.now() - 90000 }]) })
+  await tick(80)
+  const timerText = () => (rail.querySelector('.rail-now .rail-timer')?.textContent || '').trim()
+  check('(xiii) background: Now names the job', now() === 'In the background: asking Grok 4.6 (xhigh)' && !!rail.querySelector('.rail-now.live'), now())
+  check('(xiii) background: timer from the job start', /^1:3\d$/.test(timerText()), timerText())
+  emit({ kind: 'status', data: 'bg:' + JSON.stringify([{ label: BG, at: Date.now() - 90000 }, { label: 'Started in the background: Wait for deploy', at: Date.now() - 5000 }]) })
+  await tick(80)
+  check('(xiii) two jobs: (+1 more)', now() === 'In the background: asking Grok 4.6 (xhigh) (+1 more)', now())
+  emit({ kind: 'permission', title: 'Edit report.html', path: `${CWD}/clients/summit/reports/a.html`, options: [{ id: 'allowOnce', label: 'Allow' }, { id: 'skip', label: 'Skip' }] })
+  await tick(80)
+  check('(xiii) a permission ask wins over background jobs', now() === 'Waiting on you: Edit report.html' && !!rail.querySelector('.rail-now.ask'), now())
+  ;[...document.querySelectorAll<HTMLButtonElement>('.stage-pane button')].find((b) => (b.textContent || '').trim() === 'Allow')?.click()
+  await tick(80)
+  check('(xiii) after the answer Now is the background job again', now() === 'In the background: asking Grok 4.6 (xhigh) (+1 more)', now())
+  emit({ kind: 'status', data: 'bg:[]' })
+  await tick(80)
+  check('(xiii) no jobs left: idle, no timer', now() === 'Idle. Waiting for your next message.' && !!rail.querySelector('.rail-now.idle') && !timer(), now())
 
   // (vi) a second send clears the turn
   await send('now draft the email')

@@ -171,6 +171,27 @@ async function main() {
   const err = [...thread().querySelectorAll<HTMLElement>('.bubble')].find((b) => (b.textContent || '').includes('The CLI stopped'))
   check('the error keeps its box', boxed(err), `${style(err).backgroundColor} ${style(err).borderTopWidth}`)
 
+  // Quiet notices: a compact note and a plain system line read as one muted line, not a "Command" box.
+  emit({ kind: 'status', data: 'compacting' })
+  emit({ kind: 'status', data: 'compacted' })
+  emit({ kind: 'status', data: 'compacting' })
+  emit({ kind: 'done' })
+  await tick(80)
+  const inner = (text: string) =>
+    [...thread().querySelectorAll<HTMLElement>('div, p, span')].filter((el) => (el.textContent || '').includes(text)).pop()
+  for (const text of ['Older turns were summarized', 'This CLI did not compact this session']) {
+    const el = inner(text)
+    const row = el?.closest<HTMLElement>('.skin-row') || el
+    const cs = style(el)
+    check(`notice "${text}": 12px muted line`, !!el && cs.fontSize === '12px' && cs.color === getComputedStyle(document.documentElement).getPropertyValue('--muted').trim().replace(/^#(..)(..)(..)$/, (_m, r, g, b) => `rgb(${parseInt(r, 16)}, ${parseInt(g, 16)}, ${parseInt(b, 16)})`), `${cs.fontSize} ${cs.color}`)
+    const boxedUp = (() => {
+      for (let e: HTMLElement | null = el || null; e && e !== thread(); e = e.parentElement) if (boxed(e)) return e.className
+      return ''
+    })()
+    check(`notice "${text}": no box around it`, !!el && !boxedUp, boxedUp)
+    check(`notice "${text}": no "Command" label`, !!row && !(row.textContent || '').includes('Command'), row?.textContent || 'none')
+  }
+
   box().blur()
   window.scrollTo(0, 0)
   document.getElementById('out')!.textContent = JSON.stringify(results)

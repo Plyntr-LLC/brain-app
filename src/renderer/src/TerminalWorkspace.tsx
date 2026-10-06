@@ -8,13 +8,13 @@ import { defaultEffort, hydrateEffort, normalizeEffort, prettyEffort } from '../
 import { mdToHtml, tidy, outsideProject, rel, type FileHit } from './ptyChat'
 import { AwayBlock } from './AwayBlock'
 import { ActivityRail } from './ActivityRail'
+import { SessionCard, type SessionRow } from './SessionCard'
 import { railFor, type Activity } from './activity'
-import { chatActivity, fileAction, nextAction, type ActionState } from './chat-activity'
+import { bgLine, chatActivity, fileAction, nextAction, type ActionState } from './chat-activity'
 import { sameCwd } from '../../shared/paths'
 import { APP_SLASH, TUI_ONLY_SLASH } from '../../shared/slash-lanes'
 import { routeLine } from '../../shared/slash-route'
 import { panelBlocks } from '../../shared/panel-blocks'
-import { WorldClocks } from './WorldClocks'
 import { WorkPulse } from './WorkPulse'
 import { FactoryPane } from './FactoryPane'
 import { MediaLibraryPane } from './MediaLibraryPane'
@@ -724,8 +724,8 @@ export function ChatPane({
   onActivityRef.current = onActivity
   // Only real changes reach the workspace: the rail runs its own timer from since.
   useEffect(() => {
-    onActivityRef.current(id, chatActivity({ busy, turnAt, action, permission, steps: railSteps, files: railFiles }))
-  }, [id, busy, turnAt, action, permission, railSteps, railFiles])
+    onActivityRef.current(id, chatActivity({ busy, turnAt, action, permission, steps: railSteps, files: railFiles, bg: bgTasks }))
+  }, [id, busy, turnAt, action, permission, railSteps, railFiles, bgTasks])
   useEffect(() => () => onActivityRef.current(id, null), [id])
 
   useEffect(() => {
@@ -1057,9 +1057,7 @@ export function ChatPane({
     return () => clearInterval(t)
   }, [bgTasks.length])
   const bgFirst = bgTasks.length ? Math.min(...bgTasks.map((t) => t.at)) : 0
-  const bgLabel = bgTasks.length
-    ? `In the background: ${bgTasks[0].label.replace(/^Started in the background: /, '')}${bgTasks.length > 1 ? ` (+${bgTasks.length - 1} more)` : ''}`
-    : ''
+  const bgLabel = bgLine(bgTasks)
 
   useEffect(() => {
     if (!live) {
@@ -2115,7 +2113,7 @@ export function ChatPane({
             />
           ) : m.text || m.who === 'me' ? (
             <div
-              className={`bubble ${m.who === 'me' ? 'me' : ''} ${m.who === 'think' ? 'think' : ''} ${m.who === 'brain' ? 'md' : ''}`}
+              className={`bubble ${m.who === 'me' ? 'me' : ''} ${m.who === 'think' ? 'think' : ''} ${m.who === 'brain' ? 'md' : ''} ${m.who === 'sys' ? 'sys' : ''}`}
               key={i}
             >
               {m.who === 'think' && (
@@ -2124,7 +2122,6 @@ export function ChatPane({
                   {busy && i === view.length - 1 ? <span className="dots" /> : null}
                 </div>
               )}
-              {m.who === 'sys' && <div className="think-label">Command</div>}
               {m.who === 'brain' ? (
                 <div className="mdbody" dangerouslySetInnerHTML={{ __html: mdToHtml(m.text) }} />
               ) : (
@@ -2421,6 +2418,68 @@ export function TerminalWorkspace({
     chatTab?.kind,
     chatTab?.models && chatTab.models.length ? chatTab.models : modelsByKind[chatTab?.kind || 'grok']
   )
+  const ctx = contextByTab[chatId || '']
+  const effortList = chatTab?.efforts?.length ? chatTab.efforts : fallbackEfforts(chatTab?.kind)
+  const showEffort = !!(chatTab?.efforts?.length || (chatTab?.kind && chatTab.kind !== 'cursor' && fallbackEfforts(chatTab.kind).length))
+  const sessionRows: SessionRow[] = [
+    ...(powerPickers
+      ? [
+          {
+            key: 'model',
+            label: 'Model',
+            value: prettyModel(chatTab?.model, chatTab?.kind, modelChoices),
+            choices: modelChoices.map((m) => ({ id: m.id, label: m.label, on: m.id === chatTab?.model || m.label === chatTab?.model })),
+            onChoose: setChatModel,
+            empty: chatTab?.models ? 'No models for this CLI.' : 'Loading models…'
+          },
+          ...(showEffort
+            ? [
+                {
+                  key: 'effort',
+                  label: 'Effort',
+                  value: prettyEffort(chatTab?.effort, chatTab?.kind),
+                  choices: effortList.map((e) => ({ id: e.id, label: e.label, on: normalizeEffort(e.id) === normalizeEffort(chatTab?.effort) })),
+                  onChoose: setChatEffort
+                }
+              ]
+            : []),
+          ...(chatTab?.speeds?.length
+            ? [
+                {
+                  key: 'speed',
+                  label: 'Speed',
+                  value: prettySpeed(chatTab.speed, chatTab.speeds),
+                  choices: chatTab.speeds.map((x) => ({ id: x.id, label: x.label, on: x.id === chatTab.speed })),
+                  onChoose: setChatSpeed
+                }
+              ]
+            : []),
+          ...(chatTab?.agentModes?.length
+            ? [
+                {
+                  key: 'agentMode',
+                  label: 'Mode',
+                  value: chatTab.agentModes.find((m) => m.id === chatTab.agentMode)?.label || chatTab.agentMode || 'Agent',
+                  choices: chatTab.agentModes.map((m) => ({ id: m.id, label: m.label, on: m.id === chatTab.agentMode })),
+                  onChoose: setChatAgentMode
+                }
+              ]
+            : [])
+        ]
+      : []),
+    ...(ctx && (ctx.percent != null || ctx.used)
+      ? [{ key: 'context', label: 'Context', value: ctx.percent != null ? `${ctx.percent}%` : `${Math.round((ctx.used || 0) / 1000)}k tokens` }]
+      : []),
+    {
+      key: 'folder',
+      label: 'Folder',
+      value: folderName,
+      title: cwd,
+      choices: recents.map((r) => ({ id: r.path, label: `${r.name}${r.watching ? ' · watching' : ''}`, on: r.path === cwd })),
+      onChoose: (path: string) => void useFolder(path),
+      extra: { label: 'Choose folder…', onClick: () => void pickFolder() }
+    }
+  ]
 
   useEffect(() => {
     if (s.brainPath && s.brainPath !== cwd) setCwd(s.brainPath)
@@ -3242,137 +3301,7 @@ export function TerminalWorkspace({
           </ul>
             </>
           )}
-          <div className="runmeta" onMouseDown={(e) => e.stopPropagation()}>
-            {pick && (powerPickers || pick === 'folder') && (
-              <div className="runpick">
-                {pick === 'model' &&
-                  (modelChoices.length === 0 ? (
-                    <div className="tiny" style={{ padding: '0.4rem 0.55rem' }}>
-                      {chatTab?.models ? 'No models for this CLI.' : 'Loading models…'}
-                    </div>
-                  ) : (
-                    modelChoices.map((m) => (
-                      <button
-                        type="button"
-                        key={m.id}
-                        className={m.id === chatTab?.model || m.label === chatTab?.model ? 'on' : ''}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => setChatModel(m.id)}
-                      >
-                        {m.label}
-                      </button>
-                    ))
-                  ))}
-                {pick === 'effort' &&
-                  (chatTab?.efforts?.length ? chatTab.efforts : fallbackEfforts(chatTab?.kind)).map((e) => (
-                    <button
-                      type="button"
-                      key={e.id}
-                      className={normalizeEffort(e.id) === normalizeEffort(chatTab?.effort) ? 'on' : ''}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => setChatEffort(e.id)}
-                    >
-                      {e.label}
-                    </button>
-                  ))}
-                {pick === 'speed' &&
-                  (chatTab?.speeds || []).map((s) => (
-                    <button
-                      type="button"
-                      key={s.id}
-                      className={s.id === chatTab?.speed ? 'on' : ''}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => setChatSpeed(s.id)}
-                    >
-                      {s.label}
-                    </button>
-                  ))}
-                {pick === 'agentMode' &&
-                  (chatTab?.agentModes || []).map((m) => (
-                    <button
-                      type="button"
-                      key={m.id}
-                      className={m.id === chatTab?.agentMode ? 'on' : ''}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => setChatAgentMode(m.id)}
-                    >
-                      {m.label}
-                    </button>
-                  ))}
-                {pick === 'folder' && (
-                  <>
-                    {recents.map((r) => (
-                      <button
-                        type="button"
-                        key={r.path}
-                        className={r.path === cwd ? 'on' : ''}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => void useFolder(r.path)}
-                      >
-                        {r.name}
-                        {r.watching ? ' · watching' : ''}
-                      </button>
-                    ))}
-                    <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => void pickFolder()}>
-                      Choose folder…
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-            {powerPickers ? (
-              <>
-            <div className="runmeta-k">Model</div>
-            <button type="button" className="runmeta-v" onClick={() => setPick((p) => (p === 'model' ? null : 'model'))}>
-              {prettyModel(chatTab?.model, chatTab?.kind, modelChoices)}
-            </button>
-            {(chatTab?.efforts?.length || (chatTab?.kind && chatTab.kind !== 'cursor' && fallbackEfforts(chatTab.kind).length)) ? (
-              <>
-                <div className="runmeta-k">Effort</div>
-                <button type="button" className="runmeta-v" onClick={() => setPick((p) => (p === 'effort' ? null : 'effort'))}>
-                  {prettyEffort(chatTab?.effort, chatTab?.kind)}
-                </button>
-              </>
-            ) : null}
-            {chatTab?.speeds?.length ? (
-              <>
-                <div className="runmeta-k">Speed</div>
-                <button type="button" className="runmeta-v" onClick={() => setPick((p) => (p === 'speed' ? null : 'speed'))}>
-                  {prettySpeed(chatTab.speed, chatTab.speeds)}
-                </button>
-              </>
-            ) : null}
-            {chatTab?.agentModes?.length ? (
-              <>
-                <div className="runmeta-k">Mode</div>
-                <button type="button" className="runmeta-v" onClick={() => setPick((p) => (p === 'agentMode' ? null : 'agentMode'))}>
-                  {chatTab.agentModes.find((m) => m.id === chatTab.agentMode)?.label || chatTab.agentMode || 'Agent'}
-                </button>
-              </>
-            ) : null}
-              </>
-            ) : null}
-            {contextByTab[chatId || ''] && (contextByTab[chatId || ''].percent != null || contextByTab[chatId || ''].used) ? (
-              <>
-                <div className="runmeta-k">Context</div>
-                <div className="runmeta-v">
-                  {contextByTab[chatId || ''].percent != null
-                    ? `${contextByTab[chatId || ''].percent}%`
-                    : `${Math.round((contextByTab[chatId || ''].used || 0) / 1000)}k tokens`}
-                </div>
-              </>
-            ) : null}
-            <div className="runmeta-k">Folder</div>
-            <button
-              type="button"
-              className="runmeta-v"
-              title={cwd}
-              onClick={() => setPick((p) => (p === 'folder' ? null : 'folder'))}
-            >
-              {folderName}
-            </button>
-            <WorldClocks />
-          </div>
+          <SessionCard rows={sessionRows} open={pick} setOpen={(k) => setPick(k as typeof pick)} />
         </aside>
       </div>
 

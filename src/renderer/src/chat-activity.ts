@@ -23,6 +23,15 @@ export function fileAction(path: string, tool?: string): string {
 
 const STEP: Record<string, RailState> = { completed: 'done', in_progress: 'live' }
 
+export type BgTask = { label: string; at: number }
+
+/** One line for the CLI's background jobs: the first job, then "(+N more)". */
+export function bgLine(bg: BgTask[]): string {
+  if (!bg.length) return ''
+  const first = bg[0].label.replace(/^Started in the background: /, '')
+  return `In the background: ${first}${bg.length > 1 ? ` (+${bg.length - 1} more)` : ''}`
+}
+
 export function chatActivity(o: {
   busy: boolean
   turnAt: number
@@ -30,12 +39,16 @@ export function chatActivity(o: {
   permission?: { title?: string } | null
   steps?: { title: string; status?: string }[]
   files: FileHit[]
+  bg?: BgTask[]
 }): Activity {
+  const bg = o.bg || []
   const now: Activity['now'] = o.permission
     ? { text: `Waiting on you: ${o.permission.title || 'a question'}`, tone: 'ask' }
     : o.busy
       ? { text: o.action.current || 'Working', since: o.action.since ?? o.turnAt, tone: 'live' }
-      : { text: 'Idle. Waiting for your next message.', tone: 'idle' }
+      : bg.length
+        ? { text: bgLine(bg), since: Math.min(...bg.map((t) => t.at)), tone: 'live' }
+        : { text: 'Idle. Waiting for your next message.', tone: 'idle' }
   return {
     now,
     ...(o.steps?.length ? { steps: o.steps.map((s) => ({ title: s.title, state: STEP[s.status || ''] || 'todo' })) } : {}),

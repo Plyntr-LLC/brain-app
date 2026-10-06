@@ -37,7 +37,7 @@ export function WorldClocks() {
   }, [])
   const local = clockParts(now)
   return (
-    <div className="clocks-side" aria-label="Times">
+    <div className="clocks-side" role="group" aria-label="Times">
       <div className="runmeta-k">Times</div>
       <button type="button" className="runmeta-v" onClick={() => setOpen((v) => !v)}>
         {local.time}

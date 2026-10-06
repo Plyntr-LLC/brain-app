@@ -146,12 +146,7 @@ export function SkinCard({
         : p.phase === 'compacting'
           ? 'Compacting…'
           : 'Older turns were summarized. The thread on screen is unchanged.'
-    return (
-      <div className="bubble">
-        <div className="think-label">Command</div>
-        {text}
-      </div>
-    )
+    return <div className="skin-note">{text}</div>
   }
   if (spec.component === 'ErrorNotice' || spec.component === 'LoginNeed') {
     return (

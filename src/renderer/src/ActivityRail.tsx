@@ -19,7 +19,8 @@ function Mark({ state }: { state: RailState }) {
 
 /**
  * The right rail: what the tab is doing now and what it did. Sections show when the activity has them:
- * Progress, Team and Ship for a Factory run; Plan and Done so far for a chat. openFile, when given,
+ * Progress, Team and Ship for a Factory run; Plan and Done so far for a chat. Each section's rows sit in a
+ * .rail-body that scrolls on its own, so the header stays and one section never moves another. openFile, when given,
  * makes a chat's file line a link (a file outside the open folder stays a plain line).
  */
 export function ActivityRail({
@@ -56,52 +57,60 @@ export function ActivityRail({
       {progress?.length ? (
         <section className="rail-box rail-progress">
           <h5>Progress</h5>
-          {progress.map((p) => (
-            <div key={p.label} className={`rail-row ${p.state}`}>
-              <Mark state={p.state} />
-              <span className="rail-label">{p.label}</span>
-              {p.note ? <span className="rail-note">{p.note}</span> : null}
-            </div>
-          ))}
+          <div className="rail-body">
+            {progress.map((p) => (
+              <div key={p.label} className={`rail-row ${p.state}`}>
+                <Mark state={p.state} />
+                <span className="rail-label">{p.label}</span>
+                {p.note ? <span className="rail-note">{p.note}</span> : null}
+              </div>
+            ))}
+          </div>
         </section>
       ) : null}
       {steps?.length ? (
         <section className="rail-box rail-steps">
           <h5>Plan</h5>
-          {steps.map((s, i) => (
-            <div key={`${i}-${s.title}`} className={`rail-row ${s.state}`}>
-              <Mark state={s.state} />
-              <span className="rail-label">{s.title}</span>
-            </div>
-          ))}
+          <div className="rail-body">
+            {steps.map((s, i) => (
+              <div key={`${i}-${s.title}`} className={`rail-row ${s.state}`}>
+                <Mark state={s.state} />
+                <span className="rail-label">{s.title}</span>
+              </div>
+            ))}
+          </div>
         </section>
       ) : null}
       {team?.length ? (
         <section className="rail-box rail-team">
           <h5>Team</h5>
-          {team.map((m) => (
-            <div key={m.role} className={`rail-row team ${m.state}`}>
-              <span className={`who w-${m.role.toLowerCase()}`}>{m.role[0]}</span>
-              <span className="rail-who">
-                <span className="rail-label">{m.role}</span>
-                <span className="rail-note">
-                  {m.who} · {m.note}
+          <div className="rail-body">
+            {team.map((m) => (
+              <div key={m.role} className={`rail-row team ${m.state}`}>
+                <span className={`who w-${m.role.toLowerCase()}`}>{m.role[0]}</span>
+                <span className="rail-who">
+                  <span className="rail-label">{m.role}</span>
+                  <span className="rail-note">
+                    {m.who} · {m.note}
+                  </span>
                 </span>
-              </span>
-              <Mark state={m.state} />
-            </div>
-          ))}
+                <Mark state={m.state} />
+              </div>
+            ))}
+          </div>
         </section>
       ) : null}
       {log?.length ? (
         <section className="rail-box rail-log">
           <h5>Done so far</h5>
-          {log.map((l, i) => (
-            <div key={`${i}-${l.at}`} className="rail-logline">
-              <span className="rail-time">{clock(l.at)}</span>
-              <span className="rail-logtext">{l.text}</span>
-            </div>
-          ))}
+          <div className="rail-body">
+            {log.map((l, i) => (
+              <div key={`${i}-${l.at}`} className="rail-logline">
+                <span className="rail-time">{clock(l.at)}</span>
+                <span className="rail-logtext">{l.text}</span>
+              </div>
+            ))}
+          </div>
         </section>
       ) : null}
       {files.length ? (
@@ -121,8 +130,9 @@ export function ActivityRail({
               ) : null}
             </h5>
           )}
-          {showFiles
-            ? (allFiles ? files : files.slice(0, FILES_SHOWN)).map((f) =>
+          {showFiles ? (
+            <div className="rail-body">
+              {(allFiles ? files : files.slice(0, FILES_SHOWN)).map((f) =>
                 opener?.canOpen(f.path) ? (
                   <button key={f.path} type="button" className={`rail-file link${f.live ? ' live' : ''}`} title={f.path} onClick={() => opener.open(f.path)}>
                     <span className="rail-path">{f.path}</span>
@@ -133,12 +143,13 @@ export function ActivityRail({
                     {f.added !== undefined ? <span className="plus">+{f.added}</span> : null}
                   </div>
                 )
-              )
-            : null}
-          {showFiles && !allFiles && files.length > FILES_SHOWN ? (
-            <button type="button" className="rail-more" onClick={() => setAllFiles(true)}>
-              {files.length - FILES_SHOWN} more
-            </button>
+              )}
+              {!allFiles && files.length > FILES_SHOWN ? (
+                <button type="button" className="rail-more" onClick={() => setAllFiles(true)}>
+                  {files.length - FILES_SHOWN} more
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </section>
       ) : null}
