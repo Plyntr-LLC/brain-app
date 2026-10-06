@@ -20,7 +20,7 @@ function Mark({ state }: { state: RailState }) {
 /**
  * The right rail: what the tab is doing now and what it did. Sections show when the activity has them:
  * Progress, Team and Ship for a Factory run; Plan and Done so far for a chat. openFile, when given,
- * makes a file line a link (a file outside the open folder stays a plain line).
+ * makes a chat's file line a link (a file outside the open folder stays a plain line).
  */
 export function ActivityRail({
   activity,
@@ -44,6 +44,8 @@ export function ActivityRail({
   const deleted = files.reduce((n, f) => n + (f.deleted || 0), 0)
   const counted = files.some((f) => f.added !== undefined)
   const showFiles = !activity.filesFolded || filesOpen
+  // Only a chat's files open: a Factory run's paths are inside its work repo, not this folder.
+  const opener = activity.filesFolded ? openFile : undefined
   return (
     <div className="activity-rail">
       <section className={`rail-box rail-now ${now.tone}`}>
@@ -121,8 +123,8 @@ export function ActivityRail({
           )}
           {showFiles
             ? (allFiles ? files : files.slice(0, FILES_SHOWN)).map((f) =>
-                openFile?.canOpen(f.path) ? (
-                  <button key={f.path} type="button" className={`rail-file link${f.live ? ' live' : ''}`} title={f.path} onClick={() => openFile.open(f.path)}>
+                opener?.canOpen(f.path) ? (
+                  <button key={f.path} type="button" className={`rail-file link${f.live ? ' live' : ''}`} title={f.path} onClick={() => opener.open(f.path)}>
                     <span className="rail-path">{f.path}</span>
                   </button>
                 ) : (

@@ -127,7 +127,10 @@ async function mount(title: string, r: RunRecord, o: { block?: string | null; an
 
 function RailPortal({ el, activity }: { el: HTMLElement; activity: Activity }) {
   const root = (el as unknown as { _root?: ReturnType<typeof createRoot> })._root || ((el as unknown as { _root?: ReturnType<typeof createRoot> })._root = createRoot(el))
-  queueMicrotask(() => root.render(<ActivityRail activity={activity} onPush={() => void brain.factory.publish(activity.runId)} />))
+  // The workspace passes openFile to every rail; the same handler here.
+  queueMicrotask(() =>
+    root.render(<ActivityRail activity={activity} onPush={() => void brain.factory.publish(activity.runId || '')} openFile={{ open: () => calls.push({ fn: 'openFile', args: [] }), canOpen: () => true }} />)
+  )
   return null
 }
 
@@ -180,6 +183,7 @@ async function main() {
   check('a no raw activity box, no phase rail, no open diff', !a.el.querySelector('.factory-activity, .phaserail') && [...a.el.querySelectorAll('.factory-diff')].every((d) => d.closest('details')))
   check('a rail fed from onActivity equals factoryActivity(run)', JSON.stringify(a.activity()) === JSON.stringify(factoryActivity(a.r, null)))
   const shownPath = a.rail.querySelector<HTMLElement>('.rail-files .rail-path')
+  check('a Factory file rows are not links and keep +N', !a.rail.querySelector('.rail-files button.rail-file') && (a.rail.querySelector('.rail-files .rail-file')?.textContent || '').includes('+'))
   check('a Factory changed files show without a click', !!shownPath && shownPath.offsetHeight > 0 && ['fix.ts', 'src.ts'].includes(shownPath.textContent || '') && !a.rail.querySelector('.rail-fold'))
   check('a rail Ship shows pushed, no Push', (a.rail.querySelector('.rail-ship')?.textContent || '').includes('Pushed 959aaee') && !a.rail.querySelector('.rail-ship button'))
 

@@ -9,6 +9,7 @@ import { nextAction, type ActionState } from '../../src/renderer/src/chat-activi
 type Call = { path: string; args: unknown[] }
 const calls: Call[] = []
 const chatListeners: ((e: unknown) => void)[] = []
+const phoneListeners: ((e: unknown) => void)[] = []
 const opened: string[] = []
 
 /** Any bridge call the page does not name records itself and resolves to an empty answer. */
@@ -18,6 +19,10 @@ function bridge(path: string[]): unknown {
     calls.push({ path: name, args })
     if (name === 'chat.onEvent') {
       chatListeners.push(args[0] as (e: unknown) => void)
+      return () => undefined
+    }
+    if (name === 'phone.onIncoming') {
+      phoneListeners.push(args[0] as (e: unknown) => void)
       return () => undefined
     }
     if (/\.on[A-Z]/.test(name)) return () => undefined
@@ -173,6 +178,26 @@ async function main() {
   emit({ kind: 'error', data: 'the CLI stopped' })
   await tick(80)
   check('(ix) error: idle, no timer', now() === 'Idle. Waiting for your next message.' && !timer(), now())
+
+  // A phone message starts a turn: the last turn's Plan and Done so far go.
+  emit({ kind: 'done' })
+  emit({ kind: 'plan', steps: [{ title: 'Old step', status: 'completed' }] })
+  emit({ kind: 'status', data: 'work:Old action one' })
+  emit({ kind: 'status', data: 'work:Old action two' })
+  emit({ kind: 'done' })
+  await tick()
+  check('(x) before the phone turn the rail holds the old turn', stepRows().length === 1 && logLines().includes('Old action one'), JSON.stringify(logLines()))
+  flushSync(() => phoneListeners.forEach((l) => l({ tabId: ID, text: 'from my phone: check the inbox' })))
+  await tick(80)
+  check('(x) a phone message clears Plan and Done so far', !rail.querySelector('.rail-steps') && !rail.querySelector('.rail-log') && !!rail.querySelector('.rail-now.live'), now())
+  emit({ kind: 'plan', steps: [{ title: 'Read the inbox', status: 'in_progress' }] })
+  emit({ kind: 'status', data: 'work:Read the inbox' })
+  emit({ kind: 'status', data: 'work:Sorted mail' })
+  emit({ kind: 'done' })
+  await tick()
+  await send('/clear')
+  await tick(80)
+  check('(xi) /clear clears Plan and Done so far', !rail.querySelector('.rail-steps') && !rail.querySelector('.rail-log'), `${stepRows().length} ${logLines().length}`)
 
   // nextAction directly.
   let st: ActionState = { log: [] }

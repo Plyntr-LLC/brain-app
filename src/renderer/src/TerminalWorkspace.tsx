@@ -698,6 +698,13 @@ export function ChatPane({
     setBusy(next)
   }
 
+  /** Every new turn (composer, phone, skill, Claude's own, /clear, /home) starts the rail's Plan and Done so far empty. */
+  function freshTurnRail() {
+    setAction({ log: [] })
+    setRailSteps([])
+    setTurnAt(Date.now())
+  }
+
   function reportFiles(files: FileHit[]) {
     onFilesRef.current(id, files)
     setRailFiles(files)
@@ -760,6 +767,7 @@ export function ChatPane({
       }
       markBusy(true)
       setWaitLabel('Working')
+      freshTurnRail()
       turn.current = { think: false, answer: false }
       pinBottom.current = true
       setAtBottom(true)
@@ -855,6 +863,7 @@ export function ChatPane({
       if (ev.kind === 'status' && ev.data === 'turn:auto') {
         markBusy(true)
         setWaitLabel('Picking up background results')
+        freshTurnRail()
         turn.current = { think: false, answer: false }
       }
       // Claude's own turn ended while your message still waits: your answer starts a fresh bubble.
@@ -1225,6 +1234,7 @@ export function ChatPane({
       setMessages([{ who: 'brain', text: greeting }])
       filesRef.current = []
       reportFiles([])
+      freshTurnRail()
       void resetCli()
         .then(() => {
           if (skinOn) setTuiGen((g) => g + 1)
@@ -1415,6 +1425,7 @@ export function ChatPane({
       setMessages([{ who: 'brain', text: greeting }])
       filesRef.current = []
       reportFiles([])
+      freshTurnRail()
       void resetCli()
         .then(() => {
           if (skinOn) setTuiGen((g) => g + 1)
@@ -1701,6 +1712,7 @@ export function ChatPane({
     }
     markBusy(true)
     setWaitLabel('Working')
+    freshTurnRail()
     turn.current = { think: false, answer: false }
     try {
       await window.brain.chat.send({
@@ -1826,9 +1838,7 @@ export function ChatPane({
     reportFiles([])
     markBusy(true)
     setWaitLabel('Working')
-    setAction({ log: [] })
-    setRailSteps([])
-    setTurnAt(Date.now())
+    freshTurnRail()
     turn.current = { think: false, answer: false }
     if (!opts?.fromQueue) {
       pinBottom.current = true
