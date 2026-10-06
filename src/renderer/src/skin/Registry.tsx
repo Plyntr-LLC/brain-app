@@ -1,7 +1,9 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { WorkPulse } from '../WorkPulse'
 import { cleanThink, mdToHtml, stripAnsi } from '../ptyChat'
+import { pasteParts } from '../paste'
 import type { SkinSpec } from '../../../shared/skin/spec'
+import type { Paste } from '../../../shared/saved-msg'
 
 function ThoughtBody({ html, follow }: { html: string; follow: boolean }) {
   const box = useRef<HTMLDivElement>(null)
@@ -26,6 +28,32 @@ function ThoughtBody({ html, follow }: { html: string; follow: boolean }) {
   )
 }
 
+/** Your message with each big paste folded to its token; show opens the paste in place. */
+function PastedText({ text, pastes }: { text: string; pastes: Paste[] }) {
+  const [open, setOpen] = useState<Record<string, boolean>>({})
+  return (
+    <>
+      {pasteParts(text, pastes).map((part, i) =>
+        'paste' in part ? (
+          <span key={i} className="paste-fold">
+            <button
+              type="button"
+              className="paste-label"
+              aria-expanded={open[part.paste.token] === true}
+              onClick={() => setOpen((o) => ({ ...o, [part.paste.token]: !o[part.paste.token] }))}
+            >
+              {part.paste.token} · {open[part.paste.token] ? 'hide' : 'show'}
+            </button>
+            {open[part.paste.token] ? <pre className="paste-body">{part.paste.text}</pre> : null}
+          </span>
+        ) : (
+          <span key={i}>{part.text}</span>
+        )
+      )}
+    </>
+  )
+}
+
 function fileBase(path: string): string {
   return path.replace(/\\/g, '/').split('/').filter(Boolean).pop() || path
 }
@@ -45,7 +73,8 @@ export function SkinCard({
 }) {
   const p = spec.props
   if (spec.component === 'UserMessage') {
-    return <div className="bubble me">{String(p.text || '')}</div>
+    const pastes = Array.isArray(p.pastes) ? (p.pastes as Paste[]) : []
+    return <div className="bubble me">{pastes.length ? <PastedText text={String(p.text || '')} pastes={pastes} /> : String(p.text || '')}</div>
   }
   if (spec.component === 'AgentMessage') {
     const text = stripAnsi(String(p.text || '')).trim()

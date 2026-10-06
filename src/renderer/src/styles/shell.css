@@ -693,6 +693,32 @@
   padding: 0.15rem 0.3rem 0.15rem 0.45rem;
 }
 .chip .tabx { font-size: 0.9rem; padding: 0 0.15rem; }
+.paste-chip { font-weight: 500; }
+.paste-chip .linkish { font-size: 0.78rem; }
+.paste-label {
+  font-family: ui-monospace, Menlo, Monaco, monospace;
+  font-size: 0.82em;
+  color: var(--muted);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+  cursor: pointer;
+}
+.paste-body {
+  display: block;
+  margin: 0.35rem 0;
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, Menlo, Monaco, monospace;
+  font-size: 0.8rem;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.45rem 0.55rem;
+}
 .dropnote {
   grid-column: 1 / -1;
   font-size: 0.78rem;

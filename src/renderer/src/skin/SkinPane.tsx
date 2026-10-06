@@ -3,6 +3,7 @@ import { specFromStreamEvent, userMessageSpec } from '../../../shared/skin/from-
 import { isHiddenStreamKind, isProtocolNoise } from '../../../shared/skin/hidden-kinds'
 import { isSkinComponent } from '../../../shared/skin/catalog'
 import type { SkinSpec } from '../../../shared/skin/spec'
+import type { Paste } from '../../../shared/saved-msg'
 import type { AiKind } from '@shared/contracts'
 import { paintsThreadSpec } from '../../../shared/think-run'
 import { skinActivity, type SkinBgTask } from '../../../shared/agent-label'
@@ -11,7 +12,7 @@ import { SkinCard } from './Registry'
 import { SkinTerm } from './SkinTerm'
 import type { RefObject, UIEventHandler } from 'react'
 
-type Msg = { who: string; text: string; steps?: { title: string; status?: string }[]; rawKind?: string; skinLabel?: string | null }
+type Msg = { who: string; text: string; steps?: { title: string; status?: string }[]; rawKind?: string; skinLabel?: string | null; pastes?: Paste[] }
 
 function protocolJunk(text: string): boolean {
   return isProtocolNoise(text)
@@ -84,7 +85,7 @@ export function SkinPane({
   const [openThink, setOpenThink] = useState<Record<string, boolean>>({})
   const specs: { spec: SkinSpec; thinkKey?: string; thinkLive?: boolean }[] = []
   messages.forEach((m, i) => {
-    if (m.who === 'me' && m.text) specs.push({ spec: userMessageSpec(m.text) })
+    if (m.who === 'me' && m.text) specs.push({ spec: userMessageSpec(m.text, m.pastes) })
     else if (m.who === 'plan' && m.steps?.length) {
       const s = specFromStreamEvent({ kind: 'plan', steps: m.steps })
       if (s) specs.push({ spec: s })

@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { join } from 'node:path'
 import { app } from 'electron'
 import { sameCwd } from '../shared/paths'
+import { toSavedMsgs, type SavedMsg } from '../shared/saved-msg'
 
-export type SavedMsg = { who: 'me' | 'brain' | 'think' | 'sys'; text: string }
+export type { SavedMsg }
 export type SavedTab = {
   id: string
   type: 'chat' | 'file' | 'term' | 'factory' | 'library'
@@ -100,10 +101,7 @@ export function saveChats(state: SavedChats): void {
   mkdirSync(app.getPath('userData'), { recursive: true })
   const messages: Record<string, SavedMsg[]> = {}
   for (const [id, list] of Object.entries(state.messages || {})) {
-    messages[id] = (list || [])
-      .filter((m) => m.who === 'me' || m.who === 'brain' || m.who === 'sys')
-      .slice(-200)
-      .map((m) => ({ who: m.who, text: m.text }))
+    messages[id] = toSavedMsgs(list)
   }
   const tabs = state.tabs.map((t) => ({
     id: t.id,

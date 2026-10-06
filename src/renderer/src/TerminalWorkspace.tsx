@@ -27,6 +27,8 @@ import { isHiddenStreamKind, isProtocolNoise } from '../../shared/skin/hidden-ki
 import { isSkinComponent } from '../../shared/skin/catalog'
 import { appendThought, collapseAdjacentThinks, paintsThreadSpec } from '../../shared/think-run'
 import { CHAT_RULES } from '../../shared/chat-reach'
+import type { Paste } from '../../shared/saved-msg'
+import { expandPastes, isBigPaste, livePastes, nextPasteNumber, pasteLines, pasteSize, pasteToken } from './paste'
 import {
   MEDIA_OPEN_FAIL,
   MEDIA_PLAY_NOTES
@@ -67,8 +69,9 @@ type Msg = {
   rawKind?: string
   skinLabel?: string | null
   fingerprint?: string
+  pastes?: Paste[]
 }
-type Queued = { id: string; text: string; files?: Attach[]; wire?: string }
+type Queued = { id: string; text: string; files?: Attach[]; wire?: string; pastes?: Paste[] }
 
 function wantsStop(text: string): boolean {
   return /^\s*(please\s+)?(just\s+)?(stop|cancel|abort|never mind|nevermind|halt)\b/i.test(text)
@@ -632,6 +635,7 @@ export function ChatPane({
   const [compacting, setCompacting] = useState(false)
   const compactingRef = useRef(false)
   const [drops, setDrops] = useState<Attach[]>([])
+  const [pastes, setPastes] = useState<Paste[]>([])
   const [enterSends, setEnterSends] = useState(true)
   const [showTimes, setShowTimes] = useState(false)
   const [over, setOver] = useState(false)
@@ -641,6 +645,7 @@ export function ChatPane({
   const ctxRef = useRef<{ used?: number; total?: number; percent?: number }>({})
   const [ctx, setCtx] = useState<{ used?: number; total?: number; percent?: number }>({})
   const dropsRef = useRef<Attach[]>([])
+  const pastesRef = useRef<Paste[]>([])
   const pendingDrops = useRef(Promise.resolve())
   const thread = useRef<HTMLDivElement>(null)
   const sayBox = useRef<HTMLTextAreaElement>(null)
@@ -668,7 +673,7 @@ export function ChatPane({
     options?: { id: string; label: string }[]
     requestId?: string
   } | null>(null)
-  const sendTextRef = useRef<(t: string, opts?: { cancel?: boolean; fromQueue?: boolean; files?: Attach[] }) => Promise<void>>(async () => {})
+  const sendTextRef = useRef<(t: string, opts?: { cancel?: boolean; fromQueue?: boolean; files?: Attach[]; pastes?: Paste[] }) => Promise<void>>(async () => {})
   const sendSkillRef = useRef<(display: string, prompt: string, fromQueue?: boolean, files?: Attach[]) => Promise<void>>(async () => {})
   const pinBottom = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
@@ -937,7 +942,7 @@ export function ChatPane({
         if (ev.kind === 'done' && nxt) {
           writeQueue(queueRef.current.slice(1))
           if (nxt.wire) void sendSkillRef.current(nxt.text, nxt.wire, true, nxt.files || [])
-          else void sendTextRef.current(nxt.text, { fromQueue: true, files: nxt.files })
+          else void sendTextRef.current(nxt.text, { fromQueue: true, files: nxt.files, pastes: nxt.pastes })
           return
         }
         markBusy(false)
@@ -1657,12 +1662,17 @@ export function ChatPane({
       return
     }
     setSay('')
-    const line = t.startsWith('/') ? slashLine(t) : t
-    if (await takeSlash(t)) return
+    const held = livePastes(t, pastesRef.current)
+    keepPastes([])
+    // A command gets its pastes written out; a message keeps them folded in the thread.
+    const typed = t.startsWith('/') ? expandPastes(t, held) : t
+    const folded = t.startsWith('/') ? [] : held
+    const line = typed.startsWith('/') ? slashLine(typed) : typed
+    if (await takeSlash(typed)) return
     if (busy && wantsStop(line)) {
       await stop()
       if (justStop(line)) return
-      await sendText(line)
+      await sendText(line, { pastes: folded })
       return
     }
     if (busy) {
@@ -1671,11 +1681,11 @@ export function ChatPane({
       setDrops([])
       writeQueue([
         ...queueRef.current,
-        { id: crypto.randomUUID(), text: line, files: attached.length ? attached : undefined }
+        { id: crypto.randomUUID(), text: line, files: attached.length ? attached : undefined, pastes: folded.length ? folded : undefined }
       ])
       return
     }
-    await sendText(line)
+    await sendText(line, { pastes: folded })
   }
 
   async function sendNow(qid: string) {
@@ -1691,7 +1701,7 @@ export function ChatPane({
       await sendSkill(item.text, item.wire, true, item.files || [])
       return
     }
-    await sendTextRef.current(item.text, { fromQueue: true, files: item.files || [], cancel: busyRef.current })
+    await sendTextRef.current(item.text, { fromQueue: true, files: item.files || [], cancel: busyRef.current, pastes: item.pastes })
   }
 
   function editQueued(qid: string) {
@@ -1699,6 +1709,7 @@ export function ChatPane({
     if (!item) return
     writeQueue(queueRef.current.filter((q) => q.id !== qid))
     setSay(item.text)
+    keepPastes(item.pastes || [])
     if (item.files?.length) {
       dropsRef.current = item.files
       setDrops(item.files)
@@ -1735,6 +1746,31 @@ export function ChatPane({
       setCompacting(false)
       setMessages((m) => [...m, { who: 'brain', text: String((e as Error).message || e) }])
     }
+  }
+
+  function keepPastes(next: Paste[]) {
+    pastesRef.current = next
+    setPastes(next)
+  }
+
+  /** Types at the caret through the browser, so one undo takes it back out. */
+  function insertAtCaret(box: HTMLTextAreaElement, text: string) {
+    box.focus()
+    if (document.execCommand('insertText', false, text)) return
+    const at = box.selectionStart
+    const next = box.value.slice(0, at) + text + box.value.slice(box.selectionEnd)
+    setSay(next)
+    requestAnimationFrame(() => box.setSelectionRange(at + text.length, at + text.length))
+  }
+
+  function expandPaste(p: Paste) {
+    setSay((s) => s.replace(p.token, () => p.text))
+    keepPastes(pastesRef.current.filter((x) => x !== p))
+  }
+
+  function dropPaste(p: Paste) {
+    setSay((s) => s.split(p.token).join(''))
+    keepPastes(pastesRef.current.filter((x) => x !== p))
   }
 
   function takeFiles(list: FileList | File[] | null) {
@@ -1813,8 +1849,10 @@ export function ChatPane({
     reportFiles(next)
   }
 
-  async function sendText(t: string, opts?: { cancel?: boolean; fromQueue?: boolean; files?: Attach[] }) {
+  async function sendText(t: string, opts?: { cancel?: boolean; fromQueue?: boolean; files?: Attach[]; pastes?: Paste[] }) {
     await pendingDrops.current
+    const folded = livePastes(t, opts?.pastes || [])
+    const wire = expandPastes(t, folded)
     const route = routeLine(t, { peel: skinOn && peel })
     if (route === 'pty') {
       const attached = opts?.fromQueue ? opts.files || [] : opts?.files || dropsRef.current
@@ -1824,14 +1862,14 @@ export function ChatPane({
         setDropNote('')
       }
       if (opts?.cancel) await ctrlC()
-      const shown = attached.length ? `${t}${t ? '\n' : ''}${attached.map((a) => a.path).join('\n')}` : t
+      const shown = attached.length ? `${wire}${wire ? '\n' : ''}${attached.map((a) => a.path).join('\n')}` : wire
       if (shown) await window.brain.pty.write(skinPtyId(id), shown + '\r')
       return
     }
     if (t.trim().startsWith('/')) setPeel(false)
     if (opts?.cancel && busyRef.current) await stopWarm()
     if (busyRef.current && !opts?.fromQueue && !opts?.cancel) {
-      writeQueue([...queueRef.current, { id: crypto.randomUUID(), text: t, files: opts?.files }])
+      writeQueue([...queueRef.current, { id: crypto.randomUUID(), text: t, files: opts?.files, pastes: folded.length ? folded : undefined }])
       return
     }
     filesRef.current = []
@@ -1851,11 +1889,11 @@ export function ChatPane({
       setDropNote('')
     }
     const shown = attached.length ? `${t}${t ? '\n' : ''}${attached.map((a) => a.name).join(', ')}` : t
-    setMessages((m) => [...m, { who: 'me', text: shown, files: attached, at: Date.now() }])
+    setMessages((m) => [...m, { who: 'me', text: shown, files: attached, at: Date.now(), ...(folded.length ? { pastes: folded } : {}) }])
     try {
       await window.brain.chat.send({
         tabId: id,
-        text: t,
+        text: wire,
         kind,
         cwd,
         sessionId,
@@ -2178,9 +2216,17 @@ export function ChatPane({
           }}
           onPaste={(e) => {
             const files = collectFiles(e.clipboardData)
-            if (!files.length) return
-            takeFiles(files)
-            if (!e.clipboardData?.getData('text/plain')) e.preventDefault()
+            if (files.length) {
+              takeFiles(files)
+              if (!e.clipboardData?.getData('text/plain')) e.preventDefault()
+              return
+            }
+            const text = e.clipboardData?.getData('text/plain') || ''
+            if (!isBigPaste(text)) return
+            e.preventDefault()
+            const token = pasteToken(nextPasteNumber(pastesRef.current), pasteLines(text))
+            keepPastes([...pastesRef.current, { token, text }])
+            insertAtCaret(e.currentTarget, token)
           }}
           onKeyDown={(e) => {
             if (matches.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
@@ -2236,6 +2282,26 @@ export function ChatPane({
           <button className="primary" type="button" onClick={() => void send()}>
             Send
           </button>
+        )}
+        {livePastes(say, pastes).length > 0 && (
+          <div className="attachrow pasterow">
+            {livePastes(say, pastes).map((p) => {
+              const lines = pasteLines(p.text)
+              return (
+                <span className="chip paste-chip" key={p.token} title={p.token}>
+                  <span className="paste-chip-label">
+                    Pasted text {/#\d+/.exec(p.token)?.[0]} · {pasteSize(p.text)} · {lines} {lines === 1 ? 'line' : 'lines'}
+                  </span>
+                  <button type="button" className="linkish" onClick={() => expandPaste(p)}>
+                    Expand
+                  </button>
+                  <button type="button" className="tabx" onClick={() => dropPaste(p)} aria-label="Remove paste">
+                    ×
+                  </button>
+                </span>
+              )
+            })}
+          </div>
         )}
       </div>
     </div>

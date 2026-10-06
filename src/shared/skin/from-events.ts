@@ -1,5 +1,6 @@
 import { actionRisk, type SkinComponentId } from './catalog.ts'
 import type { SkinAction, SkinInEvent, SkinSpec } from './spec.ts'
+import type { Paste } from '../saved-msg.ts'
 
 let seq = 0
 function nid(prefix: string): string {
@@ -128,11 +129,11 @@ export function specFromStreamEvent(ev: SkinInEvent): SkinSpec | null {
   }
 }
 
-export function userMessageSpec(text: string): SkinSpec {
+export function userMessageSpec(text: string, pastes?: Paste[]): SkinSpec {
   return {
     id: nid('user'),
     component: 'UserMessage',
-    props: { text },
+    props: pastes?.length ? { text, pastes } : { text },
     actions: [],
     source: 'send'
   }
