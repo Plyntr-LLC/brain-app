@@ -201,6 +201,21 @@ async function main() {
   )
   const waitingCard = plan.el.querySelector<HTMLDetailsElement>('[data-role="planner"] details.fcard')
   check('b the plan to approve is open in the thread', !!waitingCard?.open && (waitingCard.querySelector('.fcard-body') as HTMLElement).offsetHeight > 0 && (waitingCard.textContent || '').includes('Files: nav.ts'))
+  const longText = `Files: big.ts\n${'step '.repeat(1400)}`
+  const longPlan = await mount(
+    'b. long plan waiting',
+    run({
+      phase: 'plan',
+      plan: { text: longText, by: 'opus', status: 'waiting', rejects: 0, reasons: [] },
+      events: [
+        { at: now + 4, kind: 'plan', status: 'waiting', by: 'opus', text: 'Files: first.ts' },
+        { at: now + 5, kind: 'plan', status: 'waiting', by: 'opus', text: longText.slice(0, 6000) }
+      ]
+    })
+  )
+  const longCards = [...longPlan.el.querySelectorAll<HTMLDetailsElement>('[data-role="planner"] details.fcard')]
+  check('b a 7000-character waiting plan opens with all of it', longText.length > 7000 && !!longCards[1]?.open && (longCards[1].querySelector('.fcard-body')?.textContent || '').length === longText.length)
+  check('b the earlier plan stays folded', !!longCards[0] && !longCards[0].open)
   const oldPlan = await mount('b. plan, saved before events', run({ phase: 'plan', plan: { text: 'Files: old.ts', by: 'opus', status: 'waiting', rejects: 0, reasons: [] } }))
   check('b a waiting plan with no timeline is open too', !!oldPlan.el.querySelector<HTMLDetailsElement>('[data-role="planner"] details.fcard')?.open)
   check('b Approve plan', same(await click(plan.el, 'Approve plan'), 'decide', plan.r.id, 'approve-plan'))

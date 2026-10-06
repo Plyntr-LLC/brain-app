@@ -35,10 +35,10 @@ function testCard(rows: VerifyRow[]): Pick<ThreadItem, 'text' | 'meta' | 'body' 
   return { text, meta, body, tone: fail.length ? 'fail' : ran ? 'ok' : 'info' }
 }
 
-/** The plan waiting on Joe's Approve stays open, however long; every other plan folds. */
-const waitingNow = (run: RunRecord, text: string) => run.phase === 'plan' && run.plan?.status === 'waiting' && run.plan.text === text
+/** The plan waiting on Joe's Approve stays open, with its full text; every other plan folds. */
+const waiting = (run: RunRecord) => run.phase === 'plan' && run.plan?.status === 'waiting' && !!run.plan.text
 
-function fromEvent(e: RunEvent, i: number, run: RunRecord): ThreadItem {
+function fromEvent(e: RunEvent, i: number, run: RunRecord, lastPlan: number): ThreadItem {
   const key = `e${i}`
   switch (e.kind) {
     case 'repo':
@@ -50,9 +50,9 @@ function fromEvent(e: RunEvent, i: number, run: RunRecord): ThreadItem {
         role: 'planner',
         text: e.status === 'approved' ? 'Plan approved' : 'Plan ready',
         meta: e.by === 'opus' ? 'Opus' : 'Grok',
-        body: e.text || undefined,
         tone: e.status === 'approved' ? 'ok' : 'info',
-        ...(e.status === 'waiting' && waitingNow(run, e.text) ? { open: true } : {})
+        // The newest plan event is the plan on screen: its event text is cut at 6000, run.plan has it all.
+        ...(i === lastPlan && e.status === 'waiting' && waiting(run) ? { open: true, body: run.plan?.text } : { body: e.text || undefined })
       }
     case 'turn':
       return {
@@ -105,7 +105,7 @@ function fromFields(run: RunRecord): ThreadItem[] {
       meta: run.plan.by === 'opus' ? 'Opus' : 'Grok',
       body: run.plan.text,
       tone: run.plan.status === 'approved' ? 'ok' : 'info',
-      ...(waitingNow(run, run.plan.text) ? { open: true } : {})
+      ...(waiting(run) ? { open: true } : {})
     })
   }
   const work = run.audit?.work || []
@@ -132,7 +132,9 @@ function fromFields(run: RunRecord): ThreadItem[] {
  * line Joe just sent (pending) is always last, with the reply streaming under it.
  */
 export function threadItems(run: RunRecord, pending: Outgoing | null): ThreadItem[] {
-  const team = run.events?.length ? run.events.map((e, i) => fromEvent(e, i, run)) : fromFields(run)
+  const events = run.events || []
+  const lastPlan = events.map((e) => e.kind).lastIndexOf('plan')
+  const team = events.length ? events.map((e, i) => fromEvent(e, i, run, lastPlan)) : fromFields(run)
   const saved = run.guide || []
   const talk: ThreadItem[] = []
   saved.forEach((g, i) => {
