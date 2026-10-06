@@ -413,11 +413,22 @@ function noteNamesRepo(text: string, repo: string): boolean {
   return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`, 'i').test(text)
 }
 
-/** A path or an exact folder name in the sentence. A unique prefix is not enough. */
+/** A path, an exact folder name, or a folder's title in the sentence. A unique prefix is not enough. */
 function exactNamedRepo(state: Live, text: string): string {
-  const found = resolveWorkRepo({ task: text, brainPath: state.run.brainPath, projectsDir: deps?.projectsDir, aliases: false })
+  const found = resolveWorkRepo({ task: text, brainPath: state.run.brainPath, projectsDir: deps?.projectsDir, aliases: 'title' })
   if (!found.ok) return ''
-  return noteNamesRepo(text, found.workRepo) ? found.workRepo : ''
+  return found.from === 'title' || noteNamesRepo(text, found.workRepo) ? found.workRepo : ''
+}
+
+/** The repo a sentence names exactly, for the conductor's restart door. '' when it names none. */
+export function namedRepoFor(id: string, text: string): string {
+  return exactNamedRepo(liveFor(id), String(text || ''))
+}
+
+/** The repo the run's task names, or '' when it names none. */
+export function taskRepoOf(run: RunRecord): string {
+  const found = resolveWorkRepo({ task: run.task, brainPath: run.brainPath, projectsDir: deps?.projectsDir })
+  return found.ok ? found.workRepo : ''
 }
 
 /**
@@ -444,8 +455,8 @@ function reconcileWorkRepo(state: Live): 'go' | 'stop' {
     if (g.ask) return g.repo === undefined ? { ...g, repo: '' } : g
     if (g.repo !== undefined) return g
     pinned = true
-    // A note moves the run by a path or a folder name, never by a README or package.json word.
-    const found = resolveWorkRepo({ task: g.text, brainPath: run.brainPath, projectsDir: deps?.projectsDir, ignore, aliases: false })
+    // A note moves the run by a path, a folder name, or a folder's title, never by a README or package.json word.
+    const found = resolveWorkRepo({ task: g.text, brainPath: run.brainPath, projectsDir: deps?.projectsDir, ignore, aliases: 'title' })
     return { ...g, repo: found.ok ? found.workRepo : '' }
   })
   if (pinned) {
@@ -1671,8 +1682,8 @@ export type Actor = { by?: 'joe'; ship?: boolean }
 /** Sentences from the run. A conductor failure never becomes the bubble. */
 export function explainRun(run: RunRecord): string {
   const looked = run.workRepo || ''
-  const found = resolveWorkRepo({ task: run.task, brainPath: run.brainPath, projectsDir: deps?.projectsDir })
-  const named = found.ok && realish(found.workRepo) !== realish(looked) ? found.workRepo : ''
+  const found = taskRepoOf(run)
+  const named = found && realish(found) !== realish(looked) ? found : ''
   const bits = [`The run is ${run.phase}.`]
   if (run.error) bits.push(run.error)
   if (looked) bits.push(`It is looking in ${looked}.`)
@@ -1702,11 +1713,14 @@ export function queueInject(id: string, text: string): RunRecord {
   return persist(state)
 }
 
-/** A conductor answer. Sent, so the next builder brief does not carry it, and it never chooses a repo. */
-export function appendSentNote(id: string, text: string, ack: string): RunRecord {
+/**
+ * A conductor answer. Sent, so the next builder brief does not carry it. It chooses a repo only when
+ * the restart door passes the one Joe named.
+ */
+export function appendSentNote(id: string, text: string, ack: string, repo = ''): RunRecord {
   const state = liveFor(id)
   const body = String(text || '').trim().slice(0, GUIDE_CHARS)
-  const note: GuideNote = { at: Date.now(), text: body, sent: true, repo: '', ask: true, ack: String(ack || '').slice(0, 2000) }
+  const note: GuideNote = { at: Date.now(), text: body, sent: true, repo, ask: !repo, ack: String(ack || '').slice(0, 2000) }
   state.run = { ...state.run, guide: [...(state.run.guide || []), note].slice(-GUIDE_MAX) }
   return persist(state)
 }

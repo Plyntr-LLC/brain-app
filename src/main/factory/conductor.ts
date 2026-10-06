@@ -1,6 +1,7 @@
 /**
- * Factory composer. Exact doors run in the app. A question goes to one Grok session for this run.
- * That session watches the run. It talks to the builder only when Joe asks to add or redirect.
+ * Factory composer. Doors run in the app; case and closing punctuation do not matter, and a paused run
+ * restarts on Joe's own words. Everything else goes to one Grok session for this run, one answer at a
+ * time. That session watches the run. Its TELL reaches the builder when Joe's sentence is not a question.
  */
 
 import type { RunRecord } from '../../shared/factory.ts'
@@ -11,6 +12,7 @@ import {
   getRun,
   guideRun,
   holdName,
+  namedRepoFor,
   pauseRun,
   queueInject,
   resumeRun,
@@ -18,19 +20,31 @@ import {
   setRunOverride,
   shipRun,
   statusReport,
+  taskRepoOf,
   type Decision,
   type OverrideBoundary
 } from './controller.ts'
+import { currentBranch } from './git-audit.ts'
+import { realish } from './paths.ts'
 import { TERMINAL_PHASES } from './run-store.ts'
 
 const NOT_SENT = 'I did not send that to the factory.'
+const NO_ANSWER = 'I could not get an answer, so nothing was sent to the run.'
+const TASK_CHARS = 1500
 const warmed = new Set<string>()
 
 export function conductorPrompt(run: RunRecord, text: string): string {
   const guide = (run.guide || []).map((g) => ({ text: g.text, ack: g.ack || '', sent: !!g.sent }))
+  const branch = run.workRepo ? currentBranch(run.workRepo) || '' : ''
   return [
     'You watch this factory run. Answer Joe in sentences using the card below. Do not edit files. Do not set the phase.',
-    'If Joe asked to add, change, redirect, or instead do something, end with one line FACTORY_TELL: and the instruction. Otherwise do not write FACTORY_TELL.',
+    'Answer from this card. Do not run commands or open files.',
+    'If Joe asked to add, change, redirect, restart, or instead do something, end with one line FACTORY_TELL: and the instruction. To move the run to another repo, the instruction names its full path. Otherwise do not write FACTORY_TELL.',
+    'A push to a branch a host builds (Vercel, Railway, Netlify) can deploy it. Never say a push will not deploy.',
+    `workRepo: ${run.workRepo}`,
+    `taskRepo: ${taskRepoOf(run)}`,
+    `task: ${JSON.stringify(String(run.task || '').slice(0, TASK_CHARS))}`,
+    `shipThrough: ${run.shipThrough ? `on, Brain pushes ${branch || 'this branch'} after a clean Opus review` : 'off'}`,
     `phase: ${run.phase}`,
     `tier: ${run.tier}`,
     `risk: ${run.risk}`,
@@ -53,20 +67,36 @@ type Intent = 'ask' | 'inject' | 'ship' | 'pause' | 'resume' | 'review-on' | 're
 
 const INJECT_RE = /we forgot|add it to the run|add this to the (?:run|plan)|put this in the (?:run|plan)|guide the run/i
 const CHANGE_RE = /\b(add|change|redirect|instead)\b/i
+// Joe's words for "start it again" (run-ae98e1f8: unpause, restart, get it started).
+const RESTART_RE =
+  /\b(?:resum(?:e|ed|ing)|un-?paus(?:e|ed|ing)|re-?start(?:ed|ing)?|start (?:it|this|the run|this run)(?: (?:again|over|up))?|get (?:it|this|the run|this run) (?:started|going|moving|running)|kick (?:it|this|the run|this run) off)\b/i
+
+/** Case, spacing, and closing punctuation do not matter: "Resume this run" is the Resume door. */
+function doorKey(text: string): string {
+  return text.trim().replace(/[\s.!?]+$/, '').toLowerCase()
+}
+
+const DOORS = new Map<string, Intent>(
+  (
+    [
+      ['Continue fixing and running the review until approval', 'review-on'],
+      ['Continue the voice fixes until voice approves', 'voice-on'],
+      ['Continue past the tier stop', 'tier-on'],
+      ['Proceed past this hold', 'proceed-on'],
+      ['Stop', 'review-off'],
+      ["Let's get this live", 'ship'],
+      ['Approve the plan.', 'approve-plan'],
+      ['Pause this run.', 'pause'],
+      ['Resume this run.', 'resume']
+    ] as const
+  ).map(([text, intent]) => [doorKey(text), intent])
+)
 
 /** The sentence picks the door. The model does not. */
 export function conductorIntent(text: string): Intent {
-  const t = text.trim()
-  if (t === 'Continue fixing and running the review until approval') return 'review-on'
-  if (t === 'Continue the voice fixes until voice approves') return 'voice-on'
-  if (t === 'Continue past the tier stop') return 'tier-on'
-  if (t === 'Proceed past this hold') return 'proceed-on'
-  if (t === 'Stop') return 'review-off'
-  if (t === "Let's get this live") return 'ship'
-  if (t === 'Approve the plan.') return 'approve-plan'
-  if (t === 'Pause this run.') return 'pause'
-  if (t === 'Resume this run.') return 'resume'
-  if (INJECT_RE.test(t)) return 'inject'
+  const door = DOORS.get(doorKey(text))
+  if (door) return door
+  if (INJECT_RE.test(text)) return 'inject'
   return 'ask'
 }
 
@@ -75,6 +105,11 @@ export function questionOnly(text: string): boolean {
   const t = text.trim()
   const q = /\?$/.test(t) || /^(how|what|why|when|is|are)\b/i.test(t)
   return q && !CHANGE_RE.test(t)
+}
+
+/** A paused or failed run, and a sentence (not a question) that asks to start it again. */
+function restartAsk(run: RunRecord, text: string): boolean {
+  return (run.phase === 'paused' || run.phase === 'failed') && RESTART_RE.test(text) && !questionOnly(text)
 }
 
 function orchTab(id: string): string {
@@ -107,29 +142,57 @@ function splitTell(raw: string): { prose: string; tell: string } {
   return { prose: kept.join('\n').trim(), tell }
 }
 
-function wantsChange(text: string): boolean {
-  return CHANGE_RE.test(text) && !questionOnly(text)
+// One answer at a time per run: a second prompt on the -orch tab would cancel the first (real ACP).
+const lanes = new Map<string, Promise<unknown>>()
+
+function inLane<T>(id: string, job: () => Promise<T>): Promise<T> {
+  const next = (lanes.get(id) || Promise.resolve()).catch(() => undefined).then(job)
+  lanes.set(id, next)
+  return next
 }
 
-async function answer(id: string, body: string, run: RunRecord): Promise<RunRecord> {
-  const prompt = conductorPrompt(run, body)
+/** A question gets an answer. Anything else that the model turned into a TELL goes to the run. */
+async function answer(id: string, body: string): Promise<RunRecord> {
+  const run = getRun(id)
+  if (!run) throw new Error('That Factory run is gone.')
   let raw = ''
   try {
-    raw = await talk(run, prompt)
+    raw = await talk(run, conductorPrompt(run, body))
   } catch {
     raw = ''
   }
   const { prose, tell } = splitTell(raw)
   const current = getRun(id) || run
-  if (!prose) return appendSentNote(id, body, statusReport(current))
-  const deliver = !!tell && wantsChange(body)
-  if (!deliver) {
-    const ack = wantsChange(body) ? `${prose} ${NOT_SENT}` : prose
-    return appendSentNote(id, body, ack)
+  const question = questionOnly(body)
+  if (tell && !question) {
+    if (current.phase === 'paused') return queueInject(id, tell)
+    const sent = guideRun(id, tell)
+    return prose ? rewriteGuideAck(id, tell, prose) : sent
   }
-  if (current.phase === 'paused') return queueInject(id, tell)
-  guideRun(id, tell)
-  return rewriteGuideAck(id, tell, prose)
+  if (!prose) return appendSentNote(id, body, question ? statusReport(current) : `${NO_ANSWER} The run is ${current.phase} in ${current.workRepo}.`)
+  return appendSentNote(id, body, question && !tell ? prose : `${prose} ${NOT_SENT}`)
+}
+
+/** Resume, after a move to the repo the sentence names. The reply says where it runs, or why it did not move. */
+function restartDoor(id: string, body: string): RunRecord {
+  const before = getRun(id)
+  const named = namedRepoFor(id, body)
+  appendSentNote(id, body, '', named)
+  let after: RunRecord
+  try {
+    after = resumeRun(id)
+  } catch (e) {
+    return rewriteGuideAck(id, body, String((e as Error).message || e))
+  }
+  const moved = !!before && realish(after.workRepo) !== realish(before.workRepo)
+  const ack = after.needsPrep
+    ? `Moved to ${after.workRepo}. It has uncommitted changes: choose Commit first or Stash first.`
+    : after.error && after.phase === 'paused'
+      ? after.error
+      : moved
+        ? `Moved to ${after.workRepo} and resumed.`
+        : `Resumed in ${after.workRepo}.`
+  return rewriteGuideAck(id, body, ack)
 }
 
 async function runDoor(id: string, intent: Intent, body: string): Promise<RunRecord> {
@@ -160,7 +223,10 @@ async function runDoor(id: string, intent: Intent, body: string): Promise<RunRec
   return appendSentNote(id, body, fallback)
 }
 
-/** One composer send. A question answers from the run. Only add-to-the-run language, or a TELL, files a note. */
+/**
+ * One composer send. Doors (pause, resume, restart, ship, overrides, add-to-the-run) act at once. A
+ * question answers from the run. Anything else asks the run's chat, and a TELL from it goes to the run.
+ */
 export async function conduct(id: string, text: string): Promise<RunRecord> {
   const body = String(text || '').trim()
   if (!body) throw new Error('Type a note first.')
@@ -170,7 +236,8 @@ export async function conduct(id: string, text: string): Promise<RunRecord> {
   const intent = conductorIntent(body)
   if (intent === 'inject') return queueInject(id, body)
   if (intent !== 'ask') return runDoor(id, intent, body)
-  return answer(id, body, run)
+  if (restartAsk(run, body)) return restartDoor(id, body)
+  return inLane(id, () => answer(id, body))
 }
 
 export type { Decision, OverrideBoundary }

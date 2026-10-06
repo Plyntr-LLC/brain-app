@@ -504,7 +504,7 @@ test('conductor drives the factory from the guide box', async () => {
   assert.equal(editNote?.sent, true)
   assert.equal(editNote?.ask, true)
   assert.equal(editNote?.repo, '')
-  assert.equal(editNote?.ack, replyFromCard(lastPrompt))
+  assert.equal(editNote?.ack, `${replyFromCard(lastPrompt)} I did not send that to the factory.`)
   assert.notEqual(editNote?.ack, EDIT_REPLY)
   assert.equal(factoryGen(activeId), editGen)
   assert.equal(prompts.length, beforeEdit)
@@ -937,7 +937,14 @@ test('conductor drives the factory from the guide box', async () => {
 
 test('Joe 2026-10-06 run-ae98e1f8: the conductor restarts in the right repo when Joe says so', async () => {
   const mods = await loaded
+  conduct = mods.conductor.conduct
+  configureFactory = mods.controller.configureFactory
+  startRun = mods.controller.startRun
+  getRun = mods.controller.getRun
+  factoryGen = mods.controller.factoryGen
+  dropMemory = mods.controller.dropMemory
   abandonRun = mods.controller.abandonRun
+  mods.store.setUserDataDir(() => userData)
   const lotProjects = join(temp, 'lot-projects')
   mkdirSync(lotProjects, { recursive: true })
   const folder = (name: string, files: Record<string, string>): string => {
@@ -1038,6 +1045,8 @@ test('Joe 2026-10-06 run-ae98e1f8: the conductor restarts in the right repo when
   orchMode = 'card'
   assert.ok(ackOf(two, 'the header is wrong').startsWith('I could not get an answer, so nothing was sent to the run.'), ackOf(two, 'the header is wrong'))
 
+  const LANE = 'Two reviews so far.'
+  orchReply = LANE
   orchHeld = []
   const before = orchCalls()
   const first = conduct(two, 'how many reviews so far?')
@@ -1049,7 +1058,7 @@ test('Joe 2026-10-06 run-ae98e1f8: the conductor restarts in the right repo when
   await until(() => orchCalls() === before + 2 && (orchHeld?.length || 0) === 1, 'second answer asked')
   orchHeld.shift()?.()
   await Promise.all([first, second])
-  for (const q of ['how many reviews so far?', 'what phase is it in?']) assert.ok(ackOf(two, q).startsWith('Strict rejects:'), `${q}: ${ackOf(two, q)}`)
+  for (const q of ['how many reviews so far?', 'what phase is it in?']) assert.equal(ackOf(two, q), LANE, q)
   const held = conduct(two, 'what is it doing now?')
   await until(() => (orchHeld?.length || 0) === 1, 'held answer')
   await conduct(two, PAUSE)
@@ -1057,11 +1066,14 @@ test('Joe 2026-10-06 run-ae98e1f8: the conductor restarts in the right repo when
   orchHeld.shift()?.()
   await held
   orchHeld = null
+  orchReply = null
   orchMode = 'throw'
   await conduct(two, 'how far along is it?')
   orchMode = 'card'
+  orchReply = LANE
   await conduct(two, 'how far along now?')
-  assert.ok(ackOf(two, 'how far along now?').startsWith('Strict rejects:'), ackOf(two, 'how far along now?'))
+  orchReply = null
+  assert.equal(ackOf(two, 'how far along now?'), LANE)
 
   const three = start('fix typo in footer', lot)
   const throwOut = 'so throw it all out and then restart in the lotline repo for crying out loud'

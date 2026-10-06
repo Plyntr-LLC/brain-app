@@ -7,15 +7,15 @@ import { factoryDir } from './run-store.ts'
 
 /**
  * Factory picks the work repo from the task, never a folder picker: a path in the task, then a
- * ~/Projects/<name> folder named in the task (exact, then one of its names), then what a folder's
- * README or package.json calls it, then the last Factory work repo (only when the task names no
- * topic of its own). Never the brain.
+ * ~/Projects/<name> folder named in the task exactly, then a folder's title (its README heading or
+ * package name, as one word), then one of its names, then what a folder's README or package.json
+ * says, then the last Factory work repo (only when the task names no topic of its own). Never the brain.
  */
 
 export const NAME_THE_REPO = 'Name the code repo in the task (a path or the Projects folder name). Factory does not edit the brain.'
 export const BRAIN_IS_WORK = 'That repo is the brain itself. Factory does not edit the brain. Name the code repo in the task.'
 
-export type RepoFrom = 'given' | 'path' | 'project' | 'name' | 'last'
+export type RepoFrom = 'given' | 'path' | 'project' | 'title' | 'name' | 'last'
 export type ResolvedRepo = { ok: true; workRepo: string; from: RepoFrom } | { ok: false; error: string }
 
 export type ResolveInput = {
@@ -31,8 +31,11 @@ export type ResolveInput = {
   gitTop?: (p: string) => string
   /** Repo basenames a word only mentions, not chooses (the current and last work repo on a Guide note). */
   ignore?: string[]
-  /** README and package.json words may pick a repo. Default on. Guide notes turn it off: "needs" in a README is not a repo. */
-  aliases?: boolean
+  /**
+   * true (default): titles and README/package.json words may pick a repo. 'title': titles only, for
+   * Guide notes ("LotOffice" names lotline, "needs" in a README does not). false: neither.
+   */
+  aliases?: boolean | 'title'
 }
 
 const PATH_RE = /(?:^|[\s"'`(<[=:,])((?:~|\/)[^\s"'`<>()[\]{},;]+)/g
@@ -130,7 +133,8 @@ function nameHit(tok: string, names: string[], ok: (name: string) => boolean): s
 const ALIAS_CAP = 80
 const ALIAS_BYTES = 8 * 1024
 const ALIAS_TTL_MS = 30_000
-let aliasCache: { dir: string; at: number; map: Map<string, string[]> } | null = null
+type Alias = { words: string[]; titles: string[] }
+let aliasCache: { dir: string; at: number; map: Map<string, Alias> } | null = null
 
 function smallText(file: string): string {
   try {
@@ -141,14 +145,21 @@ function smallText(file: string): string {
   }
 }
 
-/** README first heading + first 80 words, package.json name + description: the names Chat would know. */
-function aliasWords(dir: string): string[] {
+/**
+ * README first heading + first 80 words, package.json name + description: the names Chat would know.
+ * Titles are the heading (cut at "(", ":", " - ", "|" or a long dash) and the package name without
+ * its @scope, each folded whole: `# LotOffice` is lotoffice.
+ */
+function aliasWords(dir: string): Alias {
   const out: string[] = []
+  const titles: string[] = []
   let pkg = smallText(join(dir, 'package.json'))
   if (pkg) {
     try {
       const j = JSON.parse(pkg) as { name?: unknown; description?: unknown }
-      pkg = `${typeof j.name === 'string' ? j.name : ''} ${typeof j.description === 'string' ? j.description : ''}`
+      const name = typeof j.name === 'string' ? j.name : ''
+      titles.push(fold(name.replace(/^@[^/]+\//, '')))
+      pkg = `${name} ${typeof j.description === 'string' ? j.description : ''}`
     } catch {
       pkg = ''
     }
@@ -157,21 +168,24 @@ function aliasWords(dir: string): string[] {
   const readme = smallText(join(dir, 'README.md')) || smallText(join(dir, 'README'))
   if (readme) {
     const heading = readme.split('\n').find((l) => /^\s*#/.test(l)) || ''
+    titles.push(fold(heading.replace(/^\s*#+/, '').split(/\(|:|\s-\s|\||\u2013|\u2014/)[0]))
     const words = readme.split(/\s+/).filter(Boolean).slice(0, 80).join(' ')
     out.push(...taskTokens(`${heading} ${words}`))
   }
-  return [...new Set(out)]
+  return { words: [...new Set(out)], titles: [...new Set(titles)] }
 }
 
 /**
- * Folder -> alias words, cached per projectsDir and brain for 30s: intake resolves on every keystroke.
- * Reads at most 80 git folders that are not the brain, words or not.
+ * Folder -> alias words and titles, cached per projectsDir and brain for 30s: intake resolves on every
+ * keystroke. Reads at most 80 git folders that are not the brain, words or not. A title under 4
+ * letters, or one that is a piece of any folder name (`# Brain`, package `lotline`), is not a title.
  */
-function aliasMap(projects: string, names: string[], brain: string): Map<string, string[]> {
+function aliasMap(projects: string, names: string[], brain: string): Map<string, Alias> {
   const now = Date.now()
   const key = `${projects}\n${brain}`
   if (aliasCache && aliasCache.dir === key && now - aliasCache.at < ALIAS_TTL_MS) return aliasCache.map
-  const map = new Map<string, string[]>()
+  const pieces = new Set(names.flatMap((n) => n.split(/[-_.]+/).map(fold)))
+  const map = new Map<string, Alias>()
   let read = 0
   for (const name of names) {
     if (read >= ALIAS_CAP) break
@@ -179,24 +193,42 @@ function aliasMap(projects: string, names: string[], brain: string): Map<string,
     // A git folder that is not the brain (checked again, with gitTop, at match time).
     if (!existsSync(join(dir, '.git')) || realish(dir) === brain) continue
     read++
-    const words = aliasWords(dir)
-    if (words.length) map.set(name, words)
+    const alias = aliasWords(dir)
+    const titles = alias.titles.filter((t) => t.length >= 4 && !pieces.has(t))
+    if (alias.words.length || titles.length) map.set(name, { words: alias.words, titles })
   }
   aliasCache = { dir: key, at: now, map }
   return map
 }
 
 /** One task word against folder aliases: fold exact, then unique prefix, then unique contains. */
-function aliasHit(tok: string, aliases: Map<string, string[]>, ok: (name: string) => boolean): string {
+function aliasHit(tok: string, aliases: Map<string, Alias>, ok: (name: string) => boolean): string {
   const ft = fold(tok)
   if (!ft) return ''
   const steps: ((fw: string) => boolean)[] = [(fw) => fw === ft, (fw) => fw.startsWith(ft), (fw) => fw.includes(ft)]
   for (const step of steps) {
-    const hits = [...aliases].filter(([, words]) => words.some((w) => step(fold(w)))).map(([n]) => n).filter(ok)
+    const hits = [...aliases].filter(([, a]) => a.words.some((w) => step(fold(w)))).map(([n]) => n).filter(ok)
     if (hits.length === 1) return hits[0]
     if (hits.length > 1) return ''
   }
   return ''
+}
+
+/** Folder -> titles under projectsDir, as the resolver sees them (scripts/factory-repo-probe.ts). */
+export function folderTitles(projects: string, brainPath: string): Record<string, string[]> {
+  const names = readdirSync(projects, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
+    .map((d) => d.name)
+  const out: Record<string, string[]> = {}
+  for (const [name, a] of aliasMap(projects, names, realish(brainPath))) if (a.titles.length) out[name] = a.titles
+  return out
+}
+
+/** One task word against folder titles, folded whole. Two folders with that title: no pick. */
+function titleHit(tok: string, aliases: Map<string, Alias>, ok: (name: string) => boolean): string {
+  const ft = fold(tok)
+  const hits = [...aliases].filter(([, a]) => a.titles.includes(ft)).map(([n]) => n).filter(ok)
+  return hits.length === 1 ? hits[0] : ''
 }
 
 /** The nearest folder that exists: the path itself, its folder if it is a file, or its closest parent. */
@@ -276,12 +308,23 @@ export function resolveWorkRepo(o: ResolveInput): ResolvedRepo {
       if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'project' }
     }
   }
-  // One of its names: words from the task with paths taken out (paths already had their turn).
+  // Words from the task with paths taken out (paths already had their turn).
   let bare = String(o.task || '')
   for (const p of bare.match(PATH_RE) || []) bare = bare.replace(p, ' ')
   PATH_RE.lastIndex = 0
   const words = named(taskTokens(bare)).filter(keep)
   const okName = (n: string) => !!repoAt(join(projects, n), true)
+  const aliases = o.aliases === false ? new Map<string, Alias>() : aliasMap(projects, names, brain)
+  // What a folder calls itself, before any word that only sits inside a folder name: "lotoffice"
+  // finds lotline before "take" finds 360-seo-intake.
+  for (const tok of words) {
+    if (!topic(tok)) continue
+    const name = titleHit(tok, aliases, okName)
+    if (!name) continue
+    const hit = repoAt(join(projects, name), true)
+    if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'title' }
+  }
+  // One of its names.
   // Stopwords never pick here either: `work` must not find lotline-network before `email` finds mail-desk.
   for (const tok of words) {
     if (!topic(tok)) continue
@@ -292,9 +335,8 @@ export function resolveWorkRepo(o: ResolveInput): ResolvedRepo {
       if (hit && !skip(hit)) return { ok: true, workRepo: hit, from: 'name' }
     }
   }
-  // What the folder calls itself (README, package.json). Stopwords never pick a repo here.
-  const aliases = o.aliases === false ? new Map<string, string[]>() : aliasMap(projects, names, brain)
-  for (const tok of words) {
+  // What the folder's README or package.json says. Stopwords never pick a repo here; notes skip it.
+  for (const tok of o.aliases === 'title' ? [] : words) {
     if (!topic(tok)) continue
     for (const v of variants(tok)) {
       const name = aliasHit(v, aliases, okName)
