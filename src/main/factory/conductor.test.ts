@@ -1570,3 +1570,153 @@ test('the Lead acts: planner verdicts, a planner move, and re-plans after a move
   abandonRun(h3)
   configureFactory(deps)
 })
+
+test('push says what it deploys: Ship in advance stops before production, previews land on factory branches', async () => {
+  const mods = await loaded
+  conduct = mods.conductor.conduct
+  configureFactory = mods.controller.configureFactory
+  startRun = mods.controller.startRun
+  getRun = mods.controller.getRun
+  decideRun = mods.controller.decideRun
+  dropMemory = mods.controller.dropMemory
+  abandonRun = mods.controller.abandonRun
+  mods.store.setUserDataDir(() => userData)
+  const { hostDeploy } = mods.gates
+  configureFactory({ ...deps, publish: (r, t, over) => mods.gates.publish(r, t, 90_000, over) })
+  const { threadItems } = await import('../../renderer/src/factory-thread.ts')
+  const remoteAt = (dir: string, ref: string) => (git(dir, ['ls-remote', 'origin', `refs/heads/${ref}`]).trim().split(/\s+/)[0] || '')
+  const make = (name: string, files: Record<string, string> = {}, o: { branch?: string; remote?: boolean; vercel?: boolean; emptyVercel?: boolean } = {}): string => {
+    const dir = repo(name)
+    for (const [rel, body] of Object.entries(files)) writeFileSync(join(dir, rel), body)
+    if (o.vercel || o.emptyVercel) writeFileSync(join(dir, '.gitignore'), '.vercel\n')
+    git(dir, ['add', '-A'])
+    git(dir, ['commit', '-q', '-m', 'setup', '--allow-empty'])
+    if (o.vercel) {
+      mkdirSync(join(dir, '.vercel'), { recursive: true })
+      writeFileSync(join(dir, '.vercel', 'project.json'), JSON.stringify({ projectId: 'prj_test', orgId: 'team_test' }))
+    }
+    if (o.emptyVercel) mkdirSync(join(dir, '.vercel'), { recursive: true })
+    if (o.branch) git(dir, ['checkout', '-q', '-b', o.branch])
+    if (o.remote !== false) addRemote(dir)
+    return realpathSync(dir)
+  }
+  const ship = async (dir: string, o: { ship?: boolean; runThrough?: boolean; until: (r: RunRecord) => boolean }) => {
+    reset()
+    opusPass = true
+    let n = 0
+    touch = () => writeFileSync(join(dir, 'src.ts'), `export const n = ${++n}\n`)
+    const res = (startRun as unknown as (i: object) => StartResult)({ task: 'add a webhook endpoint feature', workRepo: dir, brainPath: repo(`${dir.split('/').pop()}-brain`), proceedCritical: true, shipThrough: o.ship ?? true, runThrough: o.runThrough })
+    if (!res.ok) throw new Error(res.error)
+    const id = res.run.id
+    activeId = id
+    if (!o.runThrough) {
+      await until(() => getRun(id)?.plan?.status === 'waiting' && !!getRun(id)?.plan?.text, 'push plan')
+      decideRun(id, 'approve-plan')
+    }
+    await until(() => !!getRun(id) && o.until(getRun(id)!), 'push run settled')
+    return { id, run: getRun(id)!, warnAtStart: res.run.pushWarn || '' }
+  }
+  const done = (r: RunRecord) => r.phase === 'done' && !!r.commitSha
+
+  // (f) the host table.
+  const v = make('host-vercel', {}, { remote: false, vercel: true })
+  const nt = make('host-netlify', { 'netlify.toml': '[build]\n' }, { remote: false })
+  const rw = make('host-railway', { 'railway.json': '{}\n' }, { remote: false })
+  for (const [dir, host] of [[v, 'Vercel'], [nt, 'Netlify'], [rw, 'Railway']] as const) {
+    assert.deepEqual(hostDeploy(dir, 'main'), { host, prod: true })
+    assert.deepEqual(hostDeploy(dir, 'master'), { host, prod: true })
+    assert.deepEqual(hostDeploy(dir, 'feature-x'), { host, prod: false })
+  }
+  const vjson = make('host-vercel-json', { 'vercel.json': '{}\n' }, { remote: false })
+  const vempty = make('host-vercel-empty', {}, { remote: false, emptyVercel: true })
+  const vscript = make('host-vercel-script', { 'package.json': JSON.stringify({ name: 'x', scripts: { vercel: 'vercel deploy' } }) }, { remote: false })
+  for (const dir of [vjson, vempty, vscript, make('host-none', {}, { remote: false })]) assert.equal(hostDeploy(dir, 'main'), null, dir)
+
+  // (a) Vercel main with Ship in advance: committed, held, then Joe's Push lands main.
+  const a = make('push-vercel', {}, { vercel: true })
+  const ra = await ship(a, { until: (r) => done(r) && !!r.shipHeld })
+  assert.equal(remoteAt(a, 'main'), '')
+  assert.equal(ra.run.shipHeld, 'Ship in advance stopped before the push: pushing main to origin deploys production on Vercel.')
+  assert.equal(ra.warnAtStart, 'Ship in advance will stop before pushing main: Vercel deploys main to production.')
+  assert.equal(ra.run.deployHint?.line, 'Pushing main to origin deploys production on Vercel.')
+  await mods.controller.publishRun(ra.id, { by: 'joe' })
+  assert.equal(remoteAt(a, 'main'), ra.run.commitSha)
+
+  // (b) no link: Ship in advance pushes main with no click, and says nothing about a host.
+  const b = make('push-plain')
+  const rb = await ship(b, { until: (r) => done(r) && !!r.pushed })
+  assert.equal(remoteAt(b, 'main'), rb.run.commitSha)
+  assert.equal(rb.run.deployHint, undefined)
+  assert.equal(rb.run.shipHeld, undefined)
+  assert.equal(/Vercel|stop/.test(rb.warnAtStart), false, rb.warnAtStart)
+
+  // (b2) things that are not a host link do not hold Ship in advance.
+  for (const [name, files, o] of [
+    ['push-vercel-json', { 'vercel.json': '{}\n' }, {}],
+    ['push-vercel-empty', {}, { emptyVercel: true }],
+    ['push-vercel-script', { 'package.json': JSON.stringify({ name: 'x', scripts: { vercel: 'vercel deploy' } }) }, {}]
+  ] as const) {
+    const dir = make(name, files, o)
+    const r = await ship(dir, { until: (x) => done(x) && (!!x.pushed || !!x.shipHeld) })
+    assert.equal(r.run.shipHeld, undefined, name)
+    assert.equal(remoteAt(dir, 'main'), r.run.commitSha, name)
+  }
+
+  // (c) Vercel on a feature branch: pushed, and the line says preview.
+  const c = make('push-vercel-feature', {}, { vercel: true, branch: 'feature-x' })
+  const rc = await ship(c, { until: (r) => done(r) && !!r.pushed })
+  assert.equal(remoteAt(c, 'feature-x'), rc.run.commitSha)
+  assert.equal(rc.run.deployHint?.line, 'Vercel builds a preview of this branch.')
+
+  // (c2) Vercel main, Ship off, Approve in advance: committed, the production line shows, Joe's Push lands main.
+  const c2 = make('push-vercel-approve', {}, { vercel: true })
+  const rc2 = await ship(c2, { ship: false, runThrough: true, until: done })
+  await new Promise((r) => setTimeout(r, 60))
+  assert.equal(getRun(rc2.id)?.pushed, undefined)
+  assert.equal(remoteAt(c2, 'main'), '')
+  assert.equal(getRun(rc2.id)?.deployHint?.line, 'Pushing main to origin deploys production on Vercel.')
+  await mods.controller.publishRun(rc2.id, { by: 'joe' })
+  assert.equal(remoteAt(c2, 'main'), rc2.run.commitSha)
+
+  // (c3) Netlify main holds the same way.
+  const c3 = make('push-netlify', { 'netlify.toml': '[build]\n' })
+  const rc3 = await ship(c3, { until: (r) => done(r) && !!r.shipHeld })
+  assert.match(rc3.run.shipHeld || '', /production on Netlify/)
+  assert.equal(remoteAt(c3, 'main'), '')
+  await mods.controller.publishRun(rc3.id, { by: 'joe' })
+  assert.equal(remoteAt(c3, 'main'), rc3.run.commitSha)
+
+  // (d) a preview after HEAD moved pushes the run's commit to factory/<id> and leaves main alone.
+  const d = make('push-preview-moved', {}, { vercel: true })
+  const rd = await ship(d, { until: (r) => done(r) && !!r.shipHeld })
+  git(d, ['commit', '-q', '--allow-empty', '-m', 'more work'])
+  const head = git(d, ['rev-parse', 'HEAD']).trim()
+  const pv = await mods.controller.publishPreview(rd.id)
+  assert.equal(remoteAt(d, `factory/${rd.id}`), rd.run.commitSha)
+  assert.equal(git(d, ['rev-parse', '--abbrev-ref', 'HEAD']).trim(), 'main')
+  assert.equal(git(d, ['rev-parse', 'HEAD']).trim(), head)
+  assert.equal(remoteAt(d, 'main'), '')
+  assert.ok(pv.preview && !pv.pushed)
+  assert.ok(threadItems(getRun(rd.id)!, null).some((it) => it.role === 'lead' && it.text === `Pushed a preview to origin/factory/${rd.id}. Vercel builds it.`))
+  const refused = await mods.controller.publishRun(rd.id, { by: 'joe' })
+  assert.equal(refused.pushError, 'This branch moved since Factory committed. Push from Terminal.')
+
+  // (d2) a preview, then Joe's Push, on an unmoved HEAD.
+  const d2 = make('push-preview-then-main', {}, { vercel: true })
+  const rd2 = await ship(d2, { until: (r) => done(r) && !!r.shipHeld })
+  await mods.controller.publishPreview(rd2.id)
+  assert.equal(remoteAt(d2, `factory/${rd2.id}`), rd2.run.commitSha)
+  const both = await mods.controller.publishRun(rd2.id, { by: 'joe' })
+  assert.equal(remoteAt(d2, 'main'), rd2.run.commitSha)
+  assert.ok(both.preview && both.pushed)
+  assert.equal(git(d2, ['rev-parse', 'HEAD']).trim(), rd2.run.commitSha)
+
+  // (e) a preview with no remote shows its error and marks nothing pushed.
+  const e = make('push-preview-noremote', {}, { vercel: true, remote: false })
+  const re = await ship(e, { until: (r) => done(r) && !!r.shipHeld })
+  const pe = await mods.controller.publishPreview(re.id)
+  assert.match(pe.previewError || '', /no remote named origin/i)
+  assert.equal(pe.preview, undefined)
+  assert.equal(pe.pushed, undefined)
+  configureFactory(deps)
+})

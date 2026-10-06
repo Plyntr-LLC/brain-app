@@ -3486,6 +3486,23 @@ setTimeout(() => {
       const clicked = await call('factory:publish', id)
       check('PM 1 Approve in advance alone commits and does not push; the Push click pushes main once', before.phase === 'done' && !!before.sha && !before.pushed && before.calls === 0 && before.main === '' && clicked.ok && pc - p0 === 1 && x.at('main') === before.sha, JSON.stringify({ before, after: pc - p0, main: x.at('main') }))
     }
+    // PM P: a Vercel-linked main holds Ship in advance; the real factory:publishPreview handler lands factory/<id> and nothing else.
+    {
+      const x = remoteRepo('ev-pm-preview')
+      writeFileSync(join(x.r, '.gitignore'), '.vercel\n')
+      git(x.r, ['add', '-A'])
+      git(x.r, ['commit', '-q', '-m', 'ignore vercel link'])
+      mkdirSync(join(x.r, '.vercel'), { recursive: true })
+      writeFileSync(join(x.r, '.vercel', 'project.json'), JSON.stringify({ projectId: 'prj_pm', orgId: 'team_pm' }))
+      const { id, r } = await evStart(x.r, [PASS], { ship: true, task: PLAIN })
+      const held = { phase: r?.phase, sha: r?.commitSha, pushed: !!r?.pushed, held: r?.shipHeld || '', main: x.at('main') }
+      const pv = await call('factory:publishPreview', id)
+      check(
+        'PM P Ship in advance holds a Vercel main; factory:publishPreview lands factory/<id> at the commit, main untouched, not marked pushed',
+        held.phase === 'done' && !!held.sha && !held.pushed && /production on Vercel/.test(held.held) && held.main === '' && pv.ok && x.at(`factory/${id}`) === held.sha && x.at('main') === '' && !pv.run?.pushed && !!pv.run?.preview,
+        JSON.stringify({ held, preview: x.at(`factory/${id}`), ok: pv.ok, error: pv.error })
+      )
+    }
     // PM 2: plain T1 on main with Ship in advance: an Opus review at low, then a push. FAIL×REVIEW_MAX holds with no push.
     {
       const x = remoteRepo('ev-pm2')

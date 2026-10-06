@@ -66,6 +66,9 @@ export function nextEvents(prev: RunRecord | undefined, next: RunRecord, at: num
   if (next.pushed && next.pushed.at !== prev?.pushed?.at) add.push({ at, kind: 'push', ok: true, text: `${next.pushed.remote}/${next.pushed.branch}` })
   else if (next.pushError && next.pushError !== prev?.pushError) add.push({ at, kind: 'push', ok: false, text: cut(next.pushError, TAIL) })
 
+  if (next.preview && next.preview.at !== prev?.preview?.at) add.push({ at, kind: 'push', ok: true, text: `${next.preview.remote}/${next.preview.branch} (preview)` })
+  else if (next.previewError && next.previewError !== prev?.previewError) add.push({ at, kind: 'push', ok: false, text: `Preview: ${cut(next.previewError, TAIL)}` })
+
   if (next.deployed && next.deployed.at !== prev?.deployed?.at) add.push({ at, kind: 'deploy', ok: true, text: '' })
   else if (next.deployError && next.deployError !== prev?.deployError) add.push({ at, kind: 'deploy', ok: false, text: cut(next.deployError, TAIL) })
 

@@ -15,6 +15,7 @@ import {
   pauseRun,
   publishAnywayFor,
   publishBlockFor,
+  publishPreview,
   publishRun,
   restoreRun,
   resumeRun,
@@ -112,6 +113,13 @@ export function registerFactoryIpc(): void {
   ipcMain.handle('factory:publish', async (_e, id: string) => {
     try {
       return { ok: true as const, run: await publishRun(String(id), { by: 'joe' }) }
+    } catch (e) {
+      return { ok: false as const, error: String((e as Error).message || e) }
+    }
+  })
+  ipcMain.handle('factory:publishPreview', async (_e, id: string) => {
+    try {
+      return { ok: true as const, run: await publishPreview(String(id)) }
     } catch (e) {
       return { ok: false as const, error: String((e as Error).message || e) }
     }

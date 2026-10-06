@@ -665,6 +665,9 @@ export function FactoryPane(props: {
           ) : null}
           {run.phase === 'done' && run.commitSha ? (
             <div className="factory-trip factory-ship">
+              {run.shipHeld && !run.pushed ? <p className="factory-note">{run.shipHeld}</p> : null}
+              {run.deployHint ? <p className="factory-deploy">{run.deployHint.line}</p> : null}
+              {run.previewError ? <p className="factory-err">{run.previewError}</p> : null}
               <div className="factory-actions">
                 {!run.pushed ? (
                   <>
@@ -689,6 +692,11 @@ export function FactoryPane(props: {
                       </button>
                     ) : null}
                     {pushBlock ? <span className="tiny">{pushBlock}</span> : null}
+                    {run.deployHint && !run.preview ? (
+                      <button type="button" className="ghost" onClick={() => void act(window.brain.factory.publishPreview(run.id))}>
+                        Push a preview branch
+                      </button>
+                    ) : null}
                   </>
                 ) : (
                   <span className="tiny">

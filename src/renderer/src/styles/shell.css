@@ -2108,3 +2108,5 @@ details.fcard > summary.fcard-title { cursor: pointer; }
 button.rail-file { display: flex; width: 100%; padding: 0.08rem 0; border: 0; background: none; font: inherit; font-size: 0.74rem; color: var(--ink); text-align: left; cursor: pointer; }
 button.rail-file:hover .rail-path { text-decoration: underline; }
 .rail-file.live .rail-path { color: var(--orange-deep); font-weight: 600; }
+.factory-deploy { margin: 0 0 0.3rem; font-size: 0.82rem; font-weight: 600; color: var(--orange-deep); }
+.rail-deploy { color: var(--orange-deep); font-weight: 600; }

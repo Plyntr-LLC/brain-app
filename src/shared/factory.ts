@@ -187,6 +187,13 @@ export type RunRecord = {
   branch?: string
   pushed?: { remote: string; branch: string; sha: string; at: number }
   pushError?: string
+  /** What a push of the committed branch sets off on its host (Vercel, Netlify, Railway), from the repo's link file. */
+  deployHint?: { host: string; prod: boolean; line: string }
+  /** Ship in advance committed but did not push: the push would deploy production. */
+  shipHeld?: string
+  /** The commit pushed to a preview branch (factory/<run id>); the real branch is not pushed by it. */
+  preview?: { remote: string; branch: string; sha: string; at: number }
+  previewError?: string
   deployed?: { at: number }
   deployError?: string
   note?: string

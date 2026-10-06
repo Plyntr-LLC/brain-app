@@ -38,6 +38,7 @@ const brain = {
     commit: (id: string) => rec('commit', id),
     publish: (id: string) => rec('publish', id),
     publishAnyway: (id: string) => rec('publishAnyway', id),
+    publishPreview: (id: string) => rec('publishPreview', id),
     deploy: (id: string) => rec('deploy', id),
     publishBlock: (id: string) => Promise.resolve({ ok: true, block: blocks.get(id) ?? null }),
     publishAnywayFor: (id: string) => Promise.resolve({ ok: true, offer: anyway.get(id) ?? false }),
@@ -269,6 +270,37 @@ async function main() {
   const anywayRun = await mount('b. push anyway', run({ phase: 'done', commitSha: 'feedbeefcafe', branch: 'staging' }), { block: 'Brain does not push to staging. Push it from Terminal after review.', anyway: true })
   check('b Push anyway after confirm', same(await click(anywayRun.el, 'Push to staging anyway…'), 'publishAnyway', anywayRun.r.id))
   check('b blocked Push disabled with its reason, no call', btn(anywayRun.el, 'Push')?.disabled === true && (anywayRun.el.textContent || '').includes('Brain does not push to staging') && (await click(anywayRun.el, 'Push')).length === 0)
+  const heldShip = await mount(
+    'b. Ship in advance held on a Vercel main',
+    run({
+      phase: 'done',
+      commitSha: 'feedbeefcafe',
+      branch: 'main',
+      shipHeld: 'Ship in advance stopped before the push: pushing main to origin deploys production on Vercel.',
+      deployHint: { host: 'Vercel', prod: true, line: 'Pushing main to origin deploys production on Vercel.' }
+    })
+  )
+  const shipText = heldShip.el.querySelector('.factory-ship')?.textContent || ''
+  check('b held: the commit sentence and an enabled Push stay', shipText.includes('Committed feedbee on main. Not pushed.') && btn(heldShip.el, 'Push')?.disabled === false)
+  check('b held: the deploy line and the stop note show', shipText.includes('Pushing main to origin deploys production on Vercel.') && shipText.includes('Ship in advance stopped before the push'))
+  check('b held: Push a preview branch', same(await click(heldShip.el, 'Push a preview branch'), 'publishPreview', heldShip.r.id))
+  await tick(60)
+  const railShip = heldShip.rail.querySelector('.rail-ship')?.textContent || ''
+  check('b held: the rail keeps its commit line and Push, with the deploy line', railShip.includes('Commit feedbee on main.') && railShip.includes('Pushing main to origin deploys production on Vercel.') && !!heldShip.rail.querySelector('.rail-ship button'))
+  check('b a run with no host shows no deploy line and no preview button', !(done.el.textContent || '').includes('deploys production') && !btn(done.el, 'Push a preview branch'))
+  const previewed = await mount(
+    'b. a preview pushed',
+    run({
+      phase: 'done',
+      commitSha: 'feedbeefcafe',
+      branch: 'main',
+      deployHint: { host: 'Vercel', prod: true, line: 'Pushing main to origin deploys production on Vercel.' },
+      preview: { remote: 'origin', branch: 'factory/run-x', sha: 'feedbeefcafe', at: now + 9 },
+      events: [{ at: now + 9, kind: 'push', ok: true, text: 'origin/factory/run-x (preview)' }]
+    })
+  )
+  check('b the preview Lead line', items(previewed.el).some((m) => label(m) === 'lead:Pushed a preview to origin/factory/run-x. Vercel builds it.'))
+  check('b after a preview, Push for main stays and no second preview button', !!btn(previewed.el, 'Push') && !btn(previewed.el, 'Push a preview branch'))
   const pushed = await mount('b. pushed, not deployed', run({ phase: 'done', commitSha: 'feedbeefcafe', branch: 'main', pushed: { remote: 'origin', branch: 'main', sha: 'feedbeefcafe', at: now } }))
   check('b Deploy', same(await click(pushed.el, 'Deploy'), 'deploy', pushed.r.id))
   const noDeploy = await mount('b. deploy blocked', run({ phase: 'done', commitSha: 'feedbeefcafe', branch: 'main', pushed: { remote: 'origin', branch: 'main', sha: 'feedbeefcafe', at: now } }), { deployBlock: 'No deploy command on this repo.' })

@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { currentBranch, hasRemote, headSha } from './git-audit.ts'
 import { realish, underPath } from './paths.ts'
@@ -191,7 +191,41 @@ export const KENNEL_PUSH_REFUSAL = 'Brain does not push Kennel main or staging. 
 
 export type PushOverride = { allowProtected?: boolean; kennelApproved?: boolean }
 
-export type PublishTarget = { remote: string; branch: string; sha: string }
+/** preview: push this sha to a new remote branch (factory/<run id>) without touching the local branch. */
+export type PublishTarget = { remote: string; branch: string; sha: string; preview?: boolean }
+
+export type HostDeploy = { host: 'Vercel' | 'Netlify' | 'Railway'; prod: boolean }
+
+function isFile(p: string): boolean {
+  try {
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * A host that deploys this repo on a push, read from the link file its CLI writes (no host API).
+ * prod: the branch is main or master, which these hosts deploy to production by default.
+ * vercel.json, an empty .vercel folder, or a vercel script is not a link.
+ */
+export function hostDeploy(repo: string, branch: string): HostDeploy | null {
+  const prod = branch === 'main' || branch === 'master'
+  try {
+    const link = JSON.parse(readFileSync(join(repo, '.vercel', 'project.json'), 'utf8')) as { projectId?: unknown }
+    if (typeof link.projectId === 'string' && link.projectId) return { host: 'Vercel', prod }
+  } catch {
+    /* not linked to Vercel */
+  }
+  if (isFile(join(repo, '.netlify', 'state.json')) || isFile(join(repo, 'netlify.toml'))) return { host: 'Netlify', prod }
+  if (isFile(join(repo, 'railway.json')) || isFile(join(repo, 'railway.toml'))) return { host: 'Railway', prod }
+  return null
+}
+
+/** What a push of this branch sets off on its host, in one sentence. */
+export function deployLine(hd: HostDeploy, remote: string, branch: string): string {
+  return hd.prod ? `Pushing ${branch} to ${remote} deploys production on ${hd.host}.` : `${hd.host} builds a preview of this branch.`
+}
 
 function remoteRef(repo: string, remote: string, branch: string): string {
   try {
@@ -214,9 +248,12 @@ export function publishBlock(o: { repo: string } & Partial<PublishTarget>, over:
   const branch = String(o.branch || '')
   const remote = String(o.remote || '')
   if (!branch) return 'This commit is on a detached HEAD. Push it from Terminal.'
-  const now = currentBranch(o.repo)
-  if (!now) return 'This repo is on a detached HEAD. Push it from Terminal.'
-  if (now !== branch || headSha(o.repo) !== o.sha) return 'This branch moved since Factory committed. Push from Terminal.'
+  // A preview pushes the run's own commit to factory/<id>: the local branch may have moved on.
+  if (!o.preview) {
+    const now = currentBranch(o.repo)
+    if (!now) return 'This repo is on a detached HEAD. Push it from Terminal.'
+    if (now !== branch || headSha(o.repo) !== o.sha) return 'This branch moved since Factory committed. Push from Terminal.'
+  }
   if (!remote || !hasRemote(o.repo, remote)) return `This repo has no remote named ${remote || 'origin'}.`
   if (o.sha && remoteRef(o.repo, remote, branch) === o.sha) return `Already pushed to ${remote}/${branch}.`
   if (!over.kennelApproved && isKennelGated(o.repo, branch)) return KENNEL_PUSH_REFUSAL
@@ -240,6 +277,8 @@ export function pushWarn(o: { repo: string; remote: string; shipThrough?: boolea
   if (o.shipThrough && branch && PROTECTED_BRANCHES.has(branch)) {
     return `On ${branch}. Ship in advance commits but Brain never pushes ${branch} on its own.`
   }
+  const hd = o.shipThrough && branch ? hostDeploy(o.repo, branch) : null
+  if (hd?.prod) return `Ship in advance will stop before pushing ${branch}: ${hd.host} deploys ${branch} to production.`
   return undefined
 }
 
@@ -257,7 +296,8 @@ export function publish(workRepo: string, t: PublishTarget, timeoutMs = 90_000, 
   if (block) return Promise.resolve({ ok: false, out: block })
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: noShimPath(process.env.PATH), GIT_TERMINAL_PROMPT: '0' }
   return new Promise((done) => {
-    const child = spawn(realGit(), ['push', t.remote, t.branch], { cwd: workRepo, env, stdio: ['ignore', 'pipe', 'pipe'], shell: false })
+    const ref = t.preview ? `${t.sha}:refs/heads/${t.branch}` : t.branch
+    const child = spawn(realGit(), ['push', t.remote, ref], { cwd: workRepo, env, stdio: ['ignore', 'pipe', 'pipe'], shell: false })
     let out = ''
     const add = (d: Buffer) => {
       out = (out + String(d)).slice(-4000)

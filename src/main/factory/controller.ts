@@ -7,7 +7,7 @@ import { ACK_FILED, ACK_NOTED, BUILDER_FIX_MAX, VOICE_MAX, type Builder, type Gu
 import { upsertLog } from './brain-log.ts'
 import { buildBrief, type BriefPhase } from './brief.ts'
 import { isNeedOpus } from './fallback.ts'
-import { deploy as gitDeploy, deployBlock, isKennelGated, publish as gitPublish, publishBlock, pushWarn, type PublishTarget, type PushOverride } from './gates.ts'
+import { deploy as gitDeploy, deployBlock, deployLine, hostDeploy, isKennelGated, publish as gitPublish, publishBlock, pushWarn, type PublishTarget, type PushOverride } from './gates.ts'
 import { auditTurn, commitRun, currentBranch, diffText, dirtyPaths, gitTop, headSha, isClean, isGitRepo, numstat, porcelain, stashAll } from './git-audit.ts'
 import { OPUS_PLAN_TIMEOUT_MS, OPUS_REVIEW_TIMEOUT_MS, planPrompt, planVerdict, REVIEW_MAX, reviewAccept, runOpus, splitOutside, STRICT_EFFORT, strictNeeded, strictPrompt, type SpawnFn } from './opus.ts'
 import { realish } from './paths.ts'
@@ -1369,7 +1369,14 @@ async function finishReview(state: Live): Promise<void> {
   if (done.phase !== 'done') return
   state.run = { ...state.run, shadow: withAuto(state.run.shadow) }
   persist(state)
-  if (opusOk && r.shipThrough) await publishRun(r.id)
+  if (!opusOk || !r.shipThrough) return
+  // A push that a host turns into a production deploy is Joe's click, never Ship in advance.
+  const hint = done.deployHint
+  if (hint?.prod) {
+    setPhase(state, 'done', { shipHeld: `Ship in advance stopped before the push: ${hint.line.replace(/^Pushing/, 'pushing')}` })
+    return
+  }
+  await publishRun(r.id)
 }
 
 function liveFor(id: string): Live {
@@ -1865,7 +1872,9 @@ export function commitRunNow(id: string, o: Actor = {}): RunRecord {
       /* */
     }
     const shadow = o.by === 'joe' ? withJudgment(state.run.shadow, 'commit') : state.run.shadow
-    return setPhase(state, 'done', { commitSha: sha, branch, audit: { brain: run.audit?.brain || [], work: rows }, shadow })
+    const hd = branch ? hostDeploy(run.workRepo, branch) : null
+    const deployHint = hd ? { host: hd.host, prod: hd.prod, line: deployLine(hd, run.profile?.publish.remote || 'origin', branch || '') } : undefined
+    return setPhase(state, 'done', { commitSha: sha, branch, audit: { brain: run.audit?.brain || [], work: rows }, shadow, deployHint })
   } catch (e) {
     return setPhase(state, 'review', { error: `Commit failed: ${String((e as Error).message || e).slice(0, 300)}` })
   }
@@ -1940,6 +1949,20 @@ export async function publishRun(id: string, o: Actor & { allowProtected?: boole
   if (!res.ok) return setPhase(state, 'done', { pushError: tail(res.out || 'git push failed.', 6) })
   const shadow = o.by === 'joe' ? withJudgment(state.run.shadow, 'push') : state.run.shadow
   return setPhase(state, 'done', { pushed: { ...t, at: Date.now() }, pushError: undefined, shadow })
+}
+
+/** Push the run's commit to factory/<run id> so the host builds a preview. The real branch stays unpushed. */
+export async function publishPreview(id: string): Promise<RunRecord> {
+  const state = liveFor(id)
+  const run = state.run
+  if (run.phase !== 'done' || !run.commitSha) throw new Error('A preview comes after Commit.')
+  const t: PublishTarget = { remote: run.profile?.publish.remote || 'origin', branch: `factory/${run.id}`, sha: run.commitSha, preview: true }
+  const block = publishBlock({ repo: run.workRepo, ...t })
+  if (block) return setPhase(state, 'done', { previewError: block })
+  const pub = need().publish
+  const res = pub ? await pub(run.workRepo, t, {}) : await gitPublish(run.workRepo, t)
+  if (!res.ok) return setPhase(state, 'done', { previewError: tail(res.out || 'git push failed.', 6) })
+  return setPhase(state, 'done', { preview: { remote: t.remote, branch: t.branch, sha: t.sha, at: Date.now() }, previewError: undefined })
 }
 
 function deployCmd(run: RunRecord): string {

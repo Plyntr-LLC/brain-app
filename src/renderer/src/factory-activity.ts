@@ -71,7 +71,12 @@ export function factoryActivity(run: RunRecord, pushBlock: string | null): Activ
     done && run.commitSha
       ? run.pushed
         ? { line: `Pushed ${run.pushed.sha.slice(0, 7)} to ${run.pushed.remote}/${run.pushed.branch}.`, block: null, pushed: true }
-        : { line: `Commit ${run.commitSha.slice(0, 7)}${run.branch ? ` on ${run.branch}` : ''}. Push sends it to ${remote}${run.branch ? `/${run.branch}` : ''}.`, block: pushBlock, pushed: false }
+        : {
+            line: `Commit ${run.commitSha.slice(0, 7)}${run.branch ? ` on ${run.branch}` : ''}. Push sends it to ${remote}${run.branch ? `/${run.branch}` : ''}.`,
+            block: pushBlock,
+            pushed: false,
+            ...(run.deployHint ? { deploy: run.deployHint.line } : {})
+          }
       : undefined
 
   return { runId: run.id, now, progress, team, files: run.audit?.work || [], ...(ship ? { ship } : {}) }

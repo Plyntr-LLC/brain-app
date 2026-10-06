@@ -15,7 +15,8 @@ export type Activity = {
   files: { path: string; added?: number; deleted?: number; live?: boolean }[]
   /** Chat folds its touched files behind "Files · N"; a Factory run's changed files show. */
   filesFolded?: boolean
-  ship?: { line: string; block: string | null; pushed: boolean }
+  /** deploy: what the push sets off on the repo's host, when it has one. */
+  ship?: { line: string; block: string | null; pushed: boolean; deploy?: string }
 }
 
 /** Which rail the right sidebar shows: a Factory or Chat tab its own, any other tab the last chat's. Null: In use. */

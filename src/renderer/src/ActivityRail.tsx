@@ -146,6 +146,7 @@ export function ActivityRail({
         <section className="rail-box rail-ship">
           <h5>Ship</h5>
           <p className="rail-sub">{ship.line}</p>
+          {ship.deploy ? <p className="rail-sub rail-deploy">{ship.deploy}</p> : null}
           {ship.pushed ? null : (
             <>
               <button type="button" className="primary" disabled={!!ship.block || !onPush} onClick={() => onPush?.()}>

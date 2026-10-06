@@ -93,6 +93,10 @@ function fromEvent(e: RunEvent, i: number, run: RunRecord, lastPlan: number): Th
     case 'commit':
       return { key, at: e.at, role: 'lead', text: `Committed ${e.sha.slice(0, 7)}${e.branch ? ` on ${e.branch}` : ''}.` }
     case 'push':
+      if (e.ok && e.text.endsWith(' (preview)')) {
+        const host = run.deployHint?.host
+        return { key, at: e.at, role: 'lead', text: `Pushed a preview to ${e.text.slice(0, -' (preview)'.length)}.${host ? ` ${host} builds it.` : ''}` }
+      }
       return { key, at: e.at, role: 'lead', text: e.ok ? `Pushed to ${e.text}.` : `Push failed: ${e.text}` }
     case 'deploy':
       return { key, at: e.at, role: 'lead', text: e.ok ? 'Deployed.' : `Deploy failed: ${e.text}` }

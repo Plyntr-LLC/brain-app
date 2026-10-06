@@ -974,6 +974,7 @@ const brain = {
         { ok: true; profile: RepoProfile; line: string } | { ok: false; error: string }
       >,
     publish: (id: string) => ipcRenderer.invoke('factory:publish', id) as Promise<FactoryResult>,
+    publishPreview: (id: string) => ipcRenderer.invoke('factory:publishPreview', id) as Promise<FactoryResult>,
     deploy: (id: string) => ipcRenderer.invoke('factory:deploy', id) as Promise<FactoryResult>,
     deployBlock: (id: string) =>
       ipcRenderer.invoke('factory:deployBlock', id) as Promise<{ ok: true; block: string | null } | { ok: false; error: string }>,
