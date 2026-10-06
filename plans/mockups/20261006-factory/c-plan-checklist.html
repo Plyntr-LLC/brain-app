@@ -1,0 +1,64 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>C · Living plan</title>
+<link rel="stylesheet" href="base.css">
+<style>
+.body{display:grid;grid-template-columns:1fr 360px;min-height:0}
+.main{overflow:auto;background:var(--card);border-right:1px solid var(--line);padding:14px 22px}
+h2{margin:0;font-size:16px}
+.sub{display:flex;gap:8px;align-items:center;margin:4px 0 12px;flex-wrap:wrap}
+.bar{display:flex;gap:4px;margin-bottom:12px}.bar div{flex:1;height:6px;border-radius:3px;background:var(--ok)}.bar .on{background:var(--orange)}
+.item{border:1px solid var(--soft);border-radius:10px;margin-bottom:9px;background:#fffefb}
+.item summary{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;padding:9px 12px}
+.item summary b{font-size:13.5px}
+.ticks{display:flex;gap:5px}
+.item .in{padding:0 12px 10px 42px;font-size:12.5px}
+.item .in .f{font-size:11.5px;color:var(--muted);margin-top:4px}
+.item .in .rv{margin-top:6px;border-left:3px solid #2f5d86;padding-left:8px}
+.side{display:flex;flex-direction:column;min-height:0;background:var(--paper)}
+.side .ship{padding:12px 14px;border-bottom:1px solid var(--line)}
+.side .h{padding:10px 14px;font-weight:600;display:flex;gap:8px;align-items:center}
+.log{flex:1;overflow:auto;padding:4px 14px 12px;display:flex;flex-direction:column;gap:9px}
+.l{display:flex;gap:8px}.l .who{width:20px;height:20px;font-size:9.5px}.l p{margin:0}
+.l.joe p{background:var(--card);border:1px solid var(--soft);border-radius:8px;padding:6px 9px}
+.compose textarea{height:34px}
+</style></head>
+<body><div class="win">
+<div class="top">agency-brain <span class="tag">Owner</span><span class="sp"></span><span class="btn sm">Settings</span></div>
+<div class="tabs"><div>Grok</div><div>Terminal</div><div class="on">LotOffice · nav, ShedPro, contracts</div><div>+</div></div>
+<div class="body">
+ <section class="main">
+  <h2>LotOffice: nav highlight, ShedPro mapping, salesperson signature, company contract</h2>
+  <div class="sub"><span class="pill">lotline · main</span><span class="pill">T3 · critical</span><span class="pill ok">4 of 4 done · tested · reviewed</span></div>
+  <div class="bar"><div></div><div></div><div></div><div></div><div class="on"></div></div>
+
+  <details class="item" open><summary><span class="check">✓</span><b>Only one nav item lights up</b><span class="ticks"><span class="pill ok">built</span><span class="pill ok">tested</span><span class="pill ok">reviewed</span></span></summary>
+   <div class="in">Start sale and Build quote are told apart by their links; Reports vs Marketing too.
+    <div class="f">nav-active.ts +47 · DealerNav.tsx · test: dealer.nav-active (2 pairs)</div></div></details>
+
+  <details class="item"><summary><span class="check">✓</span><b>ShedPro rows match the right add-ons</b><span class="ticks"><span class="pill ok">built</span><span class="pill ok">tested</span><span class="pill ok">reviewed</span></span></summary>
+   <div class="in">Each catalog add-on carries its option group; the AI's row must agree with the extra.<div class="f">shedpro-ai-match.ts · test: quote-ai.match</div></div></details>
+
+  <details class="item"><summary><span class="check">✓</span><b>Salesperson signature on every packet</b><span class="ticks"><span class="pill ok">built</span><span class="pill ok">tested</span><span class="pill ok">reviewed</span></span></summary>
+   <div class="in">Stored per user; printed under "Salesperson"; another salesperson can't use or remove it.<div class="f">signature-upload.ts · packet.ts · pdf.ts · test: esign</div></div></details>
+
+  <details class="item" open><summary><span class="check">✓</span><b>Company contract the quote attaches to</b><span class="ticks"><span class="pill ok">built</span><span class="pill ok">tested</span><span class="pill ok">reviewed · 2 fixes</span></span></summary>
+   <div class="in">Text or PDF; manufacturer toggle swaps in the selling dealer.
+    <div class="rv"><b>Reviewer, round 1:</b> the upload could save a PDF that later stops every contract from going out; it copied a settings helper. <span class="check">Fixed</span> in round 2–3.</div>
+    <div class="f">contract-upload.ts +87 · contracts.ts · esign/page.tsx · envelopes.ts</div></div></details>
+
+  <div class="item" style="padding:10px 12px;display:flex;gap:10px;align-items:center"><span class="dot live"></span><b>Push</b><span class="muted small" style="flex:1">main → origin deploys LotOffice to production (Vercel). No database changes.</span><span class="btn sm go">Push</span><span class="btn sm">Preview branch</span></div>
+ </section>
+
+ <aside class="side">
+  <div class="ship shipbox" style="border-radius:0;border-width:0 0 1px 0"><h4>Ready to push</h4><div class="small">Commit <code>6ee6ddb</code> · tests 2,237 pass · Opus pass</div><div style="display:flex;gap:6px;margin-top:8px"><span class="btn sm go">Push to production</span><span class="btn sm">Preview</span></div></div>
+  <div class="h"><span class="who w-lead">L</span>Lead<span class="sp" style="flex:1"></span><span class="pill live">listening</span></div>
+  <div class="log">
+   <div class="l"><span class="who w-lead">L</span><p>Working in <b>lotline</b> (README: LotOffice). I split your request into 4 jobs on the left.</p></div>
+   <div class="l joe"><span class="who w-joe">JW</span><p>make sure the dealer can still send a plain text contract</p></div>
+   <div class="l"><span class="who w-lead">L</span><p>Added to job 4. Plain text stays the default.</p></div>
+   <div class="l"><span class="who w-lead">L</span><p>All 4 jobs passed review. Push deploys production. Your call.</p></div>
+  </div>
+  <div class="chips" style="background:var(--paper)"><span>What's left?</span><span>Add a job</span><span>Pause</span></div>
+  <div class="compose" style="background:var(--paper)"><textarea placeholder="Talk to the Lead"></textarea><span class="btn pri">Send</span></div>
+ </aside>
+</div></div></body></html>

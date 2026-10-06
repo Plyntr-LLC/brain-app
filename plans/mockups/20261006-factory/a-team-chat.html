@@ -1,0 +1,120 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>A · Team chat</title>
+<link rel="stylesheet" href="base.css">
+<style>
+.body{display:grid;grid-template-columns:1fr 330px;min-height:0}
+.thread{display:flex;flex-direction:column;min-height:0;background:var(--card);border-right:1px solid var(--line)}
+.head{padding:12px 18px 10px;border-bottom:1px solid var(--soft)}
+.head h2{margin:0;font-size:16px}
+.head .sub{display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap}
+.msgs{flex:1;overflow:auto;padding:14px 18px 20px;display:flex;flex-direction:column;gap:12px}
+.m{display:flex;gap:10px;align-items:flex-start;max-width:860px}
+.m .b{flex:1;min-width:0}
+.m .n{font-weight:600;font-size:12px}.m .n span{font-weight:400;color:var(--muted);margin-left:6px}
+.m p{margin:3px 0 0}
+.m.joe{align-self:flex-end;flex-direction:row-reverse}
+.m.joe .b{background:var(--paper);border:1px solid var(--soft);border-radius:10px;padding:7px 11px;flex:none;max-width:560px}
+.card{margin-top:6px;border:1px solid var(--soft);border-radius:8px;background:#fffefb}
+.card summary{display:flex;align-items:center;gap:8px;padding:7px 10px;font-weight:600}
+.card summary .sp{flex:1}
+.card .in{padding:2px 12px 10px;border-top:1px solid var(--soft)}
+.card ol,.card ul{margin:6px 0 0;padding-left:18px}.card li{margin:2px 0}
+.ask{margin-top:6px;border:1px solid #f4c48f;background:#fff6ec;border-radius:8px;padding:9px 11px}
+.ask .row{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+.sys{align-self:center;font-size:11.5px;color:var(--muted);display:flex;gap:6px;align-items:center}
+.rail{overflow:auto;padding:14px;display:flex;flex-direction:column;gap:14px;background:var(--paper)}
+.rail h5{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.box{background:var(--card);border:1px solid var(--soft);border-radius:10px;padding:10px 12px}
+.stage{display:grid;grid-template-columns:18px 1fr auto;gap:6px;align-items:center;padding:4px 0}
+.stage .t{font-weight:600}.stage small{color:var(--muted)}
+.team .r{display:flex;gap:8px;align-items:center;padding:4px 0}
+.team .r .b{flex:1}.team .r .b div:last-child{font-size:11.5px;color:var(--muted)}
+.files div{display:flex;justify-content:between;gap:8px;font-size:12px;padding:2px 0}
+.files div span:first-child{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plus{color:var(--ok)}.minus{color:var(--bad)}
+</style></head>
+<body><div class="win">
+<div class="top">agency-brain <span class="tag">Owner</span><span class="sp"></span><span class="btn sm">Settings</span></div>
+<div class="tabs"><div>Grok</div><div>Terminal</div><div class="on">LotOffice · nav, ShedPro, contracts</div><div>+</div></div>
+<div class="body">
+ <section class="thread">
+  <div class="head">
+   <h2>LotOffice: nav highlight, ShedPro mapping, salesperson signature, company contract</h2>
+   <div class="sub"><span class="pill">lotline · main</span><span class="pill">T3 · critical</span><span class="pill ok">Ready to push</span><span class="muted small">Started 12:46 · 57 min</span></div>
+  </div>
+  <div class="msgs">
+   <div class="m joe"><div class="who w-joe">JW</div><div class="b">We are going to be working on the lotoffice project and there are a couple of bugs… <span class="muted">(full task)</span></div></div>
+
+   <div class="m"><div class="who w-lead">L</div><div class="b"><div class="n">Lead <span>Grok 4.6 · the one you talk to</span></div>
+    <p>I'll work in <b>lotline</b> (its README calls it LotOffice). Four jobs: the nav double-highlight, ShedPro row matching, the salesperson signature, and the company contract. Opus is writing the plan now.</p>
+    <div class="ask"><b>Is lotline right?</b> <span class="muted">I'm sure from the README title. Say another repo any time and I'll move and re-plan.</span>
+     <div class="row"><span class="btn sm pri">Yes, lotline</span><span class="btn sm">Pick another repo</span></div></div>
+   </div></div>
+
+   <div class="m"><div class="who w-plan">P</div><div class="b"><div class="n">Planner <span>Opus 5.5 · 47 s</span></div>
+    <details class="card" open><summary>Plan · 5 steps · tests named before code<span class="sp"></span><span class="pill ok">Approved in advance</span></summary>
+     <div class="in"><ol>
+      <li>Nav: only the best-matching item lights up (Start sale vs Build quote, Reports vs Marketing).</li>
+      <li>ShedPro: tag each catalog add-on with its option group; the AI must name a row that agrees with the extra.</li>
+      <li>Salesperson signature: stored per user, printed under "Salesperson" on every packet.</li>
+      <li>Company contract: upload text or PDF; the quote attaches to it; manufacturer toggle swaps in the dealer.</li>
+      <li>Checks: nav-active test, quote-ai match test, e-sign packet tests.</li>
+     </ol></div></details>
+   </div></div>
+
+   <div class="m"><div class="who w-build">B</div><div class="b"><div class="n">Builder <span>Grok 4.7 build · xhigh</span></div>
+    <details class="card"><summary>Built steps 1–4 · 26 files · <span class="plus">+1,688</span> <span class="minus">−73</span><span class="sp"></span><span class="btn sm">See changes</span></summary>
+     <div class="in small">nav-active.ts, DealerNav.tsx, shedpro-ai-match.ts, contract-upload.ts, packet.ts, pdf.ts, esign/page.tsx… </div></details>
+   </div></div>
+
+   <div class="m"><div class="who w-test">T</div><div class="b"><div class="n">Tester <span>npm test · 41 s</span></div>
+    <p><span class="check">✓</span> 2,237 tests pass. <span class="pill warn">No typecheck script</span> <span class="muted small">lotline has no <code>typecheck</code>; I ran <code>tsc --noEmit</code> instead: clean.</span></p>
+   </div></div>
+
+   <div class="m"><div class="who w-rev">R</div><div class="b"><div class="n">Reviewer <span>Opus 5.5 · round 1</span></div>
+    <details class="card" open><summary><span class="x">✗</span> 2 gaps<span class="sp"></span><span class="pill">builder fixing</span></summary>
+     <div class="in"><ul>
+      <li>The contract upload can save a PDF that later stops every contract from going out.</li>
+      <li>It copies an existing settings helper instead of reusing it.</li></ul>
+      <p class="small muted">Looks right: nav fix, ShedPro matching, salesperson signature, manufacturer toggle.</p></div></details>
+   </div></div>
+
+   <div class="m joe"><div class="who w-joe">JW</div><div class="b">make sure the dealer can still send a plain text contract if they don't upload a PDF</div></div>
+   <div class="m"><div class="who w-lead">L</div><div class="b"><div class="n">Lead</div><p>Added to the builder's fix turn. Plain text stays the default; a PDF is optional. I'll have the reviewer check it.</p></div></div>
+
+   <div class="sys"><span class="dot ok"></span>Round 2: 1 gap fixed · Round 3: <b>pass</b></div>
+
+   <div class="m"><div class="who w-lead">L</div><div class="b"><div class="n">Lead</div>
+    <p>Done and committed (<code>6ee6ddb</code>). Opus passed it on round 3, tests pass. <b>Pushing main deploys LotOffice to production on Vercel.</b> No database changes in this commit.</p>
+    <div class="ask"><b>Ready to push.</b><div class="row"><span class="btn sm go">Push to production</span><span class="btn sm">Push a preview branch first</span><span class="btn sm">Show me the diff</span></div></div>
+   </div></div>
+  </div>
+  <div class="chips"><span>What's left?</span><span>Show the plan</span><span>Run it again in another repo</span><span>Pause</span></div>
+  <div class="compose"><textarea placeholder="Talk to the team: ask, redirect, add something, or say go"></textarea><span class="btn pri">Send</span></div>
+ </section>
+
+ <aside class="rail">
+  <div class="box"><h5>Progress</h5>
+   <div class="stage"><span class="check">✓</span><span class="t">Plan</span><small>47 s</small></div>
+   <div class="stage"><span class="check">✓</span><span class="t">Build</span><small>4 turns</small></div>
+   <div class="stage"><span class="check">✓</span><span class="t">Test</span><small>2,237 pass</small></div>
+   <div class="stage"><span class="check">✓</span><span class="t">Review</span><small>pass on round 3</small></div>
+   <div class="stage"><span class="dot live"></span><span class="t">Push</span><small>waiting on you</small></div>
+  </div>
+  <div class="box team"><h5>Team</h5>
+   <div class="r"><span class="who w-lead">L</span><div class="b"><div>Lead</div><div>Grok 4.6 · listening</div></div><span class="dot live"></span></div>
+   <div class="r"><span class="who w-plan">P</span><div class="b"><div>Planner</div><div>Opus 5.5 · done</div></div><span class="dot ok"></span></div>
+   <div class="r"><span class="who w-build">B</span><div class="b"><div>Builder</div><div>Grok 4.7 build · done</div></div><span class="dot ok"></span></div>
+   <div class="r"><span class="who w-test">T</span><div class="b"><div>Tester</div><div>npm test, tsc · done</div></div><span class="dot ok"></span></div>
+   <div class="r"><span class="who w-rev">R</span><div class="b"><div>Reviewer</div><div>Opus 5.5 · passed</div></div><span class="dot ok"></span></div>
+  </div>
+  <div class="box files"><h5>Changed · 26 files</h5>
+   <div><span>components/dealer/nav-active.ts</span><span class="plus">+47</span></div>
+   <div><span>lib/dealer/shedpro-ai-match.ts</span><span class="plus">+82</span></div>
+   <div><span>lib/esign/contract-upload.ts</span><span class="plus">+87</span></div>
+   <div><span>modules/esign/envelopes.ts</span><span class="plus">+108</span></div>
+   <div class="muted">…22 more</div>
+  </div>
+  <div class="shipbox"><h4>Ship</h4><div class="small">main → origin · <b>Vercel deploys production</b></div><div style="display:flex;gap:6px;margin-top:8px"><span class="btn sm go">Push</span><span class="btn sm">Preview branch</span></div></div>
+ </aside>
+</div></div></body></html>
