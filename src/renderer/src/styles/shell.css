@@ -46,6 +46,7 @@
   color: var(--ink);
 }
 .title-set:hover:not(:disabled) { border-color: var(--ink); }
+.title-icon { width: 1.75rem; height: 1.75rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 0.82rem; }
 .settings-toggle[aria-expanded='true'] { background: var(--card); border-color: var(--ink); }
 .settings-scrim {
   position: absolute;
@@ -1664,6 +1665,40 @@ button.runmeta-v:hover { color: var(--orange-deep); }
   font-size: 0.88rem;
 }
 .skin-tool.live { border-color: var(--orange); }
+.skin-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 0.6rem;
+  align-items: start;
+}
+.skin-row-body { display: flex; flex-direction: column; }
+.skin-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.skin-chips .skin-tool {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 0.3rem;
+  max-width: 100%;
+  padding: 2px 7px;
+  border-color: var(--line-soft);
+  border-radius: 6px;
+  background: var(--paper);
+  font-size: 0.72rem;
+}
+.skin-chips .skin-tool.live { border-color: var(--orange); }
+.skin-chips .skin-tool .k { font-size: 0.68rem; font-weight: 600; }
+.skin-chips .skin-tool .p { font-size: 0.7rem; color: var(--muted); }
+.skin-row .bubble.md {
+  max-width: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: 14.5px;
+  line-height: 1.55;
+}
+.skin-row .bubble.think { max-width: none; background: transparent; border: 0; padding: 0; }
+.skin-row .bubble.think > .think-label { margin: 0; font-family: "Schibsted Grotesk", sans-serif; font-size: 12px; font-weight: 500; color: var(--muted); }
+.skin-row .bubble.think .think-body { margin-top: 0.35rem; }
+.skin-row .skin-perm { margin: 0; }
 .skin-tool .k {
   font-family: "Schibsted Grotesk", sans-serif;
   font-size: 0.72rem;

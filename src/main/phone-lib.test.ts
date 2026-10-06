@@ -394,9 +394,11 @@ test('explorer lists files outside the watched brain folder', () => {
     assert.equal(src.includes(gone), false, `TerminalWorkspace.tsx still has ${gone}`)
   }
   // Settings lives in the title bar, never behind a condition.
-  const at = firstRun.indexOf('className="ghost title-set settings-toggle"')
+  const titleBar = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/TitleBar.tsx'), 'utf8')
+  assert.match(firstRun, /<TitleBar\b/)
+  const at = titleBar.indexOf('className="ghost title-set settings-toggle"')
   assert.ok(at > 0, 'title-bar Settings button')
-  const before = firstRun.slice(0, at)
+  const before = titleBar.slice(0, at)
   const logOutEnd = before.lastIndexOf(') : null}')
   assert.ok(logOutEnd > before.lastIndexOf('Log out'), 'Settings comes after the Log out conditional closes')
   assert.equal(/&& \(|\? \(/.test(before.slice(logOutEnd + ') : null}'.length)), false, 'nothing conditional opens before Settings')

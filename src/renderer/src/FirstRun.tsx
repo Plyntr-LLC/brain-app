@@ -8,6 +8,7 @@ import { openBrainAccountLabel } from '@shared/shell-switch'
 import { blankSession, stepState } from './flow'
 import { TerminalWorkspace } from './TerminalWorkspace'
 import { SettingsPanel } from './SettingsPanel'
+import { TitleBar } from './TitleBar'
 import { SetupNeeds } from './SetupNeeds'
 import { PlyntrCodeScreen, PlyntrCreateScreen, PlyntrProjectScreen, type SignedIn } from './PlyntrPath'
 import { WorkPulse } from './WorkPulse'
@@ -1122,50 +1123,26 @@ export function FirstRun() {
 
   return (
     <div className={`app ${s.screen === 'chat' ? 'chat-on' : ''} ${s.screen === 'boot' || (!railOpen && s.screen !== 'chat') ? 'rail-off' : ''} ${updatedLine ? 'has-update' : ''}`} data-setup-role={s.role || ''} data-setup-path={s.brainPath || ''}>
-      <div className="titlebar">
-        <span>{title}</span>
-        {s.role && !openBrainAccountLabel(activeSeat) ? (
-          <span className="role-lock">
-            {s.role === 'project' ? 'Project only' : s.role === 'team' || s.role === 'member' ? 'Team' : s.role === 'scout' ? 'Scout' : 'Owner'}
-            {s.brainKind === 'project' ? ' · project' : s.brainKind === 'hq' ? ' · HQ' : ''}
-          </span>
-        ) : null}
-        <span className={`sync-pill ${sync?.ok ? 'on' : ''}`} title={sync?.tip || sync?.line || ''}>
-          {sync?.line ||
-            (s.abWatching
-              ? s.role === 'project' || s.brainKind === 'project'
-                ? 'Project folders syncing'
-                : 'Agency Brain · watching this folder'
-              : 'Folder not syncing')}
-        </span>
-        {sync?.attention ? (
-          <button
-            type="button"
-            className="ghost title-set"
-            title={discardNote || 'Drop the commits that exist only on this computer'}
-            onClick={() => {
-              const files = sync?.tip ? `\n\n${sync.tip}` : ''
-              if (!window.confirm(`Throw away the changes that exist only on this computer and take the other computer's version? This cannot be undone.${files}`)) return
-              void window.brain.discardSync().then((r) => setDiscardNote(r.ok ? '' : r.detail))
-            }}
-          >
-            Discard my changes
-          </button>
-        ) : null}
-        {sync?.attention && discardNote ? <span className="sync-pill">{discardNote}</span> : null}
-        {openBrainAccountLabel(activeSeat) ? <span className="seat-pill">{openBrainAccountLabel(activeSeat)}</span> : null}
-        <button type="button" className="ghost title-set" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-          {theme === 'dark' ? 'Light' : 'Dark'}
-        </button>
-        {s.screen === 'chat' || s.email ? (
-          <button type="button" className="ghost title-set" onClick={() => void logOut()}>
-            Log out
-          </button>
-        ) : null}
-        <button type="button" className="ghost title-set settings-toggle" aria-expanded={showInvite} onClick={() => setShowInvite(!showInvite)}>
-          Settings
-        </button>
-      </div>
+      <TitleBar
+        title={title}
+        role={s.role}
+        brainKind={s.brainKind}
+        account={openBrainAccountLabel(activeSeat)}
+        sync={sync}
+        watching={s.abWatching}
+        discardNote={discardNote}
+        onDiscard={() => {
+          const files = sync?.tip ? `\n\n${sync.tip}` : ''
+          if (!window.confirm(`Throw away the changes that exist only on this computer and take the other computer's version? This cannot be undone.${files}`)) return
+          void window.brain.discardSync().then((r) => setDiscardNote(r.ok ? '' : r.detail))
+        }}
+        theme={theme}
+        setTheme={setTheme}
+        showLogout={s.screen === 'chat' || !!s.email}
+        onLogout={() => void logOut()}
+        settingsOpen={showInvite}
+        onSettings={() => setShowInvite(!showInvite)}
+      />
       {updatedLine ? (
         <div className="update-note">
           <span>{updatedLine}</span>

@@ -7,11 +7,14 @@ export type ThreadMsg = {
   steps?: unknown[]
   rawKind?: string
   skinLabel?: string | null
+  /** Think rows: when the first chunk came, and the last. */
+  at?: number
+  end?: number
 }
 
 /** A real thread row. Hidden protocol between thoughts does not count. */
 export function splitsThinking(m: ThreadMsg): boolean {
-  if (m.who === 'me' || m.who === 'err') return true
+  if (m.who === 'me' || m.who === 'err' || m.who === 'tool') return true
   if (m.who === 'plan' && Array.isArray(m.steps) && m.steps.length > 0) return true
   if (m.who === 'sys' && String(m.text || '').trim()) return true
   if (m.who === 'brain') {
@@ -45,17 +48,17 @@ export function paintsThreadSpec(component: string, text = ''): boolean {
   return true
 }
 
-export function appendThought<T extends ThreadMsg>(messages: T[], bit: string): T[] {
+export function appendThought<T extends ThreadMsg>(messages: T[], bit: string, now = Date.now()): T[] {
   const next = messages.slice()
   for (let i = next.length - 1; i >= 0; i--) {
     const row = next[i]
     if (row.who === 'think') {
-      next[i] = { ...row, text: String(row.text || '') + bit }
+      next[i] = { ...row, text: String(row.text || '') + bit, end: now }
       return next
     }
     if (splitsThinking(row)) break
   }
-  next.push({ who: 'think', text: bit } as T)
+  next.push({ who: 'think', text: bit, at: now } as T)
   return next
 }
 
@@ -83,7 +86,8 @@ export function collapseAdjacentThinks<T extends ThreadMsg>(messages: T[]): T[] 
     const prior = String(prev.text || '')
     const extra = String(row.text || '')
     const text = !prior ? extra : !extra ? prior : prior.endsWith('\n') || extra.startsWith('\n') ? prior + extra : prior + '\n\n' + extra
-    out[prevAt] = { ...prev, text }
+    const end = row.end ?? row.at ?? prev.end
+    out[prevAt] = { ...prev, text, ...(end !== undefined ? { end } : {}) }
   }
   return out
 }

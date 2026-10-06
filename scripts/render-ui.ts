@@ -1,6 +1,6 @@
 // Renders a real renderer component page (scripts/render-ui/<name>.tsx) with the app's CSS in headless
 // Chrome, prints the page's own asserts, and saves a screenshot. Exits 1 when any assert fails.
-// node --experimental-strip-types scripts/render-ui.ts away [outDir]
+// node --experimental-strip-types scripts/render-ui.ts away [outDir]   (RENDER_UI_SIZE=1440,900 sets the screenshot size)
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -35,7 +35,7 @@ const dom = execFileSync(chrome, [...flags, '--dump-dom', pathToFileURL(page).hr
 const raw = (dom.match(/<pre id="out">([\s\S]*?)<\/pre>/) || [])[1] || ''
 const text = raw.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
 const shot = join(outDir, `${name}.png`)
-execFileSync(chrome, [...flags, '--window-size=1100,1400', `--screenshot=${shot}`, pathToFileURL(page).href], { stdio: 'ignore' })
+execFileSync(chrome, [...flags, `--window-size=${process.env.RENDER_UI_SIZE || '1100,1400'}`, `--screenshot=${shot}`, pathToFileURL(page).href], { stdio: 'ignore' })
 
 let results: { name: string; ok: boolean; detail?: string }[] = []
 try {

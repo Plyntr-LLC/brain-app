@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { appendThought, collapseAdjacentThinks, type ThreadMsg } from './think-run.ts'
+import { appendThought, collapseAdjacentThinks, splitsThinking, type ThreadMsg } from './think-run.ts'
 
 test('back to back thoughts become one entry', () => {
   const first = appendThought([] as ThreadMsg[], 'One')
@@ -103,4 +103,37 @@ test('hidden protocol between thoughts does not split them', () => {
     msgs.map((m) => m.text),
     ['First\n\nSecond', 'response_completed', 'Hi', 'After']
   )
+})
+
+test('a thought keeps the time of its first chunk and moves its end with each later chunk', () => {
+  const one = appendThought([] as ThreadMsg[], 'a', 1000)
+  assert.equal(one[0].at, 1000)
+  assert.equal(one[0].end, undefined)
+  const two = appendThought(one, 'b', 2500)
+  const three = appendThought(two, 'c', 4000)
+  assert.equal(three.length, 1)
+  assert.equal(three[0].at, 1000)
+  assert.equal(three[0].end, 4000)
+})
+
+test('joined thoughts keep the first start and the last end', () => {
+  const out = collapseAdjacentThinks([
+    { who: 'think', text: 'a', at: 1000, end: 2000 },
+    { who: 'raw', text: '', rawKind: 'tool_call_update' },
+    { who: 'think', text: 'b', at: 3000, end: 5000 }
+  ])
+  const think = out.filter((m) => m.who === 'think')
+  assert.equal(think.length, 1)
+  assert.equal(think[0].at, 1000)
+  assert.equal(think[0].end, 5000)
+})
+
+test('a tool row splits thinking', () => {
+  assert.equal(splitsThinking({ who: 'tool' }), true)
+  const msgs = appendThought([{ who: 'think', text: 'a' }, { who: 'tool' }] as ThreadMsg[], 'b', 9)
+  assert.equal(msgs.length, 3)
+  assert.equal(msgs[0].text, 'a')
+  assert.equal(msgs[2].who, 'think')
+  assert.equal(msgs[2].text, 'b')
+  assert.equal(collapseAdjacentThinks([{ who: 'think', text: 'a' }, { who: 'tool' }, { who: 'think', text: 'b' }]).length, 3)
 })

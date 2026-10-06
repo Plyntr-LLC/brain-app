@@ -61,10 +61,15 @@ function filePath(f: File): string {
   }
 }
 type Msg = {
-  who: 'me' | 'brain' | 'think' | 'sys' | 'plan' | 'err' | 'raw'
+  who: 'me' | 'brain' | 'think' | 'sys' | 'plan' | 'err' | 'raw' | 'tool'
   text: string
   files?: Attach[]
   at?: number
+  end?: number
+  /** Tool rows: the file a step touched, and whether the turn is still on it. */
+  path?: string
+  tool?: string
+  live?: boolean
   steps?: { title: string; status?: string }[]
   rawKind?: string
   skinLabel?: string | null
@@ -916,6 +921,13 @@ export function ChatPane({
           filesRef.current = [...filesRef.current, hit]
           reportFiles(filesRef.current)
         }
+        // The thread gets a chip per file in the current run of tool steps.
+        setMessages((msgs) => {
+          for (let i = msgs.length - 1; i >= 0 && msgs[i].who === 'tool'; i--) {
+            if (msgs[i].path === hit.path) return msgs
+          }
+          return [...msgs, { who: 'tool', text: '', path: hit.path, tool: hit.tool, live: true }]
+        })
       }
       if (ev.kind === 'done' || ev.kind === 'error') {
         setWaitLabel('Working')
@@ -932,6 +944,7 @@ export function ChatPane({
         setCompacting(false)
         filesRef.current = filesRef.current.map((f) => ({ ...f, live: false }))
         reportFiles(filesRef.current)
+        setMessages((msgs) => (msgs.some((m) => m.live) ? msgs.map((m) => (m.live ? { ...m, live: false } : m)) : msgs))
         if (ev.kind === 'error' && ev.data) {
           setMessages((m) => [...m, { who: 'err', text: ev.data || '' }])
         }

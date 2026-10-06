@@ -9,10 +9,24 @@ import { paintsThreadSpec } from '../../../shared/think-run'
 import { skinActivity, type SkinBgTask } from '../../../shared/agent-label'
 import { cleanThink, stripAnsi, type FileHit } from '../ptyChat'
 import { SkinCard } from './Registry'
+import { cliLetter } from './turn'
 import { SkinTerm } from './SkinTerm'
 import type { RefObject, UIEventHandler } from 'react'
 
-type Msg = { who: string; text: string; steps?: { title: string; status?: string }[]; rawKind?: string; skinLabel?: string | null; pastes?: Paste[] }
+type Msg = {
+  who: string
+  text: string
+  steps?: { title: string; status?: string }[]
+  rawKind?: string
+  skinLabel?: string | null
+  pastes?: Paste[]
+  at?: number
+  end?: number
+  path?: string
+  tool?: string
+  live?: boolean
+}
+type Row = { spec: SkinSpec; thinkKey?: string; thinkLive?: boolean }
 
 function protocolJunk(text: string): boolean {
   return isProtocolNoise(text)
@@ -83,10 +97,13 @@ export function SkinPane({
   cliName: string
 }) {
   const [openThink, setOpenThink] = useState<Record<string, boolean>>({})
-  const specs: { spec: SkinSpec; thinkKey?: string; thinkLive?: boolean }[] = []
+  const specs: Row[] = []
   messages.forEach((m, i) => {
     if (m.who === 'me' && m.text) specs.push({ spec: userMessageSpec(m.text, m.pastes) })
-    else if (m.who === 'plan' && m.steps?.length) {
+    else if (m.who === 'tool' && m.path) {
+      const s = specFromStreamEvent({ kind: 'file', path: m.path, tool: m.tool })
+      if (s) specs.push({ spec: { ...s, props: { ...s.props, live: Boolean(m.live) } } })
+    }    else if (m.who === 'plan' && m.steps?.length) {
       const s = specFromStreamEvent({ kind: 'plan', steps: m.steps })
       if (s) specs.push({ spec: s })
     } else if (m.who === 'err' && m.text) {
@@ -122,6 +139,7 @@ export function SkinPane({
           prevAt = j
           break
         }
+        if (specs[j].spec.component === 'ToolCard') break
         if (paintsThreadSpec(specs[j].spec.component, String(specs[j].spec.props.text || specs[j].spec.props.data || ''))) break
       }
       if (prevAt >= 0) {
@@ -132,13 +150,13 @@ export function SkinPane({
           thinkLive: thinkIsLive(messages, i, busy),
           spec: {
             ...prev.spec,
-            props: { ...prev.spec.props, text: prior ? prior + '\n\n' + text : text }
+            props: { ...prev.spec.props, text: prior ? prior + '\n\n' + text : text, end: m.end ?? m.at ?? prev.spec.props.end }
           }
         }
         return
       }
       const s = specFromStreamEvent({ kind: 'thought', data: text })
-      if (s) specs.push({ spec: s, thinkKey: 't-' + i, thinkLive: thinkIsLive(messages, i, busy) })
+      if (s) specs.push({ spec: { ...s, props: { ...s.props, at: m.at, end: m.end } }, thinkKey: 't-' + i, thinkLive: thinkIsLive(messages, i, busy) })
     } else if (m.who === 'sys' && m.text) {
       if (m.text.startsWith('Older turns were summarized')) {
         const s = specFromStreamEvent({ kind: 'status', data: 'compacted' })
@@ -176,6 +194,37 @@ export function SkinPane({
   specs.forEach((row, i) => {
     row.spec.id = 'row-' + i + '-' + row.spec.component
   })
+  // Everything after one of your messages is one agent turn: the first row carries the avatar,
+  // and back-to-back tool steps share one row of chips.
+  const turns: { key: string; user?: Row; card?: Row; chips?: Row[]; avatar: boolean }[] = []
+  let afterUser = false
+  for (const row of specs) {
+    if (row.spec.component === 'UserMessage') {
+      turns.push({ key: row.spec.id, user: row, avatar: false })
+      afterUser = true
+      continue
+    }
+    const last = turns[turns.length - 1]
+    if (row.spec.component === 'ToolCard' && last?.chips) {
+      last.chips.push(row)
+      continue
+    }
+    turns.push({ key: row.spec.id, ...(row.spec.component === 'ToolCard' ? { chips: [row] } : { card: row }), avatar: afterUser })
+    afterUser = false
+  }
+  const card = (row: Row) => {
+    const thinkOpen = row.thinkKey ? (openThink[row.thinkKey] ?? false) : undefined
+    return (
+      <SkinCard
+        key={row.spec.id}
+        spec={row.spec}
+        thinkOpen={thinkOpen}
+        thinkLive={row.thinkLive}
+        onThinkToggle={row.thinkKey ? () => setOpenThink((m) => ({ ...m, [row.thinkKey!]: !(m[row.thinkKey!] ?? false) })) : undefined}
+        onAction={onAction}
+      />
+    )
+  }
 
   const ctxSpec =
     context && (context.percent != null || context.used)
@@ -200,27 +249,16 @@ export function SkinPane({
         />
       </div>
       <div className="skin-thread" ref={threadRef} onScroll={onScroll}>
-        {specs.map((row) => {
-          const thinkOpen = row.thinkKey ? (openThink[row.thinkKey] ?? Boolean(row.thinkLive)) : undefined
-          return (
-            <SkinCard
-              key={row.spec.id}
-              spec={row.spec}
-              thinkOpen={thinkOpen}
-              thinkLive={row.thinkLive}
-              onThinkToggle={
-                row.thinkKey
-                  ? () =>
-                      setOpenThink((m) => ({
-                        ...m,
-                        [row.thinkKey!]: !(m[row.thinkKey!] ?? row.thinkLive)
-                      }))
-                  : undefined
-              }
-              onAction={onAction}
-            />
+        {turns.map((t) =>
+          t.user ? (
+            card(t.user)
+          ) : (
+            <div key={t.key} className="skin-row">
+              <span className="skin-gutter">{t.avatar ? <span className="who w-lead skin-avatar">{cliLetter(kind)}</span> : null}</span>
+              <div className="skin-row-body">{t.chips ? <div className="skin-chips">{t.chips.map(card)}</div> : card(t.card!)}</div>
+            </div>
           )
-        })}
+        )}
       </div>
       {(wantPower || peel || ctxSpec) ? (
       <p className="tiny skin-cli">

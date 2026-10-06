@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { WorkPulse } from '../WorkPulse'
 import { cleanThink, mdToHtml, stripAnsi } from '../ptyChat'
 import { pasteParts } from '../paste'
+import { thoughtLabel } from './turn'
 import type { SkinSpec } from '../../../shared/skin/spec'
 import type { Paste } from '../../../shared/saved-msg'
 
@@ -91,8 +92,8 @@ export function SkinCard({
     const open = thinkOpen === true
     return (
       <div className="bubble think">
-        <button type="button" className="think-label" onClick={onThinkToggle} disabled={!onThinkToggle}>
-          Thinking{open ? '' : ' · show'}
+        <button type="button" className="think-label" aria-expanded={open} onClick={onThinkToggle} disabled={!onThinkToggle}>
+          {thoughtLabel({ at: Number(p.at) || undefined, end: Number(p.end) || undefined, live: thinkLive === true, open })}
         </button>
         {open ? <ThoughtBody html={mdToHtml(text)} follow={thinkLive === true} /> : null}
       </div>
