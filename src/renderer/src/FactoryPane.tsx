@@ -469,7 +469,7 @@ export function FactoryPane(props: {
           {prepWaiting ? (
             <div className="factory-trip">
               <strong>
-                This repo has uncommitted changes ({dirtyLabel} files). Commit them first, or
+                This repo has uncommitted changes ({dirtyLabel} {dirtyN === 1 ? 'file' : 'files'}). Commit them first, or
                 stash them, then Factory starts.
               </strong>
               {run.dirtyFiles?.length ? (
@@ -511,7 +511,7 @@ export function FactoryPane(props: {
           ) : null}
           {planWaiting && run.plan ? (
             <div className="factory-plan factory-trip">
-              <strong>The plan by {run.plan.by === 'opus' ? 'Opus' : 'Grok'} is ready. Approve it, or reject it with a reason.</strong>
+              <strong>The plan by {run.plan.by === 'opus' ? 'Opus' : 'Grok'} is above. Approve it, or reject it with a reason.</strong>
               <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why reject? (optional)" spellCheck={false} />
               <div className="factory-actions">
                 <button type="button" className="primary" onClick={() => void act(window.brain.factory.decide(run.id, 'approve-plan'))}>

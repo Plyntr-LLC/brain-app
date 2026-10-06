@@ -15,6 +15,8 @@ export type ThreadItem = {
   /** A card's folded body (plan, review, failing output, file list). */
   body?: string
   tone?: 'ok' | 'fail' | 'info'
+  /** The body shows without a click: the plan Joe is asked to approve right now. */
+  open?: boolean
   /** Joe's note waits for the next brief. */
   queued?: boolean
 }
@@ -33,13 +35,25 @@ function testCard(rows: VerifyRow[]): Pick<ThreadItem, 'text' | 'meta' | 'body' 
   return { text, meta, body, tone: fail.length ? 'fail' : ran ? 'ok' : 'info' }
 }
 
-function fromEvent(e: RunEvent, i: number): ThreadItem {
+/** The plan waiting on Joe's Approve stays open, however long; every other plan folds. */
+const waitingNow = (run: RunRecord, text: string) => run.phase === 'plan' && run.plan?.status === 'waiting' && run.plan.text === text
+
+function fromEvent(e: RunEvent, i: number, run: RunRecord): ThreadItem {
   const key = `e${i}`
   switch (e.kind) {
     case 'repo':
       return { key, at: e.at, role: 'lead', text: `${e.moved ? 'Moved to' : 'Working in'} ${name(e.repo)} (${e.repo}).` }
     case 'plan':
-      return { key, at: e.at, role: 'planner', text: e.status === 'approved' ? 'Plan approved' : 'Plan ready', meta: e.by === 'opus' ? 'Opus' : 'Grok', body: e.text || undefined, tone: e.status === 'approved' ? 'ok' : 'info' }
+      return {
+        key,
+        at: e.at,
+        role: 'planner',
+        text: e.status === 'approved' ? 'Plan approved' : 'Plan ready',
+        meta: e.by === 'opus' ? 'Opus' : 'Grok',
+        body: e.text || undefined,
+        tone: e.status === 'approved' ? 'ok' : 'info',
+        ...(e.status === 'waiting' && waitingNow(run, e.text) ? { open: true } : {})
+      }
     case 'turn':
       return {
         key,
@@ -82,7 +96,18 @@ function fromFields(run: RunRecord): ThreadItem[] {
   const start = run.createdAt
   const end = run.updatedAt || run.createdAt
   const out: ThreadItem[] = [{ key: 'f-repo', at: start, role: 'lead', text: `Working in ${name(run.workRepo)} (${run.workRepo}).` }]
-  if (run.plan?.text) out.push({ key: 'f-plan', at: run.plan.approvedAt || start, role: 'planner', text: run.plan.status === 'approved' ? 'Plan approved' : 'Plan ready', meta: run.plan.by === 'opus' ? 'Opus' : 'Grok', body: run.plan.text, tone: run.plan.status === 'approved' ? 'ok' : 'info' })
+  if (run.plan?.text) {
+    out.push({
+      key: 'f-plan',
+      at: run.plan.approvedAt || start,
+      role: 'planner',
+      text: run.plan.status === 'approved' ? 'Plan approved' : 'Plan ready',
+      meta: run.plan.by === 'opus' ? 'Opus' : 'Grok',
+      body: run.plan.text,
+      tone: run.plan.status === 'approved' ? 'ok' : 'info',
+      ...(waitingNow(run, run.plan.text) ? { open: true } : {})
+    })
+  }
   const work = run.audit?.work || []
   if (run.audit) {
     out.push({
@@ -107,7 +132,7 @@ function fromFields(run: RunRecord): ThreadItem[] {
  * line Joe just sent (pending) is always last, with the reply streaming under it.
  */
 export function threadItems(run: RunRecord, pending: Outgoing | null): ThreadItem[] {
-  const team = run.events?.length ? run.events.map(fromEvent) : fromFields(run)
+  const team = run.events?.length ? run.events.map((e, i) => fromEvent(e, i, run)) : fromFields(run)
   const saved = run.guide || []
   const talk: ThreadItem[] = []
   saved.forEach((g, i) => {

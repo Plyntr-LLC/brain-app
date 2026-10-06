@@ -25,7 +25,7 @@ export function FactoryThread({ items }: { items: ThreadItem[] }) {
               {it.role === 'lead' ? (
                 <p className="flead">{it.text}</p>
               ) : it.body ? (
-                <details className={`fcard ${it.tone || 'info'}`}>
+                <details className={`fcard ${it.tone || 'info'}`} open={it.open}>
                   <summary className="fcard-title">{it.text}</summary>
                   <pre className="fcard-body">{it.body}</pre>
                 </details>

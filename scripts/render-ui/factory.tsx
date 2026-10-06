@@ -183,6 +183,7 @@ async function main() {
 
   // (b) every question card, label to call.
   const dirty = await mount('b. dirty', run({ phase: 'triage', needsPrep: 'dirty', dirtyFiles: ['scratch.txt'], dirtyCount: 1 }))
+  check('b dirty card says 1 file', (dirty.el.querySelector('.factory-trip')?.textContent || '').includes('(1 file)') && !(dirty.el.textContent || '').includes('1 files'))
   check('b dirty Commit first', same(await click(dirty.el, 'Commit first'), 'decide', dirty.r.id, 'prep-commit'))
   check('b dirty Stash first', same(await click(dirty.el, 'Stash first'), 'decide', dirty.r.id, 'prep-stash'))
   const proceed = await mount('b. proceed', run({ phase: 'triage', needsProceed: true, triage: { size: 'T2', original: 'T2', capped: false, reasons: ['Touches payments.'], llm: { by: 'jev', risk: 'critical' } } }))
@@ -190,7 +191,18 @@ async function main() {
   check('b proceed has no Retry triage when Jev answered', !btn(proceed.el, 'Retry triage'))
   const skipped = await mount('b. proceed, triage skipped', run({ phase: 'triage', needsProceed: true, triage: { size: 'T2', original: 'T2', capped: false, reasons: ['Long request.'], llm: { skipped: 'timeout' } } }))
   check('b Retry triage', same(await click(skipped.el, 'Retry triage'), 'decide', skipped.r.id, 'retry-triage'))
-  const plan = await mount('b. plan', run({ phase: 'plan', plan: { text: 'Files: nav.ts', by: 'opus', status: 'waiting', rejects: 0, reasons: [] } }))
+  const plan = await mount(
+    'b. plan',
+    run({
+      phase: 'plan',
+      plan: { text: 'Files: nav.ts', by: 'opus', status: 'waiting', rejects: 0, reasons: [] },
+      events: [{ at: now + 5, kind: 'plan', status: 'waiting', by: 'opus', text: 'Files: nav.ts' }]
+    })
+  )
+  const waitingCard = plan.el.querySelector<HTMLDetailsElement>('[data-role="planner"] details.fcard')
+  check('b the plan to approve is open in the thread', !!waitingCard?.open && (waitingCard.querySelector('.fcard-body') as HTMLElement).offsetHeight > 0 && (waitingCard.textContent || '').includes('Files: nav.ts'))
+  const oldPlan = await mount('b. plan, saved before events', run({ phase: 'plan', plan: { text: 'Files: old.ts', by: 'opus', status: 'waiting', rejects: 0, reasons: [] } }))
+  check('b a waiting plan with no timeline is open too', !!oldPlan.el.querySelector<HTMLDetailsElement>('[data-role="planner"] details.fcard')?.open)
   check('b Approve plan', same(await click(plan.el, 'Approve plan'), 'decide', plan.r.id, 'approve-plan'))
   typeInto(plan.el.querySelector('.factory-plan input') as HTMLInputElement, 'too big')
   await tick()
