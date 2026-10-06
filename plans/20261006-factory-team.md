@@ -36,6 +36,14 @@ Mockups: `plans/mockups/20261006-factory/index.html` (A team chat, B pipeline bo
 
 Rigor: high. Factory runs push to production repos (lotline main is Vercel production). Every phase gets the failing-first test, the xhigh gate on plan and diff, FACTORY_PASS, and a dev-app click-through before any pack.
 
-## Decision needed from Joe
+## Decisions
 
-Which layout (A, B, or C). Recommendation: A, with C's job checklist as the rail's Progress box. The conversation is where Joe directs the team, and the checklist answers "is it done" at a glance.
+- 2026-10-06 Joe: layout **A** ("Option A is fantastic"). Build it with C's job checklist as the rail's Progress box.
+- 2026-10-06 Joe: the other tabs get the same idea: "the right side bar would show what it is doing rather than showing In use files." Mockup D. Chat tabs already receive what the rail needs: `status` `work:<label>` (current tool action), `plan` steps with status (Grok and Cursor ACP), `thought` vs `text`, `permission`, `context` use, and `file` hits.
+
+## Order of work (revised for A and D)
+
+1. **Run events and one rail component.** A run keeps a timeline of events (repo chosen, plan, each build turn's files, test rows, each review round's verdict and findings, each hold, commit, push). One `ActivityRail` component renders Now, Plan or Progress, Done so far, Files (folded), Session. Factory and Chat feed it different data.
+2. **Factory tab as A.** The thread from guide notes plus run events, with Planner, Builder, Tester and Reviewer cards; every current hold rendered as a Lead question with the existing buttons; the rail with Progress, Team, Changed files, Ship.
+3. **Chat tabs as D.** The right rail swaps In use for the activity rail; the model, effort, folder pickers stay at the bottom of the rail.
+4. **Lead acts** (phase 1 above). 5. **Push that works** (phase 2 above). 6. **Tester that tests** (phase 3 above).

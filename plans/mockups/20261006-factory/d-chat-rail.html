@@ -1,0 +1,57 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>D · Chat tab with a "Working on" rail</title>
+<link rel="stylesheet" href="base.css">
+<style>
+.body{display:grid;grid-template-columns:230px 1fr 320px;min-height:0}
+.left{background:var(--chrome);border-right:1px solid var(--line);padding:14px}
+.left h3{margin:0 0 10px;font-size:18px}.left div{padding:2px 0;color:var(--ink)}
+.chat{display:flex;flex-direction:column;min-height:0;background:var(--card);border-right:1px solid var(--line)}
+.msgs{flex:1;overflow:auto;padding:16px 22px;display:flex;flex-direction:column;gap:12px}
+.me{align-self:flex-end;background:var(--paper);border:1px solid var(--soft);border-radius:10px;padding:8px 12px;max-width:520px}
+.br{max-width:720px}.br p{margin:0 0 6px}
+.tool{display:inline-flex;gap:6px;align-items:center;font-size:12px;border:1px solid var(--soft);border-radius:6px;padding:3px 8px;background:#fffefb;margin:2px 4px 2px 0}
+.rail{overflow:auto;padding:14px;display:flex;flex-direction:column;gap:12px;background:var(--paper)}
+.rail h5{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.box{background:var(--card);border:1px solid var(--soft);border-radius:10px;padding:10px 12px}
+.now{border-color:#f4c48f;background:#fff6ec}
+.now .big{font-size:14px;font-weight:600;display:flex;gap:8px;align-items:center}
+.now .sub{font-size:12px;color:var(--muted);margin-top:3px}
+.step{display:grid;grid-template-columns:18px 1fr;gap:6px;padding:3px 0;font-size:12.5px}
+.step.done{color:var(--muted)}.step.live b{color:var(--deep)}
+.log div{display:grid;grid-template-columns:42px 1fr;gap:6px;font-size:12px;padding:2px 0}
+.log span{color:var(--muted)}
+.meter{height:6px;border-radius:3px;background:var(--soft);overflow:hidden;margin-top:6px}.meter div{height:100%;width:38%;background:var(--ok)}
+.meta{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:12px}.meta b{font-weight:600}
+</style></head>
+<body><div class="win">
+<div class="top">agency-brain <span class="tag">Owner</span><span class="sp"></span><span class="btn sm">Settings</span></div>
+<div class="tabs"><div class="on">Grok</div><div>Terminal</div><div>LotOffice · nav, ShedPro, contracts</div><div>+</div></div>
+<div class="body">
+ <aside class="left"><h3>agency-brain</h3><div>▸ clients</div><div>▸ context</div><div>▸ projects</div><div>▸ todo</div><div>AGENTS.md</div></aside>
+ <section class="chat">
+  <div class="msgs">
+   <div class="me">pull last week's Summit Google Ads numbers and draft the weekly report email</div>
+   <div class="br"><p>I'll pull last week's account data, compare it to the week before, and draft the email in Summit's thread.</p>
+    <span class="tool">✓ gads-proxy · GAQL campaign report</span><span class="tool">✓ read clients/summit/context.md</span><span class="tool">● writing report.html</span></div>
+  </div>
+  <div class="compose"><textarea placeholder="Message Grok"></textarea><span class="btn pri">Send</span></div>
+ </section>
+ <aside class="rail">
+  <div class="box now"><h5>Now</h5><div class="big"><span class="dot live"></span>Writing clients/summit/reports/2026-10-06.html</div><div class="sub">Step 3 of 5 · 0:42 on this step · 2:10 total</div></div>
+  <div class="box"><h5>Plan</h5>
+   <div class="step done"><span class="check">✓</span><span>Pull last week's campaign numbers</span></div>
+   <div class="step done"><span class="check">✓</span><span>Compare to the week before</span></div>
+   <div class="step live"><span class="dot live" style="margin-top:5px"></span><b>Write the report page</b></div>
+   <div class="step"><span class="dot idle" style="margin-top:5px"></span><span>Draft the email in Summit's thread</span></div>
+   <div class="step"><span class="dot idle" style="margin-top:5px"></span><span>Run the voice check</span></div>
+  </div>
+  <div class="box log"><h5>Done so far</h5>
+   <div><span>2:04</span>Ran GAQL campaign report (7 days)</div>
+   <div><span>2:05</span>Read clients/summit/context.md</div>
+   <div><span>2:06</span>Read last week's report</div>
+   <div><span>2:07</span>Compared spend, leads, cost per lead</div>
+  </div>
+  <details class="box"><summary><h5 style="display:inline">Files · 3</h5></summary><div class="small" style="margin-top:6px">clients/summit/context.md<br>clients/summit/reports/2026-09-29.html<br>clients/summit/reports/2026-10-06.html</div></details>
+  <div class="box"><h5>Session</h5><div class="meta"><span>Model</span><b>Grok 4.6</b><span>Effort</span><b>High</b><span>Folder</span><b>agency-brain</b><span>Context</span><b>38% used</b></div><div class="meter"><div></div></div></div>
+ </aside>
+</div></div></body></html>
