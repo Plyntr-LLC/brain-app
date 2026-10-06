@@ -1720,3 +1720,133 @@ test('push says what it deploys: Ship in advance stops before production, previe
   assert.equal(pe.pushed, undefined)
   configureFactory(deps)
 })
+
+test('the Tester runs the repo\'s own tsc when there is no typecheck script', async () => {
+  const mods = await loaded
+  const { strictPrompt } = await import('./opus.ts')
+  const { threadItems } = await import('../../renderer/src/factory-thread.ts')
+  configureFactory = mods.controller.configureFactory
+  startRun = mods.controller.startRun
+  getRun = mods.controller.getRun
+  decideRun = mods.controller.decideRun
+  dropMemory = mods.controller.dropMemory
+  abandonRun = mods.controller.abandonRun
+  saveProfile = mods.profile.saveProfile
+  mods.store.setUserDataDir(() => userData)
+  const realTsc = join(root, 'node_modules', '.bin', 'tsc')
+  const TSCONFIG = JSON.stringify({ compilerOptions: { strict: true, target: 'ES2022', module: 'ESNext', skipLibCheck: true }, include: ['*.ts'] })
+  const tsRepo = (name: string, o: { tsconfig?: boolean; tsc?: boolean; files?: Record<string, string> } = {}): string => {
+    const dir = repo(name)
+    writeFileSync(join(dir, '.gitignore'), 'node_modules\n')
+    if (o.tsconfig !== false) writeFileSync(join(dir, 'tsconfig.json'), TSCONFIG)
+    for (const [rel, body] of Object.entries(o.files || {})) writeFileSync(join(dir, rel), body)
+    git(dir, ['add', '-A'])
+    git(dir, ['commit', '-q', '-m', 'ts setup'])
+    if (o.tsc !== false) {
+      mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true })
+      execFileSync('/bin/ln', ['-s', realTsc, join(dir, 'node_modules', '.bin', 'tsc')])
+    }
+    return realpathSync(dir)
+  }
+  const T1 = 'fix the nav highlight on the dealer screens'
+  const begin = (task: string, workRepo: string): string => {
+    const res = (startRun as unknown as (i: object) => StartResult)({ task, workRepo, brainPath: repo(`${workRepo.split('/').pop()}-brain`), proceedCritical: true })
+    if (!res.ok) throw new Error(res.error)
+    activeId = res.run.id
+    return res.run.id
+  }
+  const tests = (id: string) => (getRun(id)?.events || []).filter((e): e is Extract<RunEvent, { kind: 'test' }> => e.kind === 'test')
+  const BAD = "export const n: number = 'x'\n"
+  const GOOD = 'export const n: number = 1\n'
+
+  // (a) a type error in a file this run changed: tsc fails, one fix turn, then it passes.
+  configureFactory(deps)
+  reset()
+  const a = tsRepo('tsc-a')
+  touch = () => writeFileSync(join(a, 'src.ts'), (prompts[prompts.length - 1] || '').includes('Verify failed') ? GOOD : BAD)
+  const ida = begin(T1, a)
+  assert.equal(getRun(ida)?.tier, 'T1')
+  await until(() => tests(ida).some((t) => t.rows.some((r) => r.script === 'tsc --noEmit' && r.status === 'pass')), 'tsc passes after the fix')
+  const first = tests(ida)[0].rows.find((r) => r.script === 'tsc --noEmit')
+  assert.equal(first?.status, 'fail')
+  assert.match(first?.tail || '', /src\.ts/)
+  assert.equal(prompts.filter((p) => p.includes('Verify failed: tsc --noEmit')).length, 1)
+  assert.equal(tests(ida).some((t) => t.rows.some((r) => r.script === 'typecheck')), false)
+  const testers = threadItems(getRun(ida)!, null).filter((it) => it.role === 'tester')
+  assert.match(testers[0].meta || '', /tsc --noEmit failed/)
+  assert.ok(testers.some((it) => /tsc --noEmit passed/.test(it.meta || '')))
+  assert.ok((testers[0].body || '').startsWith('tsc --noEmit') && !(testers[0].body || '').includes('npm run'))
+  assert.equal(git(a, ['ls-files', '--others', '--exclude-standard']).split('\n').some((f) => f.endsWith('.js')), false)
+  assert.equal(existsSync(join(a, 'src.js')), false)
+  abandonRun(ida)
+
+  // (a3) T3: the verify artifact carries the tsc output under its own label.
+  reset()
+  const a3 = tsRepo('tsc-a3')
+  touch = () => writeFileSync(join(a3, 'src.ts'), BAD)
+  const id3 = begin('redesign the webhook feature', a3)
+  assert.equal(getRun(id3)?.tier, 'T3')
+  await until(() => getRun(id3)?.plan?.status === 'waiting' && !!getRun(id3)?.plan?.text, 'a3 plan')
+  decideRun(id3, 'approve-plan')
+  await until(() => !!getRun(id3)?.verifyArtifact, 'a3 verify artifact')
+  const art = readFileSync(getRun(id3)!.verifyArtifact!, 'utf8')
+  assert.match(art, /== tsc --noEmit: fail/)
+  assert.match(art, /TS2322/)
+  assert.equal(art.includes('npm run tsc'), false)
+  abandonRun(id3)
+
+  // (b) a type error in a file this run did not change: no fix turn, on to review.
+  reset()
+  const b = tsRepo('tsc-b', { files: { 'other.ts': BAD } })
+  touch = () => writeFileSync(join(b, 'src.ts'), GOOD)
+  const idb = begin(T1, b)
+  await until(() => getRun(idb)?.phase === 'review' && !!getRun(idb)?.diff, 'b on to review')
+  const bRow = tests(idb)[0].rows.find((r) => r.script === 'tsc --noEmit')
+  assert.equal(bRow?.status, 'fail')
+  assert.match(bRow?.tail || '', /other\.ts/)
+  assert.equal(prompts.some((p) => p.includes('Verify failed: tsc --noEmit')), false)
+  abandonRun(idb)
+
+  // (b2) the reviewer prompt names what ran.
+  const sp = strictPrompt({ task: 't', tier: 'T2', risk: 'none', base: 'b', diff: 'd', workRepo: '/x', verify: [{ script: 'tsc --noEmit', status: 'fail', tail: 'src.ts(1,14): error TS2322' }] })
+  assert.ok(sp.includes('- tsc --noEmit: fail') && !sp.includes('npm run tsc'))
+
+  // (c)-(f) when the fallback must not run.
+  const ran: string[] = []
+  let tscCalls = 0
+  configureFactory({ ...deps, runScript: async (_r, s) => (ran.push(s), { code: 0, out: 'ok' }), runTsc: async () => (tscCalls++, { code: 0, out: 'ok' }) })
+  const onlyTypecheck = async (dir: string) => {
+    reset()
+    ran.length = 0
+    tscCalls = 0
+    touch = () => writeFileSync(join(dir, 'src.ts'), GOOD)
+    const id = begin(T1, dir)
+    await until(() => tests(id).length > 0, 'verify ran')
+    const rows = tests(id)[0].rows
+    abandonRun(id)
+    return rows
+  }
+  const c = tsRepo('tsc-c', { files: { 'package.json': JSON.stringify({ name: 'c', scripts: { typecheck: 'tsc --noEmit' } }) } })
+  const cRows = await onlyTypecheck(c)
+  assert.ok(ran.includes('typecheck') && tscCalls === 0 && !cRows.some((r) => r.script === 'tsc --noEmit'), JSON.stringify({ ran, tscCalls, cRows }))
+  const d = tsRepo('tsc-d', { tsc: false })
+  const dRows = await onlyTypecheck(d)
+  assert.ok(tscCalls === 0 && dRows.some((r) => r.script === 'typecheck' && r.status === 'skipped'), JSON.stringify(dRows))
+  const e = tsRepo('tsc-e', { tsconfig: false })
+  const eRows = await onlyTypecheck(e)
+  assert.ok(tscCalls === 0 && eRows.some((r) => r.script === 'typecheck' && r.status === 'skipped'), JSON.stringify(eRows))
+  const f = tsRepo('tsc-f', { files: { 'package.json': JSON.stringify({ name: 'f', scripts: { types: 'tsc --noEmit' } }) } })
+  saveProfile(f, { scripts: { typecheck: 'types' } })
+  await onlyTypecheck(f)
+  assert.ok(ran.includes('types') && tscCalls === 0, JSON.stringify({ ran, tscCalls }))
+
+  // (g) what the fallback runs, and its limit.
+  assert.deepEqual(mods.controller.TSC_ARGS, ['--noEmit', '-p', 'tsconfig.json'])
+  const ctl = readFileSync(join(root, 'src/main/factory/controller.ts'), 'utf8')
+  assert.ok(ctl.includes("runBin(repo, join(repo, 'node_modules', '.bin', 'tsc'), TSC_ARGS, env)"))
+  assert.ok(ctl.includes("runBin(repo, 'npm', ['run', '--silent', script], env)"))
+  const runBinSrc = ctl.slice(ctl.indexOf('function runBin('), ctl.indexOf('function runBin(') + 900)
+  assert.ok(runBinSrc.includes("setTimeout(() => child.kill('SIGTERM'), 10 * 60_000)"), runBinSrc)
+  assert.equal(/['"`]npx\b/.test(ctl), false, 'no npx command')
+  configureFactory(deps)
+})

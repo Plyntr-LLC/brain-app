@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { accessSync, constants as fsConstants, existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseGrokLine, resolveBin, type StreamEvent } from '../ai-cli'
-import { ACK_FILED, ACK_NOTED, BUILDER_FIX_MAX, VOICE_MAX, type Builder, type GuideNote, type LiveCall, type Slice, type Tier, type UsageRow } from '../../shared/factory.ts'
+import { ACK_FILED, ACK_NOTED, BUILDER_FIX_MAX, TSC_ROW, verifyLabel, VOICE_MAX, type Builder, type GuideNote, type LiveCall, type Slice, type Tier, type UsageRow } from '../../shared/factory.ts'
 import { upsertLog } from './brain-log.ts'
 import { buildBrief, type BriefPhase } from './brief.ts'
 import { isNeedOpus } from './fallback.ts'
@@ -82,6 +82,8 @@ export type FactoryDeps = {
   /** Child env for verify scripts (shims first, no ANTHROPIC_API_KEY). */
   env: (repo: string) => NodeJS.ProcessEnv
   runScript?: (repo: string, script: string, env: NodeJS.ProcessEnv) => Promise<ScriptResult>
+  /** The repo's own tsc when it has no typecheck script (tests stub it). */
+  runTsc?: (repo: string, env: NodeJS.ProcessEnv) => Promise<ScriptResult>
   /** Fixture hooks. Defaults: resolveBin, node spawn, real git push. */
   grokBin?: () => string | null
   claudeBin?: () => string | null
@@ -1140,9 +1142,22 @@ function scriptsOf(repo: string): Record<string, string> {
   }
 }
 
+/** The tsc fallback's arguments: type-check only, never write .js into the work repo. */
+export const TSC_ARGS = ['--noEmit', '-p', 'tsconfig.json']
+
 function defaultRunScript(repo: string, script: string, env: NodeJS.ProcessEnv): Promise<ScriptResult> {
+  return runBin(repo, 'npm', ['run', '--silent', script], env)
+}
+
+/** The work repo's own TypeScript, never a global or an npx download. */
+function defaultRunTsc(repo: string, env: NodeJS.ProcessEnv): Promise<ScriptResult> {
+  return runBin(repo, join(repo, 'node_modules', '.bin', 'tsc'), TSC_ARGS, env)
+}
+
+/** A local check with the same 10-minute limit and output cap for every verify row. */
+function runBin(repo: string, bin: string, args: string[], env: NodeJS.ProcessEnv): Promise<ScriptResult> {
   return new Promise((resolve) => {
-    const child = spawn('npm', ['run', '--silent', script], { cwd: repo, env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(bin, args, { cwd: repo, env, stdio: ['ignore', 'pipe', 'pipe'] })
     let out = ''
     const add = (d: Buffer) => {
       out += String(d)
@@ -1181,16 +1196,20 @@ async function verifyStep(state: Live): Promise<void> {
   const rows: VerifyRow[] = []
   const outs: string[] = []
   const env = d.env(state.run.workRepo)
+  const typecheckName = names.typecheck || 'typecheck'
   for (const script of wanted) {
-    if (!scripts[script]) {
+    // No typecheck script but the repo's own TypeScript and a tsconfig: run that tsc instead of skipping.
+    const tsc = script === typecheckName && !scripts[script] && hasLocalTsc(state.run.workRepo)
+    if (!scripts[script] && !tsc) {
       rows.push({ script, status: 'skipped' })
       outs.push(`== npm run ${script}: skipped (no script)`)
       continue
     }
-    const res = await (d.runScript || defaultRunScript)(state.run.workRepo, script, env)
+    const res = tsc ? await (d.runTsc || defaultRunTsc)(state.run.workRepo, env) : await (d.runScript || defaultRunScript)(state.run.workRepo, script, env)
     if (stale(state, gen)) return
-    rows.push(res.code === 0 ? { script, status: 'pass' } : { script, status: 'fail', tail: tail(res.out) })
-    outs.push(`== npm run ${script}: ${res.code === 0 ? 'pass' : `fail (exit ${res.code})`}\n${String(res.out || '').trimEnd()}`)
+    const name = tsc ? TSC_ROW : script
+    rows.push(res.code === 0 ? { script: name, status: 'pass' } : { script: name, status: 'fail', tail: tail(res.out) })
+    outs.push(`== ${verifyLabel({ script: name })}: ${res.code === 0 ? 'pass' : `fail (exit ${res.code})`}\n${String(res.out || '').trimEnd()}`)
     state.run = { ...state.run, verify: [...rows] }
     persist(state)
   }
@@ -1202,10 +1221,21 @@ async function verifyStep(state: Live): Promise<void> {
   const ours = ourFail(state.run)
   if (ours && state.verifyFix !== gen) {
     state.verifyFix = gen
-    await buildStep(state, 'fix', `Verify failed: npm run ${ours.script}.\n${tail(ours.tail || '', 8)}`)
+    await buildStep(state, 'fix', `Verify failed: ${verifyLabel(ours)}.\n${tail(ours.tail || '', 8)}`)
     return
   }
   await reviewStep(state)
+}
+
+/** A tsconfig.json file and an executable node_modules/.bin/tsc in the work repo. */
+function hasLocalTsc(repo: string): boolean {
+  try {
+    if (!statSync(join(repo, 'tsconfig.json')).isFile()) return false
+    accessSync(join(repo, 'node_modules', '.bin', 'tsc'), fsConstants.X_OK)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** The first red verify row that names a file this run changed. Unrelated red rows are the repo next door. */

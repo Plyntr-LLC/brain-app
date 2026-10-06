@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { DONE_CONTRACT } from '../../shared/factory-done.ts'
-import { strictRequired, type RunRecord, type UsageRow, type VerifyRow } from '../../shared/factory.ts'
+import { strictRequired, verifyLabel, type RunRecord, type UsageRow, type VerifyRow } from '../../shared/factory.ts'
 import { claudeRow, parseClaudeEnvelope, usageRow } from './usage.ts'
 
 export { REVIEW_MAX } from '../../shared/factory.ts'
@@ -166,7 +166,7 @@ export function strictPrompt(o: { task: string; tier: string; risk: string; base
     `Tier: ${o.tier}. Risk: ${o.risk}. Base: ${o.base}.`,
     `Task: ${String(o.task || '').slice(0, 4000)}`,
     ...(rows.length
-      ? ['', 'Verify results (a fail that names a changed file is a gap):', ...rows.map((r) => `- npm run ${r.script}: ${r.status}${r.status === 'fail' && r.tail ? `\n${String(r.tail).split('\n').slice(-8).join('\n')}` : ''}`)]
+      ? ['', 'Verify results (a fail that names a changed file is a gap):', ...rows.map((r) => `- ${verifyLabel(r)}: ${r.status}${r.status === 'fail' && r.tail ? `\n${String(r.tail).split('\n').slice(-8).join('\n')}` : ''}`)]
       : []),
     '',
     `Diff against the base (cut at 60k characters; run \`git diff ${o.base}\` in the work repo for the rest):`,

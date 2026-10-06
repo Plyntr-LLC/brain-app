@@ -1,4 +1,4 @@
-import type { RunEvent, RunRecord, VerifyRow } from '../../shared/factory'
+import { verifyLabel, type RunEvent, type RunRecord, type VerifyRow } from '../../shared/factory'
 import { visibleGuide, type Outgoing } from './guide-thread'
 
 export type Role = 'joe' | 'lead' | 'planner' | 'builder' | 'tester' | 'reviewer'
@@ -31,7 +31,7 @@ function testCard(rows: VerifyRow[]): Pick<ThreadItem, 'text' | 'meta' | 'body' 
   const ran = pass.length + fail.length
   const text = !ran ? 'No checks ran' : fail.length ? `${fail.length} failed, ${pass.length} passed` : `${plural(pass.length, 'check')} passed`
   const meta = [...pass.map((r) => `${r.script} passed`), ...fail.map((r) => `${r.script} failed`), ...skip.map((r) => `No ${r.script} script`)].join(' · ')
-  const body = fail.map((r) => `npm run ${r.script}\n${r.tail || ''}`.trim()).join('\n\n') || undefined
+  const body = fail.map((r) => `${verifyLabel(r)}\n${r.tail || ''}`.trim()).join('\n\n') || undefined
   return { text, meta, body, tone: fail.length ? 'fail' : ran ? 'ok' : 'info' }
 }
 

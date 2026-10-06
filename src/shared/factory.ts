@@ -50,6 +50,14 @@ export type GuideNote = { at: number; text: string; sent?: boolean; repo?: strin
 
 export type VerifyRow = { script: string; status: 'pass' | 'fail' | 'skipped'; tail?: string }
 
+/** The verify row for the repo's own TypeScript when it has no typecheck script. */
+export const TSC_ROW = 'tsc --noEmit'
+
+/** What ran for a verify row: the local tsc, or the repo's npm script. */
+export function verifyLabel(row: { script: string }): string {
+  return row.script === TSC_ROW ? TSC_ROW : `npm run ${row.script}`
+}
+
 /** One model call. model is what the CLI said served it (never the configured name); '' when no answer came. */
 export type UsageRow = {
   phase: 'triage' | 'plan' | 'review' | 'build'
