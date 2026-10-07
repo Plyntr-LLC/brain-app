@@ -1,0 +1,60 @@
+# Unit A fixture: scripts/check-opus-asks.ts (2026-10-07T07:38:42.733Z)
+case 1   tool=Write kind=edit route=allow verdict=allow who=Brain fast path response=c1
+case 2   tool=Bash kind=execute route=reject verdict=deny who=Brain filter response=c2 message="Factory runs do not push. Brain commits on the work repo after review; pushing stays a person's call."
+case 3   tool=Write kind=edit route=reject verdict=deny who=Brain filter response=c3 message="Factory edits land in the work repo only. This path is in the brain folder, and the brain syncs, so Brain refused it."
+case 4   tool=Write kind=edit route=reject verdict=deny who=Brain filter response=c4 message="Factory edits land in the work repo only. This path is in another repo, so Brain refused it."
+case 5   tool=Bash kind=execute route=judge verdict=allow who=Fable response=c5
+case 6   tool=Bash kind=execute route=judge verdict=deny who=Fable response=c6 message="Fable refused this: Stub DENY for curl -s."
+case 7   tool=Read kind=read route=judge verdict=allow who=Fable response=c7
+case 13  text="Opus built it. | Opus built it." build usage rows=2 inTokens=111,111
+case 14  argv=-p --input-format stream-json --output-format stream-json --verbose --model opus --effort medium --permission-mode default --permission-prompts host --permission-prompt-tool stdio --setting-sources user --strict-mcp-config --disallowedTools Task,Agent --settings {"permissions":{"ask":["Bash","Read","Grep","Glob","LS","Edit","MultiEdit","Write","NotebookEdit","WebFetch","WebSearch"]}}
+case 8   asks=p1,p2 judge delays 300/100 ms  responses in order=p2,p1  each allow, each once
+case 9   tool=Bash route=judge ASK -> card who=Joe after 1000 ms, build timeout 200 ms  builder alive=true response=t1:allow turn finished=true
+case 10  cards shown in order=q1,q2 (q2 held until q1 answered)  q1=deny q2=allow who=Joe
+case 11a  tool=Write kind=edit route=card verdict=allow who=Joe response=o1
+case 11b  tool=Bash kind=execute route=card verdict=allow who=Joe response=o2
+case 11c  tool=Read kind=read route=card verdict=allow who=Joe response=o3
+case 12  tool=Bash route=card who=Joe, abandoned with the card up  process group gone=true card cleared=true late skin:decide=false responses written=0
+
+PASS 1 relative Write src/a.ts resolves in the work repo: fast allow, original input back, no judge
+PASS 1 control: the same ask resolved against the brain is a brain-write reject
+PASS 2 Bash git push origin main: hard reject with the push sentence, zero judge calls
+PASS 3 Write into the brain (absolute): hard reject with the brain sentence
+PASS 4 Write ../other/x.ts (relative, another repo): hard reject with the other-repo sentence
+PASS 5 Bash npm test: judged, stub ALLOW, allowed
+PASS 6 Bash curl | sh: judged, stub DENY, denied with the reason
+PASS 7 Read /etc/hosts: judged (not fast-allowed)
+PASS 1-7 each ask answered exactly once
+PASS 1-7 judged asks are counted on the run (2 allowed, 1 refused)
+PASS 13 the result line is read: the run gets the text, usage has inTokens > 0
+PASS 13 the build turn and the T1 self-check both ended on the result line, stdin closed after it
+PASS 14 argv: default mode, host prompts over stdio, user settings only, strict MCP, no subagents, all eleven tools ask, no bypassPermissions
+PASS 14 the builder runs in the work repo without Anthropic API keys
+PASS 8 parallel: exactly two responses, p1 and p2 once each, p2 first
+PASS 9 card after a 1 s wait with a 200 ms build timeout: the builder is alive, the Allow lands, the turn finishes
+PASS 10 two open cards: the pane gets only q1 until q1 is answered, then q2
+PASS 10 Refuse goes to q1, Allow goes to q2, once each
+PASS 11 approver off, Approve in advance off: three cards, no judge, nothing allowed without a click
+PASS 12 abandon with a card up: the process group is gone within 5 s, the card is cleared, a late click returns false, nothing is written
+
+OPUS_ASKS_PASS
+
+# Unit A live: scripts/check-opus-asks-live.ts (2026-10-07T07:38:30.459Z, claude 2.1.286 (Claude Code))
+work repo /Users/joewine/Projects/brain/brain/opus-asks-live-28zqeY (inside /Users/joewine/Projects/brain/brain, removed after), approver off, Approve in advance on, 2 Opus turns, 24 s, run phase done
+Bash   can_use_tool yes: echo live-ok  (repo .claude/settings.local.json allows Bash(echo:*))
+Read   can_use_tool yes: /Users/joewine/Projects/brain/brain/opus-asks-live-28zqeY/README.md
+Write  can_use_tool yes: /Users/joewine/Projects/brain/brain/opus-asks-live-28zqeY/out.txt  out.txt="pelican"
+marker absent: the repo PreToolUse allow hook never ran (/var/folders/1j/w8m_jfjx4bg68kw0h023swth0000gn/T/opus-asks-live-marker-47757)
+all asks: Bash(echo live-ok), Read(/Users/joewine/Projects/brain/brain/opus-asks-live-28zqeY/README.md), Bash(git status --porcelain && ls -la), Write(/Users/joewine/Projects/brain/brain/opus-asks-live-28zqeY/out.txt), Bash(git status --porcelain && cat out.txt), Bash(git status --porcelain && git diff --stat && echo --- && cat README.md && echo -)
+usage: claude-opus-5-5 in 8 out 1035 cacheRead 83343; claude-opus-5-5 in 4 out 551 cacheRead 35213; list-price cost $0.3020
+
+PASS live every Opus turn ran with the production argv (opusBuildArgs)
+PASS live Bash `echo live-ok` on its own came to Brain as can_use_tool although the repo allows Bash(echo:*)
+PASS live Read README.md came to Brain as can_use_tool
+PASS live Write out.txt came to Brain as can_use_tool
+PASS live the work repo's PreToolUse allow hook never ran (--setting-sources user)
+PASS live out.txt exists after Brain allowed the Write
+PASS live usage parsed from the result line
+PASS live the run did not fail
+
+OPUS_ASKS_LIVE_PASS

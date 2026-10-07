@@ -611,28 +611,38 @@ process.env.FAKE_CLAUDE_PLAN = claudePlan
 mkdirSync(dirname(claudeBin), { recursive: true })
 const claudeSource = `#!/usr/bin/env node
 const fs = require('fs')
-let n = 0
-try { n = fs.readFileSync(0).length } catch { n = 0 }
-fs.appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ argv: process.argv.slice(2), pid: process.pid, stdinBytes: n, cwd: process.cwd(), anthropic: 'ANTHROPIC_API_KEY' in process.env, translator: 'ANTHROPIC_TRANSLATOR_API_KEY' in process.env }) + '\\n')
-const json = process.argv[process.argv.indexOf('--output-format') + 1] === 'json'
+const log = (o) => fs.appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ argv: process.argv.slice(2), pid: process.pid, cwd: process.cwd(), anthropic: 'ANTHROPIC_API_KEY' in process.env, translator: 'ANTHROPIC_TRANSLATOR_API_KEY' in process.env, ...o }) + '\\n')
+const json = /^(stream-)?json$/.test(process.argv[process.argv.indexOf('--output-format') + 1])
 const envelope = (text) => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, total_cost_usd: 0.0123, usage: { input_tokens: 111, output_tokens: 22, cache_read_input_tokens: 3333, cache_creation_input_tokens: 444 }, modelUsage: { 'claude-fake-served': { costUSD: 0.0123 } } })
 const say = (text) => process.stdout.write(json ? envelope(text) : text + '\\n')
-// The Opus builder (bypassPermissions) never takes a planner or reviewer line from the queue.
-// Each turn appends a new comment so a long review loop does not pause on an unchanged diff.
-if (process.argv.includes('bypassPermissions')) {
-  try {
-    const path = require('path')
-    const srcDir = path.join(process.cwd(), 'src')
-    const names = fs.existsSync(srcDir) ? fs.readdirSync(srcDir).filter((n) => /\\.(ts|js|mjs)$/.test(n)).sort() : []
-    if (names.length) {
-      const file = path.join(srcDir, names[0])
-      const cur = fs.readFileSync(file, 'utf8')
-      const n = (cur.match(/\\/\\*f\\d+\\*\\//g) || []).length + 1
-      fs.writeFileSync(file, cur.replace(/\\s*$/, '') + '\\n/*f' + n + '*/\\n')
-    }
-  } catch {}
-  setTimeout(() => { say('Opus built it.'); process.exit(0) }, Number(process.env.FAKE_CLAUDE_BUILD_SLEEP || 0))
-} else setTimeout(answer, Number(process.env.FAKE_CLAUDE_DELAY || 0))
+// The Opus builder reads one stream-json brief and keeps stdin open until Brain has the result line.
+// It never takes a planner or reviewer line from the queue. Each turn appends a new comment so a long
+// review loop does not pause on an unchanged diff.
+if (process.argv.includes('--permission-prompt-tool')) {
+  require('readline').createInterface({ input: process.stdin }).once('line', (line) => {
+    let brief = ''
+    try { brief = String(JSON.parse(line).message.content) } catch {}
+    log({ stdinBytes: Buffer.byteLength(line), brief })
+    try {
+      const path = require('path')
+      const srcDir = path.join(process.cwd(), 'src')
+      const names = fs.existsSync(srcDir) ? fs.readdirSync(srcDir).filter((n) => /\\.(ts|js|mjs)$/.test(n)).sort() : []
+      if (names.length) {
+        const file = path.join(srcDir, names[0])
+        const cur = fs.readFileSync(file, 'utf8')
+        const n = (cur.match(/\\/\\*f\\d+\\*\\//g) || []).length + 1
+        fs.writeFileSync(file, cur.replace(/\\s*$/, '') + '\\n/*f' + n + '*/\\n')
+      }
+    } catch {}
+    setTimeout(() => process.stdout.write(envelope('Opus built it.') + '\\n'), Number(process.env.FAKE_CLAUDE_BUILD_SLEEP || 0))
+  })
+  process.stdin.on('end', () => process.exit(0))
+} else {
+  let n = 0
+  try { n = fs.readFileSync(0).length } catch { n = 0 }
+  log({ stdinBytes: n })
+  setTimeout(answer, Number(process.env.FAKE_CLAUDE_DELAY || 0))
+}
 function answer() {
 let plan = []
 try { plan = JSON.parse(fs.readFileSync(process.env.FAKE_CLAUDE_PLAN, 'utf8')) } catch {}
@@ -656,11 +666,12 @@ const installClaude = () => {
   chmodSync(claudeBin, 0o755)
 }
 installClaude()
-type ClaudeRow = { argv: string[]; pid: number; stdinBytes: number; cwd: string; anthropic: boolean; translator: boolean }
+type ClaudeRow = { argv: string[]; pid: number; stdinBytes: number; cwd: string; anthropic: boolean; translator: boolean; brief?: string }
 const claudeRows = (): ClaudeRow[] => (existsSync(claudeLog) ? readFileSync(claudeLog, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l) as ClaudeRow) : [])
 const claudeSays = (lines: string[]) => writeFileSync(claudePlan, JSON.stringify(lines))
 const modeOf = (row: ClaudeRow) => row.argv[row.argv.indexOf('--permission-mode') + 1]
-const opusBuilds = (rows: ClaudeRow[]) => rows.filter((x) => modeOf(x) === 'bypassPermissions')
+const isBuilder = (row: ClaudeRow) => row.argv.includes('--permission-prompt-tool')
+const opusBuilds = (rows: ClaudeRow[]) => rows.filter(isBuilder)
 const opusReviews = (rows: ClaudeRow[]) => rows.filter((x) => modeOf(x) === 'plan')
 check('S2 resolveBin finds the fake claude under the tmp HOME only', aicli.resolveBin('claude') === claudeBin)
 
@@ -770,7 +781,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   // Grok makes the first two review fixes; the third and fourth are the Opus builder.
   const grokFixes = after.filter((t) => /Phase: fix\./.test(t))
   const builds = opusBuilds(claudeRows().slice(c1))
-  const fixes = [...grokFixes, ...builds.map((x) => x.argv[1])]
+  const fixes = [...grokFixes, ...builds.map((x) => String(x.brief))]
   check('S2 8 T2 has no self-check turn', !after.some((t) => /Role: self-check/.test(t)))
   check(
     `S2 8 ${shared.REVIEW_MAX} fails send ${shared.REVIEW_MAX - 1} auto fix turns (two Grok, then Opus) with the Reviewer notes path`,
@@ -784,7 +795,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
     const eff = (x: ClaudeRow) => x.argv[x.argv.indexOf('--effort') + 1]
     const planners = block.filter((x) => modeOf(x) === 'plan' && x.argv[1].includes('Write the implementation plan'))
     const strict = block.filter((x) => modeOf(x) === 'plan' && x.argv[1].includes('strict code review skill'))
-    const builders = block.filter((x) => modeOf(x) === 'bypassPermissions')
+    const builders = block.filter(isBuilder)
     check(
       'STRICT LOW 3 planners at medium, REVIEW_MAX strict reviews at low, the Opus builders at medium',
       planners.length === 3 && planners.every((x) => eff(x) === 'medium') && strict.length === shared.REVIEW_MAX && strict.every((x) => eff(x) === 'low') && builders.length === shared.REVIEW_MAX - 3 && builders.every((x) => eff(x) === 'medium'),
@@ -793,9 +804,9 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   }
   const buildPids = builds.map((x) => x.pid)
   check(
-    'FB 4 after two Grok review fixes (reviewCycles 3) the next fix spawns claude --permission-mode bypassPermissions; plan and review stay plan mode; distinct pids',
+    'FB 4 after two Grok review fixes (reviewCycles 3) the next fix spawns the stream-json Opus builder (--permission-mode default, brief on stdin); plan and review stay plan mode; distinct pids',
     builds.length === shared.REVIEW_MAX - 3 &&
-      builds.every((x) => x.argv.includes('--model') && x.argv[x.argv.indexOf('--effort') + 1] === 'medium' && realish(x.cwd) === realish(work2) && x.stdinBytes === 0 && !x.anthropic && !x.argv.includes('--bare')) &&
+      builds.every((x) => modeOf(x) === 'default' && x.argv[x.argv.indexOf('--model') + 1] === 'opus' && x.argv[x.argv.indexOf('--effort') + 1] === 'medium' && realish(x.cwd) === realish(work2) && x.stdinBytes > 0 && !!x.brief && !x.anthropic && !x.argv.includes('--bare')) &&
       [planner1, planner2, row, ...reviews].every((x) => !!x && modeOf(x) === 'plan') &&
       new Set([...buildPids, ...reviews.map((x) => x.pid), planner1?.pid, planner2?.pid, row?.pid]).size === buildPids.length + reviews.length + 3 &&
       after.filter((t) => /Phase: fix\./.test(t)).length === 2,
@@ -819,7 +830,7 @@ const T2TASK = 'Add a new page for team settings with a new route and shared typ
   r = await ctl.settle(id)
   const kf = opusBuilds(claudeRows().slice(c4))
   const r6 = opusReviews(claudeRows().slice(c4))
-  check('S2 8 keep-fix: one Opus fix turn, then another fresh Opus review, held again at REVIEW_MAX + 1', promptCount() === p4 && kf.length === 1 && /Phase: fix\./.test(kf[0].argv[1]) && r6.length === 1 && !reviews.some((x) => x.pid === r6[0].pid) && r?.phase === 'review' && r.reviewCycles === shared.REVIEW_MAX + 1 && r.strict?.status === 'fail', JSON.stringify({ turns: kf.length, spawns: r6.length, phase: r?.phase, cycles: r?.reviewCycles }))
+  check('S2 8 keep-fix: one Opus fix turn, then another fresh Opus review, held again at REVIEW_MAX + 1', promptCount() === p4 && kf.length === 1 && /Phase: fix\./.test(String(kf[0].brief)) && r6.length === 1 && !reviews.some((x) => x.pid === r6[0].pid) && r?.phase === 'review' && r.reviewCycles === shared.REVIEW_MAX + 1 && r.strict?.status === 'fail', JSON.stringify({ turns: kf.length, spawns: r6.length, phase: r?.phase, cycles: r?.reviewCycles }))
   // Re-review: a fresh Opus only, no builder turn.
   claudeSays(['a.ts:9 still\nGAPS: 1\nFAIL'])
   const p5 = promptCount()
@@ -1337,7 +1348,7 @@ ctl.configureFactory(fakeDeps)
   reset2()
 }
 
-// FB 5: Grok and Cursor both unusable mid-turn: the run is not failed; Opus builds (bypassPermissions) and the run stays on Opus.
+// FB 5: Grok and Cursor both unusable mid-turn: the run is not failed; the stream-json Opus builder builds and the run stays on Opus.
 {
   promptPlan = async () => {
     writeFileSync(join(work2, 'src', 'app.ts'), 'export const app = "label"\n')
@@ -1350,8 +1361,8 @@ ctl.configureFactory(fakeDeps)
   let r = await ctl.settle(id)
   const built = opusBuilds(claudeRows().slice(c0))
   check(
-    'FB 5 FACTORY_NEED_OPUS from the grunt: never failed, the same brief goes to an Opus bypassPermissions builder, builder opus persists',
-    r?.phase === 'review' && r.builder === 'opus' && store.loadRun(id)?.builder === 'opus' && built.length === 1 && /Phase: build\./.test(built[0].argv[1]) && promptCount() === p0 + 1 && events.filter((e) => e.runId === id && e.run?.phase === 'failed').length === 0,
+    'FB 5 FACTORY_NEED_OPUS from the grunt: never failed, the same brief goes to the stream-json Opus builder, builder opus persists',
+    r?.phase === 'review' && r.builder === 'opus' && store.loadRun(id)?.builder === 'opus' && built.length === 1 && /Phase: build\./.test(String(built[0].brief)) && promptCount() === p0 + 1 && events.filter((e) => e.runId === id && e.run?.phase === 'failed').length === 0,
     JSON.stringify({ phase: r?.phase, builder: r?.builder, error: r?.error, builds: built.length })
   )
   const p1 = promptCount()
@@ -3354,7 +3365,7 @@ setTimeout(() => {
       const held = await ctl.settle(id)
       const fixes = fixPrompts(p0)
       check('VL 2 VOICE_MAX + 1 REJECTs: VOICE_MAX automatic fixes, then a hold at voiceCycles VOICE_MAX, no commit', fixes.length === shared.VOICE_MAX && held?.phase === 'review' && held.voice?.status === 'fail' && held.voiceCycles === shared.VOICE_MAX && !held.commitSha && new RegExp(`attempt ${shared.VOICE_MAX} of ${shared.VOICE_MAX}`).test(fixes[shared.VOICE_MAX - 1] || ''), JSON.stringify({ n: fixes.length, phase: held?.phase, cycles: held?.voiceCycles }))
-      check('VL 2 voice fixes never spawn the Opus builder', !claudeRows().slice(c0).some((x) => modeOf(x) === 'bypassPermissions'))
+      check('VL 2 voice fixes never spawn the Opus builder', !claudeRows().slice(c0).some(isBuilder))
       const pq = promptCount()
       await ctl.settle(id)
       check('VL 2 settle is quiet after the hold (no sixth fix)', promptCount() === pq)
@@ -4165,7 +4176,35 @@ process.stdout.write(JSON.stringify({ type: 'end', usage: { input_tokens: 9, out
   // h. Argv pins.
   {
     check('EV h opusArgs pin', JSON.stringify(opusMod.opusArgs('p')) === JSON.stringify(['-p', 'p', '--model', 'opus', '--effort', 'medium', '--permission-mode', 'plan', '--output-format', 'json']))
-    check('EV h opusBuildArgs pin', JSON.stringify(opusMod.opusBuildArgs('p')) === JSON.stringify(['-p', 'p', '--model', 'opus', '--effort', 'medium', '--permission-mode', 'bypassPermissions', '--output-format', 'json']))
+    check(
+      'EV h opusBuildArgs pin',
+      JSON.stringify(opusMod.opusBuildArgs()) ===
+        JSON.stringify([
+          '-p',
+          '--input-format',
+          'stream-json',
+          '--output-format',
+          'stream-json',
+          '--verbose',
+          '--model',
+          'opus',
+          '--effort',
+          'medium',
+          '--permission-mode',
+          'default',
+          '--permission-prompts',
+          'host',
+          '--permission-prompt-tool',
+          'stdio',
+          '--setting-sources',
+          'user',
+          '--strict-mcp-config',
+          '--disallowedTools',
+          'Task,Agent',
+          '--settings',
+          '{"permissions":{"ask":["Bash","Read","Grep","Glob","LS","Edit","MultiEdit","Write","NotebookEdit","WebFetch","WebSearch"]}}'
+        ])
+    )
     check('EV h grokTriageArgs pin', JSON.stringify(tllm.grokTriageArgs('p')) === JSON.stringify(['-p', 'p', '--effort', 'low', '--max-turns', '1', '--permission-mode', 'plan', '--no-subagents', '--disable-web-search', '--output-format', 'streaming-json']))
     const g47 = tllm.grokTriageArgs('p', { model: 'grok-4.7' })
     const son = opusMod.opusArgs('p', { model: 'sonnet', effort: 'high' })

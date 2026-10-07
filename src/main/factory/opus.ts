@@ -1,7 +1,9 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { resolve as resolvePath } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 import { DONE_CONTRACT } from '../../shared/factory-done.ts'
 import { strictRequired, verifyLabel, type RunRecord, type UsageRow, type VerifyRow } from '../../shared/factory.ts'
-import { claudeRow, parseClaudeEnvelope, usageRow } from './usage.ts'
+import { claudeRow, parseClaudeEnvelope, usageRow, type ClaudeEnvelope } from './usage.ts'
 
 export { REVIEW_MAX } from '../../shared/factory.ts'
 
@@ -43,12 +45,41 @@ export function opusArgs(prompt: string, o: OpusRun = {}): string[] {
   return ['-p', prompt, '--model', o.model || 'opus', '--effort', o.effort || 'medium', '--permission-mode', 'plan', ...(o.slim ? SLIM : []), '--output-format', 'json']
 }
 
+/** Every tool the Opus builder has must come to Brain as an ask, Claude's own read-only allows included. */
+export const OPUS_ASK_TOOLS = ['Bash', 'Read', 'Grep', 'Glob', 'LS', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch']
+
 /**
- * Opus as the builder (Grok and Cursor could not run, or the third review fix): same as opusArgs but
- * bypassPermissions so it can edit. Never used for plan or strict review.
+ * Opus as the builder (Grok and Cursor could not run, or a late review fix): stream-json both ways, so
+ * every tool use arrives as a can_use_tool ask Brain answers. The work repo's allow rules, hooks and MCP
+ * servers do not load (its CLAUDE.md still does); no subagents. The brief goes on stdin. Never used for
+ * plan or strict review.
  */
-export function opusBuildArgs(prompt: string, o: OpusRun = {}): string[] {
-  return ['-p', prompt, '--model', o.model || 'opus', '--effort', o.effort || 'medium', '--permission-mode', 'bypassPermissions', '--output-format', 'json']
+export function opusBuildArgs(o: OpusRun = {}): string[] {
+  return [
+    '-p',
+    '--input-format',
+    'stream-json',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--model',
+    o.model || 'opus',
+    '--effort',
+    o.effort || 'medium',
+    '--permission-mode',
+    'default',
+    '--permission-prompts',
+    'host',
+    '--permission-prompt-tool',
+    'stdio',
+    '--setting-sources',
+    'user',
+    '--strict-mcp-config',
+    '--disallowedTools',
+    'Task,Agent',
+    '--settings',
+    JSON.stringify({ permissions: { ask: OPUS_ASK_TOOLS } })
+  ]
 }
 
 export function opusEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -75,8 +106,6 @@ export function runOpus(o: {
   spawnFn?: SpawnFn
   /** Pause or abandon kills the process. */
   signal?: AbortSignal
-  /** Builder turn: opusBuildArgs (can edit). Plan and review never set this. */
-  build?: boolean
   /** Stdout as it arrives. */
   onText?: (chunk: string) => void
   /** Which job this call is, for its usage row. */
@@ -86,7 +115,7 @@ export function runOpus(o: {
   maxBytes?: number
 }): Promise<OpusResult> {
   const started = Date.now()
-  const base = () => ({ phase: o.phase || (o.build ? 'build' : 'review'), cli: 'claude' as const, effort: o.run?.effort || 'medium', ms: Date.now() - started })
+  const base = () => ({ phase: o.phase || 'review', cli: 'claude' as const, effort: o.run?.effort || 'medium', ms: Date.now() - started })
   if (!o.bin) return Promise.resolve({ found: false, code: 127, text: '', last: '', parsed: false, usage: usageRow(base(), { ok: false }) })
   const max = o.maxBytes ?? OPUS_JSON_MAX
   return new Promise((resolve) => {
@@ -105,7 +134,7 @@ export function runOpus(o: {
     }
     let child: ChildProcess
     try {
-      child = (o.spawnFn || spawn)(o.bin as string, o.build ? opusBuildArgs(o.prompt, o.run) : opusArgs(o.prompt, o.run), {
+      child = (o.spawnFn || spawn)(o.bin as string, opusArgs(o.prompt, o.run), {
         cwd: o.cwd,
         env: opusEnv(o.env),
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -154,6 +183,220 @@ export function runOpus(o: {
         /* gone */
       }
     })
+  })
+}
+
+/** Claude tool name to the ACP kind the Factory checks read. Any other tool is 'other'. */
+const TOOL_KIND: Record<string, string> = {
+  Read: 'read',
+  NotebookRead: 'read',
+  Grep: 'search',
+  Glob: 'search',
+  LS: 'search',
+  WebFetch: 'fetch',
+  WebSearch: 'fetch',
+  Edit: 'edit',
+  MultiEdit: 'edit',
+  Write: 'edit',
+  NotebookEdit: 'edit',
+  Bash: 'execute'
+}
+
+const PATH_FIELDS = ['file_path', 'path', 'notebook_path']
+
+function rec(v: unknown): Record<string, unknown> {
+  return v && typeof v === 'object' ? (v as Record<string, unknown>) : {}
+}
+
+export type AcpAsk = { params: { title: string; toolCall: { title: string; kind: string; rawInput: Record<string, unknown>; locations: { path: string }[] } } }
+
+/**
+ * One can_use_tool request in the shape of a Grok ACP ask, so both builders go through one route. Path
+ * fields resolve against cwd (Claude's cwd is the work repo; Grok's is the brain). Title: the command
+ * for Bash, else the tool and what it names.
+ */
+export function toolAsk(tool: string, input: Record<string, unknown>, cwd: string): AcpAsk {
+  const rawInput = { ...input }
+  const locations: { path: string }[] = []
+  for (const f of PATH_FIELDS) {
+    const v = input[f]
+    if (typeof v !== 'string' || !v) continue
+    rawInput[f] = resolvePath(cwd, v)
+    locations.push({ path: String(rawInput[f]) })
+  }
+  const names = locations[0]?.path || input.pattern || input.url || input.query || ''
+  const title = tool === 'Bash' ? String(input.command || 'Bash') : `${tool} ${String(names)}`.trim()
+  return { params: { title, toolCall: { title, kind: TOOL_KIND[tool] || 'other', rawInput, locations } } }
+}
+
+export type ToolAsk = { id: string; tool: string; input: Record<string, unknown>; msg: AcpAsk }
+export type AskAnswer = { allow: true } | { allow: false; message: string }
+
+/**
+ * One Opus builder turn: `claude -p` in stream-json with the brief on stdin. Each can_use_tool ask goes
+ * to onAsk (asks may overlap) and is answered once on its own request id; an allow sends the input back
+ * unchanged. The timeout counts only time with no ask open. Stdin closes after the result line, which
+ * gives the text and usage. Abort kills the process group, aborts every open ask, and drops late answers.
+ */
+export function runOpusBuild(o: {
+  cwd: string
+  prompt: string
+  env: NodeJS.ProcessEnv
+  bin?: string | null
+  timeoutMs: number
+  spawnFn?: SpawnFn
+  signal?: AbortSignal
+  run?: OpusRun
+  onAsk: (ask: ToolAsk, signal: AbortSignal) => Promise<AskAnswer>
+}): Promise<OpusResult> {
+  const started = Date.now()
+  const base = () => ({ phase: 'build' as const, cli: 'claude' as const, effort: o.run?.effort || 'medium', ms: Date.now() - started })
+  if (!o.bin) return Promise.resolve({ found: false, code: 127, text: '', last: '', parsed: false, usage: usageRow(base(), { ok: false }) })
+  return new Promise((resolve) => {
+    let child: ChildProcess
+    let settled = false
+    let result: ClaudeEnvelope | null = null
+    let buf = ''
+    let raw = ''
+    let err = ''
+    const open = new Map<string, { ctl: AbortController; input: Record<string, unknown> }>()
+    let left = o.timeoutMs
+    let since = Date.now()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const kill = () => {
+      try {
+        if (!child.pid) throw new Error('no pid')
+        process.kill(-child.pid, 'SIGKILL')
+      } catch {
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          /* gone */
+        }
+      }
+    }
+    const finish = (code: number) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      for (const a of open.values()) a.ctl.abort()
+      open.clear()
+      const body = result ? String(result.result || '').trim() : raw.trim() || err.trim()
+      resolve({ found: true, code, text: body, last: lastLine(body), parsed: !!result, usage: claudeRow(base(), result), ...(result?.is_error ? { isError: true } : {}) })
+    }
+    const arm = () => {
+      since = Date.now()
+      timer = setTimeout(() => {
+        kill()
+        raw = raw || 'Builder timed out.'
+        finish(124)
+      }, Math.max(0, left))
+    }
+    const hold = () => {
+      clearTimeout(timer)
+      left -= Date.now() - since
+    }
+    const send = (msg: unknown) => {
+      if (settled) return
+      try {
+        child.stdin?.write(JSON.stringify(msg) + '\n')
+      } catch {
+        /* the process is gone */
+      }
+    }
+    const answer = (id: string, a: AskAnswer) => {
+      const ask = open.get(id)
+      if (!ask || settled) return
+      open.delete(id)
+      const response = a.allow ? { behavior: 'allow', updatedInput: ask.input } : { behavior: 'deny', message: a.message }
+      send({ type: 'control_response', response: { subtype: 'success', request_id: id, response } })
+      if (!open.size) arm()
+    }
+    const onLine = (line: string) => {
+      let m: Record<string, unknown>
+      try {
+        m = rec(JSON.parse(line))
+      } catch {
+        return
+      }
+      if (m.type === 'result') {
+        result = parseClaudeEnvelope(line)
+        try {
+          child.stdin?.end()
+        } catch {
+          /* gone */
+        }
+        return
+      }
+      if (m.type !== 'control_request') return
+      const id = String(m.request_id || '')
+      const req = rec(m.request)
+      if (req.subtype !== 'can_use_tool') {
+        send({ type: 'control_response', response: { subtype: 'error', request_id: id, error: 'Brain does not answer this request.' } })
+        return
+      }
+      if (!id || open.has(id)) return
+      const tool = String(req.tool_name || '')
+      const input = rec(req.input)
+      const ctl = new AbortController()
+      if (!open.size) hold()
+      open.set(id, { ctl, input })
+      const deny = (e: unknown): AskAnswer => ({ allow: false, message: `Brain could not check this ask: ${String((e as Error)?.message || e).slice(0, 160)}` })
+      let pending: Promise<AskAnswer>
+      try {
+        pending = o.onAsk({ id, tool, input, msg: toolAsk(tool, input, o.cwd) }, ctl.signal)
+      } catch (e) {
+        pending = Promise.resolve(deny(e))
+      }
+      void pending.catch(deny).then((a) => answer(id, a))
+    }
+    try {
+      // Own process group, so a kill takes what the builder started too.
+      child = (o.spawnFn || spawn)(o.bin as string, opusBuildArgs(o.run), { cwd: o.cwd, env: opusEnv(o.env), stdio: ['pipe', 'pipe', 'pipe'], shell: false, detached: true })
+    } catch (e) {
+      resolve({ found: true, code: 127, text: String((e as Error).message || e), last: '', parsed: false, usage: usageRow(base(), { ok: false }) })
+      return
+    }
+    child.stdin?.on('error', () => {
+      /* EPIPE after a kill */
+    })
+    const utf8 = new StringDecoder('utf8')
+    child.stdout?.on('data', (chunk: Buffer) => {
+      const d = utf8.write(chunk)
+      raw = (raw + d).slice(-RAW_TAIL)
+      buf += d
+      for (let nl = buf.indexOf('\n'); nl >= 0; nl = buf.indexOf('\n')) {
+        const line = buf.slice(0, nl).trim()
+        buf = buf.slice(nl + 1)
+        if (line) onLine(line)
+      }
+      if (buf.length > OPUS_JSON_MAX) buf = ''
+    })
+    child.stderr?.on('data', (d: Buffer) => {
+      err = (err + String(d)).slice(-8000)
+    })
+    child.on('error', (e) => {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT' && !settled) {
+        settled = true
+        clearTimeout(timer)
+        resolve({ found: false, code: 127, text: '', last: '', parsed: false, usage: usageRow(base(), { ok: false }) })
+        return
+      }
+      err += String(e.message || e)
+      finish(127)
+    })
+    child.on('close', (code) => {
+      if (buf.trim()) onLine(buf.trim())
+      finish(code ?? 1)
+    })
+    send({ type: 'user', message: { role: 'user', content: o.prompt } })
+    arm()
+    const stop = () => {
+      kill()
+      finish(130)
+    }
+    if (o.signal?.aborted) stop()
+    else o.signal?.addEventListener('abort', stop, { once: true })
   })
 }
 

@@ -3,6 +3,7 @@ import { getAccount } from '../session-token'
 import { getSettings } from '../settings-store'
 import { isJoeSuperAdmin } from '../super-admin'
 import { acpDecidePermission } from '../acp-session'
+import { decideOpusCard } from '../factory/controller'
 import {
   captureOn,
   jevOn,
@@ -48,6 +49,11 @@ onUnmatchedCapture((row) => {
 function startDrain(): void {
   if (!jevOn()) return
   void learnUnmatchedCaptures()
+}
+
+/** A card click: the oldest Factory Opus builder card on that tab first, else the ACP card. */
+export function decidePermission(tabId: string, optionId: string): boolean {
+  return decideOpusCard(tabId, optionId) ?? acpDecidePermission(tabId, optionId)
 }
 
 export function registerSkinIpc(): void {
@@ -104,7 +110,7 @@ export function registerSkinIpc(): void {
   ipcMain.handle(
     'skin:decide',
     (_e, payload: { tabId: string; optionId: string }) => {
-      return { ok: acpDecidePermission(String(payload?.tabId || ''), String(payload?.optionId || '')) }
+      return { ok: decidePermission(String(payload?.tabId || ''), String(payload?.optionId || '')) }
     }
   )
 }

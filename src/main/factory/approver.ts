@@ -1,7 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { basename, isAbsolute, resolve, sep } from 'node:path'
 import { APPROVER_NAME, type Approver, type RunRecord, type UsageRow } from '../../shared/factory.ts'
-import { askPaths } from './gates.ts'
 import { runOpus, type SpawnFn } from './opus.ts'
 import { realish, underPath } from './paths.ts'
 
@@ -34,6 +33,22 @@ function text(v: unknown): string {
   } catch {
     return String(v)
   }
+}
+
+/** Paths a permission ask names (edit targets, locations). */
+export function askPaths(msg: Msg): string[] {
+  const p = rec(msg.params)
+  const tool = rec(p.toolCall)
+  const raw = rec(tool.rawInput)
+  const out: string[] = []
+  for (const v of [raw.target_file, raw.path, raw.file_path, raw.filePath, raw.file, tool.path]) {
+    if (typeof v === 'string' && v) out.push(v)
+  }
+  for (const loc of Array.isArray(tool.locations) ? tool.locations : []) {
+    const path = rec(loc).path
+    if (typeof path === 'string' && path) out.push(path)
+  }
+  return out
 }
 
 export function askFacts(msg: Msg): AskFacts {

@@ -6,7 +6,7 @@ import { factoryActivity } from './factory-activity'
 import { threadItems } from './factory-thread'
 import { FactoryThread } from './FactoryThread'
 
-type Perm = { title?: string; path?: string; detail?: string; options?: { id: string; label: string }[]; tabId?: string }
+type Perm = { title?: string; path?: string; detail?: string; options?: { id: string; label: string }[]; tabId?: string; requestId?: string }
 
 const ASK_CHOICE: Record<Approver, string> = { fable: 'Fable decides each ask', opus: 'Opus 5.5 decides each ask', off: 'No model: the card, or Approve in advance' }
 
@@ -159,7 +159,8 @@ export function FactoryPane(props: {
       }
       if (e.kind !== 'stream') return
       const ev = e.ev
-      if (ev.kind === 'permission') setPermission({ title: ev.title, path: ev.path, detail: ev.detail, options: ev.options, tabId: ev.tabId })
+      if (ev.kind === 'permission' && ev.clear) setPermission((p) => (p?.requestId === ev.requestId ? null : p))
+      else if (ev.kind === 'permission') setPermission({ title: ev.title, path: ev.path, detail: ev.detail, options: ev.options, tabId: ev.tabId, requestId: ev.requestId })
       else if (ev.kind === 'text' && ev.data) setActivity((a) => applyFactoryText({ activity: a, guideAck: '' }, 'stream', ev.data || '').activity.slice(-1200))
       else if (ev.kind === 'status' && ev.data?.startsWith('work:')) setWork(ev.data.slice(5))
       else if (ev.kind === 'error' && ev.data) setWork(ev.data)

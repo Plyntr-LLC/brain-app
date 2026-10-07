@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { DONE_CONTRACT } from '../../shared/factory-done.ts'
-import { opusArgs, opusBuildArgs, planPrompt, REVIEW_MAX, reviewAccept, runOpus, splitOutside, STRICT_SKILL_PATH, strictNeeded, strictPrompt, verdict } from './opus.ts'
+import { OPUS_ASK_TOOLS, opusArgs, opusBuildArgs, planPrompt, REVIEW_MAX, reviewAccept, runOpus, splitOutside, STRICT_SKILL_PATH, strictNeeded, strictPrompt, verdict } from './opus.ts'
 
 test('strict is needed for T2, elevated, critical, and MyPuppies paths only', () => {
   assert.equal(strictNeeded({ tier: 'T2', risk: 'none', workRepo: '/x/site' }), true)
@@ -135,13 +135,14 @@ test('reviewAccept: gaps are never a PASS', () => {
   assert.equal(reviewAccept('').status, 'fail')
 })
 
-test('opusBuildArgs is opusArgs with bypassPermissions; plan and review stay plan mode', () => {
+test('opusBuildArgs sends every tool to the host as an ask; plan and review stay plan mode', () => {
   const plan = opusArgs('x')
-  const build = opusBuildArgs('x')
+  const build = opusBuildArgs()
   assert.equal(plan[plan.indexOf('--permission-mode') + 1], 'plan')
-  assert.equal(build[build.indexOf('--permission-mode') + 1], 'bypassPermissions')
-  assert.deepEqual(build.filter((a) => a !== 'bypassPermissions'), plan.filter((a) => a !== 'plan'))
-  assert.ok(!build.includes('--bare'))
+  assert.equal(build[build.indexOf('--permission-mode') + 1], 'default')
+  assert.equal(build[build.indexOf('--permission-prompt-tool') + 1], 'stdio')
+  assert.deepEqual(JSON.parse(build[build.indexOf('--settings') + 1]).permissions.ask, OPUS_ASK_TOOLS)
+  assert.ok(!build.includes('bypassPermissions') && !build.includes('--bare'))
 })
 
 test('splitOutside: an OUTSIDE block with a follow-up word does not stop a clean pass', () => {

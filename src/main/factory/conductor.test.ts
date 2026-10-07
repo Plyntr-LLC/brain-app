@@ -346,7 +346,7 @@ const deps: FactoryDeps = {
     const prompt = String(args[args.indexOf('-p') + 1] || '')
     const effortAt = args.indexOf('--effort')
     const effort = effortAt >= 0 ? args[effortAt + 1] : ''
-    // Strict review is effort low. A review-cap fix is an Opus build (medium, bypassPermissions)
+    // Strict review is effort low. A review-cap fix is an Opus build (medium, the stream-json builder)
     // and must not use up the one allowed strict fail. Kennel's gate is medium and follows opusPass.
     let result = 'GAPS: 0\nPASS'
     // A planner that follows the prompt ends with its verdict; queued answers stand in for other planners.
@@ -358,14 +358,15 @@ const deps: FactoryDeps = {
       }
     } else if (!opusPass) result = 'gap\nGAPS: 1\nFAIL'
     let wait: Promise<void> | undefined
-    if (args.includes('bypassPermissions')) stampWork()
-    if (armGate && args.includes('bypassPermissions')) {
+    const builder = args.includes('--permission-prompt-tool')
+    if (builder) stampWork()
+    if (armGate && builder) {
       armGate = false
       wait = new Promise<void>((r) => {
         gate.release = r
       })
     }
-    return child(envelope(result), 0, wait)
+    return child(builder ? JSON.stringify({ type: 'result', result, total_cost_usd: 0, num_turns: 1 }) + '\n' : envelope(result), 0, wait)
   }) as unknown as SpawnFn,
   spawnVoice: (() => child('REJECT: no\n', voiceCode)) as unknown as FactoryDeps['spawnVoice'],
   voiceCheckPath: here,

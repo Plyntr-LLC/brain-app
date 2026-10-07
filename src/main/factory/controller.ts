@@ -8,9 +8,25 @@ import { askKey, judgeAsk, JUDGE_EFFORT, JUDGE_MODEL, type AskFacts, type AskVer
 import { upsertLog } from './brain-log.ts'
 import { buildBrief, type BriefPhase } from './brief.ts'
 import { isNeedOpus } from './fallback.ts'
-import { deploy as gitDeploy, deployBlock, deployLine, hostDeploy, isKennelGated, publish as gitPublish, publishBlock, pushWarn, type PublishTarget, type PushOverride } from './gates.ts'
+import { deploy as gitDeploy, deployBlock, deployLine, hostDeploy, isKennelGated, publish as gitPublish, publishBlock, pushWarn, routeFactoryAsk, type PublishTarget, type PushOverride } from './gates.ts'
 import { auditTurn, commitRun, currentBranch, diffText, dirtyPaths, gitTop, headSha, isClean, isGitRepo, numstat, porcelain, stashAll } from './git-audit.ts'
-import { OPUS_PLAN_TIMEOUT_MS, OPUS_REVIEW_TIMEOUT_MS, planPrompt, planVerdict, REVIEW_MAX, reviewAccept, runOpus, splitOutside, STRICT_EFFORT, strictNeeded, strictPrompt, type SpawnFn } from './opus.ts'
+import {
+  OPUS_PLAN_TIMEOUT_MS,
+  OPUS_REVIEW_TIMEOUT_MS,
+  planPrompt,
+  planVerdict,
+  REVIEW_MAX,
+  reviewAccept,
+  runOpus,
+  runOpusBuild,
+  splitOutside,
+  STRICT_EFFORT,
+  strictNeeded,
+  strictPrompt,
+  type AskAnswer,
+  type SpawnFn,
+  type ToolAsk
+} from './opus.ts'
 import { realish } from './paths.ts'
 import { nextEvents } from './run-events.ts'
 import { detectProfile, readProfile, runProfile } from './profile.ts'
@@ -919,8 +935,9 @@ async function builderTurn(state: Live, gen: number, phase: BriefPhase, note?: s
 }
 
 /**
- * Opus 5.5 medium as the builder: a fresh `claude -p` in bypassPermissions (can edit), cwd = work repo,
- * Factory env, no Anthropic keys. Stdout streams as text. Pause, abandon, and Guide kill it.
+ * Opus 5.5 medium as the builder: a fresh `claude -p` per turn in the work repo, Factory env, no Anthropic
+ * keys. Every tool use comes back as an ask and goes through the same route as Grok's (answerOpusAsk).
+ * Pause, abandon, and Guide kill it with its open asks; the timeout stops while an ask is open.
  */
 async function opusBuildTurn(state: Live, gen: number, brief: string): Promise<void> {
   const d = need()
@@ -932,17 +949,15 @@ async function opusBuildTurn(state: Live, gen: number, brief: string): Promise<v
   const abort = new AbortController()
   state.abort = abort
   const res = await withLive(state, { phase: 'build', ...OPUS_LIVE }, () =>
-    runOpus({
+    runOpusBuild({
       cwd: run.workRepo,
       prompt: brief,
       env: d.env(run.workRepo),
       bin: (d.claudeBin || (() => resolveBin('claude')))(),
-      timeoutMs: OPUS_REVIEW_TIMEOUT_MS,
+      timeoutMs: d.opusTimeoutMs ?? OPUS_REVIEW_TIMEOUT_MS,
       spawnFn: d.spawnOpus,
       signal: abort.signal,
-      build: true,
-      phase: 'build',
-      maxBytes: d.opusMax
+      onAsk: (ask, signal) => answerOpusAsk(state, gen, ask, signal)
     })
   )
   if (state.abort === abort) state.abort = undefined
@@ -953,6 +968,101 @@ async function opusBuildTurn(state: Live, gen: number, brief: string): Promise<v
   if (res.code !== 0) throw new Error(`Opus build did not finish (exit ${res.code}).`)
   if (!res.parsed) throw new Error('Opus build answer could not be read.')
   if (res.text) say({ kind: 'text', data: res.text })
+}
+
+export const CARD_REFUSAL = 'The person running this Factory run refused it on the card.'
+const TURN_ENDED = 'The turn ended before this ask was answered.'
+const CARD_OPTIONS = [
+  { id: 'allow_once', label: 'Allow' },
+  { id: 'reject_once', label: 'Refuse' }
+]
+
+type OpusCard = { show: () => void; hide: () => void; answer: (allow: boolean) => void }
+
+/** Joe's cards for Opus builder asks, by builder tab, oldest first. Only the head is on screen. */
+const opusCards = new Map<string, OpusCard[]>()
+
+/** skin:decide asks here first. Null: no Opus card waits on this tab, so the ACP card answers. */
+export function decideOpusCard(tabId: string, optionId: string): boolean | null {
+  const queue = opusCards.get(tabId)
+  const head = queue?.shift()
+  if (!queue || !head) return null
+  if (!queue.length) opusCards.delete(tabId)
+  head.answer(optionId === 'allow_once')
+  queue[0]?.show()
+  return true
+}
+
+/** Joe's card for one Opus ask: queued behind the tab's open cards, and gone (the next one shown) when the turn ends. */
+function opusCard(state: Live, ask: ToolAsk, facts: AskFacts, note: string, signal: AbortSignal): Promise<AskAnswer> {
+  const d = need()
+  const runId = state.run.id
+  const tabId = state.run.acpTab
+  const emit = (ev: StreamEvent) => d.emit({ runId, kind: 'stream', ev })
+  return new Promise((resolve) => {
+    const card: OpusCard = {
+      show: () =>
+        emit({ kind: 'permission', title: facts.title || 'Allow this?', path: facts.paths[0] || '', options: CARD_OPTIONS, requestId: ask.id, tabId, ...(note ? { detail: note } : {}) }),
+      hide: () => emit({ kind: 'permission', requestId: ask.id, tabId, clear: true }),
+      answer: (allow) => resolve(allow ? { allow: true } : { allow: false, message: CARD_REFUSAL })
+    }
+    const queue = opusCards.get(tabId) || []
+    queue.push(card)
+    opusCards.set(tabId, queue)
+    if (queue.length === 1) card.show()
+    signal.addEventListener(
+      'abort',
+      () => {
+        const now = opusCards.get(tabId)
+        const at = now ? now.indexOf(card) : -1
+        if (!now || at < 0) return
+        now.splice(at, 1)
+        if (!now.length) opusCards.delete(tabId)
+        if (at === 0) {
+          card.hide()
+          now[0]?.show()
+        }
+        resolve({ allow: false, message: TURN_ENDED })
+      },
+      { once: true }
+    )
+  })
+}
+
+/**
+ * One Opus builder ask through Grok's route (routeFactoryAsk): the hard filter refuses with its sentence,
+ * the fast path and Approve in advance allow, the run's approver judges, and the rest is Joe's card.
+ */
+async function answerOpusAsk(state: Live, gen: number, ask: ToolAsk, signal: AbortSignal): Promise<AskAnswer> {
+  const run = state.run
+  const say = (data: string) => {
+    if (!stale(state, gen)) need().emit({ runId: run.id, kind: 'stream', ev: { kind: 'status', data: 'work:' + data } })
+  }
+  const { route, facts, why } = routeFactoryAsk(ask.msg, { brainPath: run.brainPath, workRepo: run.workRepo, runThrough: run.runThrough, approver: run.approver })
+  const title = (facts.title || facts.kind || 'tool call').slice(0, 70)
+  if (route === 'reject') {
+    say(`Refused: ${title}`)
+    return { allow: false, message: why }
+  }
+  if (route === 'allow') {
+    say(`${run.approver && run.approver !== 'off' ? 'Allowed' : 'Allowed in advance'}: ${title.slice(0, 60)}`)
+    return { allow: true }
+  }
+  if (route === 'card') return opusCard(state, ask, facts, '', signal)
+  say(`Checking: ${title}`)
+  const v = await judgeFactoryAsk(run.acpTab, facts, signal)
+  if (signal.aborted) return { allow: false, message: TURN_ENDED }
+  const again = v.repeat ? ' (same as before)' : ''
+  if (v.decision === 'allow') {
+    say(`${v.by} allowed${again}: ${title}`)
+    return { allow: true }
+  }
+  if (v.decision === 'deny') {
+    say(`${v.by} refused${again}: ${title}${v.why ? `. ${v.why}` : ''}`.slice(0, 300))
+    return { allow: false, message: v.why ? `${v.by} refused this: ${v.why}` : `${v.by} refused this.` }
+  }
+  say(`Your call: ${title}. ${v.why}`.slice(0, 300))
+  return opusCard(state, ask, facts, v.why, signal)
 }
 
 /** Notes Joe sent while a turn ran: one follow-up turn with them before verify. False: the run moved. */

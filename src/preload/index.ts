@@ -1029,6 +1029,7 @@ const brain = {
                 options?: { id: string; label: string }[]
                 requestId?: string
                 tabId?: string
+                clear?: boolean
               }
             }
       ) => void

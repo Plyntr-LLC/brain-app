@@ -22,8 +22,8 @@ import {
   killGrokFactoryLeader,
   setGrokFactoryLeaderEnv
 } from './grok-leader'
-import { askRoute, ensureShims, factoryEnv, factorySessionRules, factoryWriteBlock, filterFactoryPermission, WATCH_WRITE_REFUSAL } from './factory/gates'
-import { askFacts, fastAllow, type AskFacts, type AskVerdict } from './factory/approver'
+import { ensureShims, factoryEnv, factorySessionRules, factoryWriteBlock, routeFactoryAsk, WATCH_WRITE_REFUSAL } from './factory/gates'
+import type { AskFacts, AskVerdict } from './factory/approver'
 import type { Approver } from '../shared/factory'
 import { cursorGrokModel, grokUsageBlocked, needOpusError } from './factory/fallback'
 import { factoryCursorAcpArgs } from './grok-args'
@@ -767,15 +767,7 @@ export function handleReq(pool: Pool, msg: RpcMsg): void {
       }
       const ctx = tab.factory || { brainPath: pool.cwd, workRepo: '' }
       const tool = asRecord(p.toolCall)
-      const facts = askFacts(msg)
-      const decision = askRoute({
-        watchOnly: !!ctx.watchOnly,
-        kind: facts.kind,
-        filtered: filterFactoryPermission(msg, ctx),
-        runThrough: !!ctx.runThrough,
-        approver: ctx.approver,
-        fast: fastAllow(facts, ctx)
-      })
+      const { route: decision, facts } = routeFactoryAsk(msg, ctx)
       if (decision === 'judge') {
         judgeFactoryAsk(pool, tab, msg, facts)
         return

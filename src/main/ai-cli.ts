@@ -111,6 +111,8 @@ export type StreamEvent =
       requestId?: string
       /** Factory: the builder tab that asked (a T3 worker is not the run's main tab). */
       tabId?: string
+      /** Factory: this card (requestId) is gone; take it off the screen. */
+      clear?: boolean
     }
   | { kind: 'plan'; steps?: { title: string; status?: string }[] }
   | { kind: 'mode'; mode: string }

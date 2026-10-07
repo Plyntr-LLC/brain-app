@@ -1,39 +1,31 @@
 import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
+import { askFacts, askPaths, fastAllow, type AskFacts } from './approver.ts'
 import { currentBranch, hasRemote, headSha } from './git-audit.ts'
 import { realish, underPath } from './paths.ts'
 import type { Approver } from '../../shared/factory.ts'
 
-/** Publish verbs the model never runs (Push is a person's click, done by Brain). Matched against a permission ask's title and raw input. */
-export const DENY_CMD_RE =
-  /\bgit\s+(?:(?:-C|-c|--git-dir|--work-tree)\s+\S+\s+|-\S+\s+)*push\b|(?:^|[\s;&|(`'"])gh\s|\bwrangler\s+(?:[\w:-]+\s+)*deploy\b|\b(?:npm|yarn|pnpm|bun)\s+publish\b|\bvercel(?=[\s\"'`;&|]|$)|\bfly(?:ctl)?\s+deploy\b|\bnetlify\s+deploy\b|\bfirebase\s+deploy\b|\bgcloud\s+\S+\s+deploy\b|\bheroku\s+(?:git:)?push\b/i
-
 export const PUSH_REFUSAL = 'Factory runs do not push. Brain commits on the work repo after review; pushing stays a person\'s call.'
 export const GH_REFUSAL = 'Factory runs do not use gh. Pull requests and releases stay a person\'s call.'
+export const PUBLISH_REFUSAL = 'Factory runs do not deploy or publish. Deploy stays a person\'s click.'
 export const BRAIN_WRITE_REFUSAL =
   'Factory edits land in the work repo only. This path is in the brain folder, and the brain syncs, so Brain refused it.'
+
+/** Publish verbs the model never runs (Push is a person's click, done by Brain), with the sentence each refusal gives. Matched against a permission ask's title and raw input. */
+const DENY_CMDS: [RegExp, string][] = [
+  [/\bgit\s+(?:(?:-C|-c|--git-dir|--work-tree)\s+\S+\s+|-\S+\s+)*push\b/i, PUSH_REFUSAL],
+  [/(?:^|[\s;&|(`'"])gh\s/i, GH_REFUSAL],
+  [
+    /\bwrangler\s+(?:[\w:-]+\s+)*deploy\b|\b(?:npm|yarn|pnpm|bun)\s+publish\b|\bvercel(?=[\s"'`;&|]|$)|\bfly(?:ctl)?\s+deploy\b|\bnetlify\s+deploy\b|\bfirebase\s+deploy\b|\bgcloud\s+\S+\s+deploy\b|\bheroku\s+(?:git:)?push\b/i,
+    PUBLISH_REFUSAL
+  ]
+]
 
 type Msg = { params?: unknown }
 
 function rec(v: unknown): Record<string, unknown> {
   return v && typeof v === 'object' ? (v as Record<string, unknown>) : {}
-}
-
-/** Paths a permission ask names (edit targets, locations). */
-export function askPaths(msg: Msg): string[] {
-  const p = rec(msg.params)
-  const tool = rec(p.toolCall)
-  const raw = rec(tool.rawInput)
-  const out: string[] = []
-  for (const v of [raw.target_file, raw.path, raw.file_path, raw.filePath, raw.file, tool.path]) {
-    if (typeof v === 'string' && v) out.push(v)
-  }
-  for (const loc of Array.isArray(tool.locations) ? tool.locations : []) {
-    const path = rec(loc).path
-    if (typeof path === 'string' && path) out.push(path)
-  }
-  return out
 }
 
 export const OTHER_REPO_WRITE_REFUSAL = 'Factory edits land in the work repo only. This path is in another repo, so Brain refused it.'
@@ -106,24 +98,49 @@ export function askRoute(o: { watchOnly: boolean; kind: string; filtered: 'rejec
   return o.fast ? 'allow' : 'judge'
 }
 
-/** 'reject' for publish verbs and edits outside the work repo (brain or another repo), 'ask' for everything else (the card decides). */
-export function filterFactoryPermission(msg: Msg, ctx: { brainPath: string; workRepo: string }): 'reject' | 'ask' {
+/** The sentence an ask is refused with: a publish verb, or an edit outside the work repo (brain or another repo). Null: the card or the approver decides. */
+export function factoryRefusal(msg: Msg, ctx: { brainPath: string; workRepo: string }): string | null {
   const p = rec(msg.params)
   const tool = rec(p.toolCall)
   const blob = [p.title, tool.title, tool.kind, JSON.stringify(tool.rawInput ?? ''), JSON.stringify(tool.content ?? '')]
     .map((x) => String(x ?? ''))
     .join(' ')
-  if (DENY_CMD_RE.test(blob)) return 'reject'
+  const verb = DENY_CMDS.find(([re]) => re.test(blob))
+  if (verb) return verb[1]
+  // Reads are fine (brain rules, skills, other repos); edits are not.
+  if (READ_KINDS.has(String(tool.kind || '').toLowerCase())) return null
   for (const raw of askPaths(msg)) {
     // Grok's cwd is the brain, so a relative path lands in the brain.
     const path = isAbsolute(raw) ? raw : ctx.brainPath ? resolve(ctx.brainPath, raw) : ''
-    if (path && factoryWriteBlock(path, ctx.brainPath, ctx.workRepo)) {
-      const kind = String(tool.kind || '').toLowerCase()
-      // Reads are fine (brain rules, skills, other repos); edits are not.
-      if (kind !== 'read' && kind !== 'search' && kind !== 'fetch' && kind !== 'think') return 'reject'
-    }
+    const block = path ? factoryWriteBlock(path, ctx.brainPath, ctx.workRepo) : null
+    if (block) return block
   }
-  return 'ask'
+  return null
+}
+
+/** 'reject' for publish verbs and edits outside the work repo (brain or another repo), 'ask' for everything else (the card decides). */
+export function filterFactoryPermission(msg: Msg, ctx: { brainPath: string; workRepo: string }): 'reject' | 'ask' {
+  return factoryRefusal(msg, ctx) ? 'reject' : 'ask'
+}
+
+export type AskCtx = { brainPath: string; workRepo: string; runThrough?: boolean; watchOnly?: boolean; approver?: Approver }
+
+/**
+ * One route for every Factory builder ask, Grok's ACP asks and the Opus builder's tool asks alike: the
+ * hard filter, then the fast path, then askRoute. why: the sentence a reject gives the builder.
+ */
+export function routeFactoryAsk(msg: Msg, ctx: AskCtx): { route: AskRoute; facts: AskFacts; why: string } {
+  const facts = askFacts(msg)
+  const refusal = factoryRefusal(msg, ctx)
+  const route = askRoute({
+    watchOnly: !!ctx.watchOnly,
+    kind: facts.kind,
+    filtered: refusal ? 'reject' : 'ask',
+    runThrough: !!ctx.runThrough,
+    approver: ctx.approver,
+    fast: fastAllow(facts, ctx)
+  })
+  return { route, facts, why: route === 'reject' ? refusal || WATCH_WRITE_REFUSAL : '' }
 }
 
 /** The real git binary, never a shim. */
