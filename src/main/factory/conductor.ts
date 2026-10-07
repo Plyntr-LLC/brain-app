@@ -72,7 +72,9 @@ export function conductorPrompt(run: RunRecord, text: string): string {
     ...(over
       ? ['You may read files in the work repo to answer. Do not edit or run commands.', 'When Joe asks what the run changed, name the changed files.']
       : ['Answer from this card. Do not run commands or open files.']),
-    'If Joe asked to add, change, redirect, restart, or instead do something, end with one line FACTORY_TELL: and the instruction. To move the run to another repo, the instruction names its full path. Otherwise do not write FACTORY_TELL.',
+    over
+      ? 'This run is over and nothing reaches it now. If Joe asks to add, change, redirect or restart something, say that needs a new run. Do not write FACTORY_TELL.'
+      : 'If Joe asked to add, change, redirect, restart, or instead do something, end with one line FACTORY_TELL: and the instruction. To move the run to another repo, the instruction names its full path. Otherwise do not write FACTORY_TELL.',
     'A push to a branch a host builds (Vercel, Railway, Netlify) can deploy it. Never say a push will not deploy.',
     `workRepo: ${run.workRepo}`,
     `taskRepo: ${taskRepoOf(run)}`,
