@@ -4,7 +4,7 @@
  * time. That session watches the run. Its TELL reaches the builder when Joe's sentence is not a question.
  */
 
-import type { RunRecord } from '../../shared/factory.ts'
+import { deployWatchLine, type RunEvent, type RunRecord } from '../../shared/factory.ts'
 import {
   appendSentNote,
   conductorBridge,
@@ -31,15 +31,47 @@ import { TERMINAL_PHASES } from './run-store.ts'
 
 const NOT_SENT = 'I did not send that to the factory.'
 const NO_ANSWER = 'I could not get an answer, so nothing was sent to the run.'
+export const RUN_OVER = 'This run is over, so nothing was sent. Start a new run for that.'
 const TASK_CHARS = 1500
+const TEXT_CHARS = 1500
+const FILES_MAX = 40
+const ASKS_MAX = 10
+const EVENTS_MAX = 40
+const LINE_CHARS = 150
 const warmed = new Set<string>()
+
+/** One event as a short card line: no timestamps or path lists, text cut. */
+function eventLine(e: RunEvent): string {
+  return JSON.stringify(e, (k, v) =>
+    k === 'at' || k === 'call' || k === 'paths' ? undefined : k === 'text' ? String(v).slice(0, 80) : k === 'rows' ? (v as { script: string; status: string }[]).map((r) => `${r.script} ${r.status}`) : v
+  ).slice(0, LINE_CHARS)
+}
+
+/** What a finished run did, each part capped so the card stays a prompt. */
+function finishedCard(run: RunRecord): string[] {
+  const asks = run.asks
+  return [
+    `commit: ${run.commitSha ? `${run.commitSha}${run.branch ? ` on ${run.branch}` : ''}` : 'none'}`,
+    `push: ${run.pushed ? `${run.pushed.remote}/${run.pushed.branch} ${run.pushed.sha.slice(0, 7)}` : run.pushError ? `failed: ${run.pushError.slice(0, 200)}` : 'not pushed'}`,
+    `deploy: ${[run.deployWatch ? deployWatchLine(run.deployWatch) : '', run.deployed ? 'Brain deployed it.' : '', run.deployError ? `Deploy failed: ${run.deployError.slice(0, 200)}` : ''].filter(Boolean).join(' ') || 'none'}`,
+    `filesChanged: ${JSON.stringify((run.audit?.work || []).slice(0, FILES_MAX).map((w) => `${w.path} +${w.added} -${w.deleted}`.slice(0, LINE_CHARS)))}`,
+    `verify: ${(run.verify || []).map((v) => `${v.script} ${v.status}`).join(', ') || 'none'}`,
+    `strictReview: ${run.strict ? `${run.strict.status} ${JSON.stringify(run.strict.text.slice(0, TEXT_CHARS))}` : 'none'}`,
+    `asks: ${asks ? `${asks.allowed} allowed, ${asks.denied} refused, ${asks.carded} to Joe ${JSON.stringify(asks.log.slice(-ASKS_MAX).map((a) => `${a.decision} by ${a.by}: ${a.title} (${a.why})`.slice(0, LINE_CHARS)))}` : 'none'}`,
+    `plan: ${run.plan?.text ? JSON.stringify(run.plan.text.slice(0, TEXT_CHARS)) : 'none'}`,
+    `events: ${JSON.stringify((run.events || []).slice(-EVENTS_MAX).map(eventLine))}`
+  ]
+}
 
 export function conductorPrompt(run: RunRecord, text: string): string {
   const guide = (run.guide || []).map((g) => ({ text: g.text, ack: g.ack || '', sent: !!g.sent }))
   const branch = run.workRepo ? currentBranch(run.workRepo) || '' : ''
+  const over = TERMINAL_PHASES.includes(run.phase)
   return [
     'You watch this factory run. Answer Joe in sentences using the card below. Do not edit files. Do not set the phase.',
-    'Answer from this card. Do not run commands or open files.',
+    ...(over
+      ? ['You may read files in the work repo to answer. Do not edit or run commands.', 'When Joe asks what the run changed, name the changed files.']
+      : ['Answer from this card. Do not run commands or open files.']),
     'If Joe asked to add, change, redirect, restart, or instead do something, end with one line FACTORY_TELL: and the instruction. To move the run to another repo, the instruction names its full path. Otherwise do not write FACTORY_TELL.',
     'A push to a branch a host builds (Vercel, Railway, Netlify) can deploy it. Never say a push will not deploy.',
     `workRepo: ${run.workRepo}`,
@@ -60,6 +92,7 @@ export function conductorPrompt(run: RunRecord, text: string): string {
     `needsProceed: ${run.needsProceed ? 'yes' : ''}`,
     `suggest: ${run.tripwire?.suggest || ''}`,
     `guide: ${JSON.stringify(guide)}`,
+    ...(over ? finishedCard(run) : []),
     `Joe: ${text}`
   ].join('\n')
 }
@@ -232,16 +265,31 @@ async function runDoor(id: string, intent: Intent, body: string): Promise<RunRec
   return appendSentNote(id, body, fallback)
 }
 
+/** A finished run: the watcher answers every sentence. A TELL from it goes nowhere, and the reply says so. */
+async function askAfterRun(id: string, body: string): Promise<RunRecord> {
+  const run = getRun(id)
+  if (!run) throw new Error('That Factory run is gone.')
+  let raw = ''
+  try {
+    raw = await talk(run, conductorPrompt(run, body))
+  } catch {
+    raw = ''
+  }
+  const { prose, tell } = splitTell(raw)
+  return appendSentNote(id, body, tell ? [prose, RUN_OVER].filter(Boolean).join(' ') : prose || statusReport(run))
+}
+
 /**
- * One composer send. Doors (pause, resume, restart, ship, overrides, add-to-the-run) act at once. A
- * question answers from the run. Anything else asks the run's chat, and a TELL from it goes to the run.
+ * One composer send. A finished run only answers: its phase is read before any door. Otherwise doors
+ * (pause, resume, restart, ship, overrides, add-to-the-run) act at once, a question answers from the run,
+ * and anything else asks the run's chat, whose TELL goes to the run.
  */
 export async function conduct(id: string, text: string): Promise<RunRecord> {
   const body = String(text || '').trim()
   if (!body) throw new Error('Type a note first.')
   const run = getRun(id)
   if (!run) throw new Error('That Factory run is gone.')
-  if (TERMINAL_PHASES.includes(run.phase)) throw new Error('This run is over. Start a new run.')
+  if (TERMINAL_PHASES.includes(run.phase)) return inLane(id, () => askAfterRun(id, body))
   const intent = conductorIntent(body)
   if (intent === 'inject') return queueInject(id, body)
   if (intent !== 'ask') return runDoor(id, intent, body)

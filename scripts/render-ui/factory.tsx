@@ -501,6 +501,21 @@ async function main() {
   const polled = await mount('h. watching with a poller', run({ phase: 'done', commitSha: 'feedbeefcafe', branch: 'main', pushed: pushedAt, deployWatch: { state: 'watching', since: now } }), { polling: true })
   check('h a watch with a live poller has no Check deploy again', !btn(polled.el, 'Check deploy again'))
 
+  // (i) a finished run keeps its composer for questions; Pause and Abandon stay hidden.
+  for (const phase of ['done', 'abandoned'] as const) {
+    const over = await mount(`i. ${phase} run: ask about it`, run({ phase, commitSha: 'feedbeefcafe', branch: 'main' }))
+    const box = over.el.querySelector<HTMLTextAreaElement>('.factory-compose textarea')
+    check(`i ${phase}: the composer stays on screen, with "Ask about this run"`, box?.placeholder === 'Ask about this run' && box.offsetHeight > 0, box ? `${box.placeholder} ${box.offsetHeight}px` : 'no composer')
+    check(`i ${phase}: no Pause or Abandon`, !btn(over.el, 'Pause') && !btn(over.el, 'Abandon run'))
+    typeInto(box!, 'What did this run change?')
+    await tick()
+    const sent = await click(over.el, 'Send')
+    check(`i ${phase}: Send asks through conduct`, sent.length === 1 && sent[0].fn === 'conduct' && sent[0].args[1] === 'What did this run change?', JSON.stringify(sent))
+    conductHold?.({ ok: true, run: null })
+  }
+  const working = await mount('i. a live run keeps its composer text', run({ phase: 'build' }))
+  check('i a live run keeps "Talk to the team"', working.el.querySelector<HTMLTextAreaElement>('.factory-compose textarea')?.placeholder === 'Talk to the team: ask, redirect, add something, or say go')
+
   document.getElementById('out')!.textContent = JSON.stringify(results)
 }
 

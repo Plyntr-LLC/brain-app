@@ -97,7 +97,7 @@ test('plan, strict, and build wording, and the T3 limit stays', () => {
   const send = pane.slice(pane.indexOf('async function sendNote'), pane.indexOf('const voiceHeld'))
   assert.match(send, /factory\.conduct\(/)
   assert.equal(send.includes('factory.guide('), false)
-  assert.match(pane, /placeholder="Talk to the team: ask, redirect, add something, or say go"/)
+  assert.ok(pane.includes(`placeholder={live ? 'Talk to the team: ask, redirect, add something, or say go' : 'Ask about this run'}`))
   assert.equal(pane.includes('placeholder="Guide this run"'), false)
   // Layout A: the run view is the team thread; the raw tool box and the phase pills are gone.
   const runView = pane.slice(pane.indexOf('const items = threadItems(run, pending)'))
@@ -1852,4 +1852,106 @@ test('the Tester runs the repo\'s own tsc when there is no typecheck script', as
   assert.ok(runBinSrc.includes("setTimeout(() => child.kill('SIGTERM'), 10 * 60_000)"), runBinSrc)
   assert.equal(/['"`]npx\b/.test(ctl), false, 'no npx command')
   configureFactory(deps)
+})
+
+test('a finished run answers from its watcher and changes nothing, done or abandoned', async () => {
+  const mods = await loaded
+  conduct = mods.conductor.conduct
+  configureFactory = mods.controller.configureFactory
+  startRun = mods.controller.startRun
+  getRun = mods.controller.getRun
+  abandonRun = mods.controller.abandonRun
+  dropMemory = mods.controller.dropMemory
+  saveProfile = mods.profile.saveProfile
+  mods.store.setUserDataDir(() => userData)
+  configureFactory(deps)
+  const finished: { id: string; work: string; phase: 'done' | 'abandoned' }[] = []
+  reset()
+  const doneRepo = await boot('over-done', 'fix typo in footer', { remote: true })
+  touch = () => writeFileSync(join(doneRepo, 'src.ts'), 'export const n = 21\n')
+  await until(() => runOf().phase === 'review' && !!runOf().diff, 'over done review')
+  assert.equal(mods.controller.commitRunNow(activeId).phase, 'done')
+  finished.push({ id: activeId, work: doneRepo, phase: 'done' })
+  reset()
+  const abandonedRepo = await boot('over-abandoned', 'fix typo in footer', { remote: true })
+  touch = () => writeFileSync(join(abandonedRepo, 'src.ts'), 'export const n = 22\n')
+  await until(() => runOf().phase === 'review' && !!runOf().diff, 'over abandoned review')
+  abandonRun(activeId)
+  finished.push({ id: activeId, work: abandonedRepo, phase: 'abandoned' })
+  orchMode = 'tell'
+  for (const f of finished) {
+    for (const text of ['add this to the run', SHIP, PAUSE, RESUME, 'Add a dark mode toggle']) {
+      const before = getRun(f.id)!
+      const head = git(f.work, ['rev-parse', 'HEAD'])
+      const status = git(f.work, ['status', '--porcelain'])
+      const builder = prompts.length
+      const pushes = pubs.length
+      const deployed = deploys
+      const asked = promptCalls.filter((c) => c.tabId.endsWith('-orch')).length
+      const after = await conduct(f.id, text)
+      const note = after.guide?.at(-1)
+      const say = `${f.phase}: ${text}`
+      assert.equal(after.phase, f.phase, say)
+      assert.equal(promptCalls.filter((c) => c.tabId.endsWith('-orch')).length, asked + 1, say)
+      assert.deepEqual(after.guide?.slice(0, -1), before.guide || [], say)
+      assert.equal(note?.text, text, say)
+      assert.equal(note?.sent, true, say)
+      assert.ok(String(note?.ack).endsWith(mods.conductor.RUN_OVER), `${say}: ${note?.ack}`)
+      assert.equal((after.guide || []).some((g) => !g.sent), false, say)
+      assert.equal(prompts.length, builder, say)
+      assert.equal(pubs.length, pushes, say)
+      assert.equal(deploys, deployed, say)
+      assert.equal(after.commitSha, before.commitSha, say)
+      assert.equal(after.pushed, before.pushed, say)
+      assert.equal(after.workRepo, before.workRepo, say)
+      assert.equal(git(f.work, ['rev-parse', 'HEAD']), head, say)
+      assert.equal(git(f.work, ['status', '--porcelain']), status, say)
+    }
+  }
+  assert.ok(lastPrompt.includes('You may read files in the work repo to answer. Do not edit or run commands.'))
+  assert.equal(lastPrompt.includes('Do not run commands or open files'), false)
+})
+
+test('a finished run card caps each part and stays under 16,000 characters', async () => {
+  const mods = await loaded
+  const work = repo('card-size')
+  const words = (n: number, w: string) => Array.from({ length: n }, (_, i) => `${w}${i}`).join(' ').slice(0, n)
+  const run: RunRecord = {
+    id: 'run-card-size',
+    title: 'Card size',
+    task: words(5000, 'task'),
+    brainPath: work,
+    workRepo: work,
+    tier: 'T2',
+    risk: 'none',
+    triage: { size: 'T2', original: 'T2', capped: false, reasons: [] },
+    phase: 'done',
+    base: 'abc',
+    acpTab: 'factory-run-card-size',
+    createdAt: 0,
+    updatedAt: 0,
+    commitSha: 'a'.repeat(40),
+    branch: 'main',
+    pushed: { remote: 'origin', branch: 'main', sha: 'a'.repeat(40), at: 0 },
+    deployWatch: { state: 'live', host: 'Vercel', env: 'Production', url: 'https://card.vercel.app', at: 0 },
+    audit: { brain: [], work: Array.from({ length: 41 }, (_, i) => ({ path: `src/components/settings/panel-${i}/index.tsx`, added: 10, deleted: 2 })) },
+    verify: [{ script: 'typecheck', status: 'pass' }, { script: 'test', status: 'fail', tail: 'f'.repeat(2000) }],
+    strict: { status: 'pass', text: words(20000, 'review') },
+    plan: { text: words(20000, 'plan'), by: 'opus', status: 'approved', rejects: 0, reasons: [] },
+    asks: { allowed: 50, denied: 0, carded: 0, log: Array.from({ length: 50 }, (_, i) => ({ n: i + 1, at: i, title: `Run npm test --filter suite-${i}`.padEnd(200, 'x'), decision: 'allow' as const, by: 'Fable', why: 'w'.repeat(300) })) },
+    events: Array.from({ length: 50 }, (_, i): RunEvent =>
+      i % 2
+        ? { at: i, kind: 'review', round: i, status: 'fail', text: 'r'.repeat(6000) }
+        : { at: i, kind: 'turn', call: i, model: 'grok-4.6', ms: 1000, ok: true, files: 40, added: 100, deleted: 10, paths: Array.from({ length: 40 }, (_, j) => `src/f${j}.ts`) }
+    )
+  }
+  const prompt = mods.conductor.conductorPrompt(run, 'What happened?')
+  const field = (k: string) => (prompt.split('\n').find((l) => l.startsWith(`${k}: `)) || '').slice(k.length + 2)
+  assert.equal((JSON.parse(field('filesChanged')) as string[]).length, 40)
+  assert.equal((JSON.parse(field('strictReview').replace(/^pass /, '')) as string).length, 1500)
+  assert.equal((JSON.parse(field('plan')) as string).length, 1500)
+  assert.equal((JSON.parse(field('asks').slice(field('asks').indexOf('['))) as string[]).length, 10)
+  assert.equal((JSON.parse(field('events')) as string[]).length, 40)
+  assert.match(field('deploy'), /^Live on Vercel: https:\/\/card\.vercel\.app/)
+  assert.ok(prompt.length < 16_000, String(prompt.length))
 })

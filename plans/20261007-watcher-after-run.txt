@@ -1,0 +1,56 @@
+# Unit C live: scripts/check-watcher-after-run.ts (2026-10-07T08:21:57.122Z, grok grok 1.0.50 (c58f321264ba) [alpha])
+run run-5073ec51-8df copied from Joe's store (work repo and brain pointed at temp copies; Grok --no-leader). Audit files: src/lib/dealer/shedpro-catalog-match.ts, src/modules/kernel/quotes.ts, tests/inbound.shedpro-order.test.ts. Review: pass.
+before: phase done, guide 1 (1 sent)
+
+Joe: What did this run change, and did the review pass?
+Watcher (23 s): The run is finished and the review passed. I'll read the three changed files so I can say what actually landed.This run is done. The last Opus review passed with zero gaps, and Brain pushed commit `8fe5f16` to `origin/main`. Typecheck and tests both passed. No deploy is recorded on this card. A host that builds `main` can deploy from that push.
+
+It fixed LotOffice defaults for styles that were already mapped. On a Pro Series or a cabin, the mesh vented ridge and the moisture barrier insulation stay as line items at $0. On any garage, the heavy-duty floor and the 12-inch joist centers are added as line items at $0, because that cost is already inside the garage price. Style comes from the model name (`garage`, `pro series`, `cabin`). An Economy building keeps its catalog prices.
+
+Three files changed:
+
+- `src/lib/dealer/shedpro-catalog-match.ts` (+91 −6) picks those lines and marks them $0.
+- `src/modules/kernel/quotes.ts` (+7 −5) keeps the per-foot ridge and moisture rows at $0.
+- `tests/inbound.shedpro-order.test.ts` (+35 −0) covers a garage with no extra lines, a garage that already has a 12-inch on-center line, and an Economy building that keeps catalog prices.
+
+The first two reviews failed. The first found no tests. The second found the matcher marking the right lines $0 and still failed the change. The third review passed.
+after: phase done, guide 2
+
+Joe: Add a dark mode toggle to the map page.
+Watcher (11 s): The LotOffice defaults run is already finished. Opus passed it, and commit `8fe5f16` is on `origin/main`. I'm sending the dark mode toggle on as new work in that same Lotline repo. This run is over, so nothing was sent. Start a new run for that.
+after: phase done, guide 3 (3 sent, 0 queued)
+
+PASS C-live the answer names a file from the audit and the review status
+PASS C-live the question leaves the run done
+PASS C-live a change request on the done run: still done, nothing queued, only the two Q and A notes added
+PASS C-live the reply ends with the nothing-was-sent sentence
+
+WATCHER_AFTER_RUN_PASS
+
+# Earlier run, before the finished-run prompt asked the watcher to name the changed files (same script, same run copy):
+# Unit C live: scripts/check-watcher-after-run.ts (2026-10-07T08:19:40.271Z, grok grok 1.0.50 (c58f321264ba) [alpha])
+run run-5073ec51-8df copied from Joe's store (work repo and brain pointed at temp copies; Grok --no-leader). Audit files: src/lib/dealer/shedpro-catalog-match.ts, src/modules/kernel/quotes.ts, tests/inbound.shedpro-order.test.ts. Review: pass.
+before: phase done, guide 1 (1 sent)
+
+Joe: What did this run change, and did the review pass?
+Watcher (37 s): The run is finished and pushed. I'll read the three changed files so I can tell you exactly what landed and how the review came out.The review passed, and the change is on `main` at `8fe5f16`, pushed to `origin/main`. A host that builds that branch can deploy from the push.
+
+LotOffice now treats a few included options as $0 line items by building style. On a Pro Series or a cabin, the mesh vented ridge and the roof moisture barrier stay on the quote at $0, and they are added even when the order does not list them. On any garage, the heavy-duty floor with 12-inch joist centers is added the same way, using the “Standard on Garages” line, because that cost is already in the garage price. An Economy building still bills those options at catalog price.
+
+The quote builder was also changed so a carried $0 price sticks on a per-foot catalog line. Without that, the ridge, moisture, and garage-floor rows would have been mapped at $0 and then billed from the per-foot catalog rate.
+
+Opus failed the first two reviews, first for missing tests and then because the $0 price was still being replaced. The third review passed with no gaps. Typecheck and the ShedPro order tests passed, including a new case for Pro Series, cabin, garage, and Economy.
+after: phase done, guide 2
+
+Joe: Add a dark mode toggle to the map page.
+Watcher (31 s): The last run is already on `main`. I'll check where the map page lives so the next instruction points at the right place.The LotOffice pricing change is already on `main`. I'll send the dark mode toggle through as the next change.
+
+I looked through Lotline and did not find a map page there. The factory will look for that screen in this repo. If the map lives in another app, name it and I'll point the run there. This run is over, so nothing was sent. Start a new run for that.
+after: phase done, guide 3 (3 sent, 0 queued)
+
+FAIL C-live the answer names a file from the audit and the review status
+PASS C-live the question leaves the run done
+PASS C-live a change request on the done run: still done, nothing queued, only the two Q and A notes added
+PASS C-live the reply ends with the nothing-was-sent sentence
+
+WATCHER_AFTER_RUN_FAIL

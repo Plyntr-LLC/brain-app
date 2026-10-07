@@ -792,26 +792,24 @@ export function FactoryPane(props: {
           ) : null}
           {error ? <p className="factory-err">{error}</p> : null}
         </div>
-        {live ? (
-          <div className="factory-compose">
-            <textarea
-              ref={noteRef}
-              value={note}
-              rows={2}
-              placeholder="Talk to the team: ask, redirect, add something, or say go"
-              onChange={(e) => setNote(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault()
-                  void sendNote()
-                }
-              }}
-            />
-            <button type="button" className="primary" disabled={!note.trim()} onClick={() => void sendNote()}>
-              Send
-            </button>
-          </div>
-        ) : null}
+        <div className="factory-compose">
+          <textarea
+            ref={noteRef}
+            value={note}
+            rows={2}
+            placeholder={live ? 'Talk to the team: ask, redirect, add something, or say go' : 'Ask about this run'}
+            onChange={(e) => setNote(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault()
+                void sendNote()
+              }
+            }}
+          />
+          <button type="button" className="primary" disabled={!note.trim()} onClick={() => void sendNote()}>
+            Send
+          </button>
+        </div>
       </div>
     </div>
   )
