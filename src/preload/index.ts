@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AiKind } from '../shared/contracts'
 import type { Approver, FactoryTriage, RepoProfile, RunRecord as FactoryRun } from '../shared/factory'
+import type { BotState, DeskBot, DeskMessage, DeskWelcome } from '../shared/desk'
 import type { MediaAddResult, MediaEnableResult, MediaLibraryResult, MediaStatus } from '../shared/media'
 
 type FactoryResult = { ok: true; run: FactoryRun | null } | { ok: false; error: string }
@@ -1149,6 +1150,37 @@ const brain = {
       ipcRenderer.invoke('media:armDrag', opts) as Promise<{ ok: boolean; detail?: string }>,
     // send: dragstart cannot wait for a reply, or the drop comes out empty.
     startDrag: (opts: { folder?: string; mediaId: string }) => ipcRenderer.send('media:startDrag', opts)
+  },
+  desk: {
+    attach: (tab: string, brain: string) => ipcRenderer.invoke('desk:attach', tab, brain) as Promise<{ brain: string }>,
+    closeCheck: (tab: string) =>
+      ipcRenderer.invoke('desk:closeCheck', tab) as Promise<{ last: boolean; busyNames: string[] }>,
+    detach: (tab: string, opts: { stop: boolean }) => ipcRenderer.invoke('desk:detach', tab, opts) as Promise<void>,
+    welcome: (tab: string, thread?: string | null) => ipcRenderer.invoke('desk:welcome', tab, thread) as Promise<DeskWelcome>,
+    list: (tab: string) =>
+      ipcRenderer.invoke('desk:list', tab) as Promise<{ bots: DeskBot[]; states: BotState[]; removedNames: Record<string, string> }>,
+    save: (tab: string, bot: Omit<DeskBot, 'file'>) => ipcRenderer.invoke('desk:save', tab, bot) as Promise<string | null>,
+    remove: (tab: string, id: string) => ipcRenderer.invoke('desk:remove', tab, id) as Promise<string | null>,
+    say: (tab: string, text: string, to?: string) => ipcRenderer.invoke('desk:say', tab, text, to),
+    answerHold: (tab: string, id: string, answer: 'yes' | 'no') => ipcRenderer.invoke('desk:answerHold', tab, id, answer),
+    answerEmail: (tab: string, id: string, answer: 'yes' | 'no') => ipcRenderer.invoke('desk:answerEmail', tab, id, answer),
+    answerText: (tab: string, id: string, answer: 'yes' | 'no') => ipcRenderer.invoke('desk:answerText', tab, id, answer),
+    stop: (tab: string, botId: string) => ipcRenderer.invoke('desk:stop', tab, botId),
+    keepWaiting: (tab: string, botId: string) => ipcRenderer.invoke('desk:keepWaiting', tab, botId),
+    continueJob: (tab: string, job: string) => ipcRenderer.invoke('desk:continueJob', tab, job),
+    stopJob: (tab: string, job: string) => ipcRenderer.invoke('desk:stopJob', tab, job),
+    retry: (tab: string, msgId: string) => ipcRenderer.invoke('desk:retry', tab, msgId),
+    status: (tab: string) => ipcRenderer.invoke('desk:status', tab),
+    focus: (tab: string) => ipcRenderer.invoke('desk:focus', tab),
+    view: (tab: string, botId: string | null) => ipcRenderer.invoke('desk:view', tab, botId) as Promise<DeskMessage[]>,
+    onEvent: (fn: (ev: { brain: string; messages: DeskMessage[]; states: BotState[]; removedNames: Record<string, string> }) => void) => {
+      const h = (_e: unknown, payload: { brain: string; messages: DeskMessage[]; states: BotState[]; removedNames: Record<string, string> }) =>
+        fn(payload)
+      ipcRenderer.on('desk:event', h)
+      return () => {
+        ipcRenderer.removeListener('desk:event', h)
+      }
+    }
   }
 }
 

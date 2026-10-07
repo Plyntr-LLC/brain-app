@@ -18,6 +18,7 @@ import { registerSkinIpc } from './skin/ipc'
 import { registerFactoryIpc } from './factory/ipc'
 import { shutdownFactory } from './factory/controller'
 import { registerPhoneIpc, restorePhoneIfWanted, stopPhone } from './phone'
+import { registerDeskIpc } from './desk/ipc'
 import { registerMediaIpc } from './media/ipc'
 import { handleBrainMediaProtocol, registerBrainMediaScheme } from './media/protocol'
 import { clearMediaTemp } from './media/export'
@@ -32,6 +33,7 @@ registerSkinIpc()
 registerFactoryIpc()
 registerPhoneIpc()
 registerMediaIpc()
+registerDeskIpc()
 
 process.on('uncaughtException', (err) => {
   const msg = String((err as NodeJS.ErrnoException).message || err)
