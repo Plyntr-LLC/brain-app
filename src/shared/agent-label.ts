@@ -13,6 +13,53 @@ function withRun(who: string, model: string, effort: string): string {
   return effort ? `${parts} (${effort})` : parts
 }
 
+const OPUS_REVIEW = 'Opus is reviewing'
+
+/** A tool title that starts a Claude Opus review, with the shell command left off the event. */
+function titleStartsReview(text: string): boolean {
+  const t = text.trim()
+  if (!t || /^(?:Read|Edit|Write|Search|Grep)\b/.test(t)) return false
+  if (/[/\\]/.test(t) || /\.[A-Za-z0-9]{1,8}\b/.test(t)) return false
+  return /^(?:Start|Run)\b.*\bClaude\b.*\bOpus\b.*\breview/.test(t)
+}
+
+/** A shell call that is an Opus review, not an ordinary Opus question. */
+export function opusReviewLabel(command: string, title = ''): string | null {
+  const cmd = String(command || '')
+  const head = String(title || '')
+  const opusBin = /(?:^|[\s;&|(]|\/)(?:claude|cursor-agent)(?=\s|$)/.test(cmd) && /--model(?:=|\s+)["']?[^\s"']*opus/i.test(cmd)
+  if (opusBin && /\breview/i.test(`${head}\n${cmd}`)) return OPUS_REVIEW
+  if (titleStartsReview(head || cmd)) return OPUS_REVIEW
+  return null
+}
+
+/** The line the chat and the right rail show for background work. */
+export function visibleBgLine(tasks: { label: string }[]): string {
+  if (!tasks.length) return ''
+  const first = tasks[0].label.replace(/^Started in the background: /, '')
+  const more = tasks.length > 1 ? ` (+${tasks.length - 1} more)` : ''
+  if (first === OPUS_REVIEW) return `${OPUS_REVIEW}${more}`
+  return `In the background: ${first}${more}`
+}
+
+export type ReviewTask = { id: string; label: string; at: number }
+
+/** Keep an Opus review on the list until its tool call finishes. Null when nothing changed. */
+export function nextReviewTasks(
+  tasks: ReviewTask[],
+  ev: { kind: string; id: string; title: string; command: string; status: string },
+  at: number
+): ReviewTask[] | null {
+  const id = String(ev.id || '')
+  const done = /completed|failed|cancelled|canceled|error/i.test(String(ev.status || ''))
+  const open = tasks.some((t) => t.id === id)
+  if (id && open && done) return tasks.filter((t) => t.id !== id)
+  if (ev.kind === 'tool_call' && id && !open && !done && opusReviewLabel(ev.command, ev.title)) {
+    return [...tasks, { id, label: OPUS_REVIEW, at }]
+  }
+  return null
+}
+
 /** The AI a shell command talks to, or '' when it talks to none. */
 export function agentInCommand(command: string): string {
   const cmd = String(command || '')
@@ -41,8 +88,12 @@ export function handoffLabel(name: string, input: unknown): string | null {
   }
   if (tool === 'SendMessage') return `Messaging ${String(i.to || 'another agent').slice(0, 40)}`
   if (tool === 'Bash') {
-    const who = agentInCommand(String(i.command || ''))
-    if (!who) return i.run_in_background ? `Started in the background: ${String(i.description || 'a command').slice(0, 60)}` : null
+    const command = String(i.command || '')
+    const title = String(i.description || '')
+    const review = opusReviewLabel(command, title)
+    if (review) return i.run_in_background ? `Started in the background: ${review}` : review
+    const who = agentInCommand(command)
+    if (!who) return i.run_in_background ? `Started in the background: ${title.slice(0, 60) || 'a command'}` : null
     return i.run_in_background ? `Started in the background: asking ${who}` : `Asking ${who}`
   }
   return null
@@ -50,6 +101,8 @@ export function handoffLabel(name: string, input: unknown): string | null {
 
 /** An ACP tool title ("Run grok -p ...") as a handoff label, or null. */
 export function handoffFromTitle(title: string): string | null {
+  const review = opusReviewLabel(title)
+  if (review) return review
   const who = agentInCommand(title)
   return who ? `Asking ${who}` : null
 }
@@ -65,7 +118,8 @@ export function skinPulseLabel(label: string): string {
     label.startsWith('Started in the background:') ||
     label.startsWith('Subagent:') ||
     label.startsWith('Messaging ') ||
-    label.startsWith('In the background:')
+    label.startsWith('In the background:') ||
+    label === OPUS_REVIEW
   ) {
     return label
   }
@@ -90,12 +144,10 @@ export function skinActivity(input: {
   }
   const tasks = input.bgTasks
   if (!tasks.length) return { show: false }
-  const first = tasks[0].label.replace(/^Started in the background: /, '')
-  const more = tasks.length > 1 ? ` (+${tasks.length - 1} more)` : ''
   const at = Math.min(...tasks.map((t) => t.at))
   return {
     show: true,
-    label: `In the background: ${first}${more}`,
+    label: visibleBgLine(tasks),
     seconds: Math.max(0, Math.floor((input.now - at) / 1000))
   }
 }

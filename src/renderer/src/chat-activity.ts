@@ -1,5 +1,6 @@
 import type { Activity, RailState } from './activity'
 import type { FileHit } from './ptyChat'
+import { visibleBgLine } from '../../shared/agent-label'
 
 export const LOG_MAX = 30
 const PLACEHOLDERS = new Set(['Working', 'Thinking'])
@@ -27,9 +28,7 @@ export type BgTask = { label: string; at: number }
 
 /** One line for the CLI's background jobs: the first job, then "(+N more)". */
 export function bgLine(bg: BgTask[]): string {
-  if (!bg.length) return ''
-  const first = bg[0].label.replace(/^Started in the background: /, '')
-  return `In the background: ${first}${bg.length > 1 ? ` (+${bg.length - 1} more)` : ''}`
+  return visibleBgLine(bg)
 }
 
 export function chatActivity(o: {

@@ -1,5 +1,5 @@
 import { homedir } from 'node:os'
-import { handoffFromTitle } from '../shared/agent-label'
+import { handoffFromTitle, nextReviewTasks, type ReviewTask } from '../shared/agent-label'
 import { app, BrowserWindow } from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute } from 'node:path'
@@ -95,6 +95,8 @@ export type Tab = {
   factory?: { brainPath: string; workRepo: string; runThrough?: boolean; watchOnly?: boolean; approver?: Approver }
   /** Factory asks the approver is deciding right now, by request id. No card and no permId while one runs. */
   judging?: Map<string, { id: number | string; ctl: AbortController }>
+  /** Opus reviews this chat started. They stay up after the turn ends, until the tool call finishes. */
+  reviews?: ReviewTask[]
 }
 
 export type Pool = {
@@ -473,6 +475,34 @@ function broadcast(tab: Tab, ev: StreamEvent): void {
   }
 }
 
+/** The chat still hears this after the turn ends and tab.onEvent is cleared. */
+function publishStatus(tab: Tab, data: string): void {
+  const ev: StreamEvent = { kind: 'status', data }
+  if (tab.onEvent) tab.onEvent(ev)
+  else broadcast(tab, ev)
+}
+
+/** Drop an Opus review and tell the chat. Stop, close, resume, and a dead process all use this. */
+function clearOpenReviews(tab: Tab): void {
+  tab.reviews = []
+  publishStatus(tab, 'bg:[]')
+}
+
+/** The slash fixture registers a fake pool so cancel and close can find it. */
+export function attachPool(key: string, pool: Pool): void {
+  pools.set(key, pool)
+  for (const tab of pool.tabs.values()) tabPool.set(tab.tabId, key)
+}
+
+export function detachPool(key: string): void {
+  const pool = pools.get(key)
+  pools.delete(key)
+  if (!pool) return
+  for (const id of pool.tabs.keys()) {
+    if (tabPool.get(id) === key) tabPool.delete(id)
+  }
+}
+
 /** Agent-to-client notifications (session/update). Exported for the fixture check. */
 export function handleNote(pool: Pool, msg: RpcMsg): void {
   const method = String(msg.method || '')
@@ -509,6 +539,21 @@ export function handleNote(pool: Pool, msg: RpcMsg): void {
   const phase = compactPhase(method, update)
   if (phase && tab.onEvent) tab.onEvent({ kind: 'status', data: phase })
   if (kind === 'tool_call' || kind === 'tool_call_update') {
+    const next = nextReviewTasks(
+      tab.reviews || [],
+      {
+        kind,
+        id: String(update.toolCallId || update.tool_call_id || ''),
+        title: String(update.title || ''),
+        command: String(asRecord(update.rawInput).command || ''),
+        status: String(update.status || '')
+      },
+      Date.now()
+    )
+    if (next) {
+      tab.reviews = next
+      publishStatus(tab, 'bg:' + JSON.stringify(next.map(({ label, at }) => ({ label, at }))))
+    }
     const cap = toolCaptureFromUpdate(update)
     if (cap) {
       try {
@@ -1102,6 +1147,7 @@ export function adoptLoadedSession(pool: Pool, tab: Tab, sid: string, live: Live
   const wasPlan = pool.kind === 'grok' && !!tab.planMode
   if (tab.sessionId && pool.bySid.get(tab.sessionId) === tab.tabId) pool.bySid.delete(tab.sessionId)
   tab.sessionId = sid
+  clearOpenReviews(tab)
   clearPlanState(tab)
   pool.tabs.set(tab.tabId, tab)
   pool.bySid.set(sid, tab.tabId)
@@ -1112,6 +1158,7 @@ export function adoptLoadedSession(pool: Pool, tab: Tab, sid: string, live: Live
 /** The pool's agent process exited. Exported for the fixture check. */
 export function onPoolExit(pool: Pool): void {
   for (const tab of pool.tabs.values()) {
+    clearOpenReviews(tab)
     // A restarted Grok agent starts outside plan mode; say so before tabPool forgets the tab.
     if (pool.kind === 'grok' && tab.planMode) {
       clearPlanState(tab)
@@ -1509,6 +1556,7 @@ export function acpCancel(tabId: string): boolean {
   const tab = pool?.tabs.get(tabId)
   if (!pool || !tab) return false
   endJudging(pool, tab)
+  clearOpenReviews(tab)
   try {
     pool.rpc.notify('session/cancel', { sessionId: tab.sessionId })
   } catch {
@@ -1524,6 +1572,7 @@ export function acpClose(tabId: string): void {
   const tab = pool?.tabs.get(tabId)
   if (!pool || !tab) return
   endJudging(pool, tab)
+  clearOpenReviews(tab)
   pool.tabs.delete(tabId)
   pool.bySid.delete(tab.sessionId)
   try {

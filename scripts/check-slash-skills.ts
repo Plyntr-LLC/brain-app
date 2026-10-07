@@ -108,7 +108,7 @@ const { formatClaudeStats, formatClaudeUsage, formatClaudeOAuthUsage } = (await 
 const { formatGrokAccount, formatGrokSession, grokUsageText } = (await import(src('grok-usage.ts'))) as typeof import('../src/main/grok-usage.ts')
 const { grokUsageBlurb, claudeUsageBlurb } = (await import(src('slash.ts'))) as typeof import('../src/main/slash.ts')
 const { PLAN_APPROVE, PLAN_KEEP } = (await import(src('grok-plan.ts'))) as typeof import('../src/main/grok-plan.ts')
-const { handleReq, handleNote, answerPlanAsk, adoptLoadedSession, onPoolExit } = (await import(src('acp-session.ts'))) as typeof import('../src/main/acp-session.ts')
+const { handleReq, handleNote, answerPlanAsk, adoptLoadedSession, onPoolExit, acpCancel, acpClose, attachPool, detachPool } = (await import(src('acp-session.ts'))) as typeof import('../src/main/acp-session.ts')
 const { newPlanControls, controlTimedOut, controlAnswered } = (await import(src('claude-plan.ts'))) as typeof import('../src/main/claude-plan.ts')
 // Windows the main process broadcasts chat:event to (the electron stub reads this list).
 const winSent: Record<string, unknown>[] = []
@@ -371,7 +371,7 @@ check('Usage popup keeps the account heading', panelBlocks(grokText)[0]?.heading
 // Grok plan approval: a fixture `_x.ai/exit_plan_mode` request through the real handleReq, fake pool.
 function fakePool() {
   const sent: { id: number | string; result?: unknown; error?: { code: number; message: string } }[] = []
-  const events: { kind: string; title?: string; detail?: string; options?: { id: string; label: string }[]; mode?: string }[] = []
+  const events: { kind: string; title?: string; detail?: string; options?: { id: string; label: string }[]; mode?: string; data?: string }[] = []
   const tab = {
     tabId: 'tab-plan',
     sessionId: 'sess-plan-1',
@@ -380,6 +380,7 @@ function fakePool() {
     text: '',
     alwaysApprove: true,
     planMode: true,
+    reviews: [] as { id: string; label: string; at: number }[],
     onEvent: (ev: (typeof events)[number]) => events.push(ev)
   }
   const pool = {
@@ -456,6 +457,7 @@ const staleTab = staleRun.tab as { planAsk?: boolean; permId?: number | string }
 check('A tool ask after an unanswered plan card is a normal permission again', staleTab.planAsk === false && staleTab.permId === 44)
 const loadRun = fakePool()
 winSent.length = 0
+loadRun.tab.reviews = [{ id: 'call-1', label: 'Opus is reviewing', at: 1 }]
 adoptLoadedSession(loadRun.pool as never, loadRun.tab as never, 'sess-loaded-2', {} as never)
 check(
   'A loaded or resumed session starts outside plan mode and says so',
@@ -466,10 +468,55 @@ check(
     winSent.some((e) => e.tabId === 'tab-plan' && e.kind === 'mode' && e.mode === 'default'),
   JSON.stringify(winSent)
 )
+check(
+  'A loaded session drops an Opus review',
+  loadRun.tab.reviews.length === 0 && loadRun.events.some((e) => e.kind === 'status' && e.data === 'bg:[]')
+)
 const exitRun = fakePool()
+exitRun.tab.reviews = [{ id: 'call-1', label: 'Opus is reviewing', at: 1 }]
 winSent.length = 0
 onPoolExit(exitRun.pool as never)
 check('A restarted Grok agent clears plan mode and tells the chat', exitRun.tab.planMode === false && winSent.some((e) => e.tabId === 'tab-plan' && e.kind === 'mode' && e.mode === 'default'))
+check(
+  'A dead Grok process drops an Opus review',
+  exitRun.tab.reviews.length === 0 && exitRun.events.some((e) => e.kind === 'status' && e.data === 'bg:[]')
+)
+const reviewEvents: { kind: string; data?: string }[] = []
+const reviewTab = {
+  tabId: 'tab-review',
+  sessionId: 'sess-review',
+  promptId: null,
+  appTools: [],
+  text: '',
+  reviews: [{ id: 'call-1', label: 'Opus is reviewing', at: 1 }],
+  onEvent: (ev: { kind: string; data?: string }) => reviewEvents.push(ev)
+}
+const reviewPool = {
+  kind: 'grok' as const,
+  cwd,
+  boot: Promise.resolve(),
+  tabs: new Map([[reviewTab.tabId, reviewTab]]),
+  bySid: new Map([[reviewTab.sessionId, reviewTab.tabId]]),
+  rpc: {
+    notify() {},
+    reply() {},
+    request: () => Promise.resolve({}),
+    kill() {}
+  }
+}
+attachPool('review-check', reviewPool as never)
+check(
+  'Stop clears an Opus review and tells the chat',
+  acpCancel('tab-review') && reviewTab.reviews.length === 0 && reviewEvents.some((e) => e.kind === 'status' && e.data === 'bg:[]')
+)
+reviewTab.reviews = [{ id: 'call-2', label: 'Opus is reviewing', at: 2 }]
+reviewEvents.length = 0
+acpClose('tab-review')
+check(
+  'Close clears an Opus review and tells the chat',
+  reviewTab.reviews.length === 0 && reviewEvents.some((e) => e.kind === 'status' && e.data === 'bg:[]')
+)
+detachPool('review-check')
 const acpSrc = readFileSync(join(rootRepo, 'src/main/acp-session.ts'), 'utf8')
 const fnBody = (name: string) => acpSrc.slice(acpSrc.indexOf(`export async function ${name}(`), acpSrc.indexOf('\nexport ', acpSrc.indexOf(`export async function ${name}(`) + 1))
 const warmBody = fnBody('acpWarm')

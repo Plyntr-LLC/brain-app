@@ -1049,7 +1049,8 @@ export function ChatPane({
     setAtBottom(pinned)
   }
 
-  const live = busy || compacting || warming
+  const reviewOn = bgTasks.some((t) => t.label.replace(/^Started in the background: /, '') === 'Opus is reviewing')
+  const turnLive = busy || compacting || warming
 
   useEffect(() => {
     if (!bgTasks.length) return
@@ -1060,19 +1061,19 @@ export function ChatPane({
   const bgLabel = bgLine(bgTasks)
 
   useEffect(() => {
-    if (!live) {
+    if (!turnLive) {
       setWaitSec(0)
       return
     }
     const t0 = Date.now()
     const t = setInterval(() => setWaitSec(Math.floor((Date.now() - t0) / 1000)), 1000)
     return () => clearInterval(t)
-  }, [live])
+  }, [turnLive])
 
   useEffect(() => {
-    onBusy(id, live)
+    onBusy(id, turnLive || reviewOn)
     return () => onBusy(id, false)
-  }, [id, live])
+  }, [id, turnLive, reviewOn])
 
   useEffect(() => {
     onTranscript(id, messages)
@@ -1199,6 +1200,7 @@ export function ChatPane({
     }
     const msgs = (r.messages || []).map((m) => ({ who: m.who, text: m.text })) as Msg[]
     setMessages(msgs.length ? msgs : [{ who: 'sys', text: 'Session loaded. The model has the history.' }])
+    setBgTasks([])
     // A loaded session starts outside plan mode; Grok re-announces plan mode if that session is in it.
     planOnRef.current = false
     setPlanOn(false)
@@ -1252,6 +1254,7 @@ export function ChatPane({
       setMessages([{ who: 'brain', text: greeting }])
       filesRef.current = []
       reportFiles([])
+      setBgTasks([])
       freshTurnRail()
       void resetCli()
         .then(() => {
@@ -1443,6 +1446,7 @@ export function ChatPane({
       setMessages([{ who: 'brain', text: greeting }])
       filesRef.current = []
       reportFiles([])
+      setBgTasks([])
       freshTurnRail()
       void resetCli()
         .then(() => {
