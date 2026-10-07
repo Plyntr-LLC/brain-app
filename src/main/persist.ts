@@ -7,7 +7,7 @@ import { toSavedMsgs, type SavedMsg } from '../shared/saved-msg'
 export type { SavedMsg }
 export type SavedTab = {
   id: string
-  type: 'chat' | 'file' | 'term' | 'factory' | 'library'
+  type: 'chat' | 'file' | 'term' | 'factory' | 'library' | 'desk'
   title: string
   kind?: string
   mode?: 'chat' | 'term'

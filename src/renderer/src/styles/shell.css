@@ -1407,6 +1407,9 @@ button.linkish.cmdval { color: var(--ink); font-size: 0.88rem; text-decoration: 
   overflow: hidden;
   padding: 0;
 }
+.desk-rail { flex: 1; min-height: 0; overflow: auto; }
+.desk-roster { display: flex; flex-direction: column; gap: 0.45rem; padding: 12px; }
+.desk-row { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
 .refs h2 {
   flex-shrink: 0;
   margin: 0;

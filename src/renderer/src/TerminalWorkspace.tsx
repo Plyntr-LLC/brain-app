@@ -17,6 +17,8 @@ import { routeLine } from '../../shared/slash-route'
 import { panelBlocks } from '../../shared/panel-blocks'
 import { WorkPulse } from './WorkPulse'
 import { FactoryPane } from './FactoryPane'
+import { DeskPane } from './DeskPane'
+import type { DeskCli } from '@shared/desk'
 import { MediaLibraryPane } from './MediaLibraryPane'
 import type { MediaLibraryFile } from '../../shared/media'
 import { SkinPane } from './skin/SkinPane'
@@ -192,7 +194,7 @@ const NEED_ARG = new Set([
 ])
 type Tab = {
   id: string
-  type: 'chat' | 'file' | 'term' | 'factory' | 'library'
+  type: 'chat' | 'file' | 'term' | 'factory' | 'library' | 'desk'
   title: string
   kind?: AiKind
   mode?: Mode
@@ -398,6 +400,16 @@ function modelOnList(id: string | undefined, list: Cap[]): string | undefined {
 
 function claudeModelOnList(id: string | undefined, list: Cap[]): string {
   return keepClaudeModel(id, list)
+}
+
+function deskModels(cli: DeskCli, list?: Cap[]): Cap[] {
+  const rows = cliModels(cli, list)
+  return rows.length ? rows : [{ id: 'default', label: 'Default' }]
+}
+
+function deskEfforts(cli: DeskCli): Cap[] {
+  if (cli === 'gpt' || cli === 'cursor') return []
+  return fallbackEfforts(cli)
 }
 
 function fallbackEfforts(kind?: AiKind): Cap[] {
@@ -2394,6 +2406,8 @@ export function TerminalWorkspace({
     }
   }, [picker])
   const [closingId, setClosingId] = useState<string | null>(null)
+  const [deskCloseId, setDeskCloseId] = useState<string | null>(null)
+  const [deskRail, setDeskRail] = useState<HTMLElement | null>(null)
 
   const [detected, setDetected] = useState<Partial<Record<AiKind, boolean>>>({})
   const [kids, setKids] = useState<Record<string, FileNode[]>>({})
@@ -2416,7 +2430,8 @@ export function TerminalWorkspace({
   // A Factory tab shows its own run's files; Chat tabs (and everything else) show the last chat's.
   const filesId = tab?.type === 'factory' ? tab.id : chatId
   const hits = filesByTab[filesId] || []
-  const railActivity = railFor(tab, lastChatId, activityByTab)
+  const deskOn = tab?.type === 'desk'
+  const railActivity = deskOn ? null : railFor(tab, lastChatId, activityByTab)
   const folderName = cwd.split('/').filter(Boolean).pop() || 'Agency Brain'
   const modelChoices = cliModels(
     chatTab?.kind,
@@ -2425,7 +2440,18 @@ export function TerminalWorkspace({
   const ctx = contextByTab[chatId || '']
   const effortList = chatTab?.efforts?.length ? chatTab.efforts : fallbackEfforts(chatTab?.kind)
   const showEffort = !!(chatTab?.efforts?.length || (chatTab?.kind && chatTab.kind !== 'cursor' && fallbackEfforts(chatTab.kind).length))
-  const sessionRows: SessionRow[] = [
+  const folderRow: SessionRow = {
+    key: 'folder',
+    label: 'Folder',
+    value: folderName,
+    title: cwd,
+    choices: recents.map((r) => ({ id: r.path, label: `${r.name}${r.watching ? ' · watching' : ''}`, on: r.path === cwd })),
+    onChoose: (path: string) => void useFolder(path),
+    extra: { label: 'Choose folder…', onClick: () => void pickFolder() }
+  }
+  const sessionRows: SessionRow[] = deskOn
+    ? [folderRow]
+    : [
     ...(powerPickers
       ? [
           {
@@ -2474,15 +2500,7 @@ export function TerminalWorkspace({
     ...(ctx && (ctx.percent != null || ctx.used)
       ? [{ key: 'context', label: 'Context', value: ctx.percent != null ? `${ctx.percent}%` : `${Math.round((ctx.used || 0) / 1000)}k tokens` }]
       : []),
-    {
-      key: 'folder',
-      label: 'Folder',
-      value: folderName,
-      title: cwd,
-      choices: recents.map((r) => ({ id: r.path, label: `${r.name}${r.watching ? ' · watching' : ''}`, on: r.path === cwd })),
-      onChoose: (path: string) => void useFolder(path),
-      extra: { label: 'Choose folder…', onClick: () => void pickFolder() }
-    }
+    folderRow
   ]
 
   useEffect(() => {
@@ -2815,6 +2833,13 @@ export function TerminalWorkspace({
     setPicker(false)
   }
 
+  function addDesk() {
+    const id = nid()
+    setTabs((t) => [...t, { id, type: 'desk', title: 'Desk' }])
+    setActive(id)
+    setPicker(false)
+  }
+
   function addLibrary() {
     const open = tabsRef.current.find((t) => t.type === 'library')
     if (open) {
@@ -2864,6 +2889,12 @@ export function TerminalWorkspace({
   }
 
   function closeTab(id: string) {
+    const t = tabsRef.current.find((x) => x.id === id)
+    if (t?.type === 'desk') {
+      setActive(id)
+      setDeskCloseId(id)
+      return
+    }
     setClosingId(id)
   }
 
@@ -3063,7 +3094,7 @@ export function TerminalWorkspace({
       </div>
       {picker && (
         <div className="picker">
-          <span className="tiny">New chat, Factory, or a terminal in this window. Terminal is a shell, not the AI.</span>
+          <span className="tiny">New chat, Desk, Factory, or a terminal in this window. Terminal is a shell, not the AI.</span>
           {KINDS.map((k) => (
             <div key={k.id} className="picker-row">
               <button type="button" className="ghost" disabled={detected[k.id] === false} onClick={() => addTab(k.id)}>
@@ -3075,6 +3106,11 @@ export function TerminalWorkspace({
           <div className="picker-row">
             <button type="button" className="ghost" onClick={() => addTerm()}>
               Terminal
+            </button>
+          </div>
+          <div className="picker-row">
+            <button type="button" className="ghost" onClick={() => addDesk()}>
+              Desk
             </button>
           </div>
           <div className="picker-row">
@@ -3224,6 +3260,26 @@ export function TerminalWorkspace({
               />
             ))}
           {tabs
+            .filter((t) => t.type === 'desk')
+            .map((t) => (
+              <DeskPane
+                key={'d' + t.id}
+                id={t.id}
+                cwd={cwd}
+                active={t.id === active}
+                rail={t.id === active ? deskRail : null}
+                closing={deskCloseId === t.id}
+                onClosed={() => {
+                  setDeskCloseId(null)
+                  dropTab(t.id)
+                }}
+                onKeep={() => setDeskCloseId(null)}
+                onOpenFile={(p) => void openFile(p)}
+                modelsFor={deskModels}
+                effortsFor={deskEfforts}
+              />
+            ))}
+          {tabs
             .filter((t) => t.type === 'library' && t.id === active)
             .map((t) => (
               <div key={t.id} className="filetab">
@@ -3286,6 +3342,8 @@ export function TerminalWorkspace({
               onPush={railActivity.runId ? () => void window.brain.factory.publish(railActivity.runId || '') : undefined}
               openFile={{ open: (p) => void openFile(p), canOpen: (p) => !outsideProject(cwd, p) }}
             />
+          ) : deskOn ? (
+            <div className="desk-rail" ref={setDeskRail} />
           ) : (
             <>
           <h2>In use</h2>
