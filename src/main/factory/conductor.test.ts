@@ -787,6 +787,7 @@ test('conductor drives the factory from the guide box', async () => {
   assert.equal(runOf().override?.review, undefined)
   trace = []
   await conduct(activeId, SHIP)
+  await until(() => deploys === 1 && !!runOf().deployed, 'ship deploy after the watch')
   const shipped = runOf()
   assert.ok(shipped.commitSha)
   assert.equal(pubs.length, 1)
@@ -1244,12 +1245,12 @@ test('a run keeps a timeline of what the team did', async () => {
   const id1 = begin('add a webhook endpoint feature', one, { shipThrough: true })
   await until(() => runOf().phase === 'plan' && runOf().plan?.status === 'waiting' && !!runOf().plan?.text, 'events plan')
   decideRun(id1, 'approve-plan')
-  await until(() => runOf().phase === 'done' && !!runOf().pushed, 'events pushed')
+  await until(() => runOf().phase === 'done' && !!runOf().pushed && runOf().deployWatch?.state === 'unknown', 'events pushed and watched')
   const ev = getRun(id1)?.events || []
   writeFileSync('/tmp/factory-fix/u2/events.json', JSON.stringify(ev, null, 2))
   const label = (e: RunEvent) =>
-    e.kind === 'plan' ? `plan(${e.status})` : e.kind === 'review' ? `review(${e.status},${e.round})` : e.kind === 'hold' ? `hold(${e.hold})` : e.kind === 'end' ? `end(${e.phase})` : e.kind === 'push' ? `push(${e.ok ? 'ok' : 'fail'})` : e.kind
-  assert.deepEqual(ev.map(label), ['repo', 'plan(waiting)', 'hold(plan)', 'plan(approved)', 'turn', 'test', 'review(fail,1)', 'turn', 'test', 'review(pass,2)', 'commit', 'end(done)', 'push(ok)'])
+    e.kind === 'plan' ? `plan(${e.status})` : e.kind === 'review' ? `review(${e.status},${e.round})` : e.kind === 'hold' ? `hold(${e.hold})` : e.kind === 'end' ? `end(${e.phase})` : e.kind === 'push' ? `push(${e.ok ? 'ok' : 'fail'})` : e.kind === 'watch' ? `watch(${e.state})` : e.kind
+  assert.deepEqual(ev.map(label), ['repo', 'plan(waiting)', 'hold(plan)', 'plan(approved)', 'turn', 'test', 'review(fail,1)', 'turn', 'test', 'review(pass,2)', 'commit', 'end(done)', 'push(ok)', 'watch(watching)', 'watch(unknown)'])
   const turns = ev.filter((e): e is Extract<RunEvent, { kind: 'turn' }> => e.kind === 'turn')
   assert.ok(turns[0].paths.includes('src.ts') && !turns[0].paths.includes('fix.ts'), JSON.stringify(turns[0].paths))
   assert.ok(turns[1].paths.includes('src.ts') && turns[1].paths.includes('fix.ts') && turns[1].files >= 2, JSON.stringify(turns[1].paths))

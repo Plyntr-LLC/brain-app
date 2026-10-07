@@ -1,5 +1,20 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { APPROVER_NAME, APPROVERS, callCount, modelsLine, REVIEW_MAX, strictRequired, VOICE_MAX, type Approver, type FactoryTriage, type LiveCall, type RunPhase, type RunRecord } from '../../shared/factory'
+import {
+  APPROVER_NAME,
+  APPROVERS,
+  callCount,
+  deployWatchLine,
+  modelsLine,
+  REVIEW_MAX,
+  strictRequired,
+  VOICE_MAX,
+  watchDeployBlock,
+  type Approver,
+  type FactoryTriage,
+  type LiveCall,
+  type RunPhase,
+  type RunRecord
+} from '../../shared/factory'
 import { applyFactoryText, showOutgoing, type Outgoing } from './guide-thread'
 import type { Activity } from './activity'
 import { factoryActivity } from './factory-activity'
@@ -99,6 +114,8 @@ export function FactoryPane(props: {
   const [pushBlock, setPushBlock] = useState<string | null>(null)
   const [pushAnyway, setPushAnyway] = useState(false)
   const [deployBlock, setDeployBlock] = useState<string | null>(null)
+  const [deployCmd, setDeployCmd] = useState('')
+  const [watchPolling, setWatchPolling] = useState(false)
   const [files, setFiles] = useState<FileHit[]>([])
   const runRef = useRef<string>(runId || '')
   const noteRef = useRef<HTMLTextAreaElement>(null)
@@ -222,10 +239,19 @@ export function FactoryPane(props: {
   }, [run?.id, doneSha, pushedAt])
 
   const deployedAt = run?.deployed?.at || 0
+  const watchState = run?.deployWatch?.state || ''
   useEffect(() => {
-    if (!run || !pushedAt) return setDeployBlock(null)
-    void window.brain.factory.deployBlock(run.id).then((r) => setDeployBlock(r.ok ? r.block : r.error))
-  }, [run?.id, pushedAt, deployedAt])
+    if (!run || !pushedAt) {
+      setDeployCmd('')
+      setWatchPolling(false)
+      return setDeployBlock(null)
+    }
+    void window.brain.factory.deployBlock(run.id).then((r) => {
+      setDeployBlock(r.ok ? r.block : r.error)
+      setDeployCmd(r.ok ? r.cmd : '')
+      setWatchPolling(r.ok ? r.polling : false)
+    })
+  }, [run?.id, pushedAt, deployedAt, watchState])
 
   async function toggleVoice(on: boolean) {
     setVoiceOn(on)
@@ -393,6 +419,8 @@ export function FactoryPane(props: {
   }
   const voiceHeld = run.voice?.status === 'fail'
   const items = threadItems(run, pending)
+  const deployOff = watchDeployBlock(run.deployWatch) ?? deployBlock
+  const watchStale = (watchState === 'watching' || watchState === 'building') && !watchPolling
   return (
     <div className={`factorywrap run ${active ? 'on' : ''}`}>
       <div className="factory">
@@ -694,7 +722,11 @@ export function FactoryPane(props: {
           {run.phase === 'done' && run.commitSha ? (
             <div className="factory-trip factory-ship">
               {run.shipHeld && !run.pushed ? <p className="factory-note">{run.shipHeld}</p> : null}
-              {run.deployHint ? <p className="factory-deploy">{run.deployHint.line}</p> : null}
+              {run.pushed && run.deployWatch ? (
+                <p className="factory-deploy">{deployWatchLine(run.deployWatch)}</p>
+              ) : run.deployHint ? (
+                <p className="factory-deploy">{run.deployHint.line}</p>
+              ) : null}
               {run.previewError ? <p className="factory-err">{run.previewError}</p> : null}
               <div className="factory-actions">
                 {!run.pushed ? (
@@ -734,10 +766,23 @@ export function FactoryPane(props: {
                 )}
                 {run.pushed && !run.deployed ? (
                   <>
-                    <button type="button" className="primary" disabled={!!deployBlock} onClick={() => void act(window.brain.factory.deploy(run.id))}>
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={!!deployOff}
+                      onClick={() => {
+                        if (!window.confirm(`Deploy runs this in ${run.workRepo}:\n\n${deployCmd}`)) return
+                        void act(window.brain.factory.deploy(run.id))
+                      }}
+                    >
                       Deploy
                     </button>
-                    {deployBlock ? <span className="tiny">{deployBlock}</span> : null}
+                    {deployOff ? <span className="tiny">{deployOff}</span> : null}
+                    {watchStale ? (
+                      <button type="button" className="ghost" onClick={() => void act(window.brain.factory.checkDeploy(run.id))}>
+                        Check deploy again
+                      </button>
+                    ) : null}
                   </>
                 ) : null}
                 {run.deployError && !run.deployed ? <span className="factory-err">{run.deployError}</span> : null}

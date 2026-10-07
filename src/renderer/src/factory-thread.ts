@@ -100,6 +100,8 @@ function fromEvent(e: RunEvent, i: number, run: RunRecord, lastPlan: number): Th
       return { key, at: e.at, role: 'lead', text: e.ok ? `Pushed to ${e.text}.` : `Push failed: ${e.text}` }
     case 'deploy':
       return { key, at: e.at, role: 'lead', text: e.ok ? 'Deployed.' : `Deploy failed: ${e.text}` }
+    case 'watch':
+      return { key, at: e.at, role: 'lead', text: e.line }
     case 'hold':
       return { key, at: e.at, role: 'lead', text: e.text }
     case 'ask':

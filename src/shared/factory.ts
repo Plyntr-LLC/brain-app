@@ -222,6 +222,8 @@ export type RunRecord = {
   previewError?: string
   deployed?: { at: number }
   deployError?: string
+  /** What GitHub says about the pushed commit's deploy, from Brain's watch after the push. */
+  deployWatch?: DeployWatch
   note?: string
   error?: string
   /** Every model call this run made (last 200). */
@@ -241,6 +243,45 @@ export type RunRecord = {
   updatedAt: number
 }
 
+/**
+ * The pushed commit's deploy as GitHub reports it. watching: nothing yet. none: nothing started in the 3
+ * minutes after the push. unknown: Brain cannot watch (no gh, gh signed out, not a github.com remote), or
+ * the build ran past 20 minutes.
+ */
+export type DeployWatch =
+  | { state: 'watching'; since: number }
+  | { state: 'building'; host: string; env?: string; url?: string; since: number }
+  | { state: 'live'; host: string; env?: string; url?: string; at: number }
+  | { state: 'failed'; host: string; env?: string; url?: string; at: number }
+  | { state: 'none'; at: number }
+  | { state: 'unknown'; why: string; at: number }
+
+/** The ship block's deploy line (and the thread's) for a watch state. */
+export function deployWatchLine(w: DeployWatch): string {
+  switch (w.state) {
+    case 'watching':
+      return 'Watching for a deploy...'
+    case 'building':
+      return `${w.host} is building ${w.env ? w.env.toLowerCase() : 'this push'}...`
+    case 'live':
+      return w.url ? `Live on ${w.host}: ${w.url}` : `Live on ${w.host}.`
+    case 'failed':
+      return w.url ? `${w.host} deploy failed: ${w.url}` : `${w.host} deploy failed.`
+    case 'none':
+      return 'No deploy started in the 3 minutes after the push.'
+    case 'unknown':
+      return `Brain can't watch this host: ${w.why}`
+  }
+}
+
+/** Deploy stays off while the host has the push (watching, building, live). Null: the watch leaves Deploy to its other rules. */
+export function watchDeployBlock(w: DeployWatch | undefined): string | null {
+  if (w?.state === 'watching') return 'Brain is watching GitHub for a deploy from this push.'
+  if (w?.state === 'building') return `${w.host} is building this push.`
+  if (w?.state === 'live') return `Live on ${w.host}.`
+  return null
+}
+
 export type HoldKind = 'dirty' | 'review' | 'voice' | 'tier' | 'proceed' | 'plan' | 'paused' | 'failed'
 
 /** Something the run waits on Joe for. The Factory thread asks it; the run's events record each one. */
@@ -256,6 +297,7 @@ export type RunEvent =
   | { at: number; kind: 'commit'; sha: string; branch?: string }
   | { at: number; kind: 'push'; ok: boolean; text: string }
   | { at: number; kind: 'deploy'; ok: boolean; text: string }
+  | { at: number; kind: 'watch'; state: DeployWatch['state']; line: string }
   | { at: number; kind: 'hold'; hold: HoldKind; text: string }
   | { at: number; kind: 'ask'; n: number; decision: 'deny' | 'card'; title: string; by: string; text: string }
   | { at: number; kind: 'end'; phase: 'done' | 'abandoned' }

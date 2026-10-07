@@ -7,8 +7,11 @@ import {
   commitRunNow,
   configureFactory,
   decideRun,
+  checkDeployAgain,
   deployBlockFor,
+  deployCmdFor,
   deployRun,
+  deployWatchLive,
   detachRun,
   getRun,
   guideRun,
@@ -135,7 +138,10 @@ export function registerFactoryIpc(): void {
       return { ok: false as const, error: String((e as Error).message || e) }
     }
   })
-  ipcMain.handle('factory:deployBlock', (_e, id: string) => safe(() => ({ ok: true as const, block: deployBlockFor(String(id)) })))
+  ipcMain.handle('factory:deployBlock', (_e, id: string) =>
+    safe(() => ({ ok: true as const, block: deployBlockFor(String(id)), cmd: deployCmdFor(String(id)), polling: deployWatchLive(String(id)) }))
+  )
+  ipcMain.handle('factory:checkDeploy', (_e, id: string) => safe(() => ({ ok: true as const, run: checkDeployAgain(String(id)) })))
   ipcMain.handle('factory:publishBlock', (_e, id: string) => safe(() => ({ ok: true as const, block: publishBlockFor(String(id)) })))
   ipcMain.handle('factory:publishAnywayFor', (_e, id: string) => safe(() => ({ ok: true as const, offer: publishAnywayFor(String(id)) })))
   // Joe's Push anyway click: protected branches, and Kennel through its Opus 5.5 medium gate. Never automatic.

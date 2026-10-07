@@ -3,12 +3,46 @@ import { createHash, randomUUID } from 'node:crypto'
 import { accessSync, constants as fsConstants, existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseGrokLine, resolveBin, type StreamEvent } from '../ai-cli'
-import { ACK_FILED, ACK_NOTED, APPROVERS, ASK_LOG_MAX, BUILDER_FIX_MAX, TSC_ROW, verifyLabel, VOICE_MAX, type Approver, type AskLog, type Builder, type GuideNote, type LiveCall, type Slice, type Tier, type UsageRow } from '../../shared/factory.ts'
+import {
+  ACK_FILED,
+  ACK_NOTED,
+  APPROVERS,
+  ASK_LOG_MAX,
+  BUILDER_FIX_MAX,
+  TSC_ROW,
+  verifyLabel,
+  VOICE_MAX,
+  watchDeployBlock,
+  type Approver,
+  type AskLog,
+  type Builder,
+  type DeployWatch,
+  type GuideNote,
+  type LiveCall,
+  type Slice,
+  type Tier,
+  type UsageRow
+} from '../../shared/factory.ts'
 import { askKey, judgeAsk, JUDGE_EFFORT, JUDGE_MODEL, type AskFacts, type AskVerdict } from './approver.ts'
 import { upsertLog } from './brain-log.ts'
 import { buildBrief, type BriefPhase } from './brief.ts'
+import { watchDeploy } from './deploy-watch.ts'
 import { isNeedOpus } from './fallback.ts'
-import { deploy as gitDeploy, deployBlock, deployLine, hostDeploy, isKennelGated, publish as gitPublish, publishBlock, pushWarn, routeFactoryAsk, type PublishTarget, type PushOverride } from './gates.ts'
+import {
+  deploy as gitDeploy,
+  deployBlock,
+  deployCommand,
+  deployLine,
+  hostDeploy,
+  isKennelGated,
+  KENNEL_RE,
+  publish as gitPublish,
+  publishBlock,
+  pushWarn,
+  routeFactoryAsk,
+  type PublishTarget,
+  type PushOverride
+} from './gates.ts'
 import { auditTurn, commitRun, currentBranch, diffText, dirtyPaths, gitTop, headSha, isClean, isGitRepo, numstat, porcelain, stashAll } from './git-audit.ts'
 import {
   OPUS_PLAN_TIMEOUT_MS,
@@ -123,6 +157,8 @@ export type FactoryDeps = {
   askConductor?: (prompt: string) => Promise<string>
   /** Test hook: the ask approver's timeout (default JUDGE_TIMEOUT_MS). */
   judgeTimeoutMs?: number
+  /** Test hook: the deploy watch's poll interval and its none and stuck windows. */
+  deployWatch?: { pollMs?: number; noneMs?: number; stuckMs?: number }
 }
 
 /** workers: T3 builder tabs open right now (factory-<id>-w<n>). */
@@ -150,6 +186,8 @@ type Live = {
   diffHash?: string
   /** The approver's ALLOW and DENY answers on this run, by askKey. ASK and misses are never kept. */
   judged?: Map<string, AskVerdict>
+  /** The deploy watch polling GitHub for this run's push right now. Gone after an app restart. */
+  watch?: AbortController
 }
 
 export const STRICT_MISSING = 'Opus reviewer not found (claude CLI). Commit is your call.'
@@ -174,6 +212,7 @@ function need(): FactoryDeps {
 
 /** Test hook: forget in-memory runs, as an app restart would. */
 export function dropMemory(): void {
+  for (const s of live.values()) s.watch?.abort()
   live.clear()
 }
 
@@ -2040,7 +2079,11 @@ export function setRunOverride(id: string, boundary: OverrideBoundary, on: boole
   return state.run
 }
 
-/** Commit, then push with Push anyway, then deploy. Stops at the first refusal. Kennel push still runs its own gate. */
+/**
+ * Commit, then push with Push anyway, then watch. Returns once the watch has started. Brain deploys only
+ * when nothing started in the 3 minutes after the push, or at once when it cannot watch this host. Stops
+ * at the first refusal. Kennel push still runs its own gate, and its deploy is refused at once.
+ */
 export async function shipRun(id: string): Promise<RunRecord> {
   let committed: RunRecord
   try {
@@ -2050,8 +2093,9 @@ export async function shipRun(id: string): Promise<RunRecord> {
     return setPhase(state, state.run.phase, { error: String((e as Error).message || e).slice(0, 300) })
   }
   if (committed.phase !== 'done') return committed
-  const pushed = await publishRun(id, { by: 'joe', allowProtected: true })
-  if (!pushed.pushed) return pushed
+  const kennel = KENNEL_RE.test(committed.workRepo)
+  const pushed = await publishRun(id, { by: 'joe', allowProtected: true, deployAfter: !kennel })
+  if (!pushed.pushed || !kennel) return pushed
   return deployRun(id)
 }
 
@@ -2113,7 +2157,7 @@ export const KENNEL_GATE_FAIL = 'Kennel gate did not approve'
  * allowProtected (Joe's Push anyway click, never finishReview) protected branches push, and Kennel
  * main/master/staging push only after a fresh Opus 5.5 medium review approves (Joe's Kennel rule).
  */
-export async function publishRun(id: string, o: Actor & { allowProtected?: boolean } = {}): Promise<RunRecord> {
+export async function publishRun(id: string, o: Actor & { allowProtected?: boolean; deployAfter?: boolean } = {}): Promise<RunRecord> {
   const state = liveFor(id)
   const run = state.run
   if (run.phase !== 'done' || !run.commitSha) throw new Error('Push comes after Commit.')
@@ -2154,7 +2198,68 @@ export async function publishRun(id: string, o: Actor & { allowProtected?: boole
   const res = pub ? await pub(run.workRepo, t, over) : await gitPublish(run.workRepo, t, undefined, over)
   if (!res.ok) return setPhase(state, 'done', { pushError: tail(res.out || 'git push failed.', 6) })
   const shadow = o.by === 'joe' ? withJudgment(state.run.shadow, 'push') : state.run.shadow
-  return setPhase(state, 'done', { pushed: { ...t, at: Date.now() }, pushError: undefined, shadow })
+  setPhase(state, 'done', { pushed: { ...t, at: Date.now() }, pushError: undefined, shadow })
+  startWatch(state, !!o.deployAfter)
+  return state.run
+}
+
+/**
+ * Watches GitHub for the pushed commit (deploy-watch.ts) and keeps the run's deployWatch current.
+ * deployAfter (Let's get this live): when the watch ends with nothing started, or Brain cannot watch
+ * this host, Brain deploys. Building, live, failed, or a stuck build never deploy on their own.
+ */
+function startWatch(state: Live, deployAfter: boolean): void {
+  const d = need()
+  const run = state.run
+  const pushed = run.pushed
+  if (!pushed) return
+  state.watch?.abort()
+  const ctl = new AbortController()
+  state.watch = ctl
+  const mine = () => state.watch === ctl && !ctl.signal.aborted && live.get(run.id) === state
+  const set = (w: DeployWatch) => {
+    state.run = { ...state.run, deployWatch: w }
+    persist(state)
+  }
+  const since = Date.now()
+  set({ state: 'watching', since })
+  void watchDeploy({
+    repo: run.workRepo,
+    remote: pushed.remote,
+    branch: pushed.branch,
+    sha: pushed.sha,
+    since,
+    env: d.env(run.workRepo),
+    signal: ctl.signal,
+    onState: (w) => {
+      if (mine()) set(w)
+    },
+    ...d.deployWatch
+  })
+    .catch((e): null => {
+      if (mine()) set({ state: 'unknown', why: `the watch stopped: ${String((e as Error)?.message || e).slice(0, 200)}`, at: Date.now() })
+      return null
+    })
+    .then((end) => {
+      if (state.watch !== ctl) return
+      state.watch = undefined
+      if (!end || ctl.signal.aborted || live.get(run.id) !== state) return
+      if (deployAfter && (end.watch.state === 'none' || end.cannot)) void deployRun(run.id).catch(() => undefined)
+    })
+}
+
+/** True while a deploy watch polls for this run (none survives an app restart). */
+export function deployWatchLive(id: string): boolean {
+  return !!live.get(id)?.watch
+}
+
+/** Check deploy again: one more watch of the pushed commit when none is polling. It never deploys on its own. */
+export function checkDeployAgain(id: string): RunRecord {
+  const state = liveFor(id)
+  const run = state.run
+  if (run.phase !== 'done' || !run.pushed) throw new Error('Brain watches for a deploy after Push.')
+  if (!state.watch) startWatch(state, false)
+  return state.run
 }
 
 /** Push the run's commit to factory/<run id> so the host builds a preview. The real branch stays unpushed. */
@@ -2171,12 +2276,21 @@ export async function publishPreview(id: string): Promise<RunRecord> {
   return setPhase(state, 'done', { preview: { remote: t.remote, branch: t.branch, sha: t.sha, at: Date.now() }, previewError: undefined })
 }
 
-function deployCmd(run: RunRecord): string {
+/** What Deploy runs on this pushed run: the saved command, else the linked host's CLI from a clean tree at the pushed commit. */
+function deployTarget(run: RunRecord): { cmd: string; why: string } {
+  let saved = ''
   try {
-    return String(readProfile(run.workRepo).deploy?.cmd || '')
+    saved = String(readProfile(run.workRepo).deploy?.cmd || '')
   } catch {
-    return ''
+    /* no profile */
   }
+  return deployCommand({ repo: run.workRepo, saved, branch: run.pushed?.branch || run.branch || '', sha: run.pushed?.sha || '' })
+}
+
+/** Kennel first, then the watch (watching, building, live), then why the host's CLI is off, then no command. */
+function deployRefusal(run: RunRecord, t: { cmd: string; why: string }): string | null {
+  if (KENNEL_RE.test(run.workRepo)) return deployBlock({ repo: run.workRepo, cmd: t.cmd })
+  return watchDeployBlock(run.deployWatch) || t.why || deployBlock({ repo: run.workRepo, cmd: t.cmd })
 }
 
 /** Null when Deploy may run on this pushed run, else the sentence the disabled Deploy shows. */
@@ -2184,21 +2298,29 @@ export function deployBlockFor(id: string): string | null {
   const run = getRun(id)
   if (!run || run.phase !== 'done' || !run.pushed) return 'Deploy comes after Push.'
   if (run.deployed) return 'Deployed.'
-  return deployBlock({ repo: run.workRepo, cmd: deployCmd(run) })
+  return deployRefusal(run, deployTarget(run))
 }
 
-/** The Deploy click: the profile's cmd, no shims, never the model. The cmd never lands on the run. */
+/** The exact command a Deploy click runs, for its confirm. Empty when Deploy is off. */
+export function deployCmdFor(id: string): string {
+  const run = getRun(id)
+  if (!run || run.phase !== 'done' || !run.pushed || run.deployed) return ''
+  const t = deployTarget(run)
+  return deployRefusal(run, t) ? '' : t.cmd
+}
+
+/** The Deploy click (and Let's get this live when nothing started): the command, no shims, never the model. It never lands on the run. */
 export async function deployRun(id: string): Promise<RunRecord> {
   const state = liveFor(id)
   const run = state.run
   if (run.phase !== 'done' || !run.pushed) throw new Error('Deploy comes after Push.')
   if (run.deployed) return run
-  const cmd = deployCmd(run)
-  const block = deployBlock({ repo: run.workRepo, cmd })
+  const t = deployTarget(run)
+  const block = deployRefusal(run, t)
   if (block) return setPhase(state, 'done', { deployError: block })
   const d = need()
   // Same project bins as verify; deploy() strips the Factory shims.
-  const res = await (d.deploy || gitDeploy)(run.workRepo, cmd, { env: d.env(run.workRepo) })
+  const res = await (d.deploy || gitDeploy)(run.workRepo, t.cmd, { env: d.env(run.workRepo) })
   if (!res.ok) return setPhase(state, 'done', { deployError: tail(res.out || 'Deploy failed.', 6) })
   return setPhase(state, 'done', { deployed: { at: Date.now() }, deployError: undefined })
 }
@@ -2208,6 +2330,7 @@ export function abandonRun(id: string, o: Actor = {}): RunRecord {
   if (o.by === 'joe' && !TERMINAL_PHASES.includes(state.run.phase)) state.run = { ...state.run, shadow: withJudgment(state.run.shadow, 'abandon') }
   state.gen++
   state.abort?.abort()
+  state.watch?.abort()
   closeWorkers(state)
   try {
     need().driver.cancel(state.run.acpTab)

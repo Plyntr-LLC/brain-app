@@ -2,7 +2,7 @@ import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from 'node:
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { askFacts, askPaths, fastAllow, type AskFacts } from './approver.ts'
-import { currentBranch, hasRemote, headSha } from './git-audit.ts'
+import { currentBranch, hasRemote, headSha, isClean } from './git-audit.ts'
 import { realish, underPath } from './paths.ts'
 import type { Approver } from '../../shared/factory.ts'
 
@@ -336,6 +336,29 @@ export function publish(workRepo: string, t: PublishTarget, timeoutMs = 90_000, 
 export const KENNEL_RE = /mykennel/i
 export const KENNEL_DEPLOY_REFUSAL = 'Brain never deploys Kennel. Its staging and main go through the Opus 5.5 Claude CLI gate.'
 export const NO_DEPLOY_CMD = 'No deploy command on this repo.'
+
+/** Each linked host's own CLI deploy: production on main or master, else its preview. */
+const HOST_DEPLOY_CMD: Record<HostDeploy['host'], { prod: string; preview: string }> = {
+  Vercel: { prod: 'vercel deploy --prod --yes', preview: 'vercel deploy --yes' },
+  Netlify: { prod: 'netlify deploy --build --prod', preview: 'netlify deploy --build' },
+  Railway: { prod: 'railway up --detach', preview: 'railway up --detach' }
+}
+
+/**
+ * What Deploy runs: the repo's saved command, else the linked host's own CLI. That CLI uploads the
+ * folder, not the commit, so it is only offered from a clean tree whose HEAD is the pushed commit; why
+ * says which is off. Both empty: no command (deployBlock names it).
+ */
+export function deployCommand(o: { repo: string; saved?: string; branch: string; sha: string }): { cmd: string; why: string } {
+  const saved = String(o.saved || '').trim()
+  if (saved) return { cmd: saved, why: '' }
+  const hd = hostDeploy(o.repo, o.branch)
+  if (!hd) return { cmd: '', why: '' }
+  if (!isClean(o.repo)) return { cmd: '', why: `${hd.host}'s CLI uploads this folder, and it has uncommitted changes. Commit or stash them first.` }
+  if (headSha(o.repo) !== o.sha) return { cmd: '', why: `${hd.host}'s CLI uploads this folder, and HEAD is no longer the pushed commit.` }
+  const cmd = HOST_DEPLOY_CMD[hd.host]
+  return { cmd: hd.prod ? cmd.prod : cmd.preview, why: '' }
+}
 
 /** Null when Deploy may run. Otherwise the one sentence the disabled Deploy shows. */
 export function deployBlock(o: { repo: string; cmd?: string }): string | null {

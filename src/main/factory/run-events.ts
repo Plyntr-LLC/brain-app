@@ -1,4 +1,4 @@
-import { holdOf, type RunEvent, type RunRecord } from '../../shared/factory.ts'
+import { deployWatchLine, holdOf, type RunEvent, type RunRecord } from '../../shared/factory.ts'
 
 export const EVENT_CAP = 300
 const TEXT = 6000
@@ -12,7 +12,7 @@ const cut = (s: string | undefined, n: number): string => String(s || '').slice(
 /**
  * The run's event list after one persist: prev is the last persisted run, next the one about to be
  * saved. Same array back when nothing happened. Within one persist the order is repo, plan, turn, ask, test,
- * review, voice, commit, push, deploy, hold, end. An approver's refusal or hand-off to Joe is an ask event;
+ * review, voice, commit, push, deploy, watch, hold, end. An approver's refusal or hand-off to Joe is an ask event;
  * its allows are only counted on the run. A builder turn (a build usage row, matched once by
  * its at) is told when the controller writes the audit after it, when the run leaves build, or when it
  * stops. A fix turn runs in review, so it waits for its own audit, never the one before it.
@@ -80,6 +80,11 @@ export function nextEvents(prev: RunRecord | undefined, next: RunRecord, at: num
 
   if (next.deployed && next.deployed.at !== prev?.deployed?.at) add.push({ at, kind: 'deploy', ok: true, text: '' })
   else if (next.deployError && next.deployError !== prev?.deployError) add.push({ at, kind: 'deploy', ok: false, text: cut(next.deployError, TAIL) })
+
+  const watch = next.deployWatch
+  if (watch && (watch.state !== prev?.deployWatch?.state || deployWatchLine(watch) !== (prev?.deployWatch ? deployWatchLine(prev.deployWatch) : ''))) {
+    add.push({ at, kind: 'watch', state: watch.state, line: deployWatchLine(watch) })
+  }
 
   const hold = holdOf(next)
   const was = prev ? holdOf(prev) : null

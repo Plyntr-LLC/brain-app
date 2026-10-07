@@ -1,7 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { useState } from 'react'
-import { REVIEW_MAX, VOICE_MAX, type RunEvent, type RunRecord } from '../../src/shared/factory'
+import { REVIEW_MAX, VOICE_MAX, watchDeployBlock, type DeployWatch, type RunEvent, type RunRecord } from '../../src/shared/factory'
 import { FactoryPane } from '../../src/renderer/src/FactoryPane'
 import { ActivityRail } from '../../src/renderer/src/ActivityRail'
 import { factoryActivity, type Activity } from '../../src/renderer/src/factory-activity'
@@ -14,6 +14,9 @@ const runs = new Map<string, RunRecord>()
 const blocks = new Map<string, string | null>()
 const anyway = new Map<string, boolean>()
 const deployBlocks = new Map<string, string | null>()
+const deployCmds = new Map<string, string>()
+const polling = new Map<string, boolean>()
+const confirms: string[] = []
 const listeners: ((e: unknown) => void)[] = []
 let conductHold: ((v: unknown) => void) | null = null
 const rec = (fn: string, ...args: unknown[]) => {
@@ -42,7 +45,8 @@ const brain = {
     deploy: (id: string) => rec('deploy', id),
     publishBlock: (id: string) => Promise.resolve({ ok: true, block: blocks.get(id) ?? null }),
     publishAnywayFor: (id: string) => Promise.resolve({ ok: true, offer: anyway.get(id) ?? false }),
-    deployBlock: (id: string) => Promise.resolve({ ok: true, block: deployBlocks.get(id) ?? null }),
+    deployBlock: (id: string) => Promise.resolve({ ok: true, block: deployBlocks.get(id) ?? null, cmd: deployCmds.get(id) ?? '', polling: polling.get(id) ?? false }),
+    checkDeploy: (id: string) => rec('checkDeploy', id),
     triage: () => Promise.resolve(null),
     resolveRepo: () => Promise.resolve({ ok: false, error: 'none' }),
     profile: () => Promise.resolve({ ok: false, error: 'none' })
@@ -50,7 +54,10 @@ const brain = {
   skin: { decide: (tabId: string, optionId: string) => rec('skin.decide', tabId, optionId) }
 }
 ;(window as unknown as { brain: typeof brain }).brain = brain
-window.confirm = () => true
+window.confirm = (msg?: string) => {
+  confirms.push(String(msg || ''))
+  return true
+}
 const layout = document.createElement('style')
 layout.textContent =
   '.stage{margin:14px 0}.stage-title{font:600 12px sans-serif;margin:0 0 4px 14px}' +
@@ -90,10 +97,12 @@ function run(patch: Partial<RunRecord>): RunRecord {
 }
 
 type Mounted = { el: HTMLElement; rail: HTMLElement; activity: () => Activity | null; r: RunRecord }
-async function mount(title: string, r: RunRecord, o: { block?: string | null; anyway?: boolean; deployBlock?: string | null } = {}): Promise<Mounted> {
+async function mount(title: string, r: RunRecord, o: { block?: string | null; anyway?: boolean; deployBlock?: string | null; deployCmd?: string; polling?: boolean } = {}): Promise<Mounted> {
   blocks.set(r.id, o.block ?? null)
   anyway.set(r.id, o.anyway ?? false)
   deployBlocks.set(r.id, o.deployBlock ?? null)
+  deployCmds.set(r.id, o.deployCmd ?? '')
+  polling.set(r.id, o.polling ?? false)
   const wrap = document.createElement('section')
   wrap.className = 'stage'
   wrap.innerHTML = `<p class="stage-title">${title}</p><div class="stage-row"><div class="stage-pane"></div><aside class="refs stage-rail"></aside></div>`
@@ -461,6 +470,36 @@ async function main() {
   check('g the hand-off card shows the reason', (ap.el.querySelector('.factory-ask .skin-perm-detail')?.textContent || '').includes('it drops a table'))
   const answered = await click(ap.el, 'Reject')
   check('g a worker card answers the worker tab, not the main tab', same(answered, 'skin.decide', `factory-${ap.r.id}-w2`, 'reject_once'), JSON.stringify(answered))
+
+  // (h) the deploy watch in the ship block: one line per state where the deploy hint sat, and Deploy on or off.
+  const pushedAt = { remote: 'origin', branch: 'main', sha: 'feedbeefcafe', at: now }
+  const watchFrames: [string, DeployWatch, string, boolean][] = [
+    ['watching', { state: 'watching', since: now }, 'Watching for a deploy...', false],
+    ['building', { state: 'building', host: 'Vercel', env: 'Production', since: now }, 'Vercel is building production...', false],
+    ['live', { state: 'live', host: 'Vercel', env: 'Production', url: 'https://lotline.vercel.app', at: now }, 'Live on Vercel: https://lotline.vercel.app', false],
+    ['failed', { state: 'failed', host: 'Vercel', env: 'Production', url: 'https://lotline-x.vercel.app', at: now }, 'Vercel deploy failed: https://lotline-x.vercel.app', true],
+    ['none', { state: 'none', at: now }, 'No deploy started in the 3 minutes after the push.', true],
+    ['unknown', { state: 'unknown', why: 'the GitHub CLI is not signed in (gh auth login).', at: now }, "Brain can't watch this host: the GitHub CLI is not signed in (gh auth login).", true]
+  ]
+  for (const [name, deployWatch, text, on] of watchFrames) {
+    const f = await mount(`h. deploy watch: ${name}`, run({ phase: 'done', commitSha: 'feedbeefcafe', branch: 'main', pushed: pushedAt, deployWatch, deployHint: { host: 'Vercel', prod: true, line: 'Pushing main to origin deploys production on Vercel.' } }), { deployCmd: 'vercel deploy --prod --yes', polling: true })
+    const ship = f.el.querySelector('.factory-ship')
+    const shown = [...(ship?.querySelectorAll('.factory-deploy') || [])].map((p) => p.textContent || '')
+    const deploy = btn(f.el, 'Deploy')
+    check(`h ${name}: the ship block's one deploy line is "${text}"`, JSON.stringify(shown) === JSON.stringify([text]), JSON.stringify(shown))
+    check(`h ${name}: Deploy is ${on ? 'on' : 'off'}`, !!deploy && deploy.disabled === !on, String(deploy?.disabled))
+    if (!on) check(`h ${name}: the reason sits beside Deploy`, (deploy?.parentElement?.textContent || '').includes(watchDeployBlock(deployWatch) || '~'), deploy?.parentElement?.textContent || '')
+  }
+  const hint = await mount('h. committed, not pushed: the deploy hint stays', run({ phase: 'done', commitSha: 'feedbeefcafe', branch: 'main', deployHint: { host: 'Vercel', prod: true, line: 'Pushing main to origin deploys production on Vercel.' } }))
+  check('h before the push the hint line is unchanged', (hint.el.querySelector('.factory-ship .factory-deploy')?.textContent || '') === 'Pushing main to origin deploys production on Vercel.')
+  const none = await mount('h. none: Deploy confirms the exact command', run({ phase: 'done', commitSha: 'feedbeefcafe', branch: 'main', pushed: pushedAt, deployWatch: { state: 'none', at: now } }), { deployCmd: 'vercel deploy --prod --yes' })
+  const c0 = confirms.length
+  const deployed = await click(none.el, 'Deploy')
+  check('h Deploy confirms with the exact command, then deploys', confirms.length === c0 + 1 && confirms.at(-1)!.includes('vercel deploy --prod --yes') && same(deployed, 'deploy', none.r.id), JSON.stringify({ confirm: confirms.at(-1), deployed }))
+  const stale = await mount('h. watching after a restart: Check deploy again', run({ phase: 'done', commitSha: 'feedbeefcafe', branch: 'main', pushed: pushedAt, deployWatch: { state: 'building', host: 'Vercel', since: now } }), { polling: false })
+  check('h a building watch with no poller offers Check deploy again', same(await click(stale.el, 'Check deploy again'), 'checkDeploy', stale.r.id))
+  const polled = await mount('h. watching with a poller', run({ phase: 'done', commitSha: 'feedbeefcafe', branch: 'main', pushed: pushedAt, deployWatch: { state: 'watching', since: now } }), { polling: true })
+  check('h a watch with a live poller has no Check deploy again', !btn(polled.el, 'Check deploy again'))
 
   document.getElementById('out')!.textContent = JSON.stringify(results)
 }

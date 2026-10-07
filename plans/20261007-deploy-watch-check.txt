@@ -1,0 +1,39 @@
+# Unit B: scripts/check-deploy-watch.ts (2026-10-07T08:12:30.377Z)
+case 1   states=watching>building>live  gh calls after end=0  deploy spy=0  deployBlockFor="Live on Vercel."  url=https://site-acme.vercel.app
+case 2   states=watching>building  gh calls after end=-  deploy spy=0  deployBlockFor="Vercel is building this push."
+case 3   states=watching>none  gh calls after end=0  deploy spy=0  deployBlockFor=null (Deploy on)  cmd="vercel deploy --prod --yes"
+case 4   dirty tree -> "Vercel's CLI uploads this folder, and it has uncommitted changes. Commit or stash them first."; HEAD moved -> "Vercel's CLI uploads this folder, and HEAD is no longer the pushed commit."; deploy spy=0
+case 5   states=watching>building  gh calls after end=0  deploy spy=0  deployBlockFor="Deploy comes after Push."  abandoned while building; live and none ends: see cases 1 and 3
+case 6   states=watching>unknown  gh calls after end=0  deploy spy=0  deployBlockFor=null (Deploy on)  why="origin is not a github.com remote."
+case 7   states=watching>unknown  gh calls after end=0  deploy spy=0  deployBlockFor=null (Deploy on)  why="the GitHub CLI (gh) is not installed."
+case 8   states=watching>building>live  gh calls after end=0  deploy spy=0  deployBlockFor="Live on Vercel."  shipRun returned at watching
+case 9   states=watching>none  gh calls after end=0  deploy spy=1  deployBlockFor="Deployed."  cmd=vercel deploy --prod --yes
+case 10  states=watching>unknown  gh calls after end=0  deploy spy=1  deployBlockFor="Deployed."  deployed after 292 ms (none window 60 s)
+case 11  states=watching>failed  gh calls after end=0  deploy spy=0  deployBlockFor=null (Deploy on)
+case 11b  states=watching>building>unknown  gh calls after end=0  deploy spy=0  deployBlockFor=null (Deploy on)  why="still building after 20 minutes, check the host."
+case 11c  states=watching>unknown  gh calls after end=0  deploy spy=1  deployBlockFor="Deployed."  deployed after 266 ms
+case 12  watching: off "Brain is watching GitHub for a deploy from this push."; live: off "Live on Vercel."; building: off "Vercel is building this push."; none: Deploy on; unknown: Deploy on; failed: Deploy on
+case 13  states=watching>live  gh calls after end=-  deploy spy=0  deployBlockFor="Live on Vercel."  polls=1 Live on Vercel: https://lotline-qnari8l0f-joeprosynergys-projects.vercel.app
+
+PASS 1 push to live: watching, building, live with host, env and URL
+PASS 1 the fake gh answered, not the Factory shim (auth status then api calls)
+PASS 1 every deployments call carried sha=<pushed sha>
+PASS 1 no gh call after live
+PASS 2 another sha live, or a Preview of this sha live, does not make this push live: watching, then building, never live
+PASS 3 no signal in the window: none, Deploy on, the standard command is vercel deploy --prod --yes on main
+PASS 5 no gh call after none
+PASS 4 the host CLI uploads the folder: a dirty tree and a moved HEAD each turn Deploy off with why, and a click does not deploy
+PASS 5 abandon during building: no gh call after abandon
+PASS 6 a local remote: unknown at once with the reason, no gh call
+PASS 7 gh missing: unknown at once, the reason names the GitHub CLI
+PASS 8 shipRun resolves while the watch is still watching; the host goes live; the deploy spy stays 0
+PASS 9 shipRun, nothing started: none, then the deploy spy exactly once with the host command
+PASS 10 shipRun, not a GitHub remote: the deploy spy once, at once (well inside the none window)
+PASS 11 shipRun, host failed: failed with the URL, the deploy spy 0, Deploy on
+PASS 11b shipRun, stuck build: unknown (still building), the deploy spy 0, Deploy on
+PASS 11c shipRun, gh missing: unknown naming the GitHub CLI, the deploy spy once, at once
+PASS 12 Deploy off while watching, building and live (with the sentence); on for none, failed and unknown
+PASS 5 polling stops at every end state: no gh call after live, failed, none or unknown in any case
+PASS 13 live read, real gh: lotline 8fe5f16 is live on Vercel, Production, with the URL, on the first poll
+
+DEPLOY_WATCH_PASS
