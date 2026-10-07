@@ -70,7 +70,8 @@ export function openDeskController(brain: string): DeskController {
     }),
     senders: createSenders({
       dryRun: process.env.BRAIN_APP_DRY_RUN === '1',
-      getAppPath: () => app.getAppPath()
+      getAppPath: () => app.getAppPath(),
+      resourcesPath: () => process.resourcesPath
     }),
     detect: deskDetect
   })

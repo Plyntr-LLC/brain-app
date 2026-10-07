@@ -18,6 +18,8 @@ export type DeskSpawn = (
 export type SendersOpts = {
   spawn?: DeskSpawn
   getAppPath?: () => string
+  /** Packed app: Contents/Resources, where extraResources puts desk/*.cjs. */
+  resourcesPath?: () => string
   dryRun?: boolean
   emailKillMs?: number
   textKillMs?: number
@@ -34,14 +36,19 @@ const DRY_NOTE = 'Dry run. Nothing left this Mac.'
 export type EmailTile = { to: string; cc?: string; subject: string; body: string; replyTo?: string }
 export type TextLookup = { sendable: boolean; note?: string; guid?: string; label?: string }
 
-function scriptPath(name: string, getAppPath?: () => string): string {
-  const here = join(dirname(fileURLToPath(import.meta.url)), name)
-  if (existsSync(here)) return here
-  if (getAppPath) {
-    const packed = join(getAppPath(), 'src', 'main', 'desk', name)
-    if (existsSync(packed)) return packed
+function scriptPath(name: string, lookup: { resourcesPath?: () => string; getAppPath?: () => string }): string {
+  const beside = join(dirname(fileURLToPath(import.meta.url)), name)
+  const resources = lookup.resourcesPath?.()
+  const appPath = lookup.getAppPath?.()
+  const candidates = [
+    resources ? join(resources, 'desk', name) : '',
+    beside,
+    appPath ? join(appPath, 'src', 'main', 'desk', name) : ''
+  ]
+  for (const file of candidates) {
+    if (file && existsSync(file)) return file
   }
-  return here
+  return beside
 }
 
 type Ran = { code: number | null; stdout: string; stderr: string; killed: boolean }
@@ -93,8 +100,8 @@ export function createSenders(opts: SendersOpts = {}) {
   const spawn = opts.spawn
   const emailKillMs = opts.emailKillMs ?? EMAIL_KILL_MS
   const textKillMs = opts.textKillMs ?? TEXT_KILL_MS
-  const gmailScript = () => scriptPath('gmail-send.cjs', opts.getAppPath)
-  const textScript = () => scriptPath('imessage.cjs', opts.getAppPath)
+  const gmailScript = () => scriptPath('gmail-send.cjs', opts)
+  const textScript = () => scriptPath('imessage.cjs', opts)
 
   async function gmailFrom(brain: string): Promise<string | null> {
     if (!spawn) return null

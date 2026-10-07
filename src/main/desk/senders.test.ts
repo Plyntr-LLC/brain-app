@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -59,6 +59,39 @@ test('the dev script path is the source gmail-send file', () => {
   const file = gmailScript()
   assert.ok(file.endsWith('gmail-send.cjs'))
   assert.match(readFileSync(file, 'utf8'), /no-token/)
+})
+
+test('the pack copies both send scripts into Resources/desk', () => {
+  const yml = readFileSync(join(import.meta.dirname, '../../../electron-builder.yml'), 'utf8')
+  assert.match(yml, /from: src\/main\/desk\/gmail-send\.cjs/)
+  assert.match(yml, /to: desk\/gmail-send\.cjs/)
+  assert.match(yml, /from: src\/main\/desk\/imessage\.cjs/)
+  assert.match(yml, /to: desk\/imessage\.cjs/)
+})
+
+test('a Resources/desk copy is the file a packed app spawns, and from does not send', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'desk-resources-'))
+  const dir = join(root, 'desk')
+  mkdirSync(dir)
+  copyFileSync(createSenders().gmailScript(), join(dir, 'gmail-send.cjs'))
+  copyFileSync(createSenders().textScript(), join(dir, 'imessage.cjs'))
+  const packed = createSenders({ resourcesPath: () => root })
+  assert.equal(packed.gmailScript(), join(dir, 'gmail-send.cjs'))
+  assert.equal(packed.textScript(), join(dir, 'imessage.cjs'))
+  const home = mkdtempSync(join(tmpdir(), 'desk-resources-home-'))
+  const ran = await new Promise<{ code: number | null; out: string }>((resolve) => {
+    const child = spawn(process.execPath, [packed.gmailScript(), 'from', home], {
+      shell: false,
+      env: { ...process.env, HOME: home, ELECTRON_RUN_AS_NODE: '1' }
+    })
+    let out = ''
+    child.stdout.on('data', (b) => {
+      out += String(b)
+    })
+    child.on('close', (code) => resolve({ code, out }))
+  })
+  assert.equal(ran.code, 2)
+  assert.match(ran.out, /no-token/)
 })
 
 test('gmailFrom, check, a new email, and a reply use one spawn shape', async () => {
