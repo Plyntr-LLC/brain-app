@@ -318,6 +318,16 @@ const brain = {
       }>,
     openCreateOrg: () =>
       ipcRenderer.invoke('setup:openCreateOrg') as Promise<{ ok: boolean; org?: string }>,
+    githubConnect: (brainId: string) =>
+      ipcRenderer.invoke('setup:githubConnect', brainId) as Promise<{
+        ok: boolean
+        org?: string
+        detail?: string
+        accounts?: { login: string; id: number; kind: string; choosable: boolean }[]
+      }>,
+    githubCancel: (brainId: string) =>
+      ipcRenderer.invoke('setup:githubCancel', brainId) as Promise<{ ok: boolean }>,
+    openOrgForm: () => ipcRenderer.invoke('setup:openOrgForm') as Promise<{ ok: boolean }>,
     openAppInstall: (slug: string, org?: string) =>
       ipcRenderer.invoke('setup:openAppInstall', slug, org),
     pollInstall: (slug: string) => ipcRenderer.invoke('setup:pollInstall', slug),
@@ -347,8 +357,8 @@ const brain = {
       }>,
     openBridge: (folder: string) =>
       ipcRenderer.invoke('setup:openBridge', folder) as Promise<{ ok: boolean; repo: string }>,
-    openBridgeRepo: (repo: string) =>
-      ipcRenderer.invoke('setup:openBridgeRepo', repo) as Promise<{
+    openBridgeRepo: (repo: string, orgId?: number, repoId?: number) =>
+      ipcRenderer.invoke('setup:openBridgeRepo', repo, orgId, repoId) as Promise<{
         ok: boolean
         repo: string
         url: string
@@ -419,16 +429,18 @@ const brain = {
     enableLocalSync: (opts: { folder?: string; org?: string; repo?: string }) =>
       ipcRenderer.invoke('setup:enableLocalSync', opts) as Promise<{ ok: boolean; detail: string; repo: string }>,
     syncMode: (folder: string) => ipcRenderer.invoke('setup:syncMode', folder) as Promise<string>,
-    openPlyntrInstall: (brainId: string, org?: string, repo?: string) =>
-      ipcRenderer.invoke('setup:openPlyntrInstall', brainId, org, repo) as Promise<{
+    openPlyntrInstall: (brainId: string, org?: string, repo?: string, orgId?: number, repoId?: number) =>
+      ipcRenderer.invoke('setup:openPlyntrInstall', brainId, org, repo, orgId, repoId) as Promise<{
         ok: boolean
         url: string
         detail?: string
       }>,
-    createPlyntrRepo: (org: string, slug: string, repo?: string) =>
-      ipcRenderer.invoke('setup:createPlyntrRepo', org, slug, repo) as Promise<{
+    createPlyntrRepo: (org: string, slug: string, repo?: string, brainId?: string) =>
+      ipcRenderer.invoke('setup:createPlyntrRepo', org, slug, repo, brainId) as Promise<{
         ok: boolean
         repo: string
+        orgId?: number
+        repoId?: number
         detail?: string
       }>,
     openPlyntrRepo: (org: string, slug: string) =>
@@ -475,6 +487,9 @@ const brain = {
           slug: string
           scoutEmail: string
           brainId?: string
+          repo?: string
+          orgId?: number
+          repoId?: number
         } | null
         join: {
           brainId: string
@@ -495,6 +510,9 @@ const brain = {
       slug?: string
       scoutEmail?: string
       brainId?: string
+      repo?: string
+      orgId?: number
+      repoId?: number
     }) => ipcRenderer.invoke('plyntr:saveCreate', row) as Promise<{ ok: boolean }>,
     clearCreate: () => ipcRenderer.invoke('plyntr:clearCreate') as Promise<{ ok: boolean }>,
     clearJoin: () => ipcRenderer.invoke('plyntr:clearJoin') as Promise<{ ok: boolean }>,

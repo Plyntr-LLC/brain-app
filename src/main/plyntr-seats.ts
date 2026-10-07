@@ -25,6 +25,9 @@ export type PendingPlyntrCreate = {
   slug: string
   scoutEmail: string
   brainId?: string
+  repo?: string
+  orgId?: number
+  repoId?: number
 }
 
 export type PendingPlyntrJoin = {
@@ -138,7 +141,10 @@ export function readPendingCreate(): PendingPlyntrCreate | null {
     org: String(raw.org || ''),
     slug: String(raw.slug || ''),
     scoutEmail: String(raw.scoutEmail || ''),
-    brainId: raw.brainId ? String(raw.brainId) : undefined
+    brainId: raw.brainId ? String(raw.brainId) : undefined,
+    repo: raw.repo ? String(raw.repo) : undefined,
+    orgId: Number(raw.orgId) || undefined,
+    repoId: Number(raw.repoId) || undefined
   }
 }
 

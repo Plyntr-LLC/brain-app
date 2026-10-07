@@ -22,6 +22,10 @@ export function LocalSyncPanel({
   const [openedBridge, setOpenedBridge] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [repoName, setRepoName] = useState(pending ? `${slug}-brain` : repo.split('/')[1] || `${slug}-brain`)
+  const [accounts, setAccounts] = useState<{ login: string; id: number; kind: string; choosable: boolean }[]>([])
+  const [orgId, setOrgId] = useState(0)
+  const [repoId, setRepoId] = useState(0)
 
   useEffect(() => {
     return window.brain.setup.onBack((ev) => {
@@ -30,28 +34,51 @@ export function LocalSyncPanel({
     })
   }, [])
 
+  async function connectGithub() {
+    const row = await window.brain.setup.githubConnect(brainId)
+    setAccounts(row.accounts || [])
+    if (!row.ok) {
+      setErr(row.detail || 'Connect GitHub again.')
+      return
+    }
+    if (row.org) setOrg(row.org)
+    else if (!(row.accounts || []).some((account) => account.kind === 'org' && account.choosable)) {
+      setErr('You do not own a GitHub organization yet. Choose your personal account, or create an organization.')
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (brainId) void window.brain.setup.githubCancel(brainId)
+    }
+  }, [brainId])
+
   async function useOrg() {
     const typed = org.trim()
-    if (typed.length < 2) {
-      setErr('Create the GitHub organization, or paste the short name you already have.')
+    const name = repoName.trim()
+    if (typed.length < 2 || !name) {
+      setErr('Choose a GitHub account you own, and confirm the repository name.')
+      return
+    }
+    const picked = accounts.find((account) => account.login.toLowerCase() === typed.toLowerCase())
+    if (!picked || !picked.choosable) {
+      setErr('Choose a GitHub account you own.')
       return
     }
     setBusy(true)
     setErr('')
     try {
-      const look = await window.brain.setup.lookupOrg(typed)
-      if (!look.ok || look.type !== 'Organization' || !look.login) {
-        setErr(look.detail || 'That short name is not a GitHub organization.')
-        return
-      }
-      const placed = await window.brain.plyntr.place({ brainId, org: look.login })
-      const created = await window.brain.setup.createPlyntrRepo(look.login, placed.slug || slug, placed.repo)
-      if (!created.ok || !created.repo) {
+      const placed = await window.brain.plyntr.place({ brainId, org: picked.login })
+      const full = `${picked.login}/${name}`
+      const created = await window.brain.setup.createPlyntrRepo(picked.login, placed.slug || slug, full, brainId)
+      if (!created.ok || !created.repo || !created.orgId || !created.repoId) {
         setErr(created.detail || 'Could not create the client brain repository.')
         return
       }
-      setOrg(look.login)
+      setOrg(picked.login)
       setNamed(created.repo)
+      setOrgId(created.orgId)
+      setRepoId(created.repoId)
       setStep('apps')
     } catch (e) {
       setErr(ipcErrorText(e))
@@ -68,8 +95,15 @@ export function LocalSyncPanel({
     setBusy(true)
     setErr('')
     try {
+      const realRepo = Boolean(named && named.includes('/') && !named.startsWith('pending/'))
+      if ((!orgId || !repoId) && !realRepo) {
+        setErr('Create the repository before opening GitHub.')
+        return
+      }
+      const pinOrg = orgId || undefined
+      const pinRepo = repoId || undefined
       if (!openedSync) {
-        const opened = await window.brain.setup.openPlyntrInstall(brainId, org, named)
+        const opened = await window.brain.setup.openPlyntrInstall(brainId, org, named, pinOrg, pinRepo)
         setOpenedSync(true)
         if (!opened.ok) setErr(opened.detail || 'Could not open the Plyntr sync install page.')
         else setErr('In the browser, click Install, then Only select repositories. Then click Check GitHub.')
@@ -89,7 +123,7 @@ export function LocalSyncPanel({
           return
         }
         if (!openedBridge) {
-          await window.brain.setup.openBridgeRepo(named)
+          await window.brain.setup.openBridgeRepo(named, pinOrg, pinRepo)
           setOpenedBridge(true)
           setErr('Install Brain Bridge on this same repository. Only select repositories. Then click Check GitHub.')
           return
@@ -118,7 +152,29 @@ export function LocalSyncPanel({
           GitHub organization
           <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="harolds-books" />
         </label>
-      ) : (
+      ) : null}
+      {step === 'org' ? (
+        <label className="field">
+          Repository name
+          <input value={repoName} onChange={(e) => setRepoName(e.target.value)} />
+        </label>
+      ) : null}
+      {step === 'org' && accounts.length ? (
+        <ul className="tiny">
+          {accounts.map((account) => (
+            <li key={account.login}>
+              {account.choosable ? (
+                <button className="ghost" type="button" onClick={() => setOrg(account.login)}>
+                  {account.login}
+                </button>
+              ) : (
+                <span>{account.login}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {step === 'org' ? null : (
         <p className="tiny">Repository {named}. Install both apps on that one repo.</p>
       )}
       {err ? <p className="note">{err}</p> : null}
@@ -129,14 +185,20 @@ export function LocalSyncPanel({
               className="ghost"
               type="button"
               onClick={() => {
-                void window.brain.setup.openCreateOrg().then((r) => {
-                  const login = String(r?.org || '').trim()
-                  if (login) setOrg(login)
-                })
+                setBusy(true)
+                setErr('')
+                void connectGithub()
+                  .catch((e) => setErr(ipcErrorText(e)))
+                  .finally(() => setBusy(false))
               }}
             >
               Open GitHub
             </button>
+            {accounts.length && !accounts.some((account) => account.kind === 'org' && account.choosable) ? (
+              <button className="ghost" type="button" onClick={() => void window.brain.setup.openOrgForm()}>
+                Create an organization
+              </button>
+            ) : null}
             <button className="primary" type="button" disabled={busy} onClick={() => void useOrg()}>
               {busy ? 'Checking…' : 'Use this organization'}
             </button>

@@ -50,6 +50,11 @@ function fail(status: number, body: { error?: string; detail?: string }): never 
   if (status === 409 && code === 'repo_missing') {
     throw new Error('Create the empty repo on GitHub first, then try again.')
   }
+  if (code === 'name_taken') throw new Error('That repository name is already taken.')
+  if (code === 'sync_conflict') throw new Error('That repository already belongs to a different brain.')
+  if (code === 'revoked') throw new Error('That GitHub sign-in expired. Connect again.')
+  if (code === 'public') throw new Error('The repository has to be private.')
+  if (code === 'commit_failed') throw new Error('GitHub did not finish copying the template. Try again.')
   if (code === 'gone') throw new Error(GONE_BRAIN_CODE)
   if (status === 410 && code === 'used') throw new Error('That code was already used.')
   if (status === 410) throw new Error('That code was revoked.')
@@ -202,6 +207,21 @@ function dryRunPlyntrWorker(path: string, body: Record<string, unknown> | null, 
       bootstrap: true
     }
   }
+  if (path === '/v1/github/setup/start') {
+    return { setupId: 'dry-setup', authorizeUrl: 'https://github.com/login/oauth/authorize?dry=1' }
+  }
+  if (path.startsWith('/v1/github/setup/status')) {
+    return {
+      phase: 'authorized',
+      accounts: [{ login: 'dry-org', id: 1, kind: 'org', choosable: true }]
+    }
+  }
+  if (path === '/v1/github/setup/repo' && body) {
+    const owner = String(body.owner || 'dry-org')
+    const name = String(body.name || 'dry-brain')
+    return { ok: true, repo: `${owner}/${name}`, owner, name, repoId: 2, orgId: 1 }
+  }
+  if (path === '/v1/github/setup/cancel' || path === '/v1/github/setup/signout') return { ok: true }
   if (path === '/v1/github/installed') {
     return dryRunInstalledBody(repoQuery)
   }
@@ -254,6 +274,51 @@ async function call(
   const body = (await r.json().catch(() => ({}))) as { error?: string; detail?: string }
   if (!r.ok) fail(r.status, body)
   return body
+}
+
+export type GithubAccount = { login: string; id: number; kind: string; choosable: boolean }
+
+export async function startGithubSetup(brainId: string): Promise<{ setupId: string; authorizeUrl: string }> {
+  const row = (await call('/v1/github/setup/start', {
+    method: 'POST',
+    brainId,
+    body: { brainId, mode: 'plyntr' }
+  })) as { setupId?: string; authorizeUrl?: string }
+  if (!row.setupId || !row.authorizeUrl) throw new Error('GitHub sign-in did not start.')
+  return { setupId: row.setupId, authorizeUrl: row.authorizeUrl }
+}
+
+export async function githubSetupStatus(
+  brainId: string,
+  setupId: string
+): Promise<{ phase: string; accounts: GithubAccount[] }> {
+  const row = (await call(`/v1/github/setup/status?setupId=${encodeURIComponent(setupId)}`, {
+    method: 'GET',
+    brainId
+  })) as { phase?: string; accounts?: GithubAccount[] }
+  return { phase: String(row.phase || ''), accounts: Array.isArray(row.accounts) ? row.accounts : [] }
+}
+
+export async function cancelGithubSetup(brainId: string, setupId: string): Promise<void> {
+  await call('/v1/github/setup/cancel', { method: 'POST', brainId, body: { brainId, setupId } })
+}
+
+export async function signOutGithubSetup(brainId: string, setupId: string): Promise<void> {
+  await call('/v1/github/setup/signout', { method: 'POST', brainId, body: { brainId, setupId } })
+}
+
+export async function createGithubSetupRepo(
+  brainId: string,
+  owner: string,
+  name: string
+): Promise<{ repo: string; orgId: number; repoId: number }> {
+  const row = (await call('/v1/github/setup/repo', {
+    method: 'POST',
+    brainId,
+    body: { brainId, owner, name, private: true }
+  })) as { repo?: string; orgId?: number; repoId?: number }
+  if (!row.repo || !row.repoId || !row.orgId) throw new Error('GitHub did not create the repository.')
+  return { repo: row.repo, orgId: Number(row.orgId), repoId: Number(row.repoId) }
 }
 
 export async function createPlyntrBrain(

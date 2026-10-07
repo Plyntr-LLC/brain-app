@@ -3,7 +3,7 @@ import { CLIENT_PACKS, packLabel, packLine } from '@shared/client-pack'
 import { inviteTryOrder, slugFromBusinessName } from '@shared/plyntr-invite'
 import { onePerPerson } from '@shared/plyntr-transfer'
 import { previousCreateStep } from '@shared/plyntr-wizard'
-import { CODE_DID_NOT_WORK, CODE_PROJECT_HEDGE, CODE_SENT_MANY, companiesLoadError, ipcErrorText, orgStepCopy, orgUseError, pickCodeError } from '@shared/plyntr-org-copy'
+import { CODE_DID_NOT_WORK, CODE_PROJECT_HEDGE, CODE_SENT_MANY, companiesLoadError, ipcErrorText, orgStepCopy, pickCodeError } from '@shared/plyntr-org-copy'
 import { resolvePlyntrRepoName } from '@shared/github-org'
 import { WorkPulse } from './WorkPulse'
 
@@ -36,6 +36,9 @@ type CreatePending = {
   slug: string
   scoutEmail: string
   brainId?: string
+  repo?: string
+  orgId?: number
+  repoId?: number
 }
 
 export function PlyntrProjectScreen({
@@ -836,7 +839,13 @@ export function PlyntrCreateScreen({
   const [brainId, setBrainId] = useState(initial?.brainId || '')
   const [hasSeat, setHasSeat] = useState(false)
   const [seatKnown, setSeatKnown] = useState(!initial?.brainId)
-  const [repo, setRepo] = useState(resolvePlyntrRepoName(initial?.org || '', initial?.slug || ''))
+  const savedRepo = initial?.repo || ''
+  const [repo, setRepo] = useState(savedRepo || resolvePlyntrRepoName(initial?.org || '', initial?.slug || ''))
+  const [repoName, setRepoName] = useState(savedRepo.includes('/') && !savedRepo.startsWith('pending/') ? savedRepo.split('/')[1] : '')
+  const [accounts, setAccounts] = useState<{ login: string; id: number; kind: string; choosable: boolean }[]>([])
+  const [orgId, setOrgId] = useState(initial?.orgId || 0)
+  const [repoId, setRepoId] = useState(initial?.repoId || 0)
+  const brainRef = useRef(initial?.brainId || '')
   const [installOpened, setInstallOpened] = useState(false)
   const [bridgeOpened, setBridgeOpened] = useState(false)
   const [err, setErr] = useState('')
@@ -919,17 +928,69 @@ export function PlyntrCreateScreen({
       org: patch?.org ?? org,
       slug: patch?.slug ?? slug,
       scoutEmail: patch?.scoutEmail ?? email,
-      brainId: patch?.brainId ?? (brainId || undefined)
+      brainId: patch?.brainId ?? (brainId || undefined),
+      repo: patch?.repo ?? repo,
+      orgId: patch?.orgId ?? orgId,
+      repoId: patch?.repoId ?? repoId
     }
     await window.brain.plyntr.saveCreate(row)
     setStep(next)
   }
+
+  async function connectGithub() {
+    let id = brainId
+    if (!id) {
+      const acct = await window.brain.auth.session()
+      const scoutEmail = email || acct.email
+      if (!scoutEmail) {
+        setErr('Platform sign-in has no email.')
+        return
+      }
+      const res = await window.brain.plyntr.createBrain({
+        label,
+        org: org.trim() || 'pending',
+        slug,
+        scoutEmail
+      })
+      setBrainId(res.brainId)
+      setEmail(scoutEmail)
+      if (res.repo) setRepo(res.repo)
+      if (!res.hasToken) {
+        setHasSeat(false)
+        setErr('Plyntr did not finish creating your seat. Click Try again.')
+        return
+      }
+      id = res.brainId
+      setHasSeat(true)
+    }
+    const row = await window.brain.setup.githubConnect(id)
+    setAccounts(row.accounts || [])
+    if (!row.ok) {
+      setErr(row.detail || 'Connect GitHub again.')
+      return
+    }
+    if (row.org) setOrg(row.org)
+    else if (!(row.accounts || []).some((account) => account.kind === 'org' && account.choosable)) {
+      setErr('You do not own a GitHub organization yet. Choose your personal account, or create an organization.')
+    }
+  }
+
+  useEffect(() => {
+    brainRef.current = brainId
+  }, [brainId])
+  useEffect(() => {
+    return () => {
+      const id = brainRef.current
+      if (id) void window.brain.setup.githubCancel(id)
+    }
+  }, [])
 
   useEffect(() => {
     if (!onBindBack) return
     onBindBack(() => {
       const prev = previousCreateStep(step, Boolean(brainId))
       if (prev == null) return false
+      if (step >= 2 && step <= 5 && brainId) void window.brain.setup.githubCancel(brainId)
       if (step === 5) {
         setInstallOpened(false)
         setBridgeOpened(false)
@@ -958,16 +1019,37 @@ export function PlyntrCreateScreen({
           <p>{orgStepCopy(label, slug, nameAdvice, org)}</p>
           <label className="field">
             Short name
-            <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="Appears after you copy it" />
+            <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="The account you choose" />
           </label>
+          {accounts.length ? (
+            <ul className="tiny">
+              {accounts.map((account) => (
+                <li key={account.login}>
+                  {account.choosable ? (
+                    <button className="ghost" type="button" onClick={() => setOrg(account.login)}>
+                      {account.login}
+                    </button>
+                  ) : (
+                    <span>{account.login}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </>
       ) : null}
       {step === 3 && !brainId ? <p className="tiny">This makes you the setup person for this brain. You get the client’s code later in Settings.</p> : null}
       {step === 4 ? (
-        <p>
-          This Mac creates {wantRepo || `${org}/${slug}-brain`}. You do not make an empty repository. After Plyntr sync is installed
-          on {org}, this Mac copies the client brain onto this computer.
-        </p>
+        <>
+          <label className="field">
+            Repository name
+            <input value={repoName} onChange={(e) => setRepoName(e.target.value)} />
+          </label>
+          <p>
+            This Mac creates {org}/{repoName || `${slug}-brain`}. You do not make an empty repository. After both GitHub
+            apps are installed on that repository, this Mac copies the client brain onto this computer.
+          </p>
+        </>
       ) : null}
       {step === 5 ? (
         <ol>
@@ -1010,15 +1092,21 @@ export function PlyntrCreateScreen({
             Try again
           </button>
         ) : null}
+        {step === 2 && accounts.length && !accounts.some((account) => account.kind === 'org' && account.choosable) ? (
+          <button className="ghost" type="button" onClick={() => void window.brain.setup.openOrgForm()}>
+            Create an organization
+          </button>
+        ) : null}
         {step === 2 && org.trim() ? (
           <button
             className="ghost"
             type="button"
             onClick={() => {
-              void window.brain.setup.openCreateOrg().then((r) => {
-                const login = String(r?.org || '').trim()
-                if (login) setOrg(login)
-              })
+              setBusy(true)
+              setErr('')
+              void connectGithub()
+                .catch((e) => setErr(ipcErrorText(e)))
+                .finally(() => setBusy(false))
             }}
           >
             Open GitHub again
@@ -1029,7 +1117,7 @@ export function PlyntrCreateScreen({
             className="ghost"
             type="button"
             onClick={() => {
-              void window.brain.setup.openPlyntrInstall(brainId, org, wantRepo).then((opened) => {
+              void window.brain.setup.openPlyntrInstall(brainId, org, wantRepo, orgId, repoId).then((opened) => {
                 if (!opened.ok) setErr(opened.detail || 'The install page did not open on this organization.')
               })
             }}
@@ -1071,43 +1159,27 @@ export function PlyntrCreateScreen({
               }
               if (step === 2) {
                 const raw = org.trim()
-                const pastedRepo = Boolean(slug) && raw.toLowerCase() === `${slug}-brain`.toLowerCase()
-                const typed = pastedRepo ? slug : raw
-                if (!typed) {
-                  void window.brain.setup.openCreateOrg().then((r) => {
-                    const login = String(r?.org || '').trim()
-                    if (login) setOrg(login)
-                  })
+                if (!raw) {
+                  await connectGithub()
                   return
                 }
-                const look = await window.brain.setup.lookupOrg(typed)
-                if (!look.ok || look.type !== 'Organization') {
-                  const advice = slug ? await window.brain.setup.adviseOrg(slug).catch(() => nameAdvice) : nameAdvice
-                  const freeName = advice?.suggestion || slug
-                  if (pastedRepo && advice?.suggestion) setOrg(advice.suggestion)
-                  setErr(orgUseError(raw, slug, pastedRepo, look, freeName))
+                const picked = accounts.find((account) => account.login.toLowerCase() === raw.toLowerCase())
+                if (!picked || !picked.choosable) {
+                  setErr('Choose a GitHub account you own.')
                   return
                 }
-                const login = look.login || typed
+                const login = picked.login
                 setOrg(login)
-                if (brainId) {
-                  const placed = await window.brain.plyntr.place({ brainId, org: login })
-                  if (placed.slug) setSlug(placed.slug)
-                  const want = placed.repo
-                  if (!want) {
-                    setErr(NO_REPO)
-                    return
-                  }
-                  const made = await window.brain.setup.createPlyntrRepo(login, placed.slug || slug, want)
-                  if (!made.ok) {
-                    setErr(made.detail || 'GitHub did not create the repository.')
-                    return
-                  }
-                  setRepo(made.repo || want)
-                  await save(5, { org: login, slug: placed.slug || slug })
+                if (!brainId) {
+                  setErr('Connect GitHub before choosing an account.')
                   return
                 }
-                await save(3, { org: login })
+                const placed = await window.brain.plyntr.place({ brainId, org: login })
+                const nextSlug = placed.slug || slug
+                if (placed.slug) setSlug(placed.slug)
+                const kept = repo.startsWith(`${login}/`) && !repo.startsWith('pending/') ? repo.split('/')[1] : ''
+                setRepoName(kept || repoName || `${nextSlug}-brain`)
+                await save(4, { org: login, slug: nextSlug })
                 return
               }
               if (step === 3) {
@@ -1120,65 +1192,61 @@ export function PlyntrCreateScreen({
                 setEmail(scoutEmail)
                 if (!seatKnown) return
                 if (hasSeat && brainId) {
-                  if (!repo) {
-                    setErr(NO_REPO)
-                    return
-                  }
-                  const made = await window.brain.setup.createPlyntrRepo(org, slug, repo)
-                  if (!made.ok) {
-                    setErr(made.detail || 'GitHub did not create the repository.')
-                    return
-                  }
-                  setRepo(made.repo || repo)
-                  await save(5, { scoutEmail, brainId })
+                  setRepoName(repoName || `${slug}-brain`)
+                  await save(4, { scoutEmail, brainId })
                   return
                 }
-                const res = await window.brain.plyntr.createBrain({ label, org, slug, scoutEmail })
+                const res = await window.brain.plyntr.createBrain({
+                  label,
+                  org: org.trim() || 'pending',
+                  slug,
+                  scoutEmail
+                })
+                setBrainId(res.brainId)
+                if (res.repo) setRepo(res.repo)
                 if (!res.hasToken) {
-                  setBrainId(res.brainId)
-                  setRepo(res.repo)
                   setHasSeat(false)
                   await save(3, { scoutEmail, brainId: res.brainId })
                   setErr('Plyntr did not finish creating your seat. Click Try again.')
                   return
                 }
-                setBrainId(res.brainId)
-                if (!res.repo) {
-                  setHasSeat(true)
-                  setErr(NO_REPO)
-                  await save(4, { scoutEmail, brainId: res.brainId })
-                  return
-                }
-                const made = await window.brain.setup.createPlyntrRepo(org, slug, res.repo)
-                if (!made.ok) {
-                  setHasSeat(true)
-                  setRepo(res.repo)
-                  setErr(made.detail || 'GitHub did not create the repository.')
-                  await save(4, { scoutEmail, brainId: res.brainId })
-                  return
-                }
-                setRepo(made.repo || res.repo)
                 setHasSeat(true)
-                await save(5, { scoutEmail, brainId: res.brainId })
+                setRepoName(`${slug}-brain`)
+                await save(4, { scoutEmail, brainId: res.brainId })
                 return
               }
               if (step === 4) {
-                if (!repo) {
+                const name = repoName.trim() || `${slug}-brain`
+                if (!brainId || !org.trim() || !name) {
                   setErr(NO_REPO)
                   return
                 }
-                const made = await window.brain.setup.createPlyntrRepo(org, slug, repo)
-                if (!made.ok) {
+                const full = `${org.trim()}/${name}`
+                if (repo === full && !repo.startsWith('pending/')) {
+                  await save(5, { repo: full })
+                  return
+                }
+                const made = await window.brain.setup.createPlyntrRepo(org.trim(), slug, full, brainId)
+                if (!made.ok || !made.repo || !made.orgId || !made.repoId) {
                   setErr(made.detail || 'GitHub did not create the repository.')
                   return
                 }
                 setRepo(made.repo)
-                await save(5)
+                setOrgId(made.orgId)
+                setRepoId(made.repoId)
+                await save(5, { repo: made.repo, orgId: made.orgId, repoId: made.repoId })
                 return
               }
               if (step === 5) {
+                const realRepo = Boolean(wantRepo && wantRepo.includes('/') && !wantRepo.startsWith('pending/'))
+                if ((!orgId || !repoId) && !realRepo) {
+                  setErr('Create the repository before opening GitHub.')
+                  return
+                }
+                const pinOrg = orgId || undefined
+                const pinRepo = repoId || undefined
                 if (!installOpened) {
-                  const opened = await window.brain.setup.openPlyntrInstall(brainId, org, wantRepo)
+                  const opened = await window.brain.setup.openPlyntrInstall(brainId, org, wantRepo, pinOrg, pinRepo)
                   if (!opened.ok) {
                     setErr(opened.detail || 'The install page did not open on this organization.')
                     return
@@ -1202,9 +1270,17 @@ export function PlyntrCreateScreen({
                   return
                 }
                 const bridge = await window.brain.setup.bridgeOnRepo(want).catch(() => null)
+                const bridgeSel = String(bridge?.repositorySelection || '').toLowerCase()
+                const bridgeAll = bridgeSel === 'all' || bridgeSel === 'all_repositories'
+                if (bridge?.installed && bridgeAll) {
+                  setErr(
+                    `Brain Bridge is on All repositories for ${org}. Choose Only select repositories, pick ${want}, then click Check GitHub.`
+                  )
+                  return
+                }
                 if (!bridge?.installed) {
                   if (!bridgeOpened) {
-                    const opened = await window.brain.setup.openBridgeRepo(want)
+                    const opened = await window.brain.setup.openBridgeRepo(want, pinOrg, pinRepo)
                     if (!opened.ok) {
                       setErr(opened.detail || 'The Brain Bridge page did not open on this organization.')
                       return

@@ -25,7 +25,6 @@ import {
   bridgeInstallUrl,
   githubAppInstallUrl,
   githubInstallReady,
-  plyntrCreateRepoUrl,
   bridgeSelectionBlocksSync,
   plyntrGithubInstallReady,
   plyntrInstallPin,
@@ -82,7 +81,8 @@ import {
   runPlyntrMove,
   writePlyntrSyncFile
 } from './plyntr-move'
-import { adviseGithubOrg, ensureRemoteBrainRepo, resolveGithubOrg, resolveGithubRepoId } from './github-account'
+import { adviseGithubOrg, resolveGithubOrg, resolveGithubRepoId } from './github-account'
+import { cancelGithub, connectGithub, createSetupRepo, openOrgForm, signOutGithub } from './github-setup-flow'
 import { resolvePlyntrRepoName } from './github-repo'
 import { loadAnyChats, loadChats, saveChats, type SavedChats } from './persist'
 import { rememberPhoneChats } from './phone'
@@ -182,8 +182,26 @@ export function dryRun(): boolean {
 async function pinnedPlyntrInstall(
   brainId: string,
   org: string,
-  repo: string
+  repo: string,
+  orgId?: number,
+  repoId?: number
 ): Promise<{ ok: boolean; url: string; detail?: string }> {
+  const orgNum = Number(orgId)
+  const repoNum = Number(repoId)
+  if (Number.isInteger(orgNum) && orgNum > 0 && Number.isInteger(repoNum) && repoNum > 0) {
+    const pin = plyntrInstallPin({
+      brainId,
+      orgName: String(org || '').trim(),
+      repo,
+      orgId: orgNum,
+      repoId: repoNum
+    })
+    if (!pin.ok || !pin.url) {
+      return { ok: false, url: '', detail: pin.detail || 'This brain has no GitHub repository name yet.' }
+    }
+    openInApp(pin.url, 'Install Plyntr sync on GitHub')
+    return { ok: true, url: pin.url }
+  }
   const look = await resolveGithubOrg(org)
   const orgName = look.login || String(org || '').trim()
   if (!look.ok || look.type !== 'Organization' || !look.id) {
@@ -765,7 +783,8 @@ export function registerStubIpc(): void {
     logoutVault()
     clearAccount()
   }
-  ipcMain.handle('auth:logout', () => {
+  ipcMain.handle('auth:logout', async () => {
+    await signOutGithub()
     logoutShell()
     stopBrainSync()
     return { ok: true }
@@ -894,12 +913,25 @@ export function registerStubIpc(): void {
     }
   })
   ipcMain.handle('setup:lookupOrg', async (_e, login: string) => resolveGithubOrg(login))
-  ipcMain.handle('setup:createPlyntrRepo', async (_e, org: string, slug: string, repo?: string) => {
-    if (dryRun()) {
-      const name = resolvePlyntrRepoName(org, slug, repo)
-      return { ok: Boolean(name), repo: name, detail: name ? undefined : 'This brain has no GitHub repository name yet.' }
+  ipcMain.handle('setup:githubConnect', async (_e, brainId: string) => connectGithub(String(brainId || '')))
+  ipcMain.handle('setup:githubCancel', async (_e, brainId: string) => {
+    await cancelGithub(String(brainId || ''))
+    return { ok: true }
+  })
+  ipcMain.handle('setup:openOrgForm', () => {
+    openOrgForm()
+    return { ok: true }
+  })
+  ipcMain.handle('setup:createPlyntrRepo', async (_e, org: string, slug: string, repo?: string, brainId?: string) => {
+    const name = resolvePlyntrRepoName(org, slug, repo)
+    if (!name) return { ok: false, repo: '', detail: 'This brain has no GitHub repository name yet.' }
+    if (dryRun()) return { ok: true, repo: name, orgId: 1, repoId: 2 }
+    if (!brainId) return { ok: false, repo: '', detail: 'Connect GitHub before creating the repository.' }
+    try {
+      return await createSetupRepo(String(brainId), org, name)
+    } catch (e) {
+      return { ok: false, repo: '', detail: e instanceof Error ? e.message : 'GitHub did not create the repository.' }
     }
-    return ensureRemoteBrainRepo(org, slug, repo)
   })
   ipcMain.handle('setup:adviseOrg', async (_e, login: string) => adviseGithubOrg(login))
   ipcMain.handle('setup:openCreateOrg', async () => {
@@ -944,9 +976,20 @@ export function registerStubIpc(): void {
     bringAppFront()
     return { ok: false, detail: 'The app is not installed on GitHub yet. In the browser, click Install, then Only select repositories, and try again.' }
   })
-  async function openPinnedBridge(repo: string): Promise<{ ok: boolean; repo: string; url: string }> {
+  async function openPinnedBridge(
+    repo: string,
+    orgId?: number,
+    repoId?: number
+  ): Promise<{ ok: boolean; repo: string; url: string }> {
     const named = parseGithubHqRepo(repo)
     if (!named) throw new Error('This brain has no GitHub repository name yet.')
+    const orgNum = Number(orgId)
+    const repoNum = Number(repoId)
+    if (Number.isInteger(orgNum) && orgNum > 0 && Number.isInteger(repoNum) && repoNum > 0) {
+      const url = bridgeInstallUrl(named, orgNum, repoNum)
+      openInApp(url, 'Install Brain Bridge')
+      return { ok: true, repo: named, url }
+    }
     const owner = named.split('/')[0]
     const look = await resolveGithubOrg(owner)
     if (!look.ok || look.type !== 'Organization' || !look.id) {
@@ -1007,7 +1050,9 @@ export function registerStubIpc(): void {
     if (!repo) throw new Error('This folder has no GitHub repo yet.')
     return openPinnedBridge(repo)
   })
-  ipcMain.handle('setup:openBridgeRepo', async (_e, repo: string) => openPinnedBridge(String(repo || '')))
+  ipcMain.handle('setup:openBridgeRepo', async (_e, repo: string, orgId?: number, repoId?: number) =>
+    openPinnedBridge(String(repo || ''), orgId, repoId)
+  )
   ipcMain.handle('setup:bridgeOnRepo', async (_e, repo: string) => {
     const ag = agencyPretend()
     if (ag) {
@@ -1495,17 +1540,18 @@ export function registerStubIpc(): void {
     enableLocalSync(opts || {})
   )
   ipcMain.handle('setup:syncMode', async (_e, folder: string) => readSyncMode(String(folder || '')) || '')
-  ipcMain.handle('setup:openPlyntrInstall', async (_e, brainId: string, org?: string, repo?: string) => {
-    setupTrace({ event: 'ipc', channel: 'setup:openPlyntrInstall' })
-    if (process.env.BRAIN_APP_SETUP_DRIVE === '1') {
-      return { ok: true, url: 'https://github.com/apps/plyntr-brain-sync/installations/new' }
+  ipcMain.handle(
+    'setup:openPlyntrInstall',
+    async (_e, brainId: string, org?: string, repo?: string, orgId?: number, repoId?: number) => {
+      setupTrace({ event: 'ipc', channel: 'setup:openPlyntrInstall' })
+      if (process.env.BRAIN_APP_SETUP_DRIVE === '1') {
+        return { ok: true, url: 'https://github.com/apps/plyntr-brain-sync/installations/new' }
+      }
+      return pinnedPlyntrInstall(brainId, org || '', repo || '', orgId, repoId)
     }
-    return pinnedPlyntrInstall(brainId, org || '', repo || '')
-  })
-  ipcMain.handle('setup:openPlyntrRepo', async (_e, org: string, slug: string) => {
-    const url = plyntrCreateRepoUrl(org, slug)
-    openInApp(url, 'Create the GitHub repo')
-    return { ok: true, url }
+  )
+  ipcMain.handle('setup:openPlyntrRepo', async () => {
+    return { ok: false, url: '', detail: 'The card creates the repository.' }
   })
 
   ipcMain.handle('plyntr:pending', () => {
@@ -1541,6 +1587,9 @@ export function registerStubIpc(): void {
     slug?: string
     scoutEmail?: string
     brainId?: string
+    repo?: string
+    orgId?: number
+    repoId?: number
   }) => {
     const prev = readPendingCreate()
     writePendingCreate({
@@ -1550,7 +1599,10 @@ export function registerStubIpc(): void {
       org: String(raw.org ?? prev?.org ?? ''),
       slug: String(raw.slug ?? prev?.slug ?? ''),
       scoutEmail: String(raw.scoutEmail ?? prev?.scoutEmail ?? ''),
-      brainId: raw.brainId || prev?.brainId
+      brainId: raw.brainId || prev?.brainId,
+      repo: raw.repo || prev?.repo,
+      orgId: Number(raw.orgId || prev?.orgId) || undefined,
+      repoId: Number(raw.repoId || prev?.repoId) || undefined
     })
     return { ok: true }
   })
