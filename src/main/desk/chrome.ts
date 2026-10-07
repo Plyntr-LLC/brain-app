@@ -17,6 +17,7 @@ export type ChromePage = {
   click: (selector: string, options?: { count?: number }) => Promise<void>
   type: (selector: string, text: string) => Promise<void>
   bringToFront: () => Promise<void>
+  screenshot?: (options: { type: 'jpeg'; quality: number }) => Promise<Uint8Array>
   isClosed: () => boolean
   setViewport?: (viewport: null) => Promise<void>
   waitForNetworkIdle?: (options: { idleTime: number; timeout: number }) => Promise<void>
@@ -34,8 +35,10 @@ export type PuppeteerLaunch = (options: ChromeLaunchOptions) => Promise<ChromeBr
 
 /** What the adapter adds beyond `PageAdapter`. Optional so a test adapter can leave them out. */
 export type DeskPage = PageAdapter & {
-  /** Brings the desk window forward. */
+  /** Brings the desk Chrome window forward. Sign-in uses this. Ordinary focus does not. */
   front?: () => Promise<void>
+  /** A jpeg of the open page, for the corner picture. Empty when the page cannot take one. */
+  shot?: () => Promise<Uint8Array>
   /** True once the person closed the desk window or quit that Chrome. */
   closed?: () => boolean
 }
@@ -219,6 +222,7 @@ function adapterFor(browser: ChromeBrowser, page: ChromePage): DeskPage {
       await settle()
     },
     front: () => page.bringToFront(),
+    shot: async () => (page.screenshot ? page.screenshot({ type: 'jpeg', quality: 40 }) : new Uint8Array()),
     closed: () => page.isClosed() || !browser.connected
   }
 }

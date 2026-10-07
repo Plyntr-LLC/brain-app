@@ -177,6 +177,8 @@ export function createDeskHost(deps: DeskHostDeps) {
     retry: (tab: string, msgId: string) => controllerFor(tab).retry(msgId),
     status: (tab: string) => controllerFor(tab).status(),
     focus: (tab: string) => controllerFor(tab).focus(),
+    showWindow: (tab: string) => controllerFor(tab).showWindow(),
+    picture: (tab: string) => controllerFor(tab).picture(),
     view: (tab: string, botId: string | null) => controllerFor(tab).view(botId),
     opened: () => controllers.size
   }
@@ -217,6 +219,8 @@ export function registerDeskIpc(): void {
   ipcMain.handle('desk:retry', (_e, tab: string, msgId: string) => host.retry(String(tab || ''), String(msgId || '')))
   ipcMain.handle('desk:status', (_e, tab: string) => host.status(String(tab || '')))
   ipcMain.handle('desk:focus', (_e, tab: string) => host.focus(String(tab || '')))
+  ipcMain.handle('desk:showWindow', (_e, tab: string) => host.showWindow(String(tab || '')))
+  ipcMain.handle('desk:picture', (_e, tab: string) => host.picture(String(tab || '')))
   ipcMain.handle('desk:view', (_e, tab: string, botId: string | null) => host.view(String(tab || ''), botId || null))
   app.on('before-quit', () => {
     void host.quitAll()

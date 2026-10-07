@@ -73,6 +73,8 @@ export type ControllerOpts = {
     cancel: (browseId: string) => void
     release: (browseId: string) => void
     focus: () => void
+    showWindow?: () => void
+    picture?: () => Promise<string | null>
     windowOpen: () => boolean
     clickApproved: (name: string, pageUrl: string) => Promise<BrowseStepResult>
     runStep: (browseId: string, step: { action: string; detail?: string; url?: string }) => Promise<BrowseStepResult>
@@ -978,6 +980,12 @@ export function createDeskController(opts: ControllerOpts) {
     },
     focus() {
       browser.focus()
+    },
+    showWindow() {
+      browser.showWindow?.()
+    },
+    picture() {
+      return browser.picture?.() ?? Promise.resolve(null)
     },
     removeBot(id: string): string | null {
       const bot = store.readBot(id)

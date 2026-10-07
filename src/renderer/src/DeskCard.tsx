@@ -135,7 +135,7 @@ export function DeskCard(props: {
   onTalk: (botId: string) => void
   onOpenLog: () => void
   onOpenMemory: (botId: string) => void
-  onOpenBrowser: () => void
+  onOpenBrowser: (opts?: { signIn?: boolean }) => void
   onRemoveHire: (msgId: string) => void
   busy: boolean
 }): JSX.Element {
@@ -315,7 +315,7 @@ export function DeskCard(props: {
               </>
             )
           }
-          actions={b?.windowOpen ? <button type="button" className="ghost" onClick={() => props.onOpenBrowser()}>Open browser</button> : null}
+          actions={b?.windowOpen ? <button type="button" className="ghost" onClick={() => props.onOpenBrowser(b.signIn ? { signIn: true } : undefined)}>Open browser</button> : null}
         />
       )
     }

@@ -57,6 +57,12 @@ const brain = {
     retry: (tab: string, msgId: string) => rec('retry', tab, msgId),
     status: (tab: string) => rec('status', tab),
     focus: (tab: string) => rec('focus', tab),
+    showWindow: (tab: string) => rec('showWindow', tab),
+    picture: (tab: string) => {
+      calls.push({ fn: 'picture', args: [tab] })
+      // A one-pixel jpeg so the corner picture has an image to size. Other tabs stay empty.
+      return Promise.resolve(tab === 'tab-pip' ? PIP_JPEG : null)
+    },
     view: (tab: string, botId: string | null) => {
       calls.push({ fn: 'view', args: [tab, botId] })
       const all = fx(tab).messages
@@ -219,6 +225,9 @@ addFixture('tab-ready', '/fx/ready', MIXED, welcome({ readiness: [{ botId: 'writ
 addFixture('tab-everyone', '/fx/everyone', ALL_GROK, welcome({ everyoneLine: EVERYONE }))
 addFixture('tab-cards', '/fx/cards', MIXED, welcome(), cardsMail, { designer: 'Designer' })
 addFixture('tab-form', '/fx/form', MIXED, welcome())
+
+// Smallest jpeg the corner picture can show. The harness never launches Chrome.
+const PIP_JPEG = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCfAA//2Q=='
 
 // ---------- mounting ----------
 
@@ -593,7 +602,7 @@ function cardStage() {
   const signIn = mount({ ...base, id: 'c_si', from: 'writer', kind: 'browse', text: 'Writer needs you to sign in, in the desk browser.', browse: { steps: [{ action: 'url', detail: 'https://example.com', url: 'https://example.com/login' }], signIn: true, windowOpen: true } })
   check('6 sign-in card is only its sentence', text(signIn.el.querySelector('.fcard-body')) === 'Writer needs you to sign in, in the desk browser.')
   button(signIn.el, 'Open browser')?.click()
-  check('6 sign-in card with the window open has Open browser', same(signIn.got, 'openBrowser'), show(signIn.got))
+  check('6 sign-in card with the window open has Open browser', same(signIn.got, 'openBrowser', { signIn: true }), show(signIn.got))
 
   const hireMsg: DeskMessage = { ...base, id: 'c_hire', from: 'conductor', kind: 'hire', text: 'Writes headlines only.', hire: { id: 'designer', name: 'Designer', cli: 'claude', model: 'default', description: 'Writes headlines only.', hasWorked: false } }
   const hireBusy = mount(hireMsg, true)
@@ -608,6 +617,74 @@ function cardStage() {
   check('6 note: header, lines, Open memory', text(note.el.querySelector('.fcard-title')) === 'Writer saved a note' && same(note.got, 'openMemory', 'writer'), show(note.got))
 }
 
+function overlaps(a: DOMRect, b: DOMRect): boolean {
+  return a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1
+}
+
+async function pipStage() {
+  const tab = 'tab-pip'
+  const msg: DeskMessage = {
+    id: 'm_pip',
+    ts: at(9, 20),
+    from: 'writer',
+    to: 'me',
+    kind: 'browse',
+    text: 'Opened the example page.',
+    browse: {
+      steps: [{ action: 'url', detail: 'https://example.com', url: 'https://example.com/' }],
+      title: 'Example',
+      windowOpen: true
+    }
+  }
+  addFixture(tab, '/fx/pip', MIXED, welcome(), [msg])
+  const { pane, rail } = await mountPane(tab, '8. the corner picture', 640)
+  await until(() => !!pane.querySelector('.desk-pip img'))
+  const pip = pane.querySelector('.desk-pip')
+  const thread = pane.querySelector('.thread')
+  const composer = pane.querySelector('.composer')
+  const img = pip?.querySelector('img')
+  const pipBox = pip?.getBoundingClientRect()
+  const threadBox = thread?.getBoundingClientRect()
+  const composerBox = composer?.getBoundingClientRect()
+  const railBox = rail.getBoundingClientRect()
+  const imgBox = img?.getBoundingClientRect()
+  check(
+    '8 the picture sits outside the thread, the rail, and the composer',
+    !!pip && !!thread && !!composer && !!pipBox && !!threadBox && !!composerBox &&
+      !thread.contains(pip) && !composer.contains(pip) && !rail.contains(pip) &&
+      !overlaps(pipBox, threadBox) && !overlaps(pipBox, composerBox) && !overlaps(pipBox, railBox),
+    pipBox && threadBox && composerBox ? `pip ${Math.round(pipBox.top)}-${Math.round(pipBox.bottom)} thread ${Math.round(threadBox.bottom)} composer ${Math.round(composerBox.top)}` : 'missing'
+  )
+  check(
+    '8 the picture is the small corner size',
+    !!imgBox && Math.round(imgBox.width) === 240 && Math.round(imgBox.height) === 150,
+    imgBox ? `${Math.round(imgBox.width)}x${Math.round(imgBox.height)}` : 'no image'
+  )
+  check('8 the open picture has Hide', !!button(pip, 'Hide'))
+  const before = calls.length
+  button(pane, 'Open browser')?.click()
+  await tick()
+  check(
+    '8 Open browser on a step card does not bring Chrome forward',
+    !since(before).some((c) => c.fn === 'showWindow' || c.fn === 'focus'),
+    show(since(before).filter((c) => c.fn !== 'picture'))
+  )
+  button(pip, 'Hide')?.click()
+  await tick()
+  const chip = pane.querySelector('.desk-pip')
+  const chipBox = chip?.getBoundingClientRect()
+  const threadNow = pane.querySelector('.thread')?.getBoundingClientRect()
+  check(
+    '8 Hide leaves a desk browser chip outside the thread',
+    text(button(chip, 'Desk browser')) === 'Desk browser' && !button(chip, 'Hide') && !chip?.querySelector('img') &&
+      !!chip && !!threadNow && !!chipBox && !pane.querySelector('.thread')!.contains(chip) && !overlaps(chipBox, threadNow),
+    text(chip)
+  )
+  button(chip, 'Desk browser')?.click()
+  await until(() => !!button(pane.querySelector('.desk-pip'), 'Hide'))
+  check('8 the chip opens the picture again', !!button(pane.querySelector('.desk-pip'), 'Hide') && !!pane.querySelector('.desk-pip img'))
+}
+
 async function main() {
   await welcomeStage()
   await readinessStage()
@@ -615,6 +692,7 @@ async function main() {
   await threadStage()
   await formStage()
   cardStage()
+  await pipStage()
   await tick()
   const all = document.getElementById('root')!.textContent || ''
   const banned = all.match(/\b(pack|assign|fence|job|bus)\b/gi) || []

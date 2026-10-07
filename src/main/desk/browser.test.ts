@@ -399,7 +399,7 @@ test('clickApproved with no window reopens pageUrl in the desk profile, clicks o
   assert.equal(b.windowOpen(), true)
 })
 
-test('focus brings the open window forward and never launches Chrome', async () => {
+test('focus raises the corner picture: it does not launch Chrome and does not bring that window forward', async () => {
   const idle = fakeWindow()
   deskBrowser(idle.launch).focus()
   assert.equal(idle.calls.launch.length, 0)
@@ -407,8 +407,35 @@ test('focus brings the open window forward and never launches Chrome', async () 
 
   const { w, b } = await onPage()
   b.focus()
+  assert.equal(w.calls.front, 0)
+  assert.equal(w.calls.launch.length, 1)
+})
+
+test('showWindow brings the open desk window forward and never launches Chrome', async () => {
+  const idle = fakeWindow()
+  deskBrowser(idle.launch).showWindow()
+  assert.equal(idle.calls.launch.length, 0)
+  assert.equal(idle.calls.front, 0)
+
+  const { w, b } = await onPage()
+  b.showWindow()
   assert.equal(w.calls.front, 1)
   assert.equal(w.calls.launch.length, 1)
+
+  w.closeWindow()
+  b.showWindow()
+  assert.equal(w.calls.launch.length, 1)
+  assert.equal(w.calls.front, 1)
+})
+
+test('picture is a jpeg of the open page, and nothing when that window is closed', async () => {
+  const { w, b } = await onPage()
+  assert.equal(await b.picture(), null)
+  const bytes = new Uint8Array([4, 5, 6])
+  w.adapter.shot = async () => bytes
+  assert.equal(await b.picture(), Buffer.from(bytes).toString('base64'))
+  w.closeWindow()
+  assert.equal(await b.picture(), null)
 })
 
 test('windowOpen: false before open, true after, still true after release; a closed window opens again on the next browse', async () => {

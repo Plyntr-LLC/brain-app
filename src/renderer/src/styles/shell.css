@@ -1411,6 +1411,8 @@ button.linkish.cmdval { color: var(--ink); font-size: 0.88rem; text-decoration: 
 .desk-roster { display: flex; flex-direction: column; gap: 0.45rem; padding: 12px; }
 .desk-row { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
 .desk-form textarea, .desk-form input, .desk-form select { width: 100%; box-sizing: border-box; }
+.desk-pip { flex-shrink: 0; display: flex; justify-content: flex-end; align-items: center; gap: 0.35rem; padding: 0 14px 6px; }
+.desk-pip img { width: 240px; height: 150px; object-fit: contain; border: 1px solid var(--line); background: var(--card); }
 .refs h2 {
   flex-shrink: 0;
   margin: 0;

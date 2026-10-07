@@ -122,7 +122,22 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
   }
 
   function focus() {
-    if (adapter && windowOpen()) adapter.front?.().catch(() => {})
+    // The corner picture lives in the Desk window. This must not launch Chrome or bring it forward.
+  }
+
+  function showWindow() {
+    if (adapter && windowOpen()) void adapter.front?.().catch(() => {})
+  }
+
+  async function picture(): Promise<string | null> {
+    if (!adapter || !windowOpen() || !adapter.shot) return null
+    try {
+      const bytes = await adapter.shot()
+      if (!bytes?.byteLength) return null
+      return Buffer.from(bytes).toString('base64')
+    } catch {
+      return null
+    }
   }
 
   /** Reads the page after a step. A sign-in page ends the session; the window stays open. */
@@ -220,5 +235,5 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
     return read(a, session)
   }
 
-  return { open, cancel, release, focus, windowOpen, clickApproved, runStep }
+  return { open, cancel, release, focus, showWindow, picture, windowOpen, clickApproved, runStep }
 }

@@ -1172,6 +1172,8 @@ const brain = {
     retry: (tab: string, msgId: string) => ipcRenderer.invoke('desk:retry', tab, msgId),
     status: (tab: string) => ipcRenderer.invoke('desk:status', tab),
     focus: (tab: string) => ipcRenderer.invoke('desk:focus', tab),
+    showWindow: (tab: string) => ipcRenderer.invoke('desk:showWindow', tab) as Promise<void>,
+    picture: (tab: string) => ipcRenderer.invoke('desk:picture', tab) as Promise<string | null>,
     view: (tab: string, botId: string | null) => ipcRenderer.invoke('desk:view', tab, botId) as Promise<DeskMessage[]>,
     onEvent: (fn: (ev: { brain: string; messages: DeskMessage[]; states: BotState[]; removedNames: Record<string, string> }) => void) => {
       const h = (_e: unknown, payload: { brain: string; messages: DeskMessage[]; states: BotState[]; removedNames: Record<string, string> }) =>

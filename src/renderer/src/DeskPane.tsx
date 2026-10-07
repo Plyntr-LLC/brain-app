@@ -79,6 +79,8 @@ export function DeskPane({
   const [models, setModels] = useState<Record<DeskCli, Cap[]>>({ grok: [], claude: [], gpt: [], cursor: [] })
   const [installed, setInstalled] = useState<DeskCli[]>([])
   const [tick, setTick] = useState(0)
+  const [pip, setPip] = useState<'open' | 'chip'>('open')
+  const [shot, setShot] = useState<string | null>(null)
   const openRef = useRef<string | null>(null)
   const brainRef = useRef('')
   const asked = useRef(false)
@@ -166,6 +168,28 @@ export function DeskPane({
       else void window.brain.desk.detach(id, { stop: true }).then(onClosed)
     }).catch(() => onKeep())
   }, [closing, id, onClosed, onKeep])
+
+  const windowOn = messages.some((m) => m.browse?.windowOpen)
+  useEffect(() => {
+    if (!active || !windowOn || pip !== 'open') return
+    let dead = false
+    let busy = false
+    const tickShot = () => {
+      if (busy) return
+      busy = true
+      void window.brain.desk.picture(id).then((b64) => {
+        if (!dead && b64) setShot(b64)
+      }).finally(() => {
+        busy = false
+      })
+    }
+    tickShot()
+    const timer = window.setInterval(tickShot, 1500)
+    return () => {
+      dead = true
+      window.clearInterval(timer)
+    }
+  }, [active, windowOn, pip, id])
 
   function openThread(botId: string | null) {
     setPickerFor(null)
@@ -327,7 +351,10 @@ export function DeskPane({
                 onTalk={(botId) => openThread(botId)}
                 onOpenLog={() => onOpenFile(`${cwd}/desk/mail/desk.md`)}
                 onOpenMemory={(botId) => onOpenFile(`${cwd}/desk/memory/${botId}.md`)}
-                onOpenBrowser={() => void window.brain.desk.focus(id)}
+                onOpenBrowser={(opts) => {
+                  setPip('open')
+                  if (opts?.signIn) void window.brain.desk.showWindow(id)
+                }}
                 onRemoveHire={(msgId) => {
                   const hire = messages.find((m) => m.id === msgId)?.hire
                   if (!hire) return
@@ -342,6 +369,18 @@ export function DeskPane({
           )
         })}
       </div>
+      {windowOn ? (
+        <div className="desk-pip">
+          {pip === 'chip' ? (
+            <button type="button" className="ghost" onClick={() => setPip('open')}>Desk browser</button>
+          ) : (
+            <>
+              {shot ? <img src={`data:image/jpeg;base64,${shot}`} alt="Desk browser" /> : <p className="tiny">Desk browser</p>}
+              <button type="button" className="ghost" onClick={() => setPip('chip')}>Hide</button>
+            </>
+          )}
+        </div>
+      ) : null}
       {bg ? (
         <button type="button" className="linkish" onClick={() => void window.brain.desk.status(id)}>{bg}</button>
       ) : null}
