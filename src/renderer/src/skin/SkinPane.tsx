@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { specFromStreamEvent, userMessageSpec } from '../../../shared/skin/from-events'
 import { isHiddenStreamKind, isProtocolNoise } from '../../../shared/skin/hidden-kinds'
 import { isSkinComponent } from '../../../shared/skin/catalog'
@@ -9,7 +9,7 @@ import { paintsThreadSpec } from '../../../shared/think-run'
 import { skinActivity, type SkinBgTask } from '../../../shared/agent-label'
 import { cleanThink, stripAnsi, type FileHit } from '../ptyChat'
 import { SkinCard } from './Registry'
-import { cliLetter } from './turn'
+import { activityLabel, cliLetter, isActivityComponent, type ActivityPart } from './turn'
 import { SkinTerm } from './SkinTerm'
 import type { RefObject, UIEventHandler } from 'react'
 
@@ -30,6 +30,63 @@ type Row = { spec: SkinSpec; thinkKey?: string; thinkLive?: boolean }
 
 function protocolJunk(text: string): boolean {
   return isProtocolNoise(text)
+}
+
+function activityParts(rows: Row[]): ActivityPart[] {
+  return rows.map((row) =>
+    row.spec.component === 'ToolCard'
+      ? { kind: 'file' }
+      : {
+          kind: 'thought',
+          at: Number(row.spec.props.at) || undefined,
+          end: Number(row.spec.props.end) || undefined,
+          live: row.thinkLive
+        }
+  )
+}
+
+/** One closed row. Open it to see the thinking and the file chips, in the order they happened. */
+function ActivityFold({
+  parts,
+  open,
+  onToggle,
+  card
+}: {
+  parts: Row[]
+  open: boolean
+  onToggle: () => void
+  card: (row: Row) => ReactNode
+}) {
+  const blocks: ReactNode[] = []
+  let chips: Row[] = []
+  const flush = () => {
+    if (!chips.length) return
+    const batch = chips
+    chips = []
+    blocks.push(
+      <div className="skin-chips" key={batch[0].spec.id}>
+        {batch.map(card)}
+      </div>
+    )
+  }
+  if (open) {
+    for (const row of parts) {
+      if (row.spec.component === 'ToolCard') chips.push(row)
+      else {
+        flush()
+        blocks.push(card(row))
+      }
+    }
+    flush()
+  }
+  return (
+    <div className="skin-activity">
+      <button type="button" className="think-label" aria-expanded={open} onClick={onToggle}>
+        {activityLabel(activityParts(parts), open)}
+      </button>
+      {open ? blocks : null}
+    </div>
+  )
 }
 
 function thinkIsLive(messages: Msg[], idx: number, busy: boolean): boolean {
@@ -194,9 +251,9 @@ export function SkinPane({
   specs.forEach((row, i) => {
     row.spec.id = 'row-' + i + '-' + row.spec.component
   })
-  // Everything after one of your messages is one agent turn: the first row carries the avatar,
-  // and back-to-back tool steps share one row of chips.
-  const turns: { key: string; user?: Row; card?: Row; chips?: Row[]; avatar: boolean }[] = []
+  // Everything after one of your messages is one agent turn. The first row carries the avatar.
+  // A run of thinking and file chips is one closed row. A reply, a question, or a plan starts the next.
+  const turns: { key: string; user?: Row; card?: Row; activity?: Row[]; avatar: boolean }[] = []
   let afterUser = false
   for (const row of specs) {
     if (row.spec.component === 'UserMessage') {
@@ -205,22 +262,30 @@ export function SkinPane({
       continue
     }
     const last = turns[turns.length - 1]
-    if (row.spec.component === 'ToolCard' && last?.chips) {
-      last.chips.push(row)
+    if (isActivityComponent(row.spec.component) && last?.activity) {
+      last.activity.push(row)
       continue
     }
-    turns.push({ key: row.spec.id, ...(row.spec.component === 'ToolCard' ? { chips: [row] } : { card: row }), avatar: afterUser })
+    turns.push({
+      key: row.spec.id,
+      ...(isActivityComponent(row.spec.component) ? { activity: [row] } : { card: row }),
+      avatar: afterUser
+    })
     afterUser = false
   }
-  const card = (row: Row) => {
-    const thinkOpen = row.thinkKey ? (openThink[row.thinkKey] ?? false) : undefined
+  const card = (row: Row, forceThink?: boolean) => {
+    const thinkOpen = forceThink ? true : row.thinkKey ? (openThink[row.thinkKey] ?? false) : undefined
     return (
       <SkinCard
         key={row.spec.id}
         spec={row.spec}
         thinkOpen={thinkOpen}
         thinkLive={row.thinkLive}
-        onThinkToggle={row.thinkKey ? () => setOpenThink((m) => ({ ...m, [row.thinkKey!]: !(m[row.thinkKey!] ?? false) })) : undefined}
+        onThinkToggle={
+          !forceThink && row.thinkKey
+            ? () => setOpenThink((m) => ({ ...m, [row.thinkKey!]: !(m[row.thinkKey!] ?? false) }))
+            : undefined
+        }
         onAction={onAction}
       />
     )
@@ -255,7 +320,18 @@ export function SkinPane({
           ) : (
             <div key={t.key} className="skin-row">
               <span className="skin-gutter">{t.avatar ? <span className="who w-lead skin-avatar">{cliLetter(kind)}</span> : null}</span>
-              <div className="skin-row-body">{t.chips ? <div className="skin-chips">{t.chips.map(card)}</div> : card(t.card!)}</div>
+              <div className="skin-row-body">
+                {t.activity ? (
+                  <ActivityFold
+                    parts={t.activity}
+                    open={openThink[t.key] ?? false}
+                    onToggle={() => setOpenThink((m) => ({ ...m, [t.key]: !(m[t.key] ?? false) }))}
+                    card={(row) => card(row, row.spec.component === 'Thought')}
+                  />
+                ) : (
+                  card(t.card!)
+                )}
+              </div>
             </div>
           )
         )}

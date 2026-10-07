@@ -39,7 +39,6 @@ let pane: HTMLElement
 const thread = () => pane.querySelector<HTMLElement>('.skin-thread')!
 const box = () => pane.querySelector<HTMLTextAreaElement>('.composer textarea')!
 const emit = (ev: Record<string, unknown>) => flushSync(() => chatListeners.forEach((l) => l({ tabId: ID, ...ev })))
-const thinks = () => [...thread().querySelectorAll<HTMLElement>('.bubble.think')]
 const chip = (name: string) => [...thread().querySelectorAll<HTMLElement>('.skin-tool')].find((c) => (c.querySelector('.p')?.textContent || '') === name)
 const style = (el: Element | null | undefined) => (el ? getComputedStyle(el) : ({} as CSSStyleDeclaration))
 const boxed = (el: Element | null | undefined) => !!el && style(el).backgroundColor !== 'rgba(0, 0, 0, 0)' && style(el).borderTopWidth !== '0px' && style(el).borderTopStyle !== 'none'
@@ -106,21 +105,20 @@ async function main() {
   await send('What is the goal for Maple Street Bakery?')
   emit({ kind: 'thought', data: 'Reading the client file first.' })
   await tick()
-  check('turn 1: a live thought is one collapsed line, "Thinking · show"', (thinks()[0]?.querySelector('.think-label')?.textContent || '') === 'Thinking · show' && !thinks()[0]?.querySelector('.think-body'), thinks()[0]?.textContent || 'none')
+  const folds = () => [...thread().querySelectorAll<HTMLButtonElement>('.skin-activity > .think-label')]
+  check('turn 1: a live thought is one collapsed line, "Thinking · show"', folds()[0]?.textContent === 'Thinking · show' && !thread().querySelector('.think-body'), folds()[0]?.textContent || 'none')
   clock = T0 + 2000
   emit({ kind: 'thought', data: ' Then the weekly-report skill.' })
   for (const p of ['clients/maple/context.md', 'skills/weekly-report/SKILL.md', 'clients/maple/notes.md']) emit({ kind: 'file', path: `${CWD}/${p}`, tool: 'Read' })
-  await tick()
-  check('turn 1: a chip is live while the turn is busy', !!thread().querySelector('.skin-chips .skin-tool.live'))
   clock = T0 + 2500
   emit({ kind: 'thought', data: 'second look' })
   await tick()
-  const chipRow1 = chip('context.md')?.closest('.skin-chips')
-  check('turn 1: a thought after the chips is its own row', thinks().length === 2 && !!chipRow1 && !!(chipRow1.compareDocumentPosition(thinks()[1]) & Node.DOCUMENT_POSITION_FOLLOWING), `${thinks().length} thinks`)
-  thinks()[1]?.querySelector<HTMLButtonElement>('.think-label')?.click()
+  check('turn 1: thinking and the file steps stay one closed row', folds().length === 1 && folds()[0]?.textContent === 'Thinking · 3 files · show' && !thread().querySelector('.skin-tool'), folds()[0]?.textContent || 'none')
+  folds()[0]?.click()
   await tick()
-  check('turn 1: that thought opens to exactly "second look"', (thinks()[1]?.querySelector('.think-body')?.textContent || '').trim() === 'second look', thinks()[1]?.querySelector('.think-body')?.textContent || 'none')
-  thinks()[1]?.querySelector<HTMLButtonElement>('.think-label')?.click()
+  check('turn 1: opening that row shows the later thought and a live chip', (thread().textContent || '').includes('second look') && !!thread().querySelector('.skin-chips .skin-tool.live'))
+  folds()[0]?.click()
+  await tick()
   const cols = Array.from({ length: 20 }, (_, i) => `Column ${i + 1}`)
   const table = `| ${cols.join(' | ')} |\n|${cols.map(() => '---').join('|')}|\n| ${cols.map((_, i) => `value ${i + 1}`).join(' | ')} |`
   emit({ kind: 'text', data: `Maple Street Bakery's goal is **20 catering inquiries a month**.\n\nThis week's update should be five short lines.\n\n${table}\n\n\`\`\`\n${'x'.repeat(400)}\n\`\`\`\n` })
@@ -129,6 +127,14 @@ async function main() {
   await tick(80)
 
   const avatarsAfter1 = thread().querySelectorAll('.skin-avatar').length
+  const first = folds()[0]
+  const later = folds()[1]
+  check('turn 1: the finished run reads "Thought for 2 s · 3 files · show"', first?.textContent === 'Thought for 2 s · 3 files · show', first?.textContent || 'none')
+  check('turn 1: the file after the answer is its own closed row', later?.textContent === '1 file · show' && !thread().querySelector('.skin-tool'), later?.textContent || 'none')
+  check('turn 1: the closed row is under 30px tall', !!first && first.getBoundingClientRect().height < 30, String(first?.getBoundingClientRect().height))
+  first?.click()
+  later?.click()
+  await tick()
   const c1 = chip('context.md')!
   const c2 = chip('SKILL.md')!
   const c3 = chip('notes.md')!
@@ -136,13 +142,8 @@ async function main() {
   check('turn 1: the first three chips share one row', !!c1 && c1.closest('.skin-chips') === c2?.closest('.skin-chips') && c2?.closest('.skin-chips') === c3?.closest('.skin-chips') && c1.offsetTop === c2.offsetTop && c2.offsetTop === c3.offsetTop, [c1, c2, c3].map((c) => c?.offsetTop).join(','))
   check('turn 1: the chip after the answer is in another row, lower', !!c4 && c4.closest('.skin-chips') !== c1.closest('.skin-chips') && c4.getBoundingClientRect().top !== c1.getBoundingClientRect().top, `${c4?.getBoundingClientRect().top} ${c1?.getBoundingClientRect().top}`)
   check('turn 1: after done no chip is live', !thread().querySelector('.skin-tool.live'))
-  const first = thinks()[0]
-  check('turn 1: the finished thought reads "Thought for 2 s · show"', (first?.querySelector('.think-label')?.textContent || '') === 'Thought for 2 s · show', first?.textContent || 'none')
-  check('turn 1: the folded thought is under 30px tall', !!first && first.getBoundingClientRect().height < 30, String(first?.getBoundingClientRect().height))
-  first?.querySelector<HTMLButtonElement>('.think-label')?.click()
-  await tick()
-  check('turn 1: opening the thought shows its body', (first?.querySelector('.think-body')?.textContent || '').includes('weekly-report skill'))
-  first?.querySelector<HTMLButtonElement>('.think-label')?.click()
+  check('turn 1: opening the row shows its thinking', (first?.parentElement?.textContent || '').includes('weekly-report skill'))
+  first?.click()
   await tick()
 
   const answer = [...thread().querySelectorAll<HTMLElement>('.skin-row .bubble.md')].find((b) => b.querySelector('table'))
@@ -160,8 +161,11 @@ async function main() {
   emit({ kind: 'permission', title: 'Edit draft.md', path: `${CWD}/clients/maple/draft.md`, options: [{ id: 'allowOnce', label: 'Allow' }, { id: 'skip', label: 'Skip' }] })
   emit({ kind: 'error', data: 'The CLI stopped before it finished.' })
   await tick(80)
+  const draftRow = folds()[2]
+  draftRow?.click()
+  await tick()
   const c5 = chip('draft.md')
-  check("turn 2: its chip sits in a row of its own", !!c5 && ![c1, c4].some((c) => c.closest('.skin-chips') === c5.closest('.skin-chips')))
+  check("turn 2: its chip sits in a row of its own", !!c5 && ![c1, c4].some((c) => c.closest('.skin-chips') === c5.closest('.skin-chips')), c5 ? 'shared' : 'missing')
   const avatars = [...thread().querySelectorAll<HTMLElement>('.skin-avatar')]
   check('two avatars, one per turn, on the first row after your message', avatars.length === 2 && avatarsAfter1 === 1 && avatars.every((av) => av.closest('.skin-row')?.previousElementSibling?.classList.contains('me')), `${avatars.length} ${avatars.map((av) => av.closest('.skin-row')?.previousElementSibling?.className).join(' | ')}`)
   check('avatars read G for Grok', avatars.every((av) => (av.textContent || '') === 'G'))

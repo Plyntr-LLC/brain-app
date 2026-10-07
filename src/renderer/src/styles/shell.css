@@ -1768,6 +1768,10 @@ button.runmeta-v:hover { color: var(--orange-deep); }
 }
 .skin-row .bubble.think { max-width: none; background: transparent; border: 0; padding: 0; }
 .skin-row .bubble.think > .think-label { margin: 0; font-family: "Schibsted Grotesk", sans-serif; font-size: 12px; font-weight: 500; color: var(--muted); }
+.skin-activity > .think-label { margin: 0; font-family: "Schibsted Grotesk", sans-serif; font-size: 12px; font-weight: 500; color: var(--muted); }
+.skin-activity .bubble.think > .think-label { display: none; }
+.skin-activity .skin-chips { margin-top: 0.35rem; }
+.skin-activity .bubble.think .think-body { margin-top: 0.35rem; }
 .skin-row .bubble.think .think-body { margin-top: 0.35rem; }
 .skin-row .skin-perm { margin: 0; }
 .skin-tool .k {
