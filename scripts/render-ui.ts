@@ -30,7 +30,7 @@ const css = ['tokens.css', 'shell.css'].map((f) => `<link rel="stylesheet" href=
 const page = join(outDir, `${name}.html`)
 writeFileSync(page, `<!doctype html><html><head><meta charset="utf-8">${css}</head><body><div id="root"></div><pre id="out"></pre><script src="${pathToFileURL(js).href}"></script></body></html>`)
 
-const flags = ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--allow-file-access-from-files', '--virtual-time-budget=6000']
+const flags = ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--allow-file-access-from-files', '--virtual-time-budget=12000']
 const dom = execFileSync(chrome, [...flags, '--dump-dom', pathToFileURL(page).href], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
 const raw = (dom.match(/<pre id="out">([\s\S]*?)<\/pre>/) || [])[1] || ''
 const text = raw.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')

@@ -7,6 +7,7 @@ import { ActivityRail } from '../../src/renderer/src/ActivityRail'
 import { factoryActivity, type Activity } from '../../src/renderer/src/factory-activity'
 import timeline from './run-events.json'
 import legacy from './run-ae98e1f8.json'
+import lotTask from './run-5073ec51-task.json'
 
 type Call = { fn: string; args: unknown[] }
 const calls: Call[] = []
@@ -515,6 +516,60 @@ async function main() {
   }
   const working = await mount('i. a live run keeps its composer text', run({ phase: 'build' }))
   check('i a live run keeps "Talk to the team"', working.el.querySelector<HTMLTextAreaElement>('.factory-compose textarea')?.placeholder === 'Talk to the team: ask, redirect, add something, or say go')
+
+  // (j) the full task under the title: Show task / Hide task, nothing else in the header moves.
+  const jBox = (el: Element | null | undefined) => {
+    const r = el?.getBoundingClientRect()
+    return r ? [r.x, r.y, r.width, r.height].map((n) => Math.round(n * 10) / 10).join(',') : 'missing'
+  }
+  const lot = await mount('j. the task, open (kept open for the screenshot)', run({ phase: 'build', title: lotTask.title, task: lotTask.task }))
+  const headOf = (m: Mounted) => ({ h3: m.el.querySelector('.factory-h'), pause: btn(m.el, 'Pause'), abandon: btn(m.el, 'Abandon run'), block: m.el.querySelector<HTMLElement>('.factory-task') })
+  const shut = headOf(lot)
+  const jBefore = { pause: jBox(shut.pause), abandon: jBox(shut.abandon), size: shut.h3 ? getComputedStyle(shut.h3).fontSize : '' }
+  check('j closed by default: the h3 is run.title, no task block, the toggle says Show task', shut.h3?.textContent === lotTask.title && !shut.block && !!btn(lot.el, 'Show task') && lotTask.task.length === 595, shut.h3?.textContent || '')
+  btn(lot.el, 'Show task')!.click()
+  await tick()
+  const open = headOf(lot)
+  check('j open: the h3 is still run.title and looks the same', open.h3?.textContent === lotTask.title && getComputedStyle(open.h3!).fontSize === jBefore.size && jBefore.size === '15px', `${open.h3?.textContent} ${jBefore.size}`)
+  check("j open: the block holds run.task exactly (Joe's 595-character task)", open.block?.textContent === lotTask.task, JSON.stringify(open.block?.textContent?.slice(0, 80)))
+  check('j open: Pause and Abandon have the same boxes as when closed', jBox(open.pause) === jBefore.pause && jBox(open.abandon) === jBefore.abandon && jBefore.pause !== 'missing', JSON.stringify({ jBefore, after: { pause: jBox(open.pause), abandon: jBox(open.abandon) } }))
+  check('j open: the toggle says Hide task and the block sits right under the title row', !!btn(lot.el, 'Hide task') && open.block?.previousElementSibling?.classList.contains('factory-titlerow') === true)
+  const closedFrame = await mount('j. the task, closed', run({ phase: 'build', title: lotTask.title, task: lotTask.task }))
+  check('j a second mount of the same task opens closed', !closedFrame.el.querySelector('.factory-task'))
+
+  const first = run({ phase: 'build', title: 'First run', task: 'First run task\nwith a second line' })
+  const second = run({ phase: 'build', title: 'Second run', task: 'Second run task' })
+  const jWrap = document.createElement('section')
+  jWrap.className = 'stage'
+  jWrap.innerHTML = '<p class="stage-title">j. one pane, then another run in it</p><div class="stage-row"><div class="stage-pane"></div><aside class="refs stage-rail"></aside></div>'
+  document.getElementById('root')!.appendChild(jWrap)
+  let show: (id: string) => void = () => undefined
+  function Switcher() {
+    const [rid, setRid] = useState(first.id)
+    show = setRid
+    return <FactoryPane id="tab-switch" runId={rid} cwd={first.brainPath} active onRun={() => undefined} onFiles={() => undefined} onActivity={() => undefined} />
+  }
+  const host = jWrap.querySelector('.stage-pane') as HTMLElement
+  createRoot(host).render(<Switcher />)
+  await tick(80)
+  btn(host, 'Show task')!.click()
+  await tick()
+  const firstOpen = host.querySelector('.factory-task')?.textContent === first.task
+  flushSync(() => show(second.id))
+  await tick(80)
+  check('j open one run, then the pane shows another: its task is closed', firstOpen && host.querySelector('.factory-h')?.textContent === 'Second run' && !host.querySelector('.factory-task') && !!btn(host, 'Show task'), JSON.stringify({ firstOpen, h3: host.querySelector('.factory-h')?.textContent }))
+
+  const token = 'x'.repeat(400)
+  const longTask = [token, ...Array.from({ length: 79 }, (_, i) => `line ${i + 2} of a long task`)].join('\n')
+  const jLong = await mount('j. a 400-character token and 80 lines', run({ phase: 'build', title: 'Long task', task: longTask }))
+  btn(jLong.el, 'Show task')!.click()
+  await tick()
+  const block = jLong.el.querySelector<HTMLElement>('.factory-task')
+  const cs = block ? getComputedStyle(block) : null
+  const extra = cs && cs.boxSizing !== 'border-jBox' ? ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'].reduce((n, k) => n + parseFloat(cs[k as 'paddingTop']), 0) : 0
+  check('j a 400-character token wraps inside the block (no sideways overflow)', !!block && block.scrollWidth <= block.clientWidth && block.textContent === longTask, block ? `${block.scrollWidth} > ${block.clientWidth}` : 'no block')
+  check('j 80 lines scroll inside the block, within its max height', !!block && !!cs && block.scrollHeight > block.clientHeight && cs.overflowY === 'auto' && block.getBoundingClientRect().height <= parseFloat(cs.maxHeight) + extra + 0.5, cs ? `${block?.scrollHeight}/${block?.clientHeight} ${cs.overflowY} ${cs.maxHeight}` : 'no block')
+  check('j the long task keeps Pause and Abandon on screen in the title row', !!btn(jLong.el, 'Pause') && btn(jLong.el, 'Pause')!.closest('.factory-titlerow') !== null && !!btn(jLong.el, 'Abandon run'))
 
   document.getElementById('out')!.textContent = JSON.stringify(results)
 }

@@ -116,6 +116,8 @@ export function FactoryPane(props: {
   const [deployBlock, setDeployBlock] = useState<string | null>(null)
   const [deployCmd, setDeployCmd] = useState('')
   const [watchPolling, setWatchPolling] = useState(false)
+  // The run whose full task is open; another run in this pane opens closed.
+  const [taskFor, setTaskFor] = useState('')
   const [files, setFiles] = useState<FileHit[]>([])
   const runRef = useRef<string>(runId || '')
   const noteRef = useRef<HTMLTextAreaElement>(null)
@@ -420,13 +422,19 @@ export function FactoryPane(props: {
   const voiceHeld = run.voice?.status === 'fail'
   const items = threadItems(run, pending)
   const deployOff = watchDeployBlock(run.deployWatch) ?? deployBlock
+  const taskOpen = taskFor === run.id
   const watchStale = (watchState === 'watching' || watchState === 'building') && !watchPolling
   return (
     <div className={`factorywrap run ${active ? 'on' : ''}`}>
       <div className="factory">
         <div className="factory-head">
           <div className="factory-titlerow">
-            <h3 className="factory-h">{run.title}</h3>
+            <div className="factory-titletext">
+              <h3 className="factory-h">{run.title}</h3>
+              <button type="button" className="linkish factory-tasktoggle" aria-expanded={taskOpen} onClick={() => setTaskFor(taskOpen ? '' : run.id)}>
+                {taskOpen ? 'Hide task' : 'Show task'}
+              </button>
+            </div>
             <div className="factory-headbtns">
               {running ? (
                 <button type="button" className="ghost" onClick={() => void act(window.brain.factory.pause(run.id))}>
@@ -440,6 +448,7 @@ export function FactoryPane(props: {
               ) : null}
             </div>
           </div>
+          {taskOpen ? <div className="factory-task">{run.task}</div> : null}
           <div className="factory-chips">
             <span className="fchip">
               {baseName(run.workRepo)}

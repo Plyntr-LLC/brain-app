@@ -1,0 +1,16 @@
+# Unit D: render-ui factory, section j (2026-10-07T08:35:10Z)
+command: node --experimental-strip-types scripts/render-ui.ts factory
+frames (cropped from RENDER_UI_SIZE=1240,31400 scripts/render-ui.ts factory /tmp/brain-d-render): /tmp/brain-d-render/d-frame-1.png (open, Joe's 595-character task), d-frame-2.png (closed), d-frame-3.png (one pane, another run), d-frame-4.png (400-character token, 80 lines)
+
+PASS j closed by default: the h3 is run.title, no task block, the toggle says Show task
+PASS j open: the h3 is still run.title and looks the same
+PASS j open: the block holds run.task exactly (Joe's 595-character task)
+PASS j open: Pause and Abandon have the same boxes as when closed
+PASS j open: the toggle says Hide task and the block sits right under the title row
+PASS j a second mount of the same task opens closed
+PASS j open one run, then the pane shows another: its task is closed
+PASS j a 400-character token wraps inside the block (no sideways overflow)
+PASS j 80 lines scroll inside the block, within its max height
+PASS j the long task keeps Pause and Abandon on screen in the title row
+
+RENDER_UI_PASS factory (127 checks)
