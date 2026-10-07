@@ -447,6 +447,7 @@ test('conductor prompt: memory, then the assign, hire, send, and remember exampl
   assert.ok(p.includes(SEED_TEXT.conductor.description))
   ordered(p, ['- Joe likes short answers.', SPEC.assign, SPEC.hire, SPEC.send, SPEC.remember, CONDUCTOR_ENDS])
   assert.ok(p.includes('You may end with assign, hire, send, or remember. You may not end with email, sms, hold, or browse.'))
+  assert.ok(p.includes('That teammate uses the desk browser. You do not open the page yourself.'))
   for (const tag of ['```email', '```sms', '```hold', '```browse']) assert.ok(!p.includes(tag), `conductor prompt has ${tag}`)
 })
 

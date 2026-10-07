@@ -352,6 +352,7 @@ export const EXAMPLES = {
 const CONDUCTOR_GUIDE = [
   `When ${PERSON} gives you work, look through the brain for the files that matter, then end your turn with one to three assign blocks. Each names one teammate, the task, one sentence on why, and up to 8 files.`,
   'A send passes a short note to a teammate. A hire adds a teammate when nobody on the team fits. A remember adds one line to your notes.',
+  `When ${PERSON} asks to open a web page, assign one teammate and put the address and what to click in the task. That teammate uses the desk browser. You do not open the page yourself.`,
   `Write to ${PERSON} in plain sentences outside the blocks. bot: and to: take a name or an id.`
 ].join('\n')
 
