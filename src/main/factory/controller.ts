@@ -188,6 +188,8 @@ type Live = {
   judged?: Map<string, AskVerdict>
   /** The deploy watch polling GitHub for this run's push right now. Gone after an app restart. */
   watch?: AbortController
+  /** A deploy command is running for this run: a second Deploy returns without running the host CLI again. */
+  deploying?: boolean
 }
 
 export const STRICT_MISSING = 'Opus reviewer not found (claude CLI). Commit is your call.'
@@ -214,6 +216,18 @@ function need(): FactoryDeps {
 export function dropMemory(): void {
   for (const s of live.values()) s.watch?.abort()
   live.clear()
+}
+
+/**
+ * App quit: kills every Opus build (its whole process group) and stops every deploy watch. The gen bump
+ * makes the killed turn stale, so no run changes phase; the next launch restores them paused.
+ */
+export function shutdownFactory(): void {
+  for (const s of live.values()) {
+    s.gen++
+    s.abort?.abort()
+    s.watch?.abort()
+  }
 }
 
 function titleOf(task: string): string {
@@ -2276,6 +2290,8 @@ export async function publishPreview(id: string): Promise<RunRecord> {
   return setPhase(state, 'done', { preview: { remote: t.remote, branch: t.branch, sha: t.sha, at: Date.now() }, previewError: undefined })
 }
 
+export const DEPLOYING = 'Brain is deploying.'
+
 /** What Deploy runs on this pushed run: the saved command, else the linked host's CLI from a clean tree at the pushed commit. */
 function deployTarget(run: RunRecord): { cmd: string; why: string } {
   let saved = ''
@@ -2298,13 +2314,14 @@ export function deployBlockFor(id: string): string | null {
   const run = getRun(id)
   if (!run || run.phase !== 'done' || !run.pushed) return 'Deploy comes after Push.'
   if (run.deployed) return 'Deployed.'
+  if (live.get(id)?.deploying) return DEPLOYING
   return deployRefusal(run, deployTarget(run))
 }
 
 /** The exact command a Deploy click runs, for its confirm. Empty when Deploy is off. */
 export function deployCmdFor(id: string): string {
   const run = getRun(id)
-  if (!run || run.phase !== 'done' || !run.pushed || run.deployed) return ''
+  if (!run || run.phase !== 'done' || !run.pushed || run.deployed || live.get(id)?.deploying) return ''
   const t = deployTarget(run)
   return deployRefusal(run, t) ? '' : t.cmd
 }
@@ -2314,15 +2331,20 @@ export async function deployRun(id: string): Promise<RunRecord> {
   const state = liveFor(id)
   const run = state.run
   if (run.phase !== 'done' || !run.pushed) throw new Error('Deploy comes after Push.')
-  if (run.deployed) return run
+  if (run.deployed || state.deploying) return run
   const t = deployTarget(run)
   const block = deployRefusal(run, t)
   if (block) return setPhase(state, 'done', { deployError: block })
   const d = need()
-  // Same project bins as verify; deploy() strips the Factory shims.
-  const res = await (d.deploy || gitDeploy)(run.workRepo, t.cmd, { env: d.env(run.workRepo) })
-  if (!res.ok) return setPhase(state, 'done', { deployError: tail(res.out || 'Deploy failed.', 6) })
-  return setPhase(state, 'done', { deployed: { at: Date.now() }, deployError: undefined })
+  state.deploying = true
+  try {
+    // Same project bins as verify; deploy() strips the Factory shims.
+    const res = await (d.deploy || gitDeploy)(run.workRepo, t.cmd, { env: d.env(run.workRepo) })
+    if (!res.ok) return setPhase(state, 'done', { deployError: tail(res.out || 'Deploy failed.', 6) })
+    return setPhase(state, 'done', { deployed: { at: Date.now() }, deployError: undefined })
+  } finally {
+    state.deploying = false
+  }
 }
 
 export function abandonRun(id: string, o: Actor = {}): RunRecord {

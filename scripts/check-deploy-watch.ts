@@ -88,6 +88,11 @@ chmodSync(join(fakeBin, 'gh'), 0o755)
 let ghOnPath = true
 const factoryEnvFor = () => opus.opusEnv(gates.factoryEnv({ ...process.env, PATH: [ghOnPath ? fakeBin : '', '/usr/bin', '/bin'].filter(Boolean).join(':') }, gates.ensureShims(store.factoryShimDir())))
 const deploys: { repo: string; cmd: string }[] = []
+let held: Promise<void> = Promise.resolve()
+let release = () => {}
+const holdDeploys = () => {
+  held = new Promise<void>((r) => (release = r))
+}
 type Ev = { runId: string; kind: string; run?: import('../src/shared/factory.ts').RunRecord; t: number }
 const events: Ev[] = []
 const deps: Parameters<typeof ctl.configureFactory>[0] = {
@@ -96,6 +101,7 @@ const deps: Parameters<typeof ctl.configureFactory>[0] = {
   env: () => factoryEnvFor(),
   deploy: async (repo, cmd) => {
     deploys.push({ repo, cmd })
+    await held
     return { ok: true, out: 'deployed' }
   },
   deployWatch: { pollMs: 50, noneMs: 1500, stuckMs: 2000 }
@@ -431,6 +437,37 @@ const line = (label: string, o: { states: string[]; after: number | string; spy:
   check('11c shipRun, gh missing: unknown naming the GitHub CLI, the deploy spy once, at once', w?.state === 'unknown' && /GitHub CLI/.test(w.why) && deploys.length - d0 === 1 && ms < 1500, JSON.stringify({ w, spy: deploys.length - d0, ms }))
   line('case 11c', { states: statesOf(id, e0), after: ghAfterEnd(id, e0), spy: deploys.length - d0, block: ctl.deployBlockFor(id), extra: `deployed after ${ms} ms` })
 }
+
+// 14. One deploy at a time: while Brain's own deploy after the watch runs, Deploy is off and a click does not run it again.
+for (const [label, remote] of [['14a', undefined], ['14b', null]] as const) {
+  ctl.configureFactory({ ...deps, deployWatch: { pollMs: 50, noneMs: remote === null ? 60_000 : 1500, stuckMs: 120_000 } })
+  const dir = workRepo({ github: remote })
+  const id = runIn(dir, 'review')
+  scriptFor('x', [{}])
+  const e0 = events.length
+  const d0 = deploys.length
+  holdDeploys()
+  await ctl.shipRun(id)
+  const started = await until(() => deploys.length - d0 === 1, 4000)
+  const block = ctl.deployBlockFor(id)
+  const cmd = ctl.deployCmdFor(id)
+  const clicked = ctl.deployRun(id)
+  await sleep(100)
+  const during = deploys.length - d0
+  release()
+  const click = await clicked
+  await until(() => !!ctl.getRun(id)?.deployed)
+  await sleep(200)
+  const states = statesOf(id, e0)
+  const end = watchOf(id)?.state
+  check(
+    `${label} ${remote === null ? 'cannot watch' : 'nothing started'}, Brain's deploy held open: Deploy says Brain is deploying, a click does not run the host CLI again, one deploy in all`,
+    started && end === (remote === null ? 'unknown' : 'none') && block === ctl.DEPLOYING && cmd === '' && !click.deployed && during === 1 && deploys.length - d0 === 1 && !!ctl.getRun(id)?.deployed && ctl.deployBlockFor(id) === 'Deployed.',
+    JSON.stringify({ started, end, block, cmd, during, total: deploys.length - d0 })
+  )
+  lines.push(`case ${label}  ${remote === null ? 'ship, cannot watch (local remote)' : 'ship, nothing started'}, deploy held open  states=${states.join('>')}  deployBlockFor while held=${JSON.stringify(block)}  click while held ran the spy: ${during > 1}  deploy spy total=${deploys.length - d0}`)
+}
+ctl.configureFactory(deps)
 
 // 12. Deploy per watch state, from the real deployBlockFor above.
 {

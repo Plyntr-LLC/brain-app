@@ -253,7 +253,7 @@ export function FactoryPane(props: {
       setDeployCmd(r.ok ? r.cmd : '')
       setWatchPolling(r.ok ? r.polling : false)
     })
-  }, [run?.id, pushedAt, deployedAt, watchState])
+  }, [run?.id, pushedAt, deployedAt, watchState, run?.deployError])
 
   async function toggleVoice(on: boolean) {
     setVoiceOn(on)

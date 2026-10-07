@@ -133,8 +133,8 @@ if (argv.includes('--tools')) {
     const selfCheck = /Role: self-check/.test(brief)
     log({ role: 'brief', bytes: brief.length, selfCheck })
     if (script.child && !selfCheck) {
-      require('child_process').spawn('sleep', ['30'], { stdio: 'ignore' })
-      log({ role: 'child' })
+      const kid = require('child_process').spawn('sleep', [String(script.child)], { stdio: 'ignore' })
+      log({ role: 'child', childPid: kid.pid })
     }
     for (const step of selfCheck ? [] : script.steps) {
       const answers = await Promise.all(step.map(ask))
@@ -153,7 +153,7 @@ if (argv.includes('--tools')) {
 )
 chmodSync(fakeClaude, 0o755)
 
-type Row = { pid: number; at: number; role: string; id?: string; tool?: string; behavior?: string; message?: string; updatedInput?: Record<string, unknown>; input?: string; verdict?: string; model?: string; argv?: string[]; cwd?: string; anthropic?: boolean; selfCheck?: boolean }
+type Row = { pid: number; at: number; role: string; childPid?: number; id?: string; tool?: string; behavior?: string; message?: string; updatedInput?: Record<string, unknown>; input?: string; verdict?: string; model?: string; argv?: string[]; cwd?: string; anthropic?: boolean; selfCheck?: boolean }
 const rows = (): Row[] => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l) as Row) : [])
 
 type Ev = { runId: string; kind: string; ev?: { kind: string; data?: string; title?: string; requestId?: string; tabId?: string; clear?: boolean; detail?: string; options?: { id: string; label: string }[] }; run?: { phase: string } }
@@ -190,8 +190,8 @@ type Rule = { match: string; verdict: 'ALLOW' | 'DENY' | 'ASK'; delay?: number }
 let n = 0
 
 /** A saved T1 run with builder opus, resumed: resumeTo('build') runs the real opusBuildTurn. */
-function startCase(o: { steps: Ask[][]; judge?: Rule[]; approver: 'fable' | 'off'; runThrough?: boolean; child?: boolean; timeoutMs?: number }) {
-  writeFileSync(scriptPath, JSON.stringify({ steps: o.steps, child: !!o.child }))
+function startCase(o: { steps: Ask[][]; judge?: Rule[]; approver: 'fable' | 'off'; runThrough?: boolean; child?: number; timeoutMs?: number }) {
+  writeFileSync(scriptPath, JSON.stringify({ steps: o.steps, child: o.child || 0 }))
   writeFileSync(judgePath, JSON.stringify(o.judge || []))
   ctl.configureFactory({ ...deps, ...(o.timeoutMs ? { opusTimeoutMs: o.timeoutMs } : {}) })
   const work = repo(`work-${++n}`, { 'README.md': '# Work\n', 'src/app.ts': 'export const app = 1\n' })
@@ -423,7 +423,7 @@ const settled = async (id: string) => {
 
 // Case 12: abandon while a card is open.
 {
-  const c = startCase({ steps: [[{ id: 'a1', tool: 'Bash', input: { command: 'npm run build' } }]], approver: 'off', child: true })
+  const c = startCase({ steps: [[{ id: 'a1', tool: 'Bash', input: { command: 'npm run build' } }]], approver: 'off', child: 30 })
   const shown = await until(() => cardsOf(c).includes('a1') && since(c).rows.some((r) => r.role === 'child'))
   const pid = since(c).rows.find((r) => r.role === 'builder')?.pid || 0
   ctl.abandonRun(c.id)
@@ -445,6 +445,30 @@ const settled = async (id: string) => {
   await sleep(200)
   check('12 abandon with a card up: the process group is gone within 5 s, the card is cleared, a late click returns false, nothing is written', shown && pid > 0 && gone && cleared && late === false && responses(c, 'a1').length === 0 && store.loadRun(c.id)?.phase === 'abandoned', JSON.stringify({ shown, pid, gone, cleared, late, responses: responses(c, 'a1') }))
   lines.push(`case 12  tool=Bash route=card who=Joe, abandoned with the card up  process group gone=${gone} card cleared=${cleared} late skin:decide=${late} responses written=${responses(c, 'a1').length}`)
+}
+
+// Case 15: the app quits mid-turn (before-quit calls shutdownFactory).
+{
+  const c = startCase({ steps: [[{ id: 'k1', tool: 'Bash', input: { command: 'npm run dev' } }]], approver: 'off', child: 60 })
+  const shown = await until(() => cardsOf(c).includes('k1') && since(c).rows.some((r) => r.role === 'child'))
+  const pid = since(c).rows.find((r) => r.role === 'builder')?.pid || 0
+  const kid = since(c).rows.find((r) => r.role === 'child')?.childPid || 0
+  const before = ctl.getRun(c.id)?.phase
+  const alive = (p: number) => {
+    try {
+      process.kill(p, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  const up = alive(pid) && alive(kid)
+  ctl.shutdownFactory()
+  const gone = await until(() => !alive(pid) && !alive(kid) && !alive(-pid), 5000)
+  await sleep(300)
+  const after = { live: ctl.getRun(c.id)?.phase, disk: store.loadRun(c.id)?.phase }
+  check('15 quit mid-turn: shutdownFactory kills the builder and its sleep 60 child within 5 s, and the run keeps its phase', shown && up && gone && before === 'build' && after.live === before && after.disk === before && responses(c, 'k1').length === 0, JSON.stringify({ shown, up, pid, kid, gone, before, after }))
+  lines.push(`case 15  quit mid-turn with a card up: builder ${pid} and its sleep 60 child ${kid} alive before=${up}, both gone within 5 s=${gone}, phase before=${before} after=${after.live} (on disk ${after.disk}), responses written=${responses(c, 'k1').length}`)
 }
 
 const pass = results.every((r) => r.ok)

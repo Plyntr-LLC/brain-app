@@ -16,6 +16,7 @@ import { killAllWarm, prewarm } from './warm'
 import { registerUpdateIpc, startAutoUpdate, recordLaunchVersion, isInstallingUpdate, installDownloadedUpdate } from './update'
 import { registerSkinIpc } from './skin/ipc'
 import { registerFactoryIpc } from './factory/ipc'
+import { shutdownFactory } from './factory/controller'
 import { registerPhoneIpc, restorePhoneIfWanted, stopPhone } from './phone'
 import { registerMediaIpc } from './media/ipc'
 import { handleBrainMediaProtocol, registerBrainMediaScheme } from './media/protocol'
@@ -184,6 +185,7 @@ app.on('before-quit', (e) => {
     void stopPhone()
     killAllPtys()
     killAllWarm()
+    shutdownFactory()
     return
   }
   if (quitStarted) {

@@ -67,7 +67,7 @@ const TIER_GO = 'Continue past the tier stop'
 const PROCEED_GO = 'Proceed past this hold'
 const STOP = 'Stop'
 const SHIP = "Let's get this live"
-const SHIP_REPLY = 'Committing, then pushing, then deploying.'
+const SHIP_REPLY = "Committed and pushed. Brain can't watch this host, so it is deploying."
 const APPROVE = 'Approve the plan.'
 const APPROVE_REPLY = 'Approving the plan.'
 const BAD_CHOICE = 'Jump to done.'
@@ -1954,4 +1954,36 @@ test('a finished run card caps each part and stays under 16,000 characters', asy
   assert.equal((JSON.parse(field('events')) as string[]).length, 40)
   assert.match(field('deploy'), /^Live on Vercel: https:\/\/card\.vercel\.app/)
   assert.ok(prompt.length < 16_000, String(prompt.length))
+})
+
+test("Let's get this live says it is watching when the remote is on GitHub", async () => {
+  const mods = await loaded
+  conduct = mods.conductor.conduct
+  configureFactory = mods.controller.configureFactory
+  startRun = mods.controller.startRun
+  getRun = mods.controller.getRun
+  dropMemory = mods.controller.dropMemory
+  saveProfile = mods.profile.saveProfile
+  mods.store.setUserDataDir(() => userData)
+  const ghDir = join(temp, 'fake-gh')
+  mkdirSync(ghDir, { recursive: true })
+  writeFileSync(
+    join(ghDir, 'gh'),
+    `#!${process.execPath}\nconst a = process.argv.slice(2)\nif (a[0] !== 'api') process.exit(0)\nprocess.stdout.write(/deployments/.test(a[1]) ? '[]' : /check-runs/.test(a[1]) ? '{"check_runs":[]}' : '{"statuses":[]}')\n`,
+    { mode: 0o755 }
+  )
+  configureFactory({ ...deps, env: () => ({ ...process.env, PATH: `${ghDir}:/usr/bin:/bin` }), deployWatch: { pollMs: 50, noneMs: 400, stuckMs: 5000 } })
+  reset()
+  const dir = await boot('ship-github', 'fix typo in footer', { remote: true })
+  git(dir, ['remote', 'set-url', 'origin', 'https://github.com/acme/site.git'])
+  git(dir, ['config', 'remote.origin.pushurl', `${dir}.git`])
+  touch = () => writeFileSync(join(dir, 'src.ts'), 'export const n = 31\n')
+  await until(() => runOf().phase === 'review' && !!runOf().diff, 'github ship review')
+  await conduct(activeId, SHIP)
+  assert.equal((runOf().guide || []).find((g) => g.text === SHIP)?.ack, mods.conductor.SHIP_WATCHING)
+  assert.equal(mods.conductor.SHIP_WATCHING, 'Committed and pushed. Watching for a deploy.')
+  assert.ok(runOf().pushed)
+  await until(() => deploys === 1 && !!runOf().deployed, 'github ship deploy after none')
+  assert.equal(runOf().deployWatch?.state, 'none')
+  configureFactory(deps)
 })

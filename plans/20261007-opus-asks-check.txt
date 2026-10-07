@@ -1,4 +1,4 @@
-# Unit A fixture: scripts/check-opus-asks.ts (2026-10-07T07:38:42.733Z)
+# Unit A fixture: scripts/check-opus-asks.ts (2026-10-07T09:44:04.886Z)
 case 1   tool=Write kind=edit route=allow verdict=allow who=Brain fast path response=c1
 case 2   tool=Bash kind=execute route=reject verdict=deny who=Brain filter response=c2 message="Factory runs do not push. Brain commits on the work repo after review; pushing stays a person's call."
 case 3   tool=Write kind=edit route=reject verdict=deny who=Brain filter response=c3 message="Factory edits land in the work repo only. This path is in the brain folder, and the brain syncs, so Brain refused it."
@@ -15,6 +15,7 @@ case 11a  tool=Write kind=edit route=card verdict=allow who=Joe response=o1
 case 11b  tool=Bash kind=execute route=card verdict=allow who=Joe response=o2
 case 11c  tool=Read kind=read route=card verdict=allow who=Joe response=o3
 case 12  tool=Bash route=card who=Joe, abandoned with the card up  process group gone=true card cleared=true late skin:decide=false responses written=0
+case 15  quit mid-turn with a card up: builder 4690 and its sleep 60 child 4697 alive before=true, both gone within 5 s=true, phase before=build after=build (on disk build), responses written=0
 
 PASS 1 relative Write src/a.ts resolves in the work repo: fast allow, original input back, no judge
 PASS 1 control: the same ask resolved against the brain is a brain-write reject
@@ -36,6 +37,7 @@ PASS 10 two open cards: the pane gets only q1 until q1 is answered, then q2
 PASS 10 Refuse goes to q1, Allow goes to q2, once each
 PASS 11 approver off, Approve in advance off: three cards, no judge, nothing allowed without a click
 PASS 12 abandon with a card up: the process group is gone within 5 s, the card is cleared, a late click returns false, nothing is written
+PASS 15 quit mid-turn: shutdownFactory kills the builder and its sleep 60 child within 5 s, and the run keeps its phase
 
 OPUS_ASKS_PASS
 

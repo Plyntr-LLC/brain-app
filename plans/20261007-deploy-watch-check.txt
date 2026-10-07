@@ -1,4 +1,4 @@
-# Unit B: scripts/check-deploy-watch.ts (2026-10-07T08:12:30.377Z)
+# Unit B: scripts/check-deploy-watch.ts (2026-10-07T09:44:25.249Z)
 case 1   states=watching>building>live  gh calls after end=0  deploy spy=0  deployBlockFor="Live on Vercel."  url=https://site-acme.vercel.app
 case 2   states=watching>building  gh calls after end=-  deploy spy=0  deployBlockFor="Vercel is building this push."
 case 3   states=watching>none  gh calls after end=0  deploy spy=0  deployBlockFor=null (Deploy on)  cmd="vercel deploy --prod --yes"
@@ -8,10 +8,12 @@ case 6   states=watching>unknown  gh calls after end=0  deploy spy=0  deployBloc
 case 7   states=watching>unknown  gh calls after end=0  deploy spy=0  deployBlockFor=null (Deploy on)  why="the GitHub CLI (gh) is not installed."
 case 8   states=watching>building>live  gh calls after end=0  deploy spy=0  deployBlockFor="Live on Vercel."  shipRun returned at watching
 case 9   states=watching>none  gh calls after end=0  deploy spy=1  deployBlockFor="Deployed."  cmd=vercel deploy --prod --yes
-case 10  states=watching>unknown  gh calls after end=0  deploy spy=1  deployBlockFor="Deployed."  deployed after 292 ms (none window 60 s)
+case 10  states=watching>unknown  gh calls after end=0  deploy spy=1  deployBlockFor="Deployed."  deployed after 261 ms (none window 60 s)
 case 11  states=watching>failed  gh calls after end=0  deploy spy=0  deployBlockFor=null (Deploy on)
 case 11b  states=watching>building>unknown  gh calls after end=0  deploy spy=0  deployBlockFor=null (Deploy on)  why="still building after 20 minutes, check the host."
-case 11c  states=watching>unknown  gh calls after end=0  deploy spy=1  deployBlockFor="Deployed."  deployed after 266 ms
+case 11c  states=watching>unknown  gh calls after end=0  deploy spy=1  deployBlockFor="Deployed."  deployed after 278 ms
+case 14a  ship, nothing started, deploy held open  states=watching>none  deployBlockFor while held="Brain is deploying."  click while held ran the spy: false  deploy spy total=1
+case 14b  ship, cannot watch (local remote), deploy held open  states=watching>unknown  deployBlockFor while held="Brain is deploying."  click while held ran the spy: false  deploy spy total=1
 case 12  watching: off "Brain is watching GitHub for a deploy from this push."; live: off "Live on Vercel."; building: off "Vercel is building this push."; none: Deploy on; unknown: Deploy on; failed: Deploy on
 case 13  states=watching>live  gh calls after end=-  deploy spy=0  deployBlockFor="Live on Vercel."  polls=1 Live on Vercel: https://lotline-qnari8l0f-joeprosynergys-projects.vercel.app
 
@@ -32,6 +34,8 @@ PASS 10 shipRun, not a GitHub remote: the deploy spy once, at once (well inside 
 PASS 11 shipRun, host failed: failed with the URL, the deploy spy 0, Deploy on
 PASS 11b shipRun, stuck build: unknown (still building), the deploy spy 0, Deploy on
 PASS 11c shipRun, gh missing: unknown naming the GitHub CLI, the deploy spy once, at once
+PASS 14a nothing started, Brain's deploy held open: Deploy says Brain is deploying, a click does not run the host CLI again, one deploy in all
+PASS 14b cannot watch, Brain's deploy held open: Deploy says Brain is deploying, a click does not run the host CLI again, one deploy in all
 PASS 12 Deploy off while watching, building and live (with the sentence); on for none, failed and unknown
 PASS 5 polling stops at every end state: no gh call after live, failed, none or unknown in any case
 PASS 13 live read, real gh: lotline 8fe5f16 is live on Vercel, Production, with the URL, on the first poll

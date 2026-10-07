@@ -239,6 +239,19 @@ function restartDoor(id: string, body: string): RunRecord {
   return rewriteGuideAck(id, body, restartAck(before, after))
 }
 
+export const SHIP_WATCHING = 'Committed and pushed. Watching for a deploy.'
+export const SHIP_CANNOT_WATCH = "Committed and pushed. Brain can't watch this host, so it is deploying."
+
+/**
+ * What Let's get this live did, read from the run it left: a refusal or failure first (Kennel's deploy
+ * refusal included). A watch already unknown here is one that could not start, and shipRun deploys then.
+ */
+function shipAck(run: RunRecord | null): string {
+  const failed = run?.error || run?.pushError || run?.deployError
+  if (failed) return failed
+  return run?.deployWatch?.state === 'unknown' ? SHIP_CANNOT_WATCH : SHIP_WATCHING
+}
+
 async function runDoor(id: string, intent: Intent, body: string): Promise<RunRecord> {
   if (intent === 'ship') {
     try {
@@ -246,9 +259,7 @@ async function runDoor(id: string, intent: Intent, body: string): Promise<RunRec
     } catch (e) {
       return appendSentNote(id, body, String((e as Error).message || e))
     }
-    const shipped = getRun(id)
-    const ack = shipped?.error || shipped?.pushError || shipped?.deployError || 'Committing, then pushing, then deploying.'
-    return appendSentNote(id, body, ack)
+    return appendSentNote(id, body, shipAck(getRun(id)))
   }
   try {
     if (intent === 'pause') pauseRun(id)
