@@ -38,14 +38,17 @@ function fakeSpawn(script: (args: string[], stdin: string) => { code?: number; o
       }
     } as unknown as ChildProcess
     const resLater = () => script(args, stdin)
-    child.stdout.on = ((ev: string, fn: (b: string) => void) => {
+    const stdout = child.stdout
+    if (!stdout) throw new Error('fake child has no stdout')
+    stdout.on = ((ev: string, fn: (b: string) => void) => {
       if (ev === 'data') {
         queueMicrotask(() => {
           const res = resLater()
           if (!res.hang && res.out) fn(res.out)
         })
       }
-    }) as ChildProcess['stdout']['on']
+      return stdout
+    }) as typeof stdout.on
     return child
   }
   return { spawn: spawnFn, calls }

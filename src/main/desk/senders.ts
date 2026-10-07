@@ -82,7 +82,7 @@ function runChild(
     child.stderr?.on('data', (b) => {
       stderr += String(b)
     })
-    child.on('error', (err) => finish(1, false) || void err)
+    child.on('error', () => finish(1, false))
     child.on('close', (code) => finish(code, false))
     if (stdin != null) child.stdin?.end(stdin)
     else child.stdin?.end()
