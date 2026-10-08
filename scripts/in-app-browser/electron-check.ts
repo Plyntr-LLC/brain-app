@@ -2,7 +2,7 @@
 // the cookie phase 1 saved is still there after a restart on the same userData.
 import './set-paths.ts'
 import { app, BaseWindow, BrowserWindow, nativeImage, session, type WebContents, type WebContentsView } from 'electron'
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { connect } from 'node:net'
@@ -521,6 +521,8 @@ async function phaseOne() {
   check('19 stopping the bridge removes this run\'s Claude config files', !existsSync(configFile))
   server.close()
   const leaderSock = process.env.BRAIN_GROK_LEADER_SOCK || ''
+  // A pool that exits after acpKillAll can start the leader again; it must not outlive the check.
+  if (leaderSock) spawnSync('pkill', ['-f', leaderSock])
   for (const f of [leaderSock, leaderSock.replace(/\.sock$/, '.lock')]) if (f) rmSync(f, { force: true })
   log('PHASE_1_PASS')
 }
