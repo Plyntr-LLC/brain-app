@@ -21,11 +21,9 @@ export type ChromePage = {
   isClosed: () => boolean
   setViewport?: (viewport: null) => Promise<void>
   waitForNetworkIdle?: (options: { idleTime: number; timeout: number }) => Promise<void>
-  /** Present on a real puppeteer page. Missing on the fake page, which then skips the park. */
-  createCDPSession?: () => Promise<{
-    send: (method: string, params?: object) => Promise<{ windowId?: number }>
-    detach?: () => Promise<void>
-  }>
+  /** Present on a real puppeteer page. Missing on the fake page, which then skips the park.
+   * `any` because puppeteer's send() only accepts protocol command names, so a `string` method would reject Page. */
+  createCDPSession?: () => Promise<any>
 }
 
 export type ChromeBrowser = {
