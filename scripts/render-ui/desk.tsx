@@ -66,8 +66,8 @@ const brain = {
     status: (tab: string) => rec('status', tab),
     focus: (tab: string) => rec('focus', tab),
     showWindow: (tab: string) => rec('showWindow', tab),
-    picture: (tab: string) => {
-      calls.push({ fn: 'picture', args: [tab] })
+    picture: (tab: string, botId?: string) => {
+      calls.push({ fn: 'picture', args: botId ? [tab, botId] : [tab] })
       // A one-pixel jpeg so the corner picture has an image to size. Other tabs stay empty.
       return Promise.resolve(tab === 'tab-pip' ? PIP_JPEG : null)
     },
@@ -81,7 +81,16 @@ const brain = {
     }
   },
   ai: { detect: () => Promise.resolve(detectNow) },
-  slash: { list: () => Promise.resolve({ models: [] as Cap[] }) }
+  slash: { list: () => Promise.resolve({ models: [] as Cap[] }) },
+  browser: {
+    face: (owner: string) => rec('face', owner),
+    clickAt: (owner: string, x: number, y: number) => rec('clickAt', owner, x, y),
+    typeText: (owner: string, text: string) => rec('typeText', owner, text),
+    pressKey: (owner: string, key: string) => rec('pressKey', owner, key),
+    wheel: (owner: string, deltaY: number) => rec('wheel', owner, deltaY),
+    showWindow: () => rec('browserShow'),
+    close: (owner: string) => rec('close', owner)
+  }
 }
 ;(window as unknown as { brain: typeof brain }).brain = brain
 
@@ -718,7 +727,7 @@ function cardStage() {
   document.getElementById('root')!.appendChild(wrap)
   const grid = wrap.querySelector('.card-grid') as HTMLElement
   const names = { me: 'You', conductor: 'Conductor', researcher: 'Researcher', writer: 'Writer', checker: 'Checker', drafts: 'Drafts' }
-  function mount(msg: DeskMessage, busy = false) {
+  function mount(msg: DeskMessage, busy = false, picture?: { mode: 'small' | 'wide' | 'note'; src: string | null }) {
     const el = document.createElement('div')
     el.className = 'thread'
     grid.appendChild(el)
@@ -743,6 +752,7 @@ function cardStage() {
           onOpenMemory={on('openMemory')}
           onOpenBrowser={on('openBrowser')}
           onRemoveHire={on('removeHire')}
+          picture={picture}
         />
       )
     )
@@ -807,10 +817,20 @@ function cardStage() {
     JSON.stringify(bodyLines(steps.el.querySelector('.fcard')!))
   )
   check('6 no Open browser when the window is closed', !button(steps.el, 'Open browser'))
-  const signIn = mount({ ...base, id: 'c_si', from: 'writer', kind: 'browse', text: 'Writer needs you to sign in, in the desk browser.', browse: { steps: [{ action: 'url', detail: 'https://example.com', url: 'https://example.com/login' }], signIn: true, windowOpen: true } })
-  check('6 sign-in card is only its sentence', text(signIn.el.querySelector('.fcard-body')) === 'Writer needs you to sign in, in the desk browser.')
+  const signIn = mount(
+    { ...base, id: 'c_si', from: 'writer', kind: 'browse', text: 'Writer needs you to sign in, in the desk browser.', browse: { steps: [{ action: 'url', detail: 'https://example.com', url: 'https://example.com/login' }], signIn: true, windowOpen: true } },
+    false,
+    { mode: 'small', src: PIP_JPEG }
+  )
+  const signImg = signIn.el.querySelector('img')
+  check(
+    '6 sign-in card keeps its sentence and shows the picture under it',
+    text(signIn.el.querySelector('.fcard-body')) === 'Writer needs you to sign in, in the desk browser.' &&
+      !!signImg && !signImg.closest('.fcard-body') && !!signIn.el.querySelector('.desk-browser-slot')?.contains(signImg),
+    text(signIn.el.querySelector('.fcard-body'))
+  )
   button(signIn.el, 'Open browser')?.click()
-  check('6 sign-in card with the window open has Open browser', same(signIn.got, 'openBrowser', { signIn: true }), show(signIn.got))
+  check('6 sign-in Open browser does not ask to bring the window forward', signIn.got.length === 1 && signIn.got[0].fn === 'openBrowser' && signIn.got[0].args.length === 0, show(signIn.got))
 
   const hireMsg: DeskMessage = { ...base, id: 'c_hire', from: 'conductor', kind: 'hire', text: 'Writes headlines only.', hire: { id: 'designer', name: 'Designer', cli: 'claude', model: 'default', description: 'Writes headlines only.', hasWorked: false } }
   const hireBusy = mount(hireMsg, true)
@@ -885,51 +905,59 @@ async function pipStage() {
   const shotBox = imgBox()
   const olderBox = olderCard()?.getBoundingClientRect()
   const threadBox = thread?.getBoundingClientRect()
+  const signBox = signCard()?.getBoundingClientRect()
   check(
-    '8 one picture, inside the latest browse card, and no corner strip',
+    '8 one picture, on the sign-in card under the sentence, and no corner strip',
     pane.querySelectorAll('img').length === 1 && !pane.querySelector('.desk-pip') &&
-      !!shotBox && !!olderBox && !!threadBox && !!thread?.contains(img()!) &&
-      !!olderCard()?.contains(img()!) && boxInside(shotBox, olderBox) && boxInside(shotBox, threadBox) &&
+      !!shotBox && !!signBox && !!threadBox && !!thread?.contains(img()!) &&
+      !!signCard()?.contains(img()!) && boxInside(shotBox, signBox) && boxInside(shotBox, threadBox) &&
       Math.round(shotBox.width) === 240 && Math.round(shotBox.height) === 150 &&
-      !signCard()?.querySelector('img'),
+      !img()?.closest('.fcard-body') &&
+      text(signCard()?.querySelector('.fcard-body')) === 'Writer needs you to sign in, in the desk browser.' &&
+      !olderCard()?.querySelector('img'),
     shotBox ? `${Math.round(shotBox.width)}x${Math.round(shotBox.height)} imgs ${pane.querySelectorAll('img').length}` : 'no image'
   )
   let before = calls.length
-  button(signCard(), 'Open browser')?.click()
-  await tick()
-  check('8 sign-in Open browser brings the window forward', since(before).some((c) => c.fn === 'showWindow'), show(since(before).filter((c) => c.fn !== 'picture')))
-  before = calls.length
   img()?.click()
   await tick()
   img()?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   const wide = img()?.getBoundingClientRect()
-  const wideCard = olderCard()?.getBoundingClientRect()
+  const wideCard = signCard()?.getBoundingClientRect()
   check(
-    '8 a click enlarges the picture inside the card and does not bring Chrome forward',
+    '8 a click enlarges the sign-in picture inside the card and does not bring Chrome forward',
     !!wide && !!wideCard && !!img() && wide.width > 240 && wide.height > 150 && wide.height <= 420 &&
-      boxInside(wide, wideCard) && olderCard()?.contains(img()!) && !img()!.closest('.fcard-body') && fullyVisible(img()!) &&
-      !since(before).some((c) => c.fn === 'showWindow' || c.fn === 'focus'),
+      boxInside(wide, wideCard) && signCard()?.contains(img()!) && !img()!.closest('.fcard-body') && fullyVisible(img()!) &&
+      !since(before).some((c) => c.fn === 'showWindow' || c.fn === 'browserShow' || c.fn === 'focus'),
     wide ? `${Math.round(wide.width)}x${Math.round(wide.height)} ${show(since(before).filter((c) => c.fn !== 'picture'))}` : 'no image'
   )
-  button(olderCard(), 'Hide')?.click()
+  before = calls.length
+  button(signCard(), 'Open browser')?.click()
   await tick()
-  const noteEl = [...(olderCard()?.querySelectorAll('button, p') || [])].find((el) => text(el) === 'There were browsers.')
+  check(
+    '8 sign-in Open browser stays wide and does not bring the window forward',
+    !!img()?.classList.contains('wide') && (img()?.getBoundingClientRect().height || 0) > 150 &&
+      !since(before).some((c) => c.fn === 'showWindow' || c.fn === 'browserShow' || c.fn === 'focus'),
+    show(since(before).filter((c) => c.fn !== 'picture'))
+  )
+  button(signCard(), 'Hide')?.click()
+  await tick()
+  const noteEl = [...(signCard()?.querySelectorAll('button, p') || [])].find((el) => text(el) === 'There were browsers.')
   check(
     '8 Hide leaves the note and no picture',
-    !olderCard()?.querySelector('img') && text(noteEl) === 'There were browsers.' && !noteEl?.closest('.fcard-body') && !text(olderCard()).includes('Desk browser'),
-    text(olderCard())
+    !signCard()?.querySelector('img') && text(noteEl) === 'There were browsers.' && !noteEl?.closest('.fcard-body'),
+    text(signCard())
   )
   before = calls.length
   noteEl?.click()
   await until(() => {
-    const box = olderCard()?.querySelector('img')?.getBoundingClientRect()
+    const box = signCard()?.querySelector('img')?.getBoundingClientRect()
     return !!box && Math.round(box.width) === 240 && Math.round(box.height) === 150
   })
-  const restored = olderCard()?.querySelector('img')?.getBoundingClientRect()
+  const restored = signCard()?.querySelector('img')?.getBoundingClientRect()
   check(
     '8 the note brings the small picture back and does not bring Chrome forward',
     !!restored && Math.round(restored.width) === 240 && Math.round(restored.height) === 150 &&
-      !since(before).some((c) => c.fn === 'showWindow' || c.fn === 'focus'),
+      !since(before).some((c) => c.fn === 'showWindow' || c.fn === 'browserShow' || c.fn === 'focus'),
     restored ? `${Math.round(restored.width)}x${Math.round(restored.height)}` : 'no image'
   )
   before = calls.length
@@ -937,16 +965,16 @@ async function pipStage() {
   await tick()
   img()?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   const opened = img()?.getBoundingClientRect()
-  const openedCard = olderCard()?.getBoundingClientRect()
+  const openedCard = signCard()?.getBoundingClientRect()
   check(
-    '8 Open browser on a step card enlarges the picture and does not bring Chrome forward',
+    '8 Open browser enlarges the picture and does not bring Chrome forward',
     !!opened && !!openedCard && !!img() && opened.width > 240 && opened.height > 150 && opened.height <= 420 &&
-      boxInside(opened, openedCard) && !img()!.closest('.fcard-body') && fullyVisible(img()!) &&
-      !since(before).some((c) => c.fn === 'showWindow' || c.fn === 'focus'),
+      boxInside(opened, openedCard) && signCard()?.contains(img()!) && !img()!.closest('.fcard-body') && fullyVisible(img()!) &&
+      !since(before).some((c) => c.fn === 'showWindow' || c.fn === 'browserShow' || c.fn === 'focus'),
     opened ? `${Math.round(opened.width)}x${Math.round(opened.height)} ${show(since(before).filter((c) => c.fn !== 'picture'))}` : 'no image'
   )
-  button(olderCard(), 'Hide')?.click()
-  await until(() => !!olderCard()?.querySelector('.desk-browser-note') && !olderCard()?.querySelector('img'))
+  button(signCard(), 'Hide')?.click()
+  await until(() => !!signCard()?.querySelector('.desk-browser-note') && !signCard()?.querySelector('img'))
   const pics = () => calls.filter((c) => c.fn === 'picture').length
   const held = pics()
   await tick(2000)

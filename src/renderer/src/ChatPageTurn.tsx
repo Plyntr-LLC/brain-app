@@ -13,38 +13,30 @@ export function ChatPageTurn(props: {
   onTypeText: (text: string) => void
   onPressKey: (key: string) => void
   onWheel: (deltaY: number) => void
-  onShowWindow: () => void
+  onWiden: () => void
 }): ReactNode {
-  let body: ReactNode
-  if (props.signIn) {
-    body = (
-      <>
-        <p>Sign in, in the browser.</p>
-        <button type="button" className="ghost" onClick={props.onShowWindow}>
+  return (
+    <div className="thread page-turn">
+      {props.signIn ? <p>Sign in, in the browser.</p> : null}
+      <BrowserPicture
+        mode={props.mode}
+        src={props.src}
+        onToggle={props.onToggle}
+        onShow={props.onShow}
+        onClickAt={props.onClickAt}
+        onTypeText={props.onTypeText}
+        onPressKey={props.onPressKey}
+        onWheel={props.onWheel}
+      />
+      {props.signIn ? (
+        <button type="button" className="ghost" onClick={props.onWiden}>
           Open browser
         </button>
-      </>
-    )
-  } else {
-    body = (
-      <>
-        <BrowserPicture
-          mode={props.mode}
-          src={props.src}
-          onToggle={props.onToggle}
-          onShow={props.onShow}
-          onClickAt={props.onClickAt}
-          onTypeText={props.onTypeText}
-          onPressKey={props.onPressKey}
-          onWheel={props.onWheel}
-        />
-        {props.mode === 'note' ? null : (
-          <button type="button" className="ghost" onClick={props.onHide}>
-            Hide
-          </button>
-        )}
-      </>
-    )
-  }
-  return <div className="thread page-turn">{body}</div>
+      ) : props.mode === 'note' ? null : (
+        <button type="button" className="ghost" onClick={props.onHide}>
+          Hide
+        </button>
+      )}
+    </div>
+  )
 }

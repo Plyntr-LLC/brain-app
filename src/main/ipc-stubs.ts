@@ -89,7 +89,8 @@ import { rememberPhoneChats } from './phone'
 import { emitChat, markChatBusy } from './chat-fan'
 import { acpGrokAccount, acpGrokReady } from './acp-session'
 import { cancelWarm, closeWarm, forkSession, planModeWarm, promptWarm, resetWarm, resumeSession, warmSession } from './warm'
-import { openSharedPage } from './shared-browser'
+import { onlyWebAddress } from '../shared/page-picture'
+import { closeShared, openSharedPage } from './shared-browser'
 import { justUpdated } from './update'
 import { contextBlurb, grokCli, grokPlanText, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
 import { expandSlash } from './slash-skills'
@@ -2104,7 +2105,9 @@ export function registerStubIpc(): void {
         attachments?: { path: string; name: string; mime: string }[]
       }
     ) => {
-      const pageOpened = openSharedPage(String(payload?.text || ''))
+      const sent = String(payload?.text || '')
+      const pageUrl = onlyWebAddress(sent)
+      const pageOpened = openSharedPage(sent, `chat:${String(payload?.tabId || '')}`)
       const watching = readWatching()
       const cwd = payload.cwd && payload.cwd.length ? payload.cwd : watching.brainPath
       if (!cwd) throw new Error('No brain folder on this computer to talk against')
@@ -2124,7 +2127,7 @@ export function registerStubIpc(): void {
           kind,
           tabId: payload.tabId,
           cwd,
-          text: payload.text,
+          text: pageUrl ?? payload.text,
           model: payload.model,
           effort: payload.effort,
           agentMode: payload.agentMode,
@@ -2192,6 +2195,7 @@ export function registerStubIpc(): void {
     }
   )
   ipcMain.handle('chat:close', async (_e, tabId: string) => {
+    await closeShared(`chat:${String(tabId || '')}`)
     closeWarm(tabId)
     ai.stopPrompt(tabId)
     return true

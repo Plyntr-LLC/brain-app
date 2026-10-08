@@ -639,7 +639,7 @@ test('a pay click holds, a later browse is dropped, and Approve clicks that same
     await desk.say('Buy it.', 'writer')
     const tile = mail(desk).find((m) => m.kind === 'hold')
     assert.ok(tile)
-    assert.equal(tile.text, 'Approving clicks Pay in the desk browser. Other browsing waits until you answer.')
+    assert.equal(tile.text, 'Approving clicks Pay in the desk browser. This browsing waits until you answer.')
     assert.equal(tile.hold?.browseClick, 'Pay')
     assert.equal(tile.hold?.pageUrl, 'https://example.com')
     assert.equal(browser.clicks.length, 0)

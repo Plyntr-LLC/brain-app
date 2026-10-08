@@ -11,6 +11,21 @@ export function onlyWebAddress(text: string): string | null {
   return t
 }
 
+/** web.whatsapp.com, including a path or a query. A bad address is not WhatsApp. */
+export function isWhatsApp(url: string): boolean {
+  try {
+    return new URL(url).hostname === 'web.whatsapp.com'
+  } catch {
+    return false
+  }
+}
+
+/** WhatsApp is one window for the whole app. Every other address uses the place that opened it. */
+export function windowKey(owner: string, url?: string): string {
+  if (url && isWhatsApp(url)) return 'wa'
+  return owner
+}
+
 /** A send whose whole text is one web address opens the shared page and shows it small. */
 export function pageAfterSend(text: string, at: number): { at: number; view: 'small' } | null {
   if (!onlyWebAddress(text)) return null

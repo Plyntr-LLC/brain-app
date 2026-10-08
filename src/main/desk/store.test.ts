@@ -90,7 +90,7 @@ const MAIL: DeskMessage[] = [
     kind: 'hold',
     job: 'j_1',
     browseId: 'b_1',
-    text: 'Approving clicks Pay in the desk browser. Other browsing waits until you answer.',
+    text: 'Approving clicks Pay in the desk browser. This browsing waits until you answer.',
     hold: { need: 'spend', browseClick: 'Pay', pageUrl: 'https://example.com/pay', browseId: 'b_1' }
   },
   {

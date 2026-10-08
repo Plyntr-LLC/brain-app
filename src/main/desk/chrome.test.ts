@@ -171,12 +171,12 @@ test('the evaluate body keeps at most 40 controls, in order', () => {
   assert.equal(got.text, 'short')
 })
 
-test('front brings the page forward, and closed follows the page', async () => {
+test('front does not move the window, and closed follows the page', async () => {
   const fake = fakePuppeteer()
   const a = await launched(fake)
   fake.calls.length = 0
   await a.front?.()
-  assert.deepEqual(fake.calls, [['bringToFront']])
+  assert.deepEqual(fake.calls, [])
   assert.equal(a.closed?.(), false)
   fake.closePage()
   assert.equal(a.closed?.(), true)
@@ -195,9 +195,10 @@ test('a closed window with Chrome still running opens a page in it, not a second
   assert.deepEqual(fake.calls[0], ['newPage'])
 })
 
-test('launch parks the window off screen, and front brings it back on screen before bringToFront', async () => {
+test('launch parks the window, then minimizes it, and later work stays minimized', async () => {
   const fake = fakePuppeteer()
   const seen: unknown[][] = []
+  const windowIds: number[] = []
   let opened = 0
   let detaches = 0
   fake.page.createCDPSession = async () => {
@@ -205,7 +206,10 @@ test('launch parks the window off screen, and front brings it back on screen bef
     return {
       send: async (method: string, params?: object) => {
         seen.push([method, params])
-        if (method === 'Browser.getWindowForTarget') return { windowId: 7 }
+        if (method === 'Browser.getWindowForTarget') {
+          windowIds.push(7)
+          return { windowId: 7 }
+        }
         return {}
       },
       detach: async () => {
@@ -213,47 +217,71 @@ test('launch parks the window off screen, and front brings it back on screen bef
       }
     }
   }
-  const bring = fake.page.bringToFront
-  fake.page.bringToFront = async () => {
-    seen.push(['bringToFront'])
-    await bring()
+  fake.page.screenshot = async () => new Uint8Array([1])
+  fake.page.mouse = {
+    click: async () => {
+      fake.calls.push(['mouse'])
+    },
+    wheel: async () => {
+      fake.calls.push(['wheel'])
+    }
+  }
+  fake.page.keyboard = {
+    type: async () => {
+      fake.calls.push(['keytype'])
+    },
+    press: async () => {
+      fake.calls.push(['press'])
+    }
   }
   const page = await launched(fake)
   assert.ok(!('args' in fake.launches[0]), 'park is not a launch argument')
-  const parked = seen.find((row) => row[0] === 'Browser.setWindowBounds')
-  const parkBounds = (parked?.[1] as { bounds?: { left: number; width: number; windowState: string } } | undefined)?.bounds
-  assert.ok(parkBounds && typeof parkBounds.width === 'number' && parkBounds.left + parkBounds.width <= 0 && parkBounds.windowState === 'normal', JSON.stringify(parked))
+  const boundsOf = (rows: unknown[][]) =>
+    rows
+      .filter((row) => row[0] === 'Browser.setWindowBounds')
+      .map((row) => (row[1] as { windowId?: number; bounds?: { left: number; width: number; windowState: string } }).bounds)
+  const idsOf = (rows: unknown[][]) =>
+    rows.filter((row) => row[0] === 'Browser.setWindowBounds').map((row) => (row[1] as { windowId?: number }).windowId)
+  const first = boundsOf(seen)
+  assert.equal(first.length, 2, JSON.stringify(first))
+  assert.ok(first[0] && first[0].left + first[0].width <= 0 && first[0].windowState === 'normal', JSON.stringify(first[0]))
+  assert.equal(first[1]?.windowState, 'minimized')
+  assert.ok((first[1]?.left ?? 1) <= 0, JSON.stringify(first[1]))
   seen.length = 0
   await page.front?.()
-  const i = seen.findIndex((row) => row[0] === 'Browser.setWindowBounds')
-  const showBounds = (seen[i]?.[1] as { bounds?: { left: number; top: number; width: number; height: number; windowState: string } } | undefined)?.bounds
-  assert.ok(showBounds, JSON.stringify(seen))
-  assert.ok(showBounds.left >= 40 && showBounds.left <= 120, String(showBounds.left))
-  assert.ok(showBounds.top >= 20 && showBounds.top <= 100, String(showBounds.top))
-  assert.equal(showBounds.width, 1100)
-  assert.equal(showBounds.height, 800)
-  assert.equal(showBounds.windowState, 'normal')
-  assert.deepEqual(seen[i + 1], ['bringToFront'])
-  await page.front?.()
+  assert.deepEqual(seen, [])
+  await page.goto('https://a.example/')
+  await page.shot?.()
+  await page.clickAt?.(10, 12)
+  await page.typeText?.('a')
+  await page.pressKey?.('Enter')
+  await page.wheel?.(20)
+  const later = boundsOf(seen)
+  assert.ok(later.length >= 6, String(later.length))
+  for (const bounds of later) {
+    assert.equal(bounds?.windowState, 'minimized')
+    assert.ok((bounds?.left ?? 1) <= 0, JSON.stringify(bounds))
+  }
+  for (const id of idsOf(seen)) assert.ok(windowIds.includes(id as number), String(id))
+  assert.equal(seen.filter((row) => row[0] === 'bringToFront').length, 0)
   assert.equal(opened, detaches)
-  assert.ok(opened >= 3)
 })
 
-test('a page with no CDP session still launches, and front still brings it forward', async () => {
+test('a page with no CDP session still launches, and front does not bring it forward', async () => {
   const fake = fakePuppeteer()
   assert.equal(fake.page.createCDPSession, undefined)
   const page = await launched(fake)
   fake.calls.length = 0
   await page.front?.()
-  assert.deepEqual(fake.calls, [['bringToFront']])
+  assert.deepEqual(fake.calls, [])
 })
 
-test('the page fills the window: viewport emulation is turned off after launch', async () => {
+test('launch sets an 1100 by 800 viewport before the picture is taken', async () => {
   const fake = fakePuppeteer()
   await launched(fake)
   assert.deepEqual(
     fake.calls.filter((c) => c[0] === 'setViewport'),
-    [['setViewport', null]]
+    [['setViewport', { width: 1100, height: 800, deviceScaleFactor: 1 }]]
   )
 })
 
@@ -262,6 +290,198 @@ test('chrome.ts and browser.ts do not import puppeteer-core', () => {
     const src = readFileSync(join(import.meta.dirname, file), 'utf8')
     assert.doesNotMatch(src, /from\s+['"]puppeteer|require\(\s*['"]puppeteer|import\(\s*['"]puppeteer/, file)
   }
+})
+
+test('a created window that pages() does not list yet is parked, and newPage is not called', async () => {
+  const calls: string[] = []
+  const bounds: Array<{ windowId?: number; bounds?: { left: number; width: number; windowState: string } }> = []
+  let newPages = 0
+  let waiting = false
+  let releaseWait = () => {}
+  const pages: ChromePage[] = []
+  const sessionFor = (windowId: number) => async () => ({
+    send: async (method: string, params?: { windowId?: number; bounds?: { left: number; width: number; windowState: string } }) => {
+      if (method === 'Browser.getWindowForTarget') return { windowId }
+      if (method === 'Browser.setWindowBounds') {
+        bounds.push({ windowId: params?.windowId, bounds: params?.bounds })
+        return {}
+      }
+      if (method === 'Target.createTarget') {
+        calls.push('createTarget')
+        return { targetId: 'late' }
+      }
+      return {}
+    },
+    detach: async () => {}
+  })
+  const seed: ChromePage = {
+    goto: async () => {},
+    evaluate: async () => undefined,
+    url: () => 'about:blank',
+    click: async () => {},
+    type: async () => {},
+    bringToFront: async () => {},
+    isClosed: () => false,
+    setViewport: async () => {
+      calls.push('seed-view')
+    },
+    createCDPSession: sessionFor(1)
+  }
+  let lateViewport: { width: number; height: number; deviceScaleFactor: number } | null = null
+  const late: ChromePage = {
+    goto: async () => {},
+    evaluate: async () => undefined,
+    url: () => 'about:blank',
+    click: async () => {},
+    type: async () => {},
+    bringToFront: async () => {},
+    isClosed: () => false,
+    setViewport: async (viewport) => {
+      if (viewport) lateViewport = viewport
+    },
+    createCDPSession: sessionFor(9),
+    target: () => ({ _targetId: 'late' }),
+    close: async () => {}
+  }
+  const browser: ChromeBrowser = {
+    pages: async () => pages.filter((page) => !page.isClosed()),
+    newPage: async () => {
+      newPages += 1
+      if (newPages === 1) {
+        pages.push(seed)
+        return seed
+      }
+      calls.push('newPage')
+      pages.push(seed)
+      return seed
+    },
+    connected: true,
+    waitForTarget: async (predicate) => {
+      waiting = true
+      await new Promise<void>((resolve) => {
+        releaseWait = () => resolve()
+      })
+      pages.push(late)
+      const target = { _targetId: 'late', page: async () => late }
+      if (!(await predicate(target))) throw new Error('predicate missed the created target')
+      return target
+    }
+  }
+  const launch = makeDeskLaunch(async () => browser)
+  await launch({ chromePath: fakeChromeExe(), profileDir: deskProfileDir() })
+  const newPagesAfterFirst = newPages
+  calls.length = 0
+  const pending = launch.windows.page('chat:other')
+  const end = Date.now() + 2000
+  while (!waiting) {
+    if (Date.now() > end) throw new Error('did not wait for the created target')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  assert.equal(pages.includes(late), false)
+  assert.equal(calls.includes('createTarget'), true)
+  assert.equal(calls.includes('newPage'), false)
+  releaseWait()
+  const adapter = await pending
+  assert.equal('noChrome' in adapter, false)
+  assert.equal(newPages, newPagesAfterFirst)
+  assert.equal(calls.includes('newPage'), false)
+  assert.deepEqual(lateViewport, { width: 1100, height: 800, deviceScaleFactor: 1 })
+  const lateBounds = bounds.filter((row) => row.windowId === 9).map((row) => row.bounds)
+  assert.equal(lateBounds.length, 2, JSON.stringify(lateBounds))
+  assert.ok(lateBounds[0] && lateBounds[0].left + lateBounds[0].width <= 0 && lateBounds[0].windowState === 'normal', JSON.stringify(lateBounds[0]))
+  assert.equal(lateBounds[1]?.windowState, 'minimized')
+  assert.ok((lateBounds[1]?.left ?? 1) <= 0, JSON.stringify(lateBounds[1]))
+})
+
+test('a close during a failed open does not cancel the next open of that key', { timeout: 15_000 }, async () => {
+  const pages: ChromePage[] = []
+  let creates = 0
+  let waits = 0
+  let newPages = 0
+  let waiting = false
+  let releaseWait = () => {}
+  let okViewport: { width: number; height: number; deviceScaleFactor: number } | null = null
+  let okClosed = false
+  const ok: ChromePage = {
+    goto: async () => {},
+    evaluate: async () => undefined,
+    url: () => 'about:blank',
+    click: async () => {},
+    type: async () => {},
+    bringToFront: async () => {},
+    isClosed: () => okClosed,
+    close: async () => {
+      okClosed = true
+    },
+    setViewport: async (viewport) => {
+      if (viewport) okViewport = viewport
+    },
+    createCDPSession: async () => ({
+      send: async (method: string) => (method === 'Browser.getWindowForTarget' ? { windowId: 9 } : {}),
+      detach: async () => {}
+    }),
+    target: () => ({ _targetId: 'ok' })
+  }
+  const seed: ChromePage = {
+    goto: async () => {},
+    evaluate: async () => undefined,
+    url: () => 'about:blank',
+    click: async () => {},
+    type: async () => {},
+    bringToFront: async () => {},
+    isClosed: () => false,
+    setViewport: async () => {},
+    createCDPSession: async () => ({
+      send: async (method: string) => {
+        if (method === 'Browser.getWindowForTarget') return { windowId: 1 }
+        if (method === 'Browser.setWindowBounds') return {}
+        if (method === 'Target.createTarget') {
+          creates += 1
+          if (creates === 1) return { targetId: 'missing' }
+          pages.push(ok)
+          return { targetId: 'ok' }
+        }
+        return {}
+      },
+      detach: async () => {}
+    })
+  }
+  const browser: ChromeBrowser = {
+    pages: async () => pages.filter((page) => !page.isClosed()),
+    newPage: async () => {
+      newPages += 1
+      pages.push(seed)
+      return seed
+    },
+    connected: true,
+    waitForTarget: async () => {
+      waits += 1
+      if (waits > 1) throw new Error('the next open waited instead of using the listed page')
+      waiting = true
+      await new Promise<void>((_resolve, reject) => {
+        releaseWait = () => reject(new Error('target never attached'))
+      })
+      throw new Error('target never attached')
+    }
+  }
+  const launch = makeDeskLaunch(async () => browser)
+  await launch({ chromePath: fakeChromeExe(), profileDir: deskProfileDir() })
+  const newPagesAfterFirst = newPages
+  const pending = launch.windows.page('chat:z')
+  const end = Date.now() + 2000
+  while (!waiting) {
+    if (Date.now() > end) throw new Error('did not wait for the missing target')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  await launch.windows.close('chat:z')
+  releaseWait()
+  assert.deepEqual(await pending, { noChrome: true })
+  const again = await launch.windows.page('chat:z')
+  assert.equal('noChrome' in again, false)
+  assert.equal(okClosed, false)
+  assert.deepEqual(okViewport, { width: 1100, height: 800, deviceScaleFactor: 1 })
+  assert.equal(creates, 2)
+  assert.equal(newPages, newPagesAfterFirst)
 })
 
 test('puppeteer-core is a dependency, not a devDependency', () => {

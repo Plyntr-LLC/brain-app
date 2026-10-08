@@ -1152,12 +1152,13 @@ const brain = {
     startDrag: (opts: { folder?: string; mediaId: string }) => ipcRenderer.send('media:startDrag', opts)
   },
   browser: {
-    face: () => ipcRenderer.invoke('browser:face') as Promise<{ src: string | null; signIn: boolean }>,
-    clickAt: (x: number, y: number) => ipcRenderer.invoke('browser:clickAt', x, y) as Promise<void>,
-    typeText: (text: string) => ipcRenderer.invoke('browser:typeText', text) as Promise<void>,
-    pressKey: (key: string) => ipcRenderer.invoke('browser:pressKey', key) as Promise<void>,
-    wheel: (deltaY: number) => ipcRenderer.invoke('browser:wheel', deltaY) as Promise<void>,
-    showWindow: () => ipcRenderer.invoke('browser:showWindow') as Promise<void>
+    face: (owner: string) => ipcRenderer.invoke('browser:face', owner) as Promise<{ src: string | null; signIn: boolean }>,
+    clickAt: (owner: string, x: number, y: number) => ipcRenderer.invoke('browser:clickAt', owner, x, y) as Promise<void>,
+    typeText: (owner: string, text: string) => ipcRenderer.invoke('browser:typeText', owner, text) as Promise<void>,
+    pressKey: (owner: string, key: string) => ipcRenderer.invoke('browser:pressKey', owner, key) as Promise<void>,
+    wheel: (owner: string, deltaY: number) => ipcRenderer.invoke('browser:wheel', owner, deltaY) as Promise<void>,
+    showWindow: () => ipcRenderer.invoke('browser:showWindow') as Promise<void>,
+    close: (owner: string) => ipcRenderer.invoke('browser:close', owner) as Promise<void>
   },
   desk: {
     attach: (tab: string, brain: string) => ipcRenderer.invoke('desk:attach', tab, brain) as Promise<{ brain: string }>,
@@ -1182,7 +1183,7 @@ const brain = {
     status: (tab: string) => ipcRenderer.invoke('desk:status', tab),
     focus: (tab: string) => ipcRenderer.invoke('desk:focus', tab),
     showWindow: (tab: string) => ipcRenderer.invoke('desk:showWindow', tab) as Promise<void>,
-    picture: (tab: string) => ipcRenderer.invoke('desk:picture', tab) as Promise<string | null>,
+    picture: (tab: string, botId?: string) => ipcRenderer.invoke('desk:picture', tab, botId) as Promise<string | null>,
     view: (tab: string, botId: string | null) => ipcRenderer.invoke('desk:view', tab, botId) as Promise<DeskMessage[]>,
     onEvent: (fn: (ev: { brain: string; messages: DeskMessage[]; states: BotState[]; removedNames: Record<string, string> }) => void) => {
       const h = (_e: unknown, payload: { brain: string; messages: DeskMessage[]; states: BotState[]; removedNames: Record<string, string> }) =>

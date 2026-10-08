@@ -25,7 +25,8 @@ export type ChromePage = {
     clip?: { x: number; y: number; width: number; height: number; scale?: number }
   }) => Promise<Uint8Array>
   isClosed: () => boolean
-  setViewport?: (viewport: null) => Promise<void>
+  setViewport?: (viewport: null | { width: number; height: number; deviceScaleFactor: number }) => Promise<void>
+  close?: () => Promise<void>
   waitForNetworkIdle?: (options: { idleTime: number; timeout: number }) => Promise<void>
   /** Present on a real puppeteer page. Missing on the fake page, which then skips the park.
    * `any` because puppeteer's send() only accepts protocol command names, so a `string` method would reject Page. */
@@ -33,21 +34,39 @@ export type ChromePage = {
   /** `any` so puppeteer's Mouse and Keyboard stay assignable to this page. */
   mouse?: any
   keyboard?: any
+  /** The CDP target this page belongs to. The real page has this. The id is how a new window is found. */
+  target?: () => { url?: () => string; _targetId?: string }
 }
+
+type ChromeTarget = { url?: () => string; _targetId?: string; page?: () => Promise<ChromePage | null> }
 
 export type ChromeBrowser = {
   pages: () => Promise<ChromePage[]>
   newPage: () => Promise<ChromePage>
+  /** A new operating-system window in this same Chrome. Tests provide it. The real browser uses CDP. */
+  newWindow?: () => Promise<ChromePage>
   readonly connected: boolean
+  /** The real browser has this. A test supplies it when the new page is not in `pages()` yet. */
+  waitForTarget?: (predicate: (target: ChromeTarget) => boolean | Promise<boolean>, options?: { timeout?: number }) => Promise<ChromeTarget>
 }
 
 /** Exactly these four options. No `connect`, no debugging port. */
 export type ChromeLaunchOptions = { pipe: true; headless: false; executablePath: string; userDataDir: string }
 export type PuppeteerLaunch = (options: ChromeLaunchOptions) => Promise<ChromeBrowser>
 
+/** Pages this one Chrome already has. `page` creates a window. `peek` does not. */
+export type DeskWindows = {
+  connect: (opts: { chromePath: string; profileDir: string }) => Promise<ChromeBrowser | { noChrome: true }>
+  page: (key: string) => Promise<DeskPage | { noChrome: true }>
+  peek: (key: string) => DeskPage | null
+  has: (key: string) => boolean
+  close: (key: string) => Promise<void>
+  anyOpen: () => boolean
+}
+
 /** What the adapter adds beyond `PageAdapter`. Optional so a test adapter can leave them out. */
 export type DeskPage = PageAdapter & {
-  /** Brings the desk Chrome window forward. Sign-in uses this. Ordinary focus does not. */
+  /** The live page does not move the operating-system window. Tests may still record a call. */
   front?: () => Promise<void>
   /** A jpeg of the open page, for the picture in the thread. Empty when the page cannot take one. */
   shot?: () => Promise<Uint8Array>
@@ -183,12 +202,13 @@ export function pageSubmitFor(i: number): { index: number; name: string } | null
 
 const errText = (e: unknown) => String((e as Error)?.message ?? e)
 
-type WindowBounds = { left: number; top: number; width: number; height: number; windowState: 'normal' }
+type WindowBounds = { left: number; top: number; width: number; height: number; windowState: 'normal' | 'minimized' }
 
 /** Off the screen, with a width, so a restored window cannot ignore a bare negative left. */
 const PARKED: WindowBounds = { left: -2400, top: 0, width: 1100, height: 800, windowState: 'normal' }
-/** Sign-in puts the window back on the screen, then brings it forward. */
-const SHOWN: WindowBounds = { left: 80, top: 60, width: 1100, height: 800, windowState: 'normal' }
+/** Same rectangle, minimized, so macOS cannot clamp a strip back onto the laptop. */
+const MINIMIZED: WindowBounds = { left: -2400, top: 0, width: 1100, height: 800, windowState: 'minimized' }
+const PAGE_VIEW = { width: 1100, height: 800, deviceScaleFactor: 1 }
 
 /** Best effort. A page with no CDP session, or a CDP error, leaves the window where it is. */
 async function place(page: ChromePage, bounds: WindowBounds) {
@@ -227,9 +247,11 @@ function adapterFor(browser: ChromeBrowser, page: ChromePage): DeskPage {
       }
     }
   }
+  const hide = () => place(page, MINIMIZED)
   // A page that re-rendered since the last look has lost its marks. Mark it again and retry once,
   // only when that number still names the same control.
   const onControl = async (i: number, run: () => Promise<void>) => {
+    await hide()
     try {
       await run()
     } catch (e) {
@@ -243,6 +265,7 @@ function adapterFor(browser: ChromeBrowser, page: ChromePage): DeskPage {
   }
   return {
     goto: async (url) => {
+      await hide()
       // A dead link or a slow page still leaves something in the window to read.
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch((e) => {
         if (!/net::|timeout/i.test(errText(e))) throw e
@@ -263,16 +286,17 @@ function adapterFor(browser: ChromeBrowser, page: ChromePage): DeskPage {
     submit: (i) => onControl(i, () => page.click(at(i))),
     submitFor: (i) => page.evaluate(pageSubmitFor, i),
     scroll: async (dir) => {
+      await hide()
       await page.evaluate(pageScroll, dir)
       await settle()
     },
     front: async () => {
-      await place(page, SHOWN)
-      await page.bringToFront()
+      // The picture stays inside the app. This does not move the window or bring it forward.
     },
     // mouse.click is CSS pixels. A surface shot is device pixels, so this clip is the parked CSS window at scale 1.
-    shot: async () =>
-      page.screenshot
+    shot: async () => {
+      await hide()
+      return page.screenshot
         ? page.screenshot({
             type: 'jpeg',
             quality: 40,
@@ -280,37 +304,242 @@ function adapterFor(browser: ChromeBrowser, page: ChromePage): DeskPage {
             captureBeyondViewport: false,
             clip: { x: 0, y: 0, width: PARKED.width, height: PARKED.height, scale: 1 }
           })
-        : new Uint8Array(),
+        : new Uint8Array()
+    },
     closed: () => page.isClosed() || !browser.connected,
     clickAt: async (x, y) => {
+      await hide()
       await page.mouse?.click(x, y)
     },
     typeText: async (text) => {
+      await hide()
       await page.keyboard?.type(text)
     },
     pressKey: async (key) => {
+      await hide()
       await page.keyboard?.press(key)
     },
     wheel: async (deltaY) => {
+      await hide()
       await page.mouse?.wheel?.({ deltaY })
     }
   }
 }
 
-/** The `DeskLaunch` the desk browser takes. A missing `chromePath` returns { noChrome: true } without
- * launching. One Chrome per app run: when the person closed the window but that Chrome still runs,
- * the next launch opens a page in it instead of starting a second Chrome on the same profile. */
-export function makeDeskLaunch(puppeteerLaunch: PuppeteerLaunch): DeskLaunch {
-  let browser: ChromeBrowser | null = null
-  return async ({ chromePath, profileDir }) => {
-    if (!chromePath || !existsSync(chromePath)) return { noChrome: true }
-    if (!browser || !browser.connected) {
-      browser = await puppeteerLaunch({ pipe: true, headless: false, executablePath: chromePath, userDataDir: profileDir })
+function pageTargetId(page: ChromePage): string {
+  const id = page.target?.()._targetId
+  return typeof id === 'string' ? id : ''
+}
+
+async function pageListed(browser: ChromeBrowser, targetId: string): Promise<ChromePage | null> {
+  const pages = await browser.pages()
+  return pages.find((page) => !page.isClosed() && pageTargetId(page) === targetId) ?? null
+}
+
+/** `createTarget` already opened this window. Find that target. Do not open another. */
+async function pageForTarget(browser: ChromeBrowser, targetId: string): Promise<ChromePage | null> {
+  const listed = await pageListed(browser, targetId)
+  if (listed) return listed
+  if (browser.waitForTarget) {
+    try {
+      const target = await browser.waitForTarget((row) => row._targetId === targetId, { timeout: 5000 })
+      const page = await target.page?.()
+      if (page && !page.isClosed()) return page
+    } catch {
+      // The target was created. A later pages() list is the backup.
     }
-    const page = (await browser.pages()).find((p) => !p.isClosed()) ?? (await browser.newPage())
-    // Let the page fill the window instead of puppeteer's 800×600.
-    await page.setViewport?.(null)
-    await place(page, PARKED)
-    return adapterFor(browser, page)
   }
+  const deadline = Date.now() + 2000
+  while (Date.now() < deadline) {
+    const found = await pageListed(browser, targetId)
+    if (found) return found
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  return null
+}
+
+function targetIdFrom(created: unknown): string {
+  if (!created || typeof created !== 'object' || !('targetId' in created)) return ''
+  const id = created.targetId
+  return typeof id === 'string' ? id : ''
+}
+
+/** A new operating-system window in the Chrome that is already running. */
+async function openWindow(browser: ChromeBrowser): Promise<ChromePage> {
+  if (browser.newWindow) return browser.newWindow()
+  const seed = (await browser.pages()).find((p) => !p.isClosed())
+  if (seed?.createCDPSession) {
+    let client: Awaited<ReturnType<NonNullable<ChromePage['createCDPSession']>>> | undefined
+    let targetId = ''
+    try {
+      client = await seed.createCDPSession()
+      targetId = targetIdFrom(await client.send('Target.createTarget', { url: 'about:blank', newWindow: true }))
+    } catch {
+      // This Chrome is still the one we have. A new page in it is the fallback when createTarget did not run.
+      targetId = ''
+    } finally {
+      try {
+        await client?.detach?.()
+      } catch {
+        // The session is already gone.
+      }
+    }
+    if (targetId) {
+      const page = await pageForTarget(browser, targetId)
+      if (!page) throw new Error('desk chrome: created window did not attach')
+      return page
+    }
+  }
+  return browser.newPage()
+}
+
+/** The `DeskLaunch` the desk browser takes. A missing `chromePath` returns { noChrome: true } without
+ * launching. One Chrome per app run. A closed window opens a page in that Chrome. Later keys open
+ * new windows in it. `.windows` is how chat and Desk name those windows. */
+export function makeDeskLaunch(puppeteerLaunch: PuppeteerLaunch): DeskLaunch & { windows: DeskWindows } {
+  let browser: ChromeBrowser | null = null
+  let starting: Promise<ChromeBrowser> | null = null
+  let opts: { chromePath: string; profileDir: string } | null = null
+  const byKey = new Map<string, { page: ChromePage | null; adapter: DeskPage | null }>()
+  const opening = new Map<string, Promise<DeskPage | { noChrome: true }>>()
+  /** A close that arrived while this key was still opening. The open does not keep the page. */
+  const dropped = new Set<string>()
+  /** The page `prepare` is parking, so a close during that wait can close it. */
+  const preparing = new Map<string, ChromePage>()
+  // Two places can open at once. Creating the windows has to be one at a time, or both
+  // reads of browser.pages() see the same new window and the second address replaces the first.
+  let claiming: Promise<void> = Promise.resolve()
+  function claim<T>(work: () => Promise<T>): Promise<T> {
+    const run = claiming.then(work, work)
+    claiming = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
+  async function connect(next: { chromePath: string; profileDir: string }): Promise<ChromeBrowser | { noChrome: true }> {
+    opts = next
+    if (!next.chromePath || !existsSync(next.chromePath)) return { noChrome: true }
+    if (browser?.connected) return browser
+    if (!starting) {
+      starting = puppeteerLaunch({ pipe: true, headless: false, executablePath: next.chromePath, userDataDir: next.profileDir })
+        .then((got) => {
+          browser = got
+          byKey.clear()
+          return got
+        })
+        .finally(() => {
+          starting = null
+        })
+    }
+    return starting
+  }
+
+  async function prepare(page: ChromePage): Promise<DeskPage> {
+    await page.setViewport?.(PAGE_VIEW)
+    await place(page, PARKED)
+    await place(page, MINIMIZED)
+    return adapterFor(browser as ChromeBrowser, page)
+  }
+
+  async function pageFor(key: string): Promise<DeskPage | { noChrome: true }> {
+    const inflight = opening.get(key)
+    if (inflight) return inflight
+    const held = byKey.get(key)
+    if (held?.page && !held.page.isClosed() && held.adapter) return held.adapter
+    const isFirst = byKey.size === 0
+    if (!held) byKey.set(key, { page: null, adapter: null })
+    const job = (async (): Promise<DeskPage | { noChrome: true }> => {
+      if (!opts) return { noChrome: true }
+      const got = await connect(opts)
+      if ('noChrome' in got) {
+        dropped.delete(key)
+        if (!byKey.get(key)?.page) byKey.delete(key)
+        return got
+      }
+      let page: ChromePage
+      try {
+        page = await claim(async () => {
+          const current = byKey.get(key)
+          if (current?.page && !current.page.isClosed()) return current.page
+          if (current?.page?.isClosed()) return got.newPage()
+          if (isFirst) return (await got.pages()).find((p) => !p.isClosed()) ?? (await got.newPage())
+          return openWindow(got)
+        })
+      } catch (error) {
+        if (!byKey.get(key)?.page) byKey.delete(key)
+        // A close during this failed open must not cancel the next open of the same key.
+        if (!dropped.has(key)) throw error
+        dropped.delete(key)
+        return { noChrome: true }
+      }
+      if (dropped.has(key)) {
+        dropped.delete(key)
+        if (!page.isClosed()) await page.close?.()
+        if (!byKey.get(key)?.page) byKey.delete(key)
+        return { noChrome: true }
+      }
+      preparing.set(key, page)
+      let adapter: DeskPage | null = null
+      try {
+        adapter = await prepare(page)
+      } catch (error) {
+        if (!dropped.has(key)) throw error
+      } finally {
+        preparing.delete(key)
+      }
+      if (dropped.has(key) || !adapter) {
+        dropped.delete(key)
+        if (!page.isClosed()) await page.close?.()
+        if (!byKey.get(key)?.page) byKey.delete(key)
+        return { noChrome: true }
+      }
+      byKey.set(key, { page, adapter })
+      return adapter
+    })()
+    opening.set(key, job)
+    try {
+      return await job
+    } finally {
+      if (opening.get(key) === job) opening.delete(key)
+    }
+  }
+
+  function peek(key: string): DeskPage | null {
+    const held = byKey.get(key)
+    if (!held?.page || held.page.isClosed() || !held.adapter) return null
+    return held.adapter
+  }
+
+  const windows: DeskWindows = {
+    connect,
+    page: pageFor,
+    peek,
+    has: (key) => peek(key) !== null,
+    async close(key) {
+      if (!key || key === 'wa') return
+      const inflight = opening.has(key)
+      const held = byKey.get(key)
+      const pending = preparing.get(key)
+      if (!held && !inflight && !pending) return
+      if (inflight) dropped.add(key)
+      byKey.delete(key)
+      const page = held?.page ?? pending
+      if (page && !page.isClosed()) await page.close?.()
+    },
+    anyOpen: () => {
+      if (!browser?.connected) return false
+      for (const held of byKey.values()) if (held.page && !held.page.isClosed()) return true
+      return false
+    }
+  }
+
+  const launch = (async (next: { chromePath: string; profileDir: string }) => {
+    const got = await connect(next)
+    if ('noChrome' in got) return got
+    return pageFor('page')
+  }) as DeskLaunch & { windows: DeskWindows }
+  launch.windows = windows
+  return launch
 }

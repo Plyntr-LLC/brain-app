@@ -256,23 +256,25 @@ export type PageAdapter = {
   scroll: (dir: 'down' | 'up') => Promise<void>
 }
 export type DeskBrowser = {
-  open: (browseId: string) => Promise<void | { noChrome: true }>
+  open: (browseId: string, owner?: string) => Promise<void | { noChrome: true }>
   cancel: (browseId: string) => void
   release: (browseId: string) => void
   focus: () => void // raises the corner picture. It does not launch Chrome or bring that window forward.
-  showWindow: () => void // the sign-in card: bring the desk Chrome window forward. Does not launch it.
-  picture: () => Promise<string | null> // jpeg base64 of the open page, or null when that window is closed
-  windowOpen: () => boolean // true while the desk Chrome window is open, with or without a browse session
-  clickApproved: (name: string, pageUrl: string) => Promise<BrowseStepResult>
+  showWindow: () => void // asks the adapter. The live window stays minimized. Does not launch Chrome.
+  picture: (owner?: string) => Promise<string | null> // jpeg base64 of that place's page, or null when it is closed
+  windowOpen: () => boolean // true while a desk Chrome window is open, with or without a browse session
+  clickApproved: (name: string, pageUrl: string, owner?: string) => Promise<BrowseStepResult>
   runStep: (browseId: string, step: { action: string; detail?: string; url?: string }) => Promise<BrowseStepResult>
-  /** Open this address in the shared window. Does not start a browse session. */
-  goTo?: (url: string) => Promise<void>
-  clickAt?: (x: number, y: number) => Promise<void>
-  typeText?: (text: string) => Promise<void>
-  pressKey?: (key: string) => Promise<void>
-  wheel?: (deltaY: number) => Promise<void>
-  /** Whether the open page is asking the person to sign in. */
-  look?: () => Promise<{ signIn: boolean } | null>
+  /** Open this address on that place's window. Does not start a browse session. */
+  goTo?: (url: string, owner?: string) => Promise<void>
+  clickAt?: (x: number, y: number, owner?: string) => Promise<void>
+  typeText?: (text: string, owner?: string) => Promise<void>
+  pressKey?: (key: string, owner?: string) => Promise<void>
+  wheel?: (deltaY: number, owner?: string) => Promise<void>
+  /** Whether that place's page is asking the person to sign in. */
+  look?: (owner?: string) => Promise<{ signIn: boolean } | null>
+  /** Close that place's own site window. Never closes the shared WhatsApp window. */
+  closeOwner?: (owner: string) => Promise<void>
 }
 
 /** Built by slice-9, returned by slice-6, rendered by slice-7 as is. */

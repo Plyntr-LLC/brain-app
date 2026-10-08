@@ -312,10 +312,11 @@ export function DeskCard(props: {
 
     case 'browse': {
       const b = msg.browse
-      const only = !b || b.signIn || b.noChrome
-      const pic = !only ? props.picture : undefined
+      const noPic = !b || b.noChrome
+      const sentence = !b || b.signIn || b.noChrome
+      const pic = !noPic ? props.picture : undefined
       const openBtn = b?.windowOpen ? (
-        <button type="button" className="ghost" onClick={() => props.onOpenBrowser(b.signIn ? { signIn: true } : undefined)}>
+        <button type="button" className="ghost" onClick={() => props.onOpenBrowser()}>
           Open browser
         </button>
       ) : null
@@ -340,7 +341,7 @@ export function DeskCard(props: {
         <Card
           title={`${from} in the desk browser`}
           body={
-            only ? (
+            sentence ? (
               msg.text
             ) : (
               <>

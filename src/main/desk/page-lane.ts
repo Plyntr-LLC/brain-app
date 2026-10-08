@@ -1,22 +1,24 @@
 /**
- * One page at a time. A turn claims synchronously, then waits.
- * A later claim that lands before this one touches the page wins, and this one does not run.
- * The lane stays held until release, so the next turn cannot overlap the work.
+ * One queue per window. Different windows run together.
+ * The same window waits: the later step runs after the earlier one finishes.
  */
-let generation = 0
-let tail: Promise<void> = Promise.resolve()
+const tails = new Map<string, Promise<void>>()
 
-export function startPageTurn(): { promise: Promise<boolean>; release: () => void } {
-  const mine = ++generation
-  const prev = tail
-  let released = false
+export function startPageTurn(key = 'page'): { promise: Promise<boolean>; release: () => void } {
+  const prev = tails.get(key) ?? Promise.resolve()
   let release!: () => void
-  tail = new Promise<void>((resolve) => {
+  let released = false
+  const gate = new Promise<void>((resolve) => {
     release = () => {
       if (released) return
       released = true
       resolve()
     }
   })
-  return { promise: prev.then(() => mine === generation), release }
+  const done = prev.then(() => gate)
+  tails.set(key, done)
+  done.then(() => {
+    if (tails.get(key) === done) tails.delete(key)
+  })
+  return { promise: prev.then(() => true), release }
 }

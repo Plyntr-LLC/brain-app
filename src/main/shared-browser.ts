@@ -2,7 +2,6 @@ import puppeteer from 'puppeteer-core'
 import { onlyWebAddress } from '../shared/page-picture.ts'
 import { createDeskBrowser } from './desk/browser.ts'
 import { deskProfileDir, macChromePath, makeDeskLaunch } from './desk/chrome.ts'
-import { startPageTurn } from './desk/page-lane.ts'
 import type { DeskBrowser } from '../shared/desk.ts'
 
 /**
@@ -22,54 +21,40 @@ export function sharedDeskBrowser(): DeskBrowser {
   return browser
 }
 
-/** When the whole message is one web address, open it. Other text does nothing. */
-export function openSharedPage(text: string): Promise<void> {
+/** When the whole message is one web address, open it on that place's window. Other text does nothing. */
+export function openSharedPage(text: string, owner = 'page'): Promise<void> {
   const url = onlyWebAddress(text)
   if (!url) return Promise.resolve()
-  const turn = startPageTurn()
-  return (async () => {
-    try {
-      if (!(await turn.promise)) return
-      await sharedDeskBrowser().goTo?.(url)
-    } finally {
-      turn.release()
-    }
-  })()
+  return sharedDeskBrowser().goTo?.(url, owner) ?? Promise.resolve()
 }
 
-async function withTurn(run: () => Promise<void>): Promise<void> {
-  const turn = startPageTurn()
-  try {
-    if (!(await turn.promise)) return
-    await run()
-  } finally {
-    turn.release()
-  }
+export function clickShared(owner: string, x: number, y: number): Promise<void> {
+  return sharedDeskBrowser().clickAt?.(x, y, owner) ?? Promise.resolve()
 }
 
-export function clickShared(x: number, y: number): Promise<void> {
-  return withTurn(() => sharedDeskBrowser().clickAt?.(x, y) ?? Promise.resolve())
+export function typeShared(owner: string, text: string): Promise<void> {
+  return sharedDeskBrowser().typeText?.(text, owner) ?? Promise.resolve()
 }
 
-export function typeShared(text: string): Promise<void> {
-  return withTurn(() => sharedDeskBrowser().typeText?.(text) ?? Promise.resolve())
+export function pressShared(owner: string, key: string): Promise<void> {
+  return sharedDeskBrowser().pressKey?.(key, owner) ?? Promise.resolve()
 }
 
-export function pressShared(key: string): Promise<void> {
-  return withTurn(() => sharedDeskBrowser().pressKey?.(key) ?? Promise.resolve())
-}
-
-export function wheelShared(deltaY: number): Promise<void> {
-  return withTurn(() => sharedDeskBrowser().wheel?.(deltaY) ?? Promise.resolve())
+export function wheelShared(owner: string, deltaY: number): Promise<void> {
+  return sharedDeskBrowser().wheel?.(deltaY, owner) ?? Promise.resolve()
 }
 
 export function showShared(): void {
   sharedDeskBrowser().showWindow()
 }
 
-export async function faceShared(): Promise<{ src: string | null; signIn: boolean }> {
+export function closeShared(owner: string): Promise<void> {
+  return sharedDeskBrowser().closeOwner?.(owner) ?? Promise.resolve()
+}
+
+export async function faceShared(owner: string): Promise<{ src: string | null; signIn: boolean }> {
   const b = sharedDeskBrowser()
-  const src = (await b.picture()) || null
-  const seen = await b.look?.()
+  const src = (await b.picture(owner)) || null
+  const seen = await b.look?.(owner)
   return { src, signIn: !!seen?.signIn }
 }

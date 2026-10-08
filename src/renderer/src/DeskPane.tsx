@@ -262,8 +262,9 @@ export function DeskPane({
     }).catch(() => onKeep())
   }, [closing, id, onClosed, onKeep])
 
-  const pictureMsg = [...messages].reverse().find((m) => m.kind === 'browse' && m.browse?.windowOpen && !m.browse.signIn)
+  const pictureMsg = [...messages].reverse().find((m) => m.kind === 'browse' && m.browse?.windowOpen && !m.browse.noChrome)
   const pictureKey = pictureMsg?.id ?? ''
+  const pictureFrom = pictureMsg?.from ?? ''
   useEffect(() => {
     setBrowserView('small')
     setShot(null)
@@ -275,7 +276,7 @@ export function DeskPane({
     const tickShot = () => {
       if (busy || dead) return
       busy = true
-      void window.brain.desk.picture(id).then((b64) => {
+      void window.brain.desk.picture(id, pictureFrom || undefined).then((b64) => {
         if (!dead && b64) setShot(b64)
       }).finally(() => {
         busy = false
@@ -287,7 +288,7 @@ export function DeskPane({
       dead = true
       window.clearInterval(timer)
     }
-  }, [active, pictureKey, browserView, id])
+  }, [active, pictureKey, browserView, id, pictureFrom])
 
   function openThread(botId: string | null) {
     stick.current = true
@@ -553,17 +554,11 @@ export function DeskPane({
               onPictureToggle={() => setBrowserView((v) => (v === 'small' ? 'wide' : v))}
               onPictureHide={() => setBrowserView('note')}
               onPictureShow={() => setBrowserView('small')}
-              onPictureClick={(x, y) => void window.brain.browser.clickAt(x, y)}
-              onPictureType={(text) => void window.brain.browser.typeText(text)}
-              onPicturePress={(key) => void window.brain.browser.pressKey(key)}
-              onPictureWheel={(deltaY) => void window.brain.browser.wheel(deltaY)}
-              onOpenBrowser={(opts) => {
-                if (opts?.signIn) {
-                  void window.brain.desk.showWindow(id)
-                  return
-                }
-                setBrowserView((v) => (v === 'note' ? 'small' : 'wide'))
-              }}
+              onPictureClick={(x, y) => void window.brain.browser.clickAt(pictureFrom ? `desk:${pictureFrom}` : '', x, y)}
+              onPictureType={(text) => void window.brain.browser.typeText(pictureFrom ? `desk:${pictureFrom}` : '', text)}
+              onPicturePress={(key) => void window.brain.browser.pressKey(pictureFrom ? `desk:${pictureFrom}` : '', key)}
+              onPictureWheel={(deltaY) => void window.brain.browser.wheel(pictureFrom ? `desk:${pictureFrom}` : '', deltaY)}
+              onOpenBrowser={() => setBrowserView('wide')}
               onRemoveHire={(msgId) => {
                 const hire = messages.find((m) => m.id === msgId)?.hire
                 if (!hire) return

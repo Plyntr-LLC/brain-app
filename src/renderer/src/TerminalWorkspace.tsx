@@ -752,7 +752,7 @@ export function ChatPane({
     const tickShot = () => {
       if (busyShot || dead || !window.brain.browser?.face) return
       busyShot = true
-      void window.brain.browser.face().then((face) => {
+      void window.brain.browser.face(`chat:${id}`).then((face) => {
         if (dead || !face) return
         if (face.src) setPageShot(face.src)
         setPageSignIn(!!face.signIn)
@@ -1986,6 +1986,7 @@ export function ChatPane({
   }
   sendTextRef.current = sendText
 
+  const pageOwner = `chat:${id}`
   const pageSlot = pageAt == null ? null : (
     <ChatPageTurn
       mode={pageView}
@@ -1994,11 +1995,11 @@ export function ChatPane({
       onToggle={() => setPageView((v) => (v === 'small' ? 'wide' : v))}
       onHide={() => setPageView('note')}
       onShow={() => setPageView('small')}
-      onClickAt={(x, y) => void window.brain.browser.clickAt(x, y)}
-      onTypeText={(text) => void window.brain.browser.typeText(text)}
-      onPressKey={(key) => void window.brain.browser.pressKey(key)}
-      onWheel={(deltaY) => void window.brain.browser.wheel(deltaY)}
-      onShowWindow={() => void window.brain.browser.showWindow()}
+      onClickAt={(x, y) => void window.brain.browser.clickAt(pageOwner, x, y)}
+      onTypeText={(text) => void window.brain.browser.typeText(pageOwner, text)}
+      onPressKey={(key) => void window.brain.browser.pressKey(pageOwner, key)}
+      onWheel={(deltaY) => void window.brain.browser.wheel(pageOwner, deltaY)}
+      onWiden={() => setPageView('wide')}
     />
   )
 

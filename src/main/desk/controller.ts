@@ -70,14 +70,15 @@ export type ControllerOpts = {
   role?: Role
   runner: Pick<DeskRunner, 'run' | 'stop' | 'stopAll' | 'keepWaiting'>
   browser: {
-    open: (browseId: string) => Promise<void | { noChrome: true }>
+    open: (browseId: string, owner?: string) => Promise<void | { noChrome: true }>
     cancel: (browseId: string) => void
     release: (browseId: string) => void
     focus: () => void
     showWindow?: () => void
-    picture?: () => Promise<string | null>
+    picture?: (owner?: string) => Promise<string | null>
     windowOpen: () => boolean
-    clickApproved: (name: string, pageUrl: string) => Promise<BrowseStepResult>
+    clickApproved: (name: string, pageUrl: string, owner?: string) => Promise<BrowseStepResult>
+    closeOwner?: (owner: string) => Promise<void>
     runStep: (browseId: string, step: { action: string; detail?: string; url?: string }) => Promise<BrowseStepResult>
   }
   senders: DeskSenders
@@ -553,7 +554,7 @@ export function createDeskController(opts: ControllerOpts) {
     if (block.action === 'url') {
       browserWaiting.add(bot.id)
       const slow = armSlow(bot)
-      const opened = await browser.open(session.browseId)
+      const opened = await browser.open(session.browseId, `desk:${bot.id}`)
       slow.clear()
       browserWaiting.delete(bot.id)
       if (halted(turn)) {
@@ -572,7 +573,7 @@ export function createDeskController(opts: ControllerOpts) {
         from: bot.id,
         to: ME,
         kind: 'hold',
-        text: `Approving clicks ${result.name} in the desk browser. Other browsing waits until you answer.`,
+        text: `Approving clicks ${result.name} in the desk browser. This browsing waits until you answer.`,
         browseId: session.browseId,
         hold: { need: 'spend', browseClick: result.name, pageUrl: result.url, browseId: session.browseId }
       })
@@ -842,7 +843,7 @@ export function createDeskController(opts: ControllerOpts) {
     if (!tile || tile.kind !== 'hold' || tile.hold?.answer) return
     const bot = store.readBot(tile.from)
     if (answer === 'yes' && tile.hold?.browseClick && tile.hold.pageUrl) {
-      const result = await browser.clickApproved(tile.hold.browseClick, tile.hold.pageUrl)
+      const result = await browser.clickApproved(tile.hold.browseClick, tile.hold.pageUrl, `desk:${tile.from}`)
       const session = sessions.get(tile.from)
       if (session) {
         session.steps += 1
@@ -994,8 +995,8 @@ export function createDeskController(opts: ControllerOpts) {
     showWindow() {
       browser.showWindow?.()
     },
-    picture() {
-      return browser.picture?.() ?? Promise.resolve(null)
+    picture(botId?: string) {
+      return browser.picture?.(botId ? `desk:${botId}` : undefined) ?? Promise.resolve(null)
     },
     removeBot(id: string): string | null {
       const bot = store.readBot(id)
@@ -1022,6 +1023,7 @@ export function createDeskController(opts: ControllerOpts) {
         }
       }
       endSession(id)
+      void browser.closeOwner?.(`desk:${id}`)
       store.removeBotFiles(id)
       post({ from: id, to: ME, kind: 'system', system: 'removed', name: bot.name, text: `${bot.name} was removed.` })
       for (const job of jobs) settle(job)
