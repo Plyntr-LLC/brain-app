@@ -25,15 +25,16 @@ import { opusEnv, type SpawnFn } from '../factory/opus.ts'
  *
  * | CLI    | Argv                                                                                      | Never |
  * |--------|-------------------------------------------------------------------------------------------|-------|
- * | grok   | grok -p <prompt> --cwd <brain> --permission-mode plan --no-subagents --disable-web-search  | --always-approve |
- * |        |   --output-format plain --deny Bash(*) --deny Write(**) --deny Edit(**) --deny MCPTool(*)  | |
- * |        |   --deny mcp__*, plus --model <id> and --reasoning-effort <effort> when not default        | |
- * | claude | claude -p <prompt> --permission-mode plan --restricted --strict-mcp-config                 | --bare, --dangerously-skip-permissions, |
- * |        |   --output-format text, plus --model and --effort when not default. Env is opusEnv.        | --fallback-model, --tools |
- * | gpt    | codex exec --sandbox read-only --ephemeral --skip-git-repo-check --ignore-user-config      | --dangerously-bypass-approvals-and-sandbox, |
- * |        |   -C <brain> <prompt>, plus -m <id> when not default. No effort flag.                      | CODEX_CHAT_SANDBOX |
- * | cursor | cursor-agent -p --mode=ask --sandbox enabled --trust --workspace <brain>                   | --force, --yolo, --approve-mcps |
- * |        |   --output-format text <prompt>, plus --model <id> when not default. No effort flag.        | |
+ * | grok   | grok -p <prompt> --cwd <brain> --permission-mode bypassPermissions --no-subagents           | --always-approve |
+ * |        |   --disable-web-search --output-format plain, then one --deny per GROK_DENY rule,          | |
+ * |        |   plus --model <id> and --reasoning-effort <effort> when not default                       | |
+ * | claude | claude -p <prompt> --permission-mode bypassPermissions --permission-prompts none           | --bare, --dangerously-skip-permissions, |
+ * |        |   --strict-mcp-config --output-format text, plus --model and --effort when not default.    | --fallback-model, --tools |
+ * |        |   Env is opusEnv.                                                                          | |
+ * | gpt    | codex exec --sandbox workspace-write --ephemeral --skip-git-repo-check                     | --dangerously-bypass-approvals-and-sandbox, |
+ * |        |   --ignore-user-config -C <brain> <prompt>, plus -m <id> when not default. No effort flag. | CODEX_CHAT_SANDBOX |
+ * | cursor | cursor-agent -p --sandbox enabled --trust --workspace <brain> --output-format text         | --force, --yolo, --approve-mcps |
+ * |        |   <prompt>, plus --model <id> when not default. No effort flag.                            | |
  *
  * Each grok `--deny` value is the exact string shown, with no quote characters. This file does not import
  * ai-cli.ts (resolveBin, binEnv, and detect come in as arguments) and does not parse fences: it returns the
@@ -42,7 +43,32 @@ import { opusEnv, type SpawnFn } from '../factory/opus.ts'
 
 // ---------- argv ----------
 
-export const GROK_DENY = ['Bash(*)', 'Write(**)', 'Edit(**)', 'MCPTool(*)', 'mcp__*']
+export const GROK_DENY = [
+  'MCPTool(*)',
+  'mcp__*',
+  'Bash(sudo *)',
+  'Bash(su *)',
+  'Bash(rm -rf /*)',
+  'Bash(rm -r /*)',
+  'Bash(curl *|*bash*)',
+  'Bash(curl *|*sh*)',
+  'Bash(wget *|*bash*)',
+  'Bash(wget *|*sh*)',
+  'Bash(mkfs*)',
+  'Bash(dd if=/dev/*)',
+  'Bash(shutdown*)',
+  'Bash(reboot*)',
+  'Bash(halt*)',
+  'Bash(poweroff*)',
+  'Write(~/.ssh/authorized_keys)',
+  'Edit(~/.ssh/authorized_keys)',
+  'Write(/etc/**)',
+  'Edit(/etc/**)',
+  'Write(/usr/**)',
+  'Write(/boot/**)',
+  'Edit(/usr/**)',
+  'Edit(/boot/**)'
+]
 
 /** A model or effort value for a flag, or '' when it is `default` (omit the flag). */
 function flagValue(v: string): string {
@@ -62,7 +88,7 @@ export function argvFor(bot: Pick<DeskBot, 'cli' | 'model' | 'effort'>, prompt: 
         '--cwd',
         brain,
         '--permission-mode',
-        'plan',
+        'bypassPermissions',
         '--no-subagents',
         '--disable-web-search',
         '--output-format',
@@ -76,8 +102,9 @@ export function argvFor(bot: Pick<DeskBot, 'cli' | 'model' | 'effort'>, prompt: 
         '-p',
         prompt,
         '--permission-mode',
-        'plan',
-        '--restricted',
+        'bypassPermissions',
+        '--permission-prompts',
+        'none',
         '--strict-mcp-config',
         '--output-format',
         'text',
@@ -85,9 +112,9 @@ export function argvFor(bot: Pick<DeskBot, 'cli' | 'model' | 'effort'>, prompt: 
         ...(effort ? ['--effort', effort] : [])
       ]
     case 'gpt':
-      return ['exec', '--sandbox', 'read-only', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '-C', brain, ...(model ? ['-m', model] : []), prompt]
+      return ['exec', '--sandbox', 'workspace-write', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '-C', brain, ...(model ? ['-m', model] : []), prompt]
     case 'cursor':
-      return ['-p', '--mode=ask', '--sandbox', 'enabled', '--trust', '--workspace', brain, '--output-format', 'text', ...(model ? ['--model', model] : []), prompt]
+      return ['-p', '--sandbox', 'enabled', '--trust', '--workspace', brain, '--output-format', 'text', ...(model ? ['--model', model] : []), prompt]
   }
 }
 
@@ -319,7 +346,7 @@ export function signInLine(name: string): string {
   return `${name} needs you to sign in, in the desk browser.`
 }
 
-const FOLDER_LINE = 'Your working folder is the open brain. You may read files there. You cannot write files or send anything yourself.'
+const FOLDER_LINE = 'Your working folder is the open brain. You may write files there and run commands there. You do not send mail, send a text, spend, or change an ads account.'
 
 /** The block examples, exactly as the spec's Blocks section writes them. */
 export const EXAMPLES = {

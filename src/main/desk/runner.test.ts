@@ -14,6 +14,7 @@ import {
   PAGE_HOW,
   PAGE_SENTENCE,
   WORKER_ENDS,
+  GROK_DENY,
   argvFor,
   childKey,
   compactPrompt,
@@ -88,20 +89,45 @@ const NEVER = ['--always-approve', '--bare', '--dangerously-skip-permissions', '
 // ---------- argv and spawn ----------
 
 test('argvFor matches the table for each CLI, model and effort flags only when not default', () => {
-  const grokDeny = ['--deny', 'Bash(*)', '--deny', 'Write(**)', '--deny', 'Edit(**)', '--deny', 'MCPTool(*)', '--deny', 'mcp__*']
-  const grokBase = ['-p', PROMPT, '--cwd', BRAIN, '--permission-mode', 'plan', '--no-subagents', '--disable-web-search', '--output-format', 'plain', ...grokDeny]
+  const grokDeny = [
+    'MCPTool(*)',
+    'mcp__*',
+    'Bash(sudo *)',
+    'Bash(su *)',
+    'Bash(rm -rf /*)',
+    'Bash(rm -r /*)',
+    'Bash(curl *|*bash*)',
+    'Bash(curl *|*sh*)',
+    'Bash(wget *|*bash*)',
+    'Bash(wget *|*sh*)',
+    'Bash(mkfs*)',
+    'Bash(dd if=/dev/*)',
+    'Bash(shutdown*)',
+    'Bash(reboot*)',
+    'Bash(halt*)',
+    'Bash(poweroff*)',
+    'Write(~/.ssh/authorized_keys)',
+    'Edit(~/.ssh/authorized_keys)',
+    'Write(/etc/**)',
+    'Edit(/etc/**)',
+    'Write(/usr/**)',
+    'Write(/boot/**)',
+    'Edit(/usr/**)',
+    'Edit(/boot/**)'
+  ].flatMap((rule) => ['--deny', rule])
+  const grokBase = ['-p', PROMPT, '--cwd', BRAIN, '--permission-mode', 'bypassPermissions', '--no-subagents', '--disable-web-search', '--output-format', 'plain', ...grokDeny]
   assert.deepEqual(argvFor({ cli: 'grok', model: 'default', effort: 'default' }, PROMPT, BRAIN), grokBase)
   assert.deepEqual(argvFor({ cli: 'grok', model: 'grok-4.7', effort: 'high' }, PROMPT, BRAIN), [...grokBase, '--model', 'grok-4.7', '--reasoning-effort', 'high'])
 
-  const claudeBase = ['-p', PROMPT, '--permission-mode', 'plan', '--restricted', '--strict-mcp-config', '--output-format', 'text']
+  const claudeBase = ['-p', PROMPT, '--permission-mode', 'bypassPermissions', '--permission-prompts', 'none', '--strict-mcp-config', '--output-format', 'text']
   assert.deepEqual(argvFor({ cli: 'claude', model: 'default', effort: 'default' }, PROMPT, BRAIN), claudeBase)
   assert.deepEqual(argvFor({ cli: 'claude', model: 'claude-opus-5-5', effort: 'low' }, PROMPT, BRAIN), [...claudeBase, '--model', 'claude-opus-5-5', '--effort', 'low'])
 
-  const gptHead = ['exec', '--sandbox', 'read-only', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '-C', BRAIN]
+  const gptHead = ['exec', '--sandbox', 'workspace-write', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '-C', BRAIN]
   assert.deepEqual(argvFor({ cli: 'gpt', model: 'default', effort: 'high' }, PROMPT, BRAIN), [...gptHead, PROMPT])
   assert.deepEqual(argvFor({ cli: 'gpt', model: 'gpt-5.5', effort: 'high' }, PROMPT, BRAIN), [...gptHead, '-m', 'gpt-5.5', PROMPT])
 
-  const cursorHead = ['-p', '--mode=ask', '--sandbox', 'enabled', '--trust', '--workspace', BRAIN, '--output-format', 'text']
+  const cursorHead = ['-p', '--sandbox', 'enabled', '--trust', '--workspace', BRAIN, '--output-format', 'text']
   assert.deepEqual(argvFor({ cli: 'cursor', model: 'default', effort: 'high' }, PROMPT, BRAIN), [...cursorHead, PROMPT])
   assert.deepEqual(argvFor({ cli: 'cursor', model: 'sonnet-5', effort: 'high' }, PROMPT, BRAIN), [...cursorHead, '--model', 'sonnet-5', PROMPT])
 
@@ -137,27 +163,31 @@ test('every spawn: the table argv, cwd the brain, stdin ignore, no shell; claude
   }
 })
 
-test('grok argv: each deny rule is its own exact item after --deny, no mcp(*), no --always-approve', async () => {
+test('grok argv: each deny rule is its own exact item after --deny, no blanket write block, no --always-approve', async () => {
   const { spawn, calls } = fakeSpawn()
   await createDeskRunner(depsFor(spawn)).run({ bot: bot('researcher', 'grok', 'default', 'high'), prompt: PROMPT, brain: BRAIN })
   const argv = calls[0].args
   assert.equal(calls[0].opts.shell, false)
-  for (const rule of ['Bash(*)', 'Write(**)', 'Edit(**)', 'MCPTool(*)', 'mcp__*']) {
+  let prev = -1
+  for (const rule of GROK_DENY) {
     const i = argv.findIndex((a) => a === rule)
-    assert.ok(i > 0, `missing ${rule}`)
-    assert.ok(argv[i - 1] === '--deny', `${rule} is not after --deny`)
+    assert.ok(i > prev, `missing or out of order ${rule}`)
+    assert.equal(argv[i - 1], '--deny', `${rule} is not after --deny`)
+    prev = i
   }
+  for (const rule of ['Bash(*)', 'Write(**)', 'Edit(**)']) assert.ok(!argv.includes(rule), `still denies ${rule}`)
   assert.ok(argv.every((a) => !a.includes('"') && !a.includes("'") || a === PROMPT))
   assert.ok(!argv.includes('mcp(*)'))
   assert.ok(!argv.includes('--always-approve'))
 })
 
-test('cursor argv ends with the prompt, is in ask mode, and never approves MCPs', async () => {
+test('cursor argv ends with the prompt, keeps the sandbox, and never approves MCPs', async () => {
   const { spawn, calls } = fakeSpawn()
   await createDeskRunner(depsFor(spawn)).run({ bot: bot('checker', 'cursor', 'sonnet-5', 'high'), prompt: PROMPT, brain: BRAIN })
   const argv = calls[0].args
   assert.equal(argv[argv.length - 1], PROMPT)
-  assert.ok(argv.includes('--mode=ask'))
+  assert.ok(!argv.includes('--mode=ask'))
+  assert.ok(argv.includes('--sandbox') && argv[argv.indexOf('--sandbox') + 1] === 'enabled')
   assert.ok(!argv.includes('--approve-mcps'))
 })
 

@@ -8,8 +8,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 // Desk slice-8 check. Three parts, nothing else:
 // 1. A scripted controller fixture: the real controller, store, bus, seed and welcome in a temp brain, with a
 //    fake runner, a fake browser and dry-run senders. No model call, no send.
-// 2. CLI probes in fresh temp folders with argvFor from runner.ts: a file-creation probe and an MCP marker
-//    probe, each with a control built by editing argvFor's output. stdin 'ignore', killed at 60 s.
+// 2. CLI probes in fresh temp folders with argvFor from runner.ts. The write probe spawns that array
+//    (stdin ignore, 110s). The MCP probe is unchanged: production argv must not create marker.txt, and
+//    its control is still a hand edit of that array. stdin 'ignore', MCP killed at 60 s.
 // 3. One gmailFrom read. It never sends and never opens a browser.
 // It does not launch the Desk UI and does not grade the click-through.
 // node --experimental-strip-types scripts/check-desk.ts
@@ -224,6 +225,21 @@ async function fixture() {
   check('F Checker reports Done into the thread', report?.from === 'checker' && report?.text === 'Ready. Names and numbers match the note.' && typeof report?.report?.seconds === 'number', JSON.stringify(report))
   check('F a turn with handoffs is a reply, not a report', ['researcher', 'writer'].every((id) => mail().some((m) => m.kind === 'reply' && m.from === id) && !mail().some((m) => m.kind === 'report' && m.from === id)))
   check('F the conductor did not wake for the report', runner.count('conductor') === 1, `conductor turns=${runner.count('conductor')}`)
+  const folderLine = 'Your working folder is the open brain. You may write files there and run commands there. You do not send mail, send a text, spend, or change an ads account.'
+  const conductorPromptText = runner.last('conductor')
+  const writerPromptText = runner.last('writer')
+  check(
+    'F both prompts may write and run commands, and do not say to end on a tile',
+    conductorPromptText.includes(folderLine) &&
+      writerPromptText.includes(folderLine) &&
+      !conductorPromptText.includes('End with email, sms, or hold') &&
+      !writerPromptText.includes('End with email, sms, or hold') &&
+      !conductorPromptText.includes('You cannot write files') &&
+      !writerPromptText.includes('You cannot write files') &&
+      conductorPromptText.includes(runnerMod.CONDUCTOR_ENDS) &&
+      writerPromptText.includes(runnerMod.WORKER_ENDS),
+    'folder line or endings'
+  )
 
   // The background line's status card.
   const status = desk.status()
@@ -314,7 +330,35 @@ try {
 // ---------- 2. CLI probes in temp folders ----------
 
 const PROBE_MS = 60_000
-const WRITE_PROMPT = 'Create a file named probe.txt in the working folder with the text desk-probe in it. Then run the shell command echo desk-probe. Say what happened.'
+const WRITE_MS = 110_000
+const WRITE_PROMPT = 'Create probe.txt in the working folder containing exactly desk-probe. Run a command that creates ran.txt containing exactly ran. Reply done.'
+const NEVER_FLAGS = ['--always-approve', '--bare', '--dangerously-skip-permissions', '--fallback-model', '--tools', '--dangerously-bypass-approvals-and-sandbox', '--force', '--yolo', '--approve-mcps']
+const GROK_RULES = [
+  'MCPTool(*)',
+  'mcp__*',
+  'Bash(sudo *)',
+  'Bash(su *)',
+  'Bash(rm -rf /*)',
+  'Bash(rm -r /*)',
+  'Bash(curl *|*bash*)',
+  'Bash(curl *|*sh*)',
+  'Bash(wget *|*bash*)',
+  'Bash(wget *|*sh*)',
+  'Bash(mkfs*)',
+  'Bash(dd if=/dev/*)',
+  'Bash(shutdown*)',
+  'Bash(reboot*)',
+  'Bash(halt*)',
+  'Bash(poweroff*)',
+  'Write(~/.ssh/authorized_keys)',
+  'Edit(~/.ssh/authorized_keys)',
+  'Write(/etc/**)',
+  'Edit(/etc/**)',
+  'Write(/usr/**)',
+  'Write(/boot/**)',
+  'Edit(/usr/**)',
+  'Edit(/boot/**)'
+]
 const MCP_PROMPT = 'Call the probe tool. If you cannot, reply none.'
 const SIGNED_OUT = /log(?:ged)?\s*-?\s*in|sign(?:ed)?\s*-?\s*in|auth|\b401\b/i
 
@@ -382,7 +426,7 @@ function killGroup(child: ChildProcess) {
   }
 }
 
-function probe(cli: DeskCli, argv: string[], dir: string, file: string): Promise<Run> {
+function probe(cli: DeskCli, argv: string[], dir: string, file: string, ms = PROBE_MS): Promise<Run> {
   const bin = aicli.resolveBin(cli) as string
   const env = cli === 'claude' ? opus.opusEnv(aicli.binEnv()) : aicli.binEnv()
   const started = Date.now()
@@ -410,8 +454,8 @@ function probe(cli: DeskCli, argv: string[], dir: string, file: string): Promise
     const timer = setTimeout(() => {
       killed = true
       killGroup(child)
-    }, PROBE_MS)
-    const hard = setTimeout(() => finish(null), PROBE_MS + 10_000)
+    }, ms)
+    const hard = setTimeout(() => finish(null), ms + 10_000)
     child.stdout?.on('data', (d: Buffer) => {
       if (stdout.length < 20_000) stdout += String(d)
     })
@@ -427,21 +471,46 @@ function probe(cli: DeskCli, argv: string[], dir: string, file: string): Promise
 }
 
 const dropPair = (args: string[], flag: string, value: string) => args.filter((a, i) => !(a === flag && args[i + 1] === value) && !(a === value && args[i - 1] === flag))
-const setAfter = (args: string[], flag: string, value: string) => args.map((a, i) => (args[i - 1] === flag ? value : a))
 const beforePrompt = (args: string[], ...items: string[]) => [...args.slice(0, -1), ...items, args[args.length - 1]]
+const pairIs = (argv: string[], flag: string, value: string) => argv.some((a, i) => a === flag && argv[i + 1] === value)
+const denyAt = (argv: string[], rule: string) => argv.findIndex((a, i) => a === '--deny' && argv[i + 1] === rule)
 
-/** The write block removed: the control may write probe.txt. Built from argvFor's output, argvFor unchanged. */
-function writeControl(cli: DeskCli, args: string[]): string[] {
-  switch (cli) {
-    case 'grok':
-      return ['Bash(*)', 'Write(**)', 'Edit(**)'].reduce((a, rule) => dropPair(a, '--deny', rule), dropPair(args, '--permission-mode', 'plan'))
-    case 'claude':
-      return setAfter(args, '--permission-mode', 'acceptEdits').filter((a) => a !== '--restricted')
-    case 'gpt':
-      return setAfter(args, '--sandbox', 'workspace-write')
-    case 'cursor':
-      return args.filter((a) => a !== '--mode=ask')
+function flagWhy(cli: DeskCli, argv: string[]): string {
+  for (const flag of NEVER_FLAGS) if (argv.includes(flag)) return `never-list flag ${flag}`
+  if (cli === 'grok') {
+    if (!pairIs(argv, '--permission-mode', 'bypassPermissions')) return 'missing bypassPermissions'
+    if (pairIs(argv, '--permission-mode', 'plan')) return 'still plan mode'
+    if (!argv.includes('--no-subagents') || !argv.includes('--disable-web-search')) return 'missing grok limits'
+    let prev = -1
+    for (const rule of GROK_RULES) {
+      const at = denyAt(argv, rule)
+      if (at < 0 || at <= prev) return `deny ${rule} missing or out of order`
+      prev = at
+    }
+    for (const rule of ['Bash(*)', 'Write(**)', 'Edit(**)']) if (denyAt(argv, rule) >= 0) return `still denies ${rule}`
+    return ''
   }
+  if (cli === 'claude') {
+    if (!pairIs(argv, '--permission-mode', 'bypassPermissions')) return 'missing bypassPermissions'
+    if (pairIs(argv, '--permission-mode', 'plan') || argv.includes('--restricted')) return 'still read-only'
+    if (!pairIs(argv, '--permission-prompts', 'none')) return 'missing permission-prompts none'
+    if (!argv.includes('--strict-mcp-config')) return 'missing strict-mcp-config'
+    return ''
+  }
+  if (cli === 'gpt') {
+    if (!pairIs(argv, '--sandbox', 'workspace-write')) return 'sandbox is not workspace-write'
+    if (pairIs(argv, '--sandbox', 'read-only') || pairIs(argv, '--sandbox', 'danger-full-access')) return 'wrong sandbox'
+    return ''
+  }
+  if (argv.includes('--mode=ask')) return 'still ask mode'
+  if (!pairIs(argv, '--sandbox', 'enabled')) return 'missing sandbox enabled'
+  if (!argv.includes('--trust')) return 'missing trust'
+  return ''
+}
+
+function fileText(dir: string, name: string): string {
+  const p = join(dir, name)
+  return existsSync(p) ? readFileSync(p, 'utf8').trim() : ''
 }
 
 /** The MCP block removed: the control may call the probe server. */
@@ -469,21 +538,30 @@ const BOT = { model: 'default', effort: 'default' }
 
 async function probeCli(cli: DeskCli): Promise<Block[]> {
   const out: Block[] = []
-  const wDir = freshDir(cli, 'write', 'blocked')
+  const wDir = freshDir(cli, 'write', 'seat')
   const wArgs = runnerMod.argvFor({ cli, ...BOT }, WRITE_PROMPT, wDir)
-  const absentBefore = !existsSync(join(wDir, 'probe.txt'))
-  const wBlocked = await probe(cli, wArgs, wDir, 'probe.txt')
-  if (signedOut(wBlocked)) {
-    const why = `not signed in: ${(wBlocked.stderr || wBlocked.stdout).trim().split('\n')[0]}`
+  const absentBefore = !existsSync(join(wDir, 'probe.txt')) && !existsSync(join(wDir, 'ran.txt'))
+  const wRun = await probe(cli, wArgs, wDir, 'probe.txt', WRITE_MS)
+  if (signedOut(wRun)) {
+    const why = `not signed in: ${(wRun.stderr || wRun.stdout).trim().split('\n')[0]}`
     return [
-      { cli, block: 'write', verdict: 'skipped', why, blocked: wBlocked },
+      { cli, block: 'write', verdict: 'skipped', why, blocked: wRun },
       { cli, block: 'mcp', verdict: 'skipped', why }
     ]
   }
-  const cDir = freshDir(cli, 'write', 'control')
-  const wControl = await probe(cli, writeControl(cli, runnerMod.argvFor({ cli, ...BOT }, WRITE_PROMPT, cDir)), cDir, 'probe.txt')
-  const w = judge(wBlocked, wControl)
-  out.push({ cli, block: 'write', ...w, why: absentBefore ? w.why : 'probe.txt existed before the run', ...(absentBefore ? {} : { verdict: 'fail' as const }), blocked: wBlocked, control: wControl })
+  const flags = flagWhy(cli, wRun.argv)
+  const probeBody = fileText(wDir, 'probe.txt')
+  const ranBody = fileText(wDir, 'ran.txt')
+  const bodiesOk = probeBody === 'desk-probe' && ranBody === 'ran'
+  const writeVerdict: Verdict = !absentBefore ? 'fail' : flags || !bodiesOk ? 'fail' : 'pass'
+  const writeWhy = !absentBefore
+    ? 'probe.txt or ran.txt existed before the run'
+    : flags
+      ? flags
+      : bodiesOk
+        ? 'probe.txt is desk-probe and ran.txt is ran'
+        : `bodies probe=${JSON.stringify(probeBody)} ran=${JSON.stringify(ranBody)}`
+  out.push({ cli, block: 'write', verdict: writeVerdict, why: writeWhy, blocked: wRun })
 
   if (cli === 'gpt') {
     out.push({ cli, block: 'mcp', verdict: 'skipped', why: 'Codex does not read .mcp.json, and dropping --ignore-user-config would load the real MCP config. The gpt MCP block is not proven by this check.' })
@@ -559,7 +637,7 @@ for (const b of blocks) {
   console.log(`PROBE ${b.cli} ${b.block}: ${b.verdict.toUpperCase()} (${b.why})`)
   for (const [role, run] of [['blocked', b.blocked], ['control', b.control]] as const) {
     if (!run) continue
-    console.log(`  ${role}: exit ${run.code}${run.killed ? ' killed at 60s' : ''} in ${Math.round(run.ms / 1000)}s, file ${run.wrote ? 'written' : 'absent'}; stdout: ${short(run.stdout) || '(none)'}`)
+    console.log(`  ${role}: exit ${run.code}${run.killed ? ' killed' : ''} in ${Math.round(run.ms / 1000)}s, file ${run.wrote ? 'written' : 'absent'}; stdout: ${short(run.stdout) || '(none)'}`)
   }
 }
 console.log(`GMAIL from (${gmailBrain === AGENCY_BRAIN ? 'the brain path as an argument, not a working folder' : 'a temp folder'}): ${fromLine}`)
