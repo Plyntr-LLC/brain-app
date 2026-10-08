@@ -26,7 +26,7 @@ const TOOLS = [
   },
   {
     name: 'browser_click',
-    description: 'Clicks one control on the open page, by its number from the last read ("#3") or its name. A button that pays or buys is never clicked; the person clicks it themselves.',
+    description: 'Clicks one control on the open page, by its number from the last read ("#3") or its name. A control that pays, buys, sends, posts, or changes an account is never pressed by this tool; the person clicks it themselves in the picture.',
     inputSchema: { type: 'object', properties: { target: { type: 'string' } }, required: ['target'] }
   },
   {

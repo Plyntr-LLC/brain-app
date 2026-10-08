@@ -54,7 +54,7 @@ function deskDetect(): Record<DeskCli, boolean> {
   return detect()
 }
 
-/** The live controller: desk Chrome through makeDeskLaunch, senders in dry-run when the env says so. */
+/** The live controller: the shared in-app browser, senders in dry-run when the env says so. */
 export function openDeskController(brain: string): DeskController {
   const role = deskWriteRole(brain)
   seedDesk({ brain, role, detect: deskDetect })
