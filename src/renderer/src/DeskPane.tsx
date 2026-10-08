@@ -412,6 +412,24 @@ export function DeskPane({
               </div>
             )
           }
+          if (msg.kind === 'report') {
+            if (msg.from === speaker) {
+              return (
+                <div className="bubble md" key={msg.id}>
+                  <div className="mdbody" dangerouslySetInnerHTML={{ __html: mdToHtml(msg.text) }} />
+                </div>
+              )
+            }
+            const whoName = nameOf(msg.from)
+            return [
+              <div className="bubble sys desk-pill" key={`${msg.id}-from`} title={`Double-click to open ${whoName}.`} onDoubleClick={() => openOther(msg.from)}>
+                {`Message from ${whoName}.`}
+              </div>,
+              <div className="bubble md" key={`${msg.id}-back`}>
+                <div className="mdbody" dangerouslySetInnerHTML={{ __html: mdToHtml(`${whoName} responded.`) }} />
+              </div>
+            ]
+          }
           const botId = msg.hire?.id || msg.from
           const st = states.find((s) => s.id === botId)
           return (

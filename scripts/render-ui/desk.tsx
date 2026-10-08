@@ -600,15 +600,12 @@ async function threadStage() {
   hold = cardTitled(pane, 'Researcher')[0]
   check('4 after Approve it reads Approved · 9:15 and the buttons are gone', text(hold?.querySelector('.tiny')) === 'Approved · 9:15' && buttons(hold).length === 0, text(hold))
 
-  // Report.
-  const report = cardTitled(pane, 'Writer · Done · 3m')[0]
-  check('4 report header with minutes', !!report, cards(pane).map(title).join(' | '))
-  check('4 report keeps its line breaks', (report?.querySelector('.fcard-body')?.textContent || '') === REPORT, report?.querySelector('.fcard-body')?.textContent || '')
-  check('4 report has Open the log and Talk to Writer', JSON.stringify(buttons(report).map(text)) === JSON.stringify(['Open the log', 'Talk to Writer']), buttons(report).map(text).join(' | '))
-  before = calls.length
-  button(report, 'Open the log')?.click()
-  await tick()
-  check('4 Open the log opens the mail file', same(since(before), 'openFile', tab, '/fx/cards/desk/mail/desk.md'), show(since(before)))
+  // Another bot's finished answer is a communication bubble, then Conductor says they responded.
+  const fromWriter = hop('Message from Writer.')
+  const answered = [...thread.querySelectorAll<HTMLElement>('.bubble.md')].find((el) => text(el) === 'Writer responded.')
+  check('4 a finished answer is a message-from bubble', !!fromWriter && fromWriter.getAttribute('title') === 'Double-click to open Writer.')
+  check('4 Conductor says Writer responded', !!answered && !answered.classList.contains('sys'))
+  check('4 the other bot’s answer is not a tile on this thread', !cards(pane).some((c) => title(c).includes('Done')) && !text(thread).includes('Three bullets for Summit') && !text(thread).includes('Leads up 12%'))
 
   // Status, error, and names.
   const status = cardTitled(pane, 'Where things stand')[0]
@@ -666,11 +663,12 @@ async function threadStage() {
   button(pane.querySelector('.filetab-head'), 'Team')?.click()
   await until(() => text(pane.querySelector('.filetab-head span')) === 'Conductor')
 
-  // Talk to Writer opens Writer's thread.
+  // Opening Writer shows the answer as their own words, not a tile and not the “responded” line.
   before = calls.length
-  button(report, 'Talk to Writer')?.click()
+  ;[...pane.querySelectorAll('.bubble.sys')].find((el) => text(el) === 'Message from Writer.')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
   await until(() => text(pane.querySelector('.filetab-head span')) === 'Writer')
-  check("4 Talk to Writer opens Writer's thread", text(pane.querySelector('.filetab-head span')) === 'Writer' && !!button(pane.querySelector('.filetab-head'), 'Team'))
+  const writerAnswer = text(pane.querySelector('.thread'))
+  check("4 opening Writer shows the answer", text(pane.querySelector('.filetab-head span')) === 'Writer' && !!button(pane.querySelector('.filetab-head'), 'Team') && writerAnswer.includes('Three bullets for Summit') && writerAnswer.includes('Leads up 12%') && writerAnswer.includes('Budget question still open') && !writerAnswer.includes('Writer responded.') && !cards(pane).some((c) => title(c).includes('Done')))
   check("4 Writer's thread loads Writer's view", since(before).some((c) => c.fn === 'view' && c.args[0] === tab && c.args[1] === 'writer'), show(since(before)))
   await until(() => pane.querySelector<HTMLTextAreaElement>('.composer textarea')?.placeholder === 'Message Writer')
   check('4 the composer talks to Writer there', pane.querySelector<HTMLTextAreaElement>('.composer textarea')?.placeholder === 'Message Writer')
