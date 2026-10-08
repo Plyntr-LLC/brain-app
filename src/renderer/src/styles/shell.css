@@ -1459,6 +1459,23 @@ button.linkish.cmdval { color: var(--ink); font-size: 0.88rem; text-decoration: 
   line-height: 1.2;
   color: var(--ink);
 }
+.desk-hidden { width: 100%; }
+.desk-hidden-toggle,
+:root.glass .desk-hidden-toggle {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  transition: none;
+}
 .desk-mark {
   position: relative;
   width: 40px;
@@ -1524,8 +1541,11 @@ button.linkish.cmdval { color: var(--ink); font-size: 0.88rem; text-decoration: 
 }
 .desk-form { width: 100%; }
 .desk-form textarea, .desk-form input, .desk-form select { width: 100%; box-sizing: border-box; }
-.desk-pip { flex-shrink: 0; display: flex; justify-content: flex-end; align-items: center; gap: 0.35rem; padding: 0 14px 6px; }
-.desk-pip img { width: 240px; height: 150px; object-fit: contain; border: 1px solid var(--line); background: var(--card); }
+.desk-browser-slot { padding: 0.45rem 0.65rem 0.6rem; border-top: 1px solid var(--line-soft); }
+.desk-browser-shot { display: block; width: 100%; margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer; text-align: left; }
+.desk-browser-shot img { width: 240px; height: 150px; object-fit: contain; border: 1px solid var(--line); background: var(--card); display: block; }
+.desk-browser-shot img.wide { width: 100%; height: 320px; max-height: 420px; }
+.desk-browser-note { margin-top: 6px; }
 .refs h2 {
   flex-shrink: 0;
   margin: 0;

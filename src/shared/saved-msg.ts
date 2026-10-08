@@ -1,6 +1,14 @@
 /** A big paste folded into the message as a token; the body is what the CLI gets. */
 export type Paste = { token: string; text: string }
 
+/** Swap each whole token for its paste, in one pass. A paste that holds a token stays as pasted. */
+export function expandPastes(text: string, pastes?: Paste[]): string {
+  const live = (pastes || []).filter((p) => p.token && text.includes(p.token))
+  if (!live.length) return text
+  const re = new RegExp(live.map((p) => p.token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g')
+  return text.replace(re, (tok) => live.find((p) => p.token === tok)?.text ?? tok)
+}
+
 export type SavedMsg = { who: 'me' | 'brain' | 'think' | 'sys'; text: string; pastes?: Paste[] }
 
 /** What a chat tab saves of its thread: your messages, answers and notes (last 200), with your pastes. */

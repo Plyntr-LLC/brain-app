@@ -21,6 +21,11 @@ export type ChromePage = {
   isClosed: () => boolean
   setViewport?: (viewport: null) => Promise<void>
   waitForNetworkIdle?: (options: { idleTime: number; timeout: number }) => Promise<void>
+  /** Present on a real puppeteer page. Missing on the fake page, which then skips the park. */
+  createCDPSession?: () => Promise<{
+    send: (method: string, params?: object) => Promise<{ windowId?: number }>
+    detach?: () => Promise<void>
+  }>
 }
 
 export type ChromeBrowser = {
@@ -37,7 +42,7 @@ export type PuppeteerLaunch = (options: ChromeLaunchOptions) => Promise<ChromeBr
 export type DeskPage = PageAdapter & {
   /** Brings the desk Chrome window forward. Sign-in uses this. Ordinary focus does not. */
   front?: () => Promise<void>
-  /** A jpeg of the open page, for the corner picture. Empty when the page cannot take one. */
+  /** A jpeg of the open page, for the picture in the thread. Empty when the page cannot take one. */
   shot?: () => Promise<Uint8Array>
   /** True once the person closed the desk window or quit that Chrome. */
   closed?: () => boolean
@@ -165,6 +170,33 @@ export function pageSubmitFor(i: number): { index: number; name: string } | null
 
 const errText = (e: unknown) => String((e as Error)?.message ?? e)
 
+type WindowBounds = { left: number; top: number; width: number; height: number; windowState: 'normal' }
+
+/** Off the screen, with a width, so a restored window cannot ignore a bare negative left. */
+const PARKED: WindowBounds = { left: -2400, top: 0, width: 1100, height: 800, windowState: 'normal' }
+/** Sign-in puts the window back on the screen, then brings it forward. */
+const SHOWN: WindowBounds = { left: 80, top: 60, width: 1100, height: 800, windowState: 'normal' }
+
+/** Best effort. A page with no CDP session, or a CDP error, leaves the window where it is. */
+async function place(page: ChromePage, bounds: WindowBounds) {
+  if (!page.createCDPSession) return
+  let client: Awaited<ReturnType<NonNullable<ChromePage['createCDPSession']>>> | undefined
+  try {
+    client = await page.createCDPSession()
+    const got = await client.send('Browser.getWindowForTarget')
+    if (got?.windowId == null) return
+    await client.send('Browser.setWindowBounds', { windowId: got.windowId, bounds })
+  } catch {
+    // The picture in the thread still works if the operating-system window cannot be moved.
+  } finally {
+    try {
+      await client?.detach?.()
+    } catch {
+      // The session is already gone.
+    }
+  }
+}
+
 function adapterFor(browser: ChromeBrowser, page: ChromePage): DeskPage {
   let lastControls: string[] | null = null
   const at = (i: number) => `[data-desk-n="${i}"]`
@@ -221,7 +253,10 @@ function adapterFor(browser: ChromeBrowser, page: ChromePage): DeskPage {
       await page.evaluate(pageScroll, dir)
       await settle()
     },
-    front: () => page.bringToFront(),
+    front: async () => {
+      await place(page, SHOWN)
+      await page.bringToFront()
+    },
     shot: async () => (page.screenshot ? page.screenshot({ type: 'jpeg', quality: 40 }) : new Uint8Array()),
     closed: () => page.isClosed() || !browser.connected
   }
@@ -240,6 +275,7 @@ export function makeDeskLaunch(puppeteerLaunch: PuppeteerLaunch): DeskLaunch {
     const page = (await browser.pages()).find((p) => !p.isClosed()) ?? (await browser.newPage())
     // Let the page fill the window instead of puppeteer's 800×600.
     await page.setViewport?.(null)
+    await place(page, PARKED)
     return adapterFor(browser, page)
   }
 }

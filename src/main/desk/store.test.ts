@@ -266,6 +266,16 @@ test('messagesFor and view fold before the bot filter', () => {
   assert.ok(team.some((m) => m.id === 'm_7'))
   assert.deepEqual(store.view('drafts').map((m) => m.id), ['m_7'])
   assert.equal(store.view(null, 2).length, 2)
+  store.appendMail({ id: 'm_12', ts: '2026-10-07T10:01:00.000Z', from: 'me', to: 'writer', kind: 'task', job: 'j_2', text: 'Only for Writer.' })
+  store.appendMail({ id: 'm_13', ts: '2026-10-07T10:02:00.000Z', from: 'writer', to: 'me', kind: 'report', job: 'j_2', text: 'Writer only.', report: { seconds: 4 } })
+  store.appendMail({ id: 'm_14', ts: '2026-10-07T10:03:00.000Z', from: 'writer', to: 'conductor', kind: 'send', job: 'j_2', text: 'The part for you.' })
+  const teamAfter = store.view(null)
+  assert.ok(!teamAfter.some((m) => m.id === 'm_12' || m.id === 'm_13'))
+  assert.ok(teamAfter.some((m) => m.id === 'm_14'))
+  assert.deepEqual(
+    store.view('writer').filter((m) => m.id === 'm_12' || m.id === 'm_13' || m.id === 'm_14').map((m) => m.id),
+    ['m_12', 'm_13', 'm_14']
+  )
 })
 
 test('appendMemory adds a dated line under This week and skips a line already in Standing', () => {

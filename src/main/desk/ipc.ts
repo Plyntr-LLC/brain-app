@@ -167,7 +167,7 @@ export function createDeskHost(deps: DeskHostDeps) {
     list: (tab: string) => controllerFor(tab).list(),
     save: (tab: string, bot: Omit<DeskBot, 'file'>) => controllerFor(tab).saveBot(bot),
     remove: (tab: string, id: string) => controllerFor(tab).removeBot(id),
-    say: (tab: string, text: string, to?: string) => controllerFor(tab).say(text, to),
+    say: (tab: string, text: string, to?: string, pastes?: { token: string; text: string }[]) => controllerFor(tab).say(text, to, pastes),
     answerHold: (tab: string, id: string, answer: 'yes' | 'no') => controllerFor(tab).answerHold(id, answer),
     answerEmail: (tab: string, id: string, answer: 'yes' | 'no') => controllerFor(tab).answerEmail(id, answer),
     answerText: (tab: string, id: string, answer: 'yes' | 'no') => controllerFor(tab).answerText(id, answer),
@@ -203,7 +203,9 @@ export function registerDeskIpc(): void {
   ipcMain.handle('desk:list', (_e, tab: string) => host.list(String(tab || '')))
   ipcMain.handle('desk:save', (_e, tab: string, bot: Omit<DeskBot, 'file'>) => host.save(String(tab || ''), bot))
   ipcMain.handle('desk:remove', (_e, tab: string, id: string) => host.remove(String(tab || ''), String(id || '')))
-  ipcMain.handle('desk:say', (_e, tab: string, text: string, to?: string) => host.say(String(tab || ''), String(text || ''), to))
+  ipcMain.handle('desk:say', (_e, tab: string, text: string, to?: string, pastes?: { token: string; text: string }[]) =>
+    host.say(String(tab || ''), String(text || ''), typeof to === 'string' ? to : undefined, Array.isArray(pastes) ? pastes : undefined)
+  )
   ipcMain.handle('desk:answerHold', (_e, tab: string, id: string, answer: 'yes' | 'no') =>
     host.answerHold(String(tab || ''), String(id || ''), answer === 'no' ? 'no' : 'yes')
   )

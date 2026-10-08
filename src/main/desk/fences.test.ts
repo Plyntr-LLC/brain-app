@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { DeskBot } from '../../shared/desk.ts'
+import { SUMMARY_MAX, briefReturn, returnText } from '../../shared/desk.ts'
 import { parseFences } from './fences.ts'
 
 const F = '```'
@@ -201,4 +202,42 @@ test('bot and to resolve by name or id; an unknown bot is flagged and dropped', 
 test('remember keeps at most 20 lines', () => {
   const lines = Array.from({ length: 25 }, (_, i) => `- Line ${i}.`).join('\n')
   assert.equal(parseFences(block('remember', lines), writer).remember.length, 20)
+})
+
+test('a summary fence is the other chat’s line and a bad one does not drop the turn', () => {
+  const two = parseFences(`${block('summary', 'First try.')}\n\nDone.\n\n${block('summary', 'Drafted the bullets.')}`, writer)
+  assert.equal(two.prose, 'Done.')
+  assert.equal(two.summary, 'Drafted the bullets.')
+  assert.deepEqual(two.flags, [])
+  const empty = parseFences(`Done.\n\n${block('summary', '   ')}`, writer)
+  assert.equal(empty.prose, 'Done.')
+  assert.equal(empty.summary, '')
+  assert.deepEqual(empty.flags, [])
+  const open = parseFences('Done.\n\n```summary\nno close', writer)
+  assert.equal(open.prose, 'Done.')
+  assert.equal(open.summary, '')
+  assert.deepEqual(open.flags, [])
+  const conductorSummary = parseFences(`Researcher is on it.\n\n${block('summary', 'Handed the note to Writer.')}`, conductor)
+  assert.equal(conductorSummary.summary, '')
+  assert.ok(conductorSummary.prose.includes('Researcher is on it.'))
+  assert.ok(conductorSummary.prose.includes('Handed the note to Writer.'))
+  const long = 'Saved the note. '.repeat(40)
+  const capped = parseFences(`Done.\n\n${block('summary', long)}`, writer)
+  assert.ok(capped.summary.endsWith('…'))
+  assert.ok(capped.summary.length <= SUMMARY_MAX)
+  assert.equal(capped.flags.length, 0)
+})
+
+test('a missing summary shows a short answer and clips a long one', () => {
+  assert.equal(returnText({ text: 'Headline ideas are in the thread.' }), 'Headline ideas are in the thread.')
+  const report = 'Three bullets for Summit:\n- Leads up 12%\n- Cost per lead down\n- Budget question still open'
+  const clipped = briefReturn(report)
+  assert.equal(clipped, 'Three bullets for Summit:')
+  assert.ok(!clipped.includes('Leads up 12%'))
+  assert.ok(clipped.length < report.length)
+  const two = 'Drafted the Summit note. The budget is still open.\n- Leads up 12%\n- Cost per lead down\n- Budget question still open'
+  assert.equal(briefReturn(two), 'Drafted the Summit note. The budget is still open.')
+  const numbered = '1. Draft the three bullets for Summit.\n- Leads up 12%\n- Cost per lead down\n- Budget question still open'
+  assert.equal(briefReturn(numbered), '1. Draft the three bullets for Summit.')
+  assert.equal(returnText({ summary: 'Drafted three Summit bullets.', text: report }), 'Drafted three Summit bullets.')
 })

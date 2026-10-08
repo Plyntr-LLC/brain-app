@@ -195,9 +195,25 @@ async function main() {
   await tick(80)
   check('(xiii) no jobs left: idle, no timer', now() === 'Idle. Waiting for your next message.' && !!rail.querySelector('.rail-now.idle') && !timer(), now())
 
-  // (vi) a second send clears the turn
+  // (vi) a second send clears Done so far and keeps the plan. A later plan adds a step and does not send a finished step back.
   await send('now draft the email')
-  check('(vi) Done so far and Plan cleared', !rail.querySelector('.rail-log') && !rail.querySelector('.rail-steps'))
+  check('(vi) Done so far cleared, Plan kept', !rail.querySelector('.rail-log') && stepRows().length === 4, `${stepRows().length}`)
+  emit({
+    kind: 'plan',
+    steps: [
+      { title: 'Pull the numbers', status: 'pending' },
+      { title: 'Send the draft', status: 'in_progress' }
+    ]
+  })
+  await tick()
+  const labels = () => stepRows().map((r) => (r.querySelector('.rail-label')?.textContent || '').trim())
+  check(
+    '(vi) the new point is added and a finished step stays done',
+    labels().join('|') === 'Pull the numbers|Compare weeks|Write the report|Draft the email|Send the draft' &&
+      stepRows()[0].classList.contains('done') &&
+      stepRows()[4].classList.contains('live'),
+    labels().join('|')
+  )
 
   // (ix) error ends a busy turn
   emit({ kind: 'status', data: 'work:Drafting the email' })
@@ -206,22 +222,29 @@ async function main() {
   await tick(80)
   check('(ix) error: idle, no timer', now() === 'Idle. Waiting for your next message.' && !timer(), now())
 
-  // A phone message starts a turn: the last turn's Plan and Done so far go.
+  // A phone message starts a turn: Done so far goes, the plan stays.
   emit({ kind: 'done' })
   emit({ kind: 'plan', steps: [{ title: 'Old step', status: 'completed' }] })
   emit({ kind: 'status', data: 'work:Old action one' })
   emit({ kind: 'status', data: 'work:Old action two' })
   emit({ kind: 'done' })
   await tick()
-  check('(x) before the phone turn the rail holds the old turn', stepRows().length === 1 && logLines().includes('Old action one'), JSON.stringify(logLines()))
+  check('(x) before the phone turn the rail holds the old turn', stepRows().length === 6 && logLines().includes('Old action one'), `${stepRows().length} ${JSON.stringify(logLines())}`)
   flushSync(() => phoneListeners.forEach((l) => l({ tabId: ID, text: 'from my phone: check the inbox' })))
   await tick(80)
-  check('(x) a phone message clears Plan and Done so far', !rail.querySelector('.rail-steps') && !rail.querySelector('.rail-log') && !!rail.querySelector('.rail-now.live'), now())
+  check('(x) a phone message keeps the plan and clears Done so far', stepRows().length === 6 && !rail.querySelector('.rail-log') && !!rail.querySelector('.rail-now.live'), `${stepRows().length} ${now()}`)
   emit({ kind: 'plan', steps: [{ title: 'Read the inbox', status: 'in_progress' }] })
   emit({ kind: 'status', data: 'work:Read the inbox' })
   emit({ kind: 'status', data: 'work:Sorted mail' })
   emit({ kind: 'done' })
   await tick()
+  check(
+    '(x) the phone plan adds a step and a finished step stays done',
+    labels().join('|') === 'Pull the numbers|Compare weeks|Write the report|Draft the email|Send the draft|Old step|Read the inbox' &&
+      stepRows()[0].classList.contains('done') &&
+      stepRows()[6].classList.contains('live'),
+    labels().join('|')
+  )
   await send('/clear')
   await tick(80)
   check('(xi) /clear clears Plan and Done so far', !rail.querySelector('.rail-steps') && !rail.querySelector('.rail-log'), `${stepRows().length} ${logLines().length}`)

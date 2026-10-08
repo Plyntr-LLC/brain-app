@@ -63,7 +63,7 @@ function fakePuppeteer() {
     launches.push(options)
     return browser
   }
-  return { doc, calls, launches, puppeteerLaunch, closePage: () => (closed = true) }
+  return { doc, calls, launches, puppeteerLaunch, closePage: () => (closed = true), page }
 }
 
 async function launched(fake: ReturnType<typeof fakePuppeteer>, chromePath = fakeChromeExe()): Promise<DeskPage> {
@@ -193,6 +193,59 @@ test('a closed window with Chrome still running opens a page in it, not a second
   assert.ok(!('noChrome' in again))
   assert.equal(fake.launches.length, 1)
   assert.deepEqual(fake.calls[0], ['newPage'])
+})
+
+test('launch parks the window off screen, and front brings it back on screen before bringToFront', async () => {
+  const fake = fakePuppeteer()
+  const seen: unknown[][] = []
+  let opened = 0
+  let detaches = 0
+  fake.page.createCDPSession = async () => {
+    opened += 1
+    return {
+      send: async (method: string, params?: object) => {
+        seen.push([method, params])
+        if (method === 'Browser.getWindowForTarget') return { windowId: 7 }
+        return {}
+      },
+      detach: async () => {
+        detaches += 1
+      }
+    }
+  }
+  const bring = fake.page.bringToFront
+  fake.page.bringToFront = async () => {
+    seen.push(['bringToFront'])
+    await bring()
+  }
+  const page = await launched(fake)
+  assert.ok(!('args' in fake.launches[0]), 'park is not a launch argument')
+  const parked = seen.find((row) => row[0] === 'Browser.setWindowBounds')
+  const parkBounds = (parked?.[1] as { bounds?: { left: number; width: number; windowState: string } } | undefined)?.bounds
+  assert.ok(parkBounds && typeof parkBounds.width === 'number' && parkBounds.left + parkBounds.width <= 0 && parkBounds.windowState === 'normal', JSON.stringify(parked))
+  seen.length = 0
+  await page.front?.()
+  const i = seen.findIndex((row) => row[0] === 'Browser.setWindowBounds')
+  const showBounds = (seen[i]?.[1] as { bounds?: { left: number; top: number; width: number; height: number; windowState: string } } | undefined)?.bounds
+  assert.ok(showBounds, JSON.stringify(seen))
+  assert.ok(showBounds.left >= 40 && showBounds.left <= 120, String(showBounds.left))
+  assert.ok(showBounds.top >= 20 && showBounds.top <= 100, String(showBounds.top))
+  assert.equal(showBounds.width, 1100)
+  assert.equal(showBounds.height, 800)
+  assert.equal(showBounds.windowState, 'normal')
+  assert.deepEqual(seen[i + 1], ['bringToFront'])
+  await page.front?.()
+  assert.equal(opened, detaches)
+  assert.ok(opened >= 3)
+})
+
+test('a page with no CDP session still launches, and front still brings it forward', async () => {
+  const fake = fakePuppeteer()
+  assert.equal(fake.page.createCDPSession, undefined)
+  const page = await launched(fake)
+  fake.calls.length = 0
+  await page.front?.()
+  assert.deepEqual(fake.calls, [['bringToFront']])
 })
 
 test('the page fills the window: viewport emulation is turned off after launch', async () => {

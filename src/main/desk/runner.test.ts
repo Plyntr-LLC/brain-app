@@ -396,6 +396,7 @@ const SPEC = {
   email: '```email\nreply: <gmail message id, or empty when this is a new email>\nto: Brent <brent@example.com>\ncc:\nsubject: September numbers\n\nSeptember numbers are in the note.\n```',
   sms: '```sms\nto: Brent\nvia: iMessage\n\nThe September note is ready.\n```',
   remember: '```remember\n- <one line the bot should still know tomorrow>\n```',
+  summary: '```summary\n<one or two sentences naming what you did and the result>\n```',
   hire: '```hire\nname: Designer\ncli: claude\nmodel: default\neffort: low\n\n<description, after a blank line, plain sentences, 800 characters max>\n```',
   browse: ['url: https://example.com', 'click: Pricing', 'click: #3', 'type: Search | summit', 'press: Enter', 'scroll: down'].map((s) => '```browse\n' + s + '\n```')
 }
@@ -447,6 +448,7 @@ test('conductor prompt: memory, then the assign, hire, send, and remember exampl
   assert.ok(p.includes(SEED_TEXT.conductor.description))
   ordered(p, ['- Joe likes short answers.', SPEC.assign, SPEC.hire, SPEC.send, SPEC.remember, CONDUCTOR_ENDS])
   assert.ok(p.includes('You may end with assign, hire, send, or remember. You may not end with email, sms, hold, or browse.'))
+  assert.ok(!p.includes('```summary'), 'the conductor chat shows the full reply, so it is not taught a summary fence')
   assert.ok(p.includes('That teammate uses the desk browser. You do not open the page yourself.'))
   for (const tag of ['```email', '```sms', '```hold', '```browse']) assert.ok(!p.includes(tag), `conductor prompt has ${tag}`)
 })
@@ -484,10 +486,10 @@ test('conductor history keeps the last 20 after leaving out person messages to w
 test('worker prompt: roster line, then the send, remember, browse, email, sms, and hold examples exactly, then the PAGE and ends lines', () => {
   const p = workerPrompt({ bot: WRITER, bots: BOTS, memory: '- Joe wants bullets.', mail: [], job: 'j_1' })
   const line = rosterLine(p)
-  ordered(p, [line, SPEC.send, SPEC.remember, ...SPEC.browse, SPEC.email, SPEC.sms, SPEC.hold, PAGE_HOW, WORKER_ENDS])
+  ordered(p, [line, SPEC.send, SPEC.remember, SPEC.summary, ...SPEC.browse, SPEC.email, SPEC.sms, SPEC.hold, PAGE_HOW, WORKER_ENDS])
   for (const s of ['click: #3', 'type: Search | summit', 'press: Enter', 'scroll: down', 'url: https://example.com', 'click: Pricing']) assert.ok(p.includes(s), s)
   assert.ok(p.includes("The PAGE block lists the page's controls as numbered lines. Click one by its name or by its number, like #3."))
-  assert.ok(p.includes('You may end with send, remember, browse, email, sms, or hold. You may not end with assign or hire.'))
+  assert.ok(p.includes('You may end with send, remember, browse, email, sms, hold, or summary. You may not end with assign or hire.'))
   assert.ok(p.includes('subject: September numbers\n\nSeptember numbers are in the note.'), 'a real blank line before the email body')
   assert.ok(p.includes('```email'))
   assert.ok(!p.includes('```assign'))
@@ -522,7 +524,14 @@ test("later-turn worker prompt: description, roster line, memory, and only this 
   const mail = [
     msg({ kind: 'task', from: ME, to: 'conductor', text: 'Team thread sentence.' }),
     msg({ kind: 'pack', from: 'conductor', to: 'writer', job: 'j_1', text: 'Draft the Summit reply.', pack: { why: 'Brent asked.', files: [{ path: 'clients/summit/notes.md', excerpt: 'Spend was $4,200.' }], dropped: [] } }),
-    msg({ kind: 'send', from: 'researcher', to: 'writer', job: 'j_1', text: 'Here are the three notes.' }),
+    msg({
+      kind: 'send',
+      from: 'researcher',
+      to: 'writer',
+      job: 'j_1',
+      text: '[Pasted text #1 +1 line]',
+      pastes: [{ token: '[Pasted text #1 +1 line]', text: 'Here are the three notes.' }]
+    }),
     msg({ kind: 'send', from: 'writer', to: 'checker', job: 'j_1', text: 'Draft is ready for a look.' }),
     msg({ kind: 'send', from: 'researcher', to: 'checker', job: 'j_1', text: 'Checker only note.' }),
     msg({ kind: 'send', from: 'researcher', to: 'writer', job: 'j_2', text: 'Unrelated thing for later.' }),

@@ -11,6 +11,7 @@ import {
   botHire,
   botIdFromName,
   botSlug,
+  cleanSummary,
   isoWeek
 } from '../../shared/desk.ts'
 import type { BotState, DeskBot, DeskCli, DeskMessage, DeskSendResult, DeskSystem } from '../../shared/desk.ts'
@@ -346,14 +347,16 @@ export function createDeskController(opts: ControllerOpts) {
     })
   }
 
-  function postProse(bot: DeskBot, prose: string, kind: 'reply' | 'report', result: Extract<RunResult, { status: 'ok' }>, started: number) {
-    const text = prose.trim()
+  function postProse(bot: DeskBot, prose: string, kind: 'reply' | 'report', result: Extract<RunResult, { status: 'ok' }>, started: number, summary?: string) {
+    const line = cleanSummary(summary)
+    const text = prose.trim() || line
     if (!text) return
     post({
       from: bot.id,
       to: ME,
       kind,
       text,
+      ...(line ? { summary: line } : {}),
       ...(result.used ? { used: result.used } : {}),
       ...(kind === 'report' ? { report: { seconds: Math.max(0, Math.round((now().getTime() - started) / 1000)) } } : {})
     })
@@ -632,7 +635,7 @@ export function createDeskController(opts: ControllerOpts) {
     if (parsed.flags.some((f) => f.system === 'parse-failed')) return
     hire(parsed.hire)
     deliverWork(bot, parsed)
-    postProse(bot, parsed.prose, 'reply', result, started)
+    postProse(bot, parsed.prose, 'reply', result, started, parsed.summary)
   }
 
   async function runWorker(bot: DeskBot, turn: Turn, started: number) {
@@ -672,7 +675,7 @@ export function createDeskController(opts: ControllerOpts) {
       const live = sessions.get(bot.id)
       if (live?.done && parsed.browse) {
         postSystem(bot.id, 'browse-limit', `${bot.name} stopped after 8 browser steps.`)
-        postProse(bot, parsed.prose, 'reply', result, started)
+        postProse(bot, parsed.prose, 'reply', result, started, parsed.summary)
         endSession(bot.id)
         return
       }
@@ -680,7 +683,7 @@ export function createDeskController(opts: ControllerOpts) {
       if (parsed.browse && blocked) postSystem(bot.id, 'extra-tile', `${bot.name} is still waiting on your answer, so that was left out.`)
       if (parsed.browse && !blocked && !signInFollow) {
         const action = await doBrowse(bot, turn, parsed.browse)
-        if (parsed.prose.trim()) postProse(bot, parsed.prose, 'reply', result, started)
+        if (parsed.prose.trim() || parsed.summary) postProse(bot, parsed.prose, 'reply', result, started, parsed.summary)
         if (halted(turn)) return
         if (action === 'again') {
           wake = undefined
@@ -699,7 +702,7 @@ export function createDeskController(opts: ControllerOpts) {
       const tileNow = turn.job ? openTile(bot.id, turn.job) : undefined
       const finished = !parsed.sends.length && !parsed.hold && !parsed.email && !parsed.sms && !parsed.browse && !tileNow
       if (live && !parsed.browse && !(waiting?.kind === 'hold' && waiting.hold?.browseClick)) endSession(bot.id)
-      postProse(bot, parsed.prose, finished ? 'report' : 'reply', result, started)
+      postProse(bot, parsed.prose, finished ? 'report' : 'reply', result, started, parsed.summary)
       return
     }
   }
@@ -821,8 +824,15 @@ export function createDeskController(opts: ControllerOpts) {
     }
   }
 
-  async function say(text: string, to = CONDUCTOR) {
-    const res = post({ from: ME, to, kind: 'task', text })
+  async function say(text: string, to = CONDUCTOR, pastes?: { token: string; text: string }[]) {
+    const held = (pastes || []).filter((p) => p && typeof p.token === 'string' && p.token && typeof p.text === 'string' && text.includes(p.token))
+    const res = post({
+      from: ME,
+      to,
+      kind: 'task',
+      text,
+      ...(held.length ? { pastes: held.map((p) => ({ token: p.token, text: p.text })) } : {})
+    })
     await whenIdle()
     return res
   }

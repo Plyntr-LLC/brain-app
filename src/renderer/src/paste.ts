@@ -1,4 +1,4 @@
-import type { Paste } from '../../shared/saved-msg'
+import { expandPastes as expandStored, type Paste } from '../../shared/saved-msg'
 
 /** A text paste past either limit folds into a token, the way the terminal CLIs do it. */
 export const PASTE_CHARS = 1000
@@ -37,9 +37,7 @@ function tokenPattern(pastes: Paste[]): RegExp {
 
 /** The text with each whole token swapped for its paste, in one pass (a paste that holds a token stays as pasted). */
 export function expandPastes(text: string, pastes: Paste[]): string {
-  const live = livePastes(text, pastes)
-  if (!live.length) return text
-  return text.replace(tokenPattern(live), (tok) => live.find((p) => p.token === tok)?.text ?? tok)
+  return expandStored(text, livePastes(text, pastes))
 }
 
 /** The text cut into plain runs and pastes, for the thread's folded view. */

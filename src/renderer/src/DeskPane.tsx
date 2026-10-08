@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { CLI_LABEL, CONDUCTOR, type BotState, type DeskBot, type DeskCli, type DeskMessage, type DeskWelcome } from '@shared/desk'
+import { CLI_LABEL, CONDUCTOR, returnText, type BotState, type DeskBot, type DeskCli, type DeskMessage, type DeskWelcome } from '@shared/desk'
+import type { Paste } from '@shared/saved-msg'
 import { DeskBotForm } from './DeskBotForm'
 import { DeskCard } from './DeskCard'
+import { isBigPaste, livePastes, nextPasteNumber, pasteLines, pasteParts, pasteSize, pasteToken } from './paste'
 import { mdToHtml } from './ptyChat'
-import { visibleBgLine } from '../../shared/agent-label'
 
 type Cap = { id: string; label: string }
 
@@ -34,6 +35,32 @@ function stateLine(st: BotState | undefined, names: Record<string, string>, mode
   if (st.queued && st.queued > 0) parts.push(`Queued (${st.queued})`)
   if (st.nextModel) parts.push(`Switches to ${modelLabel(st.nextModel, models)} after this step.`)
   return parts.join(' · ')
+}
+
+/** Your line, with each long paste folded. Show opens that paste in place. */
+function PastedLine({ text, pastes }: { text: string; pastes: Paste[] }) {
+  const [open, setOpen] = useState<Record<string, boolean>>({})
+  return (
+    <>
+      {pasteParts(text, pastes).map((part, i) =>
+        'paste' in part ? (
+          <span key={i} className="paste-fold">
+            <button
+              type="button"
+              className="paste-label"
+              aria-expanded={open[part.paste.token] === true}
+              onClick={() => setOpen((o) => ({ ...o, [part.paste.token]: !o[part.paste.token] }))}
+            >
+              {part.paste.token} · {open[part.paste.token] ? 'hide' : 'show'}
+            </button>
+            {open[part.paste.token] ? <pre className="paste-body">{part.paste.text}</pre> : null}
+          </span>
+        ) : (
+          <span key={i}>{part.text}</span>
+        )
+      )}
+    </>
+  )
 }
 
 function withCurrent(list: Cap[], current: string): Cap[] {
@@ -66,6 +93,20 @@ function DeskFace({ name }: { name: string }) {
 }
 
 const CHAT_KIND = new Set(['task', 'reply', 'pack', 'send'])
+
+function messageBack(msg: DeskMessage, whoName: string, onOpen: (id: string) => void) {
+  const line = returnText(msg)
+  return [
+    <div className="bubble sys desk-pill" key={`${msg.id}-from`} title={`Double-click to open ${whoName}.`} onDoubleClick={() => onOpen(msg.from)}>
+      {`Message from ${whoName}.`}
+    </div>,
+    line ? (
+      <div className="bubble md" key={`${msg.id}-back`}>
+        <div className="mdbody" dangerouslySetInnerHTML={{ __html: mdToHtml(line) }} />
+      </div>
+    ) : null
+  ]
+}
 
 function chatShape(msg: DeskMessage, speaker: string): 'me' | 'prose' | 'sent' | 'from' | 'card' {
   if (!CHAT_KIND.has(msg.kind)) return 'card'
@@ -107,6 +148,8 @@ export function DeskPane({
   const [welcome, setWelcome] = useState<DeskWelcome | null>(null)
   const [openBotId, setOpenBotId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const [pastes, setPastes] = useState<Paste[]>([])
+  const pastesRef = useRef<Paste[]>([])
   const [form, setForm] = useState<DeskBot | null | undefined>(undefined)
   const [note, setNote] = useState('')
   const [removeAsk, setRemoveAsk] = useState<{ id: string; name: string } | null>(null)
@@ -114,7 +157,7 @@ export function DeskPane({
   const [models, setModels] = useState<Record<DeskCli, Cap[]>>({ grok: [], claude: [], gpt: [], cursor: [] })
   const [installed, setInstalled] = useState<DeskCli[]>([])
   const [tick, setTick] = useState(0)
-  const [pip, setPip] = useState<'open' | 'chip'>('open')
+  const [browserView, setBrowserView] = useState<'small' | 'wide' | 'note'>('small')
   const [shot, setShot] = useState<string | null>(null)
   const openRef = useRef<string | null>(null)
   const brainRef = useRef('')
@@ -122,7 +165,19 @@ export function DeskPane({
   const threadRef = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
+  const [hiddenIds, setHiddenIds] = useState<string[]>([])
+  const [hiddenOpen, setHiddenOpen] = useState(false)
   openRef.current = openBotId
+
+  useEffect(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(`desk-hidden:${cwd}`) || '[]')
+      setHiddenIds(Array.isArray(raw) ? raw.filter((id) => typeof id === 'string' && id !== CONDUCTOR) : [])
+    } catch {
+      setHiddenIds([])
+    }
+    setHiddenOpen(false)
+  }, [cwd])
 
   function names(): Record<string, string> {
     const map: Record<string, string> = { me: 'You' }
@@ -207,13 +262,18 @@ export function DeskPane({
     }).catch(() => onKeep())
   }, [closing, id, onClosed, onKeep])
 
-  const windowOn = messages.some((m) => m.browse?.windowOpen)
+  const pictureMsg = [...messages].reverse().find((m) => m.kind === 'browse' && m.browse?.windowOpen && !m.browse.signIn)
+  const pictureKey = pictureMsg?.id ?? ''
   useEffect(() => {
-    if (!active || !windowOn || pip !== 'open') return
+    setBrowserView('small')
+    setShot(null)
+  }, [pictureKey])
+  useEffect(() => {
+    if (!active || !pictureKey || browserView === 'note') return
     let dead = false
     let busy = false
     const tickShot = () => {
-      if (busy) return
+      if (busy || dead) return
       busy = true
       void window.brain.desk.picture(id).then((b64) => {
         if (!dead && b64) setShot(b64)
@@ -227,7 +287,7 @@ export function DeskPane({
       dead = true
       window.clearInterval(timer)
     }
-  }, [active, windowOn, pip, id])
+  }, [active, pictureKey, browserView, id])
 
   function openThread(botId: string | null) {
     stick.current = true
@@ -273,23 +333,44 @@ export function DeskPane({
     await loadThread(openRef.current === botId ? null : openRef.current)
   }
 
+  function keepPastes(next: Paste[]) {
+    pastesRef.current = next
+    setPastes(next)
+  }
+
+  /** Types at the caret through the browser, so one undo takes the token back out. */
+  function insertAtCaret(box: HTMLTextAreaElement, text: string) {
+    box.focus()
+    if (document.execCommand('insertText', false, text)) return
+    const at = box.selectionStart
+    const next = box.value.slice(0, at) + text + box.value.slice(box.selectionEnd)
+    setDraft(next)
+    requestAnimationFrame(() => box.setSelectionRange(at + text.length, at + text.length))
+  }
+
+  function expandPaste(p: Paste) {
+    setDraft((s) => s.replace(p.token, () => p.text))
+    keepPastes(pastesRef.current.filter((x) => x !== p))
+  }
+
+  function dropPaste(p: Paste) {
+    setDraft((s) => s.split(p.token).join(''))
+    keepPastes(pastesRef.current.filter((x) => x !== p))
+  }
+
   function send() {
     const text = draft.trim()
     if (!text || welcome?.composerDisabled) return
+    const held = livePastes(text, pastesRef.current)
     setDraft('')
-    void window.brain.desk.say(id, text, openBotId || CONDUCTOR)
+    keepPastes([])
+    void window.brain.desk.say(id, text, openBotId || CONDUCTOR, held.length ? held : undefined)
   }
 
   const who = names()
   const openBot = bots.find((b) => b.id === openBotId) || null
   const header = openBot?.name || who[CONDUCTOR] || 'Conductor'
   const conductor = states.find((s) => s.id === CONDUCTOR)
-  const working = states.filter((s): s is Extract<BotState, { state: 'working' }> => s.state === 'working')
-  const bg = visibleBgLine(working.map((s) => {
-    const name = who[s.id] || 'A teammate'
-    const task = s.trying ? 'trying another model' : ((s.task || 'working').split('\n')[0] || 'working')
-    return { label: `${name} is ${task}` }
-  }))
   const efforts = {
     grok: effortsFor('grok'),
     claude: effortsFor('claude'),
@@ -300,35 +381,55 @@ export function DeskPane({
 
   const speaker = openBotId || CONDUCTOR
   const nameOf = (botId: string) => who[botId] || (botId === 'me' ? 'You' : 'Someone')
+  const hiddenSet = new Set(hiddenIds)
+  const shownBots = bots.filter((bot) => bot.id === CONDUCTOR || !hiddenSet.has(bot.id))
+  const hiddenBots = bots.filter((bot) => bot.id !== CONDUCTOR && hiddenSet.has(bot.id))
+  function hideBot(botId: string) {
+    if (botId === CONDUCTOR) return
+    const next = hiddenSet.has(botId) ? hiddenIds.filter((id) => id !== botId) : [...hiddenIds, botId]
+    setHiddenIds(next)
+    if (!hiddenSet.has(botId)) setHiddenOpen(true)
+    try { localStorage.setItem(`desk-hidden:${cwd}`, JSON.stringify(next)) } catch { /* the rail still updates */ }
+    setForm(undefined)
+  }
+  function botButton(bot: DeskBot) {
+    const st = states.find((s) => s.id === bot.id)
+    const choices = withCurrent(models[bot.cli] || [], bot.model)
+    const open = bot.id === speaker
+    const live = st?.state === 'working'
+    return (
+      <button
+        type="button"
+        key={bot.id}
+        className={`desk-bot${open ? ' on' : ''}${live ? ' live' : ''}`}
+        aria-label={bot.name}
+        title={`${bot.name}. ${stateLine(st, who, choices)}`}
+        onClick={() => openThread(bot.id === CONDUCTOR ? null : bot.id)}
+      >
+        <span className="desk-logo">
+          <DeskFace name={bot.name} />
+          {live ? <span className="desk-dot" aria-hidden="true" /> : null}
+        </span>
+        <span className="desk-name">{bot.name}</span>
+      </button>
+    )
+  }
   const roster = (
     <div className="desk-roster">
       <div className="desk-bots">
-        {bots.map((bot) => {
-          const st = states.find((s) => s.id === bot.id)
-          const choices = withCurrent(models[bot.cli] || [], bot.model)
-          const open = bot.id === speaker
-          const live = st?.state === 'working'
-          return (
-            <button
-              type="button"
-              key={bot.id}
-              className={`desk-bot${open ? ' on' : ''}${live ? ' live' : ''}`}
-              aria-label={bot.name}
-              title={`${bot.name}. ${stateLine(st, who, choices)}`}
-              onClick={() => openThread(bot.id === CONDUCTOR ? null : bot.id)}
-            >
-              <span className="desk-logo">
-                <DeskFace name={bot.name} />
-                {live ? <span className="desk-dot" aria-hidden="true" /> : null}
-              </span>
-              <span className="desk-name">{bot.name}</span>
-            </button>
-          )
-        })}
+        {shownBots.map(botButton)}
         <button type="button" className="desk-mark" aria-label="Add a teammate" title="Add a teammate" onClick={() => { setForm(null); setNote('') }}>
           +
         </button>
       </div>
+      {hiddenBots.length ? (
+        <div className="desk-hidden">
+          <button type="button" className="desk-hidden-toggle" aria-expanded={hiddenOpen} onClick={() => setHiddenOpen((open) => !open)}>
+            Hidden
+          </button>
+          {hiddenOpen ? <div className="desk-bots desk-hidden-list">{hiddenBots.map(botButton)}</div> : null}
+        </div>
+      ) : null}
       {note ? <p className="tiny">{note}</p> : null}
       {form !== undefined ? (
         <>
@@ -347,6 +448,8 @@ export function DeskPane({
               void removeBot(form.id)
             } : undefined}
             onOpenFile={form ? () => onOpenFile(form.file) : undefined}
+            onHide={form && form.id !== CONDUCTOR ? () => hideBot(form.id) : undefined}
+            hidden={!!form && hiddenSet.has(form.id)}
             onCancel={() => setForm(undefined)}
           />
         </>
@@ -390,7 +493,7 @@ export function DeskPane({
           if (shape === 'me') {
             return (
               <div className="bubble me" key={msg.id}>
-                {msg.text}
+                {msg.pastes?.length ? <PastedLine text={msg.text} pastes={msg.pastes} /> : msg.text}
                 {queued ? <p className="tiny">Conductor will read this next.</p> : null}
               </div>
             )
@@ -405,10 +508,10 @@ export function DeskPane({
           if (shape === 'sent' || shape === 'from') {
             const other = shape === 'sent' ? msg.to : msg.from
             const whoName = nameOf(other)
-            const label = shape === 'sent' ? `Message sent to ${whoName}.` : `Message from ${whoName}.`
+            if (shape === 'from') return messageBack(msg, whoName, openOther)
             return (
               <div className="bubble sys desk-pill" key={msg.id} title={`Double-click to open ${whoName}.`} onDoubleClick={() => openOther(other)}>
-                {label}
+                {`Message sent to ${whoName}.`}
               </div>
             )
           }
@@ -420,15 +523,7 @@ export function DeskPane({
                 </div>
               )
             }
-            const whoName = nameOf(msg.from)
-            return [
-              <div className="bubble sys desk-pill" key={`${msg.id}-from`} title={`Double-click to open ${whoName}.`} onDoubleClick={() => openOther(msg.from)}>
-                {`Message from ${whoName}.`}
-              </div>,
-              <div className="bubble md" key={`${msg.id}-back`}>
-                <div className="mdbody" dangerouslySetInnerHTML={{ __html: mdToHtml(`${whoName} responded.`) }} />
-              </div>
-            ]
+            return messageBack(msg, nameOf(msg.from), openOther)
           }
           const botId = msg.hire?.id || msg.from
           const st = states.find((s) => s.id === botId)
@@ -454,9 +549,16 @@ export function DeskPane({
               onTalk={(botId) => openThread(botId)}
               onOpenLog={() => onOpenFile(`${cwd}/desk/mail/desk.md`)}
               onOpenMemory={(botId) => onOpenFile(`${cwd}/desk/memory/${botId}.md`)}
+              picture={msg.id === pictureMsg?.id ? { mode: browserView, src: shot } : undefined}
+              onPictureToggle={() => setBrowserView((v) => (v === 'small' ? 'wide' : v))}
+              onPictureHide={() => setBrowserView('note')}
+              onPictureShow={() => setBrowserView('small')}
               onOpenBrowser={(opts) => {
-                setPip('open')
-                if (opts?.signIn) void window.brain.desk.showWindow(id)
+                if (opts?.signIn) {
+                  void window.brain.desk.showWindow(id)
+                  return
+                }
+                setBrowserView((v) => (v === 'note' ? 'small' : 'wide'))
               }}
               onRemoveHire={(msgId) => {
                 const hire = messages.find((m) => m.id === msgId)?.hire
@@ -480,21 +582,6 @@ export function DeskPane({
           Latest
         </button>
       ) : null}
-      {windowOn ? (
-        <div className="desk-pip">
-          {pip === 'chip' ? (
-            <button type="button" className="ghost" onClick={() => setPip('open')}>Desk browser</button>
-          ) : (
-            <>
-              {shot ? <img src={`data:image/jpeg;base64,${shot}`} alt="Desk browser" /> : <p className="tiny">Desk browser</p>}
-              <button type="button" className="ghost" onClick={() => setPip('chip')}>Hide</button>
-            </>
-          )}
-        </div>
-      ) : null}
-      {bg ? (
-        <button type="button" className="linkish" onClick={() => void window.brain.desk.status(id)}>{bg}</button>
-      ) : null}
       <div className="composer">
         <textarea
           rows={2}
@@ -502,6 +589,15 @@ export function DeskPane({
           placeholder={welcome?.composerPlaceholder || 'Message Conductor'}
           disabled={!!welcome?.composerDisabled}
           onChange={(e) => setDraft(e.target.value)}
+          onPaste={(e) => {
+            if (welcome?.composerDisabled) return
+            const text = e.clipboardData?.getData('text/plain') || ''
+            if (!isBigPaste(text)) return
+            e.preventDefault()
+            const token = pasteToken(nextPasteNumber(pastesRef.current), pasteLines(text))
+            keepPastes([...pastesRef.current, { token, text }])
+            insertAtCaret(e.currentTarget, token)
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
@@ -510,6 +606,22 @@ export function DeskPane({
           }}
         />
         <button className="primary" type="button" disabled={!!welcome?.composerDisabled} onClick={send}>Send</button>
+        {livePastes(draft, pastes).length > 0 ? (
+          <div className="attachrow pasterow">
+            {livePastes(draft, pastes).map((p) => {
+              const lines = pasteLines(p.text)
+              return (
+                <span className="chip paste-chip" key={p.token} title={p.token}>
+                  <span className="paste-chip-label">
+                    Pasted text {/#\d+/.exec(p.token)?.[0]} · {pasteSize(p.text)} · {lines} {lines === 1 ? 'line' : 'lines'}
+                  </span>
+                  <button type="button" className="linkish" onClick={() => expandPaste(p)}>Expand</button>
+                  <button type="button" className="tabx" onClick={() => dropPaste(p)} aria-label="Remove paste">×</button>
+                </span>
+              )
+            })}
+          </div>
+        ) : null}
         {welcome?.readiness.map((entry) => {
           const bot = bots.find((b) => b.id === entry.botId)
           return (

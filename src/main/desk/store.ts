@@ -3,11 +3,13 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { brainWriteBlock } from '../write-guard.ts'
 import {
   ME,
+  forThread,
   MEMORY_PROMPT_CHARS,
   MEMORY_STANDING_CHARS,
   MEMORY_WEEK_CHARS,
   SEED_IDS,
   botSlug,
+  cleanSummary,
   descriptionError,
   isDeskCli,
   localDay
@@ -91,7 +93,7 @@ export function parseBotFile(text: string, file: string, id: string): DeskBot | 
 const MACHINE = '<!-- desk '
 const MACHINE_LINE = /^<!-- desk .*$/gm
 const TOKEN_KEYS = ['id', 'kind', 'from', 'to', 'job', 'ts', 'replaces', 'actedAt', 'browseId', 'system'] as const
-const DATA_KEYS = ['pack', 'hold', 'email', 'textMsg', 'hire', 'browse', 'noteLines', 'report', 'used', 'lastTry', 'name', 'failure', 'detail', 'inputs'] as const
+const DATA_KEYS = ['pack', 'hold', 'email', 'textMsg', 'hire', 'browse', 'noteLines', 'report', 'used', 'lastTry', 'name', 'failure', 'detail', 'inputs', 'pastes', 'summary'] as const
 const WORKED_KINDS: DeskKind[] = ['report', 'send', 'email', 'text', 'reply', 'hold', 'browse']
 
 const KIND_LABEL: Partial<Record<DeskKind, string>> = {
@@ -155,6 +157,17 @@ export function serializeMessage(m: DeskMessage, names: Record<string, string> =
   return `${MACHINE}${tokens.join(' ')} -->\n${heading(m, names)}\n${escapeBody(m.text)}\n\n`
 }
 
+function cleanPastes(v: unknown): { token: string; text: string }[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const out = v.flatMap((p) => {
+    if (!p || typeof p !== 'object') return []
+    const token = (p as { token?: unknown }).token
+    const text = (p as { text?: unknown }).text
+    return typeof token === 'string' && token && typeof text === 'string' ? [{ token, text }] : []
+  })
+  return out.length ? out : undefined
+}
+
 function parseMachine(line: string): Record<string, string> {
   const inner = line.slice(MACHINE.length).replace(/\s*-->\s*$/, '')
   const out: Record<string, string> = {}
@@ -194,6 +207,12 @@ export function parseMail(text: string): DeskMessage[] {
         // A damaged data token loses the structured fields, not the message.
       }
     }
+    const pastes = cleanPastes(msg.pastes)
+    if (pastes) msg.pastes = pastes
+    else delete msg.pastes
+    const summary = cleanSummary(msg.summary)
+    if (summary) msg.summary = summary
+    else delete msg.summary
     out.push(msg as unknown as DeskMessage)
   })
   out.forEach((m, i) => {
@@ -462,9 +481,7 @@ export function createDeskStore(opts: { brain: string; role: Role }) {
 
   /** What the renderer shows: fold, filter to the team or one bot, group browse steps, last `limit`. */
   function view(botId: string | null, limit = 200): DeskMessage[] {
-    const folded = foldMessages(readMail())
-    const seen = botId ? folded.filter((m) => m.from === botId || m.to === botId) : folded
-    return groupBrowse(seen).slice(-limit)
+    return groupBrowse(forThread(botId, foldMessages(readMail()))).slice(-limit)
   }
 
   function memoryLines(id: string): string[] {

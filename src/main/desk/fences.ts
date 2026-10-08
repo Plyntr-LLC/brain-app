@@ -1,8 +1,8 @@
-import { ASSIGN_MAX_PER_TURN, CONDUCTOR, DESCRIPTION_MAX, SEND_MAX_PER_TURN, isDeskCli, resolveBot } from '../../shared/desk.ts'
+import { ASSIGN_MAX_PER_TURN, CONDUCTOR, DESCRIPTION_MAX, SEND_MAX_PER_TURN, cleanSummary, isDeskCli, resolveBot } from '../../shared/desk.ts'
 import type { DeskBot, DeskCli, DeskSystem } from '../../shared/desk.ts'
 
 /**
- * The one parser for the blocks a turn may end with. Prose outside the eight known fences is the reply.
+ * The one parser for the blocks a turn may end with. Prose outside the known fences is the reply.
  * A fence tagged anything else (including `text`) stays in the prose as written. Raw block text never
  * comes back: a block that does not parse turns the whole turn into prose plus one parse-failed flag,
  * so nothing is sent and no file is written.
@@ -33,10 +33,12 @@ export type ParsedTurn = {
   remember: string[]
   hire: HireBlock | null
   browse: BrowseBlock | null
+  /** One or two sentences for the other chats. Empty when the bot did not write one. */
+  summary: string
   flags: FenceFlag[]
 }
 
-export const FENCE_TAGS = ['assign', 'send', 'hold', 'email', 'sms', 'remember', 'hire', 'browse'] as const
+export const FENCE_TAGS = ['assign', 'send', 'hold', 'email', 'sms', 'remember', 'hire', 'browse', 'summary'] as const
 type Tag = (typeof FENCE_TAGS)[number]
 
 export const REMEMBER_MAX_LINES = 20
@@ -136,10 +138,13 @@ type Parsed =
   | { tag: 'remember'; v: string[] }
   | { tag: 'hire'; v: HireBlock }
   | { tag: 'browse'; v: BrowseBlock }
+  | { tag: 'summary'; v: string }
 
 function parseBlock(b: RawBlock): Parsed | null {
   if (!b.closed) return null
   switch (b.tag) {
+    case 'summary':
+      return { tag: 'summary', v: cleanSummary(b.body) }
     case 'assign': {
       const { map, list } = header(b.body.split('\n'), ['bot', 'task', 'why', 'files'], 'files')
       if (!map.bot || !map.task) return null
@@ -228,14 +233,21 @@ export function parseFences(text: string, opts: { from: string; bots: DeskBot[] 
   const { prose, blocks } = scan(text)
   const isConductor = opts.from === CONDUCTOR
   const speaker = resolveBot(opts.bots, opts.from)?.name || opts.from
-  const out: ParsedTurn = { prose, assigns: [], sends: [], hold: null, email: null, sms: null, remember: [], hire: null, browse: null, flags: [] }
+  const out: ParsedTurn = { prose, assigns: [], sends: [], hold: null, email: null, sms: null, remember: [], hire: null, browse: null, summary: '', flags: [] }
   const flags: FenceFlag[] = []
   const flag = (system: DeskSystem, text: string) => {
     if (!flags.some((f) => f.system === system && f.text === text)) flags.push({ system, text })
   }
 
   const parsed: Parsed[] = []
+  const summaries: string[] = []
   for (const b of blocks) {
+    if (b.tag === 'summary' && isConductor) {
+      const back = b.body.trim()
+      if (back) out.prose = [out.prose, back].filter(Boolean).join('\n\n')
+      continue
+    }
+    if (b.tag === 'summary' && !b.closed) continue
     if (!isConductor && b.tag === 'assign') {
       flag('worker-assign', SENTENCE.workerAssign)
       continue
@@ -274,6 +286,7 @@ export function parseFences(text: string, opts: { from: string; bots: DeskBot[] 
     else if (p.tag === 'remember') out.remember.push(...p.v)
     else if (p.tag === 'hire') hires.push(p.v)
     else if (p.tag === 'browse') browses.push(p.v)
+    else if (p.tag === 'summary' && p.v) summaries.push(p.v)
   }
 
   out.remember = out.remember.slice(0, REMEMBER_MAX_LINES)
@@ -286,6 +299,7 @@ export function parseFences(text: string, opts: { from: string; bots: DeskBot[] 
   if (keep?.tag === 'email') out.email = keep.v
   if (keep?.tag === 'sms') out.sms = keep.v
   if (tiles.length > (keep ? 1 : 0)) flag('extra-tile', SENTENCE.extraTile)
+  out.summary = summaries.length ? summaries[summaries.length - 1] : ''
   out.flags = flags
   return out
 }

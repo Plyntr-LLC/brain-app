@@ -81,11 +81,12 @@ function Lines({ lines }: { lines: string[] }) {
   )
 }
 
-function Card(props: { tone?: 'ok' | 'fail' | 'info'; title?: string; body?: ReactNode; actions?: ReactNode }) {
+function Card(props: { tone?: 'ok' | 'fail' | 'info'; title?: string; body?: ReactNode; below?: ReactNode; actions?: ReactNode }) {
   return (
     <div className={`fcard ${props.tone || 'info'}`}>
       {props.title ? <div className="fcard-title">{props.title}</div> : null}
       {props.body != null ? <div className="fcard-body">{props.body}</div> : null}
+      {props.below}
       {props.actions ? (
         <div className="fcard-body">
           <div className="actions tight">{props.actions}</div>
@@ -138,6 +139,11 @@ export function DeskCard(props: {
   onOpenBrowser: (opts?: { signIn?: boolean }) => void
   onRemoveHire: (msgId: string) => void
   busy: boolean
+  /** The live page, only on the latest browse card that is not a sign-in. */
+  picture?: { mode: 'small' | 'wide' | 'note'; src: string | null }
+  onPictureToggle?: () => void
+  onPictureHide?: () => void
+  onPictureShow?: () => void
 }): JSX.Element {
   const { msg } = props
   const name = (id: string) => props.names[id] || (id === ME ? 'You' : 'Someone')
@@ -302,6 +308,26 @@ export function DeskCard(props: {
     case 'browse': {
       const b = msg.browse
       const only = !b || b.signIn || b.noChrome
+      const pic = !only ? props.picture : undefined
+      const openBtn = b?.windowOpen ? (
+        <button type="button" className="ghost" onClick={() => props.onOpenBrowser(b.signIn ? { signIn: true } : undefined)}>
+          Open browser
+        </button>
+      ) : null
+      const hideBtn = pic && pic.mode !== 'note' ? (
+        <button type="button" className="ghost" onClick={props.onPictureHide}>
+          Hide
+        </button>
+      ) : null
+      const shot = pic?.mode === 'note' ? (
+        <button type="button" className="ghost desk-browser-note" onClick={props.onPictureShow}>
+          There were browsers.
+        </button>
+      ) : pic ? (
+        <button type="button" className="desk-browser-shot" onClick={props.onPictureToggle}>
+          {pic.src ? <img className={pic.mode === 'wide' ? 'wide' : ''} src={`data:image/jpeg;base64,${pic.src}`} alt="" /> : null}
+        </button>
+      ) : null
       return (
         <Card
           title={`${from} in the desk browser`}
@@ -315,7 +341,8 @@ export function DeskCard(props: {
               </>
             )
           }
-          actions={b?.windowOpen ? <button type="button" className="ghost" onClick={() => props.onOpenBrowser(b.signIn ? { signIn: true } : undefined)}>Open browser</button> : null}
+          below={shot ? <div className="desk-browser-slot">{shot}</div> : undefined}
+          actions={openBtn || hideBtn ? <>{openBtn}{hideBtn}</> : null}
         />
       )
     }

@@ -12,9 +12,11 @@ export function DeskBotForm(props: {
   onSave: (bot: Omit<DeskBot, 'file'>) => Promise<string | null>
   onRemove?: () => void
   onOpenFile?: () => void
+  onHide?: () => void
+  hidden?: boolean
   onCancel: () => void
 }): JSX.Element {
-  const { bot, bots, installed, models, efforts, busy, onSave, onRemove, onOpenFile, onCancel } = props
+  const { bot, bots, installed, models, efforts, busy, onSave, onRemove, onOpenFile, onHide, hidden, onCancel } = props
   const firstCli = installed[0] || bot?.cli || 'grok'
   const [name, setName] = useState(bot?.name || '')
   const [description, setDescription] = useState(bot?.description || '')
@@ -118,6 +120,9 @@ export function DeskBotForm(props: {
         <button className="primary" type="submit">Save</button>
         <button className="ghost" type="button" onClick={onCancel}>Cancel</button>
         {onOpenFile ? <button className="ghost" type="button" onClick={onOpenFile}>Open file</button> : null}
+        {onHide && bot?.id !== CONDUCTOR ? (
+          <button className="ghost" type="button" onClick={onHide}>{hidden ? 'Show' : 'Hide'}</button>
+        ) : null}
         {onRemove && bot?.id !== CONDUCTOR ? (
           <button className="ghost" type="button" disabled={busy} onClick={() => setAskRemove(true)}>Remove</button>
         ) : null}

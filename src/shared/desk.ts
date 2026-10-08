@@ -2,6 +2,7 @@
  * Desk types and the small pure helpers every Desk slice shares. No node imports: the renderer
  * typechecks this file too. Later slices import from here and do not edit it.
  */
+import type { Paste } from './saved-msg'
 
 export type DeskCli = 'grok' | 'claude' | 'gpt' | 'cursor'
 
@@ -41,6 +42,8 @@ export type DeskMessage = {
   to: string
   kind: DeskKind
   text: string // prose only; never contains a fence
+  summary?: string // one or two sentences for the other chats; the author's chat keeps text
+  pastes?: Paste[] // a long paste folded to a token in text; the model reads the full paste
   job?: string
   replaces?: string // append-only edit of an earlier message id; set by the controller, never read from a block
   actedAt?: string // Send or Approve time; Not now never sets it
@@ -95,6 +98,56 @@ export const DESK_CLIS: DeskCli[] = ['grok', 'claude', 'gpt', 'cursor']
 export const CONDUCTOR = 'conductor'
 /** Roster order: the seed team first, then hires in the order they joined. */
 export const SEED_IDS = ['conductor', 'researcher', 'writer', 'checker', 'drafts']
+
+/**
+ * One chat's lines. A bot sees what they sent or received.
+ * The team chat is the conductor. A line you typed to another bot, and that bot's
+ * answer on the same job, stay in that bot's chat. A line to or from the conductor still shows.
+ */
+export function forThread(botId: string | null, messages: DeskMessage[]): DeskMessage[] {
+  if (botId) return messages.filter((m) => m.from === botId || m.to === botId)
+  const direct = new Set<string>()
+  for (const m of messages) {
+    if (m.job && m.from === ME && m.to !== CONDUCTOR && m.to !== ME) direct.add(m.job)
+  }
+  return messages.filter((m) => {
+    if (m.from === CONDUCTOR || m.to === CONDUCTOR) return true
+    if (m.from === ME && (m.to === CONDUCTOR || m.to === ME)) return true
+    if (m.job && direct.has(m.job)) return false
+    if (m.to === ME) return true
+    return m.from !== ME && m.to !== ME
+  })
+}
+
+/** Other chats show at most this many characters of a summary. */
+export const SUMMARY_MAX = 320
+
+/** One paragraph, capped. Empty when there is nothing to show. */
+export function cleanSummary(v: unknown): string {
+  if (typeof v !== 'string') return ''
+  const t = v.replace(/\s+/g, ' ').trim()
+  if (!t) return ''
+  if (t.length <= SUMMARY_MAX) return t
+  const cut = t.slice(0, SUMMARY_MAX - 1)
+  const stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '))
+  const kept = (stop >= 40 ? cut.slice(0, stop + 1) : cut).trimEnd()
+  return `${kept}…`
+}
+
+/** What another chat shows when the bot did not write a summary. A short answer stands. A longer one keeps its first line. */
+export function briefReturn(text: string): string {
+  const raw = String(text || '').trim()
+  if (!raw) return ''
+  const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  const flat = lines.join(' ')
+  if (flat.length <= 240 && lines.length <= 2) return flat
+  return cleanSummary(lines[0] || flat)
+}
+
+/** The line under “Message from {Name}.” The bot’s summary when they wrote one. */
+export function returnText(msg: { summary?: string; text?: string }): string {
+  return cleanSummary(msg.summary) || briefReturn(msg.text || '')
+}
 
 export function isDeskCli(v: unknown): v is DeskCli {
   return typeof v === 'string' && (DESK_CLIS as string[]).includes(v)

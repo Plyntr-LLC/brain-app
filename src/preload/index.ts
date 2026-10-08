@@ -1161,7 +1161,8 @@ const brain = {
       ipcRenderer.invoke('desk:list', tab) as Promise<{ bots: DeskBot[]; states: BotState[]; removedNames: Record<string, string> }>,
     save: (tab: string, bot: Omit<DeskBot, 'file'>) => ipcRenderer.invoke('desk:save', tab, bot) as Promise<string | null>,
     remove: (tab: string, id: string) => ipcRenderer.invoke('desk:remove', tab, id) as Promise<string | null>,
-    say: (tab: string, text: string, to?: string) => ipcRenderer.invoke('desk:say', tab, text, to),
+    say: (tab: string, text: string, to?: string, pastes?: { token: string; text: string }[]) =>
+      ipcRenderer.invoke('desk:say', tab, text, to, pastes),
     answerHold: (tab: string, id: string, answer: 'yes' | 'no') => ipcRenderer.invoke('desk:answerHold', tab, id, answer),
     answerEmail: (tab: string, id: string, answer: 'yes' | 'no') => ipcRenderer.invoke('desk:answerEmail', tab, id, answer),
     answerText: (tab: string, id: string, answer: 'yes' | 'no') => ipcRenderer.invoke('desk:answerText', tab, id, answer),

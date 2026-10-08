@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
-import type { BotState, DeskBot, DeskCli, DeskMessage, DeskWelcome } from '../../src/shared/desk'
+import { forThread, type BotState, type DeskBot, type DeskCli, type DeskMessage, type DeskWelcome } from '../../src/shared/desk'
 import { DeskPane } from '../../src/renderer/src/DeskPane'
 import { DeskCard } from '../../src/renderer/src/DeskCard'
 import { buildWelcome } from '../../src/main/desk/welcome.ts'
@@ -54,7 +54,7 @@ const brain = {
     list: (tab: string) => Promise.resolve({ bots: fx(tab).bots, states: fx(tab).states, removedNames: fx(tab).removedNames }),
     save: (tab: string, bot: unknown) => rec('save', tab, bot),
     remove: (tab: string, id: string) => rec('remove', tab, id),
-    say: (tab: string, text: string, to?: string) => rec('say', tab, text, to),
+    say: (tab: string, text: string, to?: string, pastes?: unknown) => rec('say', tab, text, to, pastes),
     answerHold: (tab: string, id: string, answer: string) => rec('answerHold', tab, id, answer),
     answerEmail: (tab: string, id: string, answer: string) => rec('answerEmail', tab, id, answer),
     answerText: (tab: string, id: string, answer: string) => rec('answerText', tab, id, answer),
@@ -73,8 +73,7 @@ const brain = {
     },
     view: (tab: string, botId: string | null) => {
       calls.push({ fn: 'view', args: [tab, botId] })
-      const all = fx(tab).messages
-      return Promise.resolve(botId ? all.filter((m) => m.from === botId || m.to === botId) : all)
+      return Promise.resolve(forThread(botId, fx(tab).messages))
     },
     onEvent: (cb: (snap: unknown) => void) => {
       listeners.push(cb)
@@ -170,6 +169,7 @@ const HANDOFF =
 const HOLD_TEXT = 'Raise the Summit daily budget to $40. Approving records your yes. It does not spend money or change the ads account.'
 const ACCOUNT_LINE = 'It does not spend money or change the ads account.'
 const REPORT = 'Three bullets for Summit:\n- Leads up 12%\n- Cost per lead down\n- Budget question still open'
+const WRITER_SUMMARY = 'Drafted three Summit bullets. Leads are up, cost per lead is down, and the budget is still an open question.'
 const STATUS = 'Conductor · idle\nResearcher · waiting on you\nWriter · idle\nChecker · reading the draft · 1m\nDrafts · waiting on you'
 const EMAIL = {
   replyTo: '',
@@ -205,7 +205,7 @@ const cardsMail: DeskMessage[] = [
   { id: 'm_04', ts: at(9, 12), from: 'researcher', to: 'writer', kind: 'send', job: 'j_1', text: HANDOFF },
   { id: 'm_05', ts: at(9, 13), from: 'drafts', to: 'me', kind: 'email', job: 'j_2', text: EMAIL.subject, email: { ...EMAIL } },
   { id: 'm_06', ts: at(9, 13), from: 'researcher', to: 'me', kind: 'hold', job: 'j_3', text: HOLD_TEXT, hold: { need: 'spend' } },
-  { id: 'm_07', ts: at(9, 16), from: 'writer', to: 'me', kind: 'report', job: 'j_1', text: REPORT, report: { seconds: 185 } },
+  { id: 'm_07', ts: at(9, 16), from: 'writer', to: 'me', kind: 'report', job: 'j_1', text: REPORT, summary: WRITER_SUMMARY, report: { seconds: 185 } },
   { id: 'm_08', ts: at(9, 17), from: 'me', to: 'me', kind: 'status', text: STATUS },
   {
     id: 'm_09',
@@ -255,6 +255,7 @@ addFixture('tab-ready', '/fx/ready', MIXED, welcome({ readiness: [{ botId: 'writ
 addFixture('tab-everyone', '/fx/everyone', ALL_GROK, welcome({ everyoneLine: EVERYONE }))
 addFixture('tab-cards', '/fx/cards', MIXED, welcome(), cardsMail, { designer: 'Designer' })
 addFixture('tab-form', '/fx/form', MIXED, welcome())
+addFixture('tab-paste', '/fx/paste', MIXED, welcome())
 const markConductor = team('/fx/marks', MIXED)[0]
 const markBots: DeskBot[] = [
   markConductor,
@@ -304,7 +305,7 @@ async function mountPane(tab: string, title: string, height = 560): Promise<Pane
 
 async function emit(tab: string) {
   const f = fx(tab)
-  flushSync(() => listeners.forEach((l) => l({ brain: f.brain, messages: f.messages, states: f.states, removedNames: f.removedNames })))
+  flushSync(() => listeners.forEach((l) => l({ brain: f.brain, messages: forThread(null, f.messages), states: f.states, removedNames: f.removedNames })))
   await tick(60)
 }
 
@@ -359,7 +360,7 @@ async function welcomeStage() {
   const railBox = rail.getBoundingClientRect()
   const lastIcon = icons[icons.length - 1].getBoundingClientRect()
   check('1 team Edit opens Conductor', (edit?.querySelector('input')?.value || '') === 'Conductor')
-  check('1 team Edit has a model select and no Remove', !!edit?.querySelector('select') && !button(edit, 'Remove'))
+  check('1 team Edit has a model select and no Remove or Hide', !!edit?.querySelector('select') && !button(edit, 'Remove') && !button(edit, 'Hide'))
   check('1 form sits under the icons and fills the rail', !!editBox && editBox.top > lastIcon.bottom && editBox.width > 200 && Math.abs(editBox.width - rail.clientWidth) <= 24, `form=${editBox?.width} rail=${rail.clientWidth}`)
   button(edit, 'Cancel')?.click()
   await until(() => !rail.querySelector('.desk-form'))
@@ -393,6 +394,7 @@ async function welcomeStage() {
   check('1 open Conductor shows its name on an ink face with no bar', text(conductorIcon?.querySelector('.desk-name')) === 'Conductor' && conductorIcon?.classList.contains('on') === true && faceInk(conductorIcon) && noBar(conductorIcon) && anim(conductorIcon, '.desk-face') === 'desk-idle')
   check('1 idle Researcher shows its name and blinks', text(researcherIcon?.querySelector('.desk-name')) === 'Researcher' && !researcherIcon?.classList.contains('on') && faceInk(researcherIcon) && anim(researcherIcon, '.desk-face') === 'desk-idle' && anim(researcherIcon, '.eye') === 'desk-blink')
   check('1 working Writer shows its name, bobs, and keeps an orange dot', text(writerIcon?.querySelector('.desk-name')) === 'Writer' && writerIcon?.getAttribute('aria-label') === 'Writer' && anim(writerIcon, '.desk-face') === 'desk-bob' && anim(writerIcon, '.eye') === 'desk-glance' && dotOk(writerIcon) && noBar(writerIcon))
+  check('1 a working bot has no background line', !(document.body.textContent || '').includes('In the background:'))
   check('1 working hover is the full sentence', writerIcon?.getAttribute('title') === 'Writer. Working · 0m · Find the note', writerIcon?.getAttribute('title') || '')
   fx('tab-welcome').states = fx('tab-welcome').states.map((s) => s.id === 'conductor' ? working('conductor', 'Hand it off') : s)
   await emit('tab-welcome')
@@ -530,7 +532,7 @@ async function threadStage() {
   const isProse = (el: HTMLElement | undefined) => !!el && el.classList.contains('md') && !el.classList.contains('me') && !el.classList.contains('sys') && !el.closest('.fcard')
   const isHop = (el: HTMLElement | undefined) => !!el && el.classList.contains('sys') && !el.closest('.fcard') && getComputedStyle(el).color === muted
   check('4 your task is a right-hand bubble', isMe(mine.find((el) => text(el).includes(TASK))) && text(mine.find((el) => text(el).includes(TASK))!).includes(TASK))
-  check('4 a task to Writer stays a right-hand bubble', isMe(mine.find((el) => text(el) === 'Draft the three bullets.')))
+  check('4 a message typed to Writer stays off this chat', !text(thread).includes('Draft the three bullets.'))
   check('4 Conductor replies in prose', isProse(prose.find((el) => text(el) === 'Researcher is on it. I will tell you when Writer has a draft.')))
   check('4 a send to Conductor stays prose', isProse(prose.find((el) => text(el) === 'The draft is ready for you.')))
   const lineColor = paint('border-top-color', 'var(--line)')
@@ -543,6 +545,7 @@ async function threadStage() {
   check('4 the briefing is a muted line', isHop(hop('Message sent to Researcher.')))
   check('4 the handoff is a pill', isPill(hop('Message sent to Writer.'), 'Double-click to open Writer.'))
   check('4 Designer is a pill', isPill(hop('Message from Designer.'), 'Double-click to open Designer.'))
+  check('4 a short reply shows under the pill', [...thread.querySelectorAll('.bubble.md')].some((el) => text(el) === 'Headline ideas are in the thread.') && !text(thread).includes('Designer responded.'))
   check('4 an unknown id reads Someone', isHop(hop('Message from Someone.')))
   const teamText = text(thread)
   check(
@@ -600,11 +603,11 @@ async function threadStage() {
   hold = cardTitled(pane, 'Researcher')[0]
   check('4 after Approve it reads Approved · 9:15 and the buttons are gone', text(hold?.querySelector('.tiny')) === 'Approved · 9:15' && buttons(hold).length === 0, text(hold))
 
-  // Another bot's finished answer is a communication bubble, then Conductor says they responded.
+  // Another bot's finished answer is a communication bubble, then a short account of what they did.
   const fromWriter = hop('Message from Writer.')
-  const answered = [...thread.querySelectorAll<HTMLElement>('.bubble.md')].find((el) => text(el) === 'Writer responded.')
+  const answered = [...thread.querySelectorAll<HTMLElement>('.bubble.md')].find((el) => text(el) === WRITER_SUMMARY)
   check('4 a finished answer is a message-from bubble', !!fromWriter && fromWriter.getAttribute('title') === 'Double-click to open Writer.')
-  check('4 Conductor says Writer responded', !!answered && !answered.classList.contains('sys'))
+  check('4 the team thread shows what Writer did', !!answered && !answered.classList.contains('sys') && !text(thread).includes('responded'))
   check('4 the other bot’s answer is not a tile on this thread', !cards(pane).some((c) => title(c).includes('Done')) && !text(thread).includes('Three bullets for Summit') && !text(thread).includes('Leads up 12%'))
 
   // Status, error, and names.
@@ -659,16 +662,18 @@ async function threadStage() {
   const handoff = [...pane.querySelectorAll('.bubble.md')].find((el) => text(el) === HANDOFF)
   const writerThread = text(pane.querySelector('.thread'))
   check('4 Writer’s thread shows the handoff prose', !!handoff, writerThread.slice(0, 200))
+  const typedThere = [...pane.querySelectorAll<HTMLElement>('.bubble.me')].find((el) => text(el) === 'Draft the three bullets.')
+  check('4 the line you typed to Writer is on Writer’s thread', isMe(typedThere))
   check('4 Writer’s thread does not show the briefing', !writerThread.includes('Reading 2 files') && !writerThread.includes('Why: Joe wants three bullets from the newest Summit note.') && !buttons(pane.querySelector('.thread')).some((b) => text(b) === NOTE))
   button(pane.querySelector('.filetab-head'), 'Team')?.click()
   await until(() => text(pane.querySelector('.filetab-head span')) === 'Conductor')
 
-  // Opening Writer shows the answer as their own words, not a tile and not the “responded” line.
+  // Opening Writer shows the answer as their own words, not the summary and not a tile.
   before = calls.length
   ;[...pane.querySelectorAll('.bubble.sys')].find((el) => text(el) === 'Message from Writer.')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
   await until(() => text(pane.querySelector('.filetab-head span')) === 'Writer')
   const writerAnswer = text(pane.querySelector('.thread'))
-  check("4 opening Writer shows the answer", text(pane.querySelector('.filetab-head span')) === 'Writer' && !!button(pane.querySelector('.filetab-head'), 'Team') && writerAnswer.includes('Three bullets for Summit') && writerAnswer.includes('Leads up 12%') && writerAnswer.includes('Budget question still open') && !writerAnswer.includes('Writer responded.') && !cards(pane).some((c) => title(c).includes('Done')))
+  check("4 opening Writer shows the answer", text(pane.querySelector('.filetab-head span')) === 'Writer' && !!button(pane.querySelector('.filetab-head'), 'Team') && writerAnswer.includes('Three bullets for Summit') && writerAnswer.includes('Leads up 12%') && writerAnswer.includes('Budget question still open') && !writerAnswer.includes(WRITER_SUMMARY) && !writerAnswer.includes('responded') && !cards(pane).some((c) => title(c).includes('Done')))
   check("4 Writer's thread loads Writer's view", since(before).some((c) => c.fn === 'view' && c.args[0] === tab && c.args[1] === 'writer'), show(since(before)))
   await until(() => pane.querySelector<HTMLTextAreaElement>('.composer textarea')?.placeholder === 'Message Writer')
   check('4 the composer talks to Writer there', pane.querySelector<HTMLTextAreaElement>('.composer textarea')?.placeholder === 'Message Writer')
@@ -824,9 +829,25 @@ function overlaps(a: DOMRect, b: DOMRect): boolean {
   return a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1
 }
 
+function boxInside(inner: DOMRect, outer: DOMRect): boolean {
+  return inner.left >= outer.left - 1 && inner.right <= outer.right + 1 && inner.top >= outer.top - 1 && inner.bottom <= outer.bottom + 1
+}
+
+function fullyVisible(el: Element): boolean {
+  const box = el.getBoundingClientRect()
+  let node = el.parentElement
+  while (node) {
+    const style = getComputedStyle(node)
+    const clips = ['auto', 'hidden', 'scroll'].includes(style.overflowY) || ['auto', 'hidden', 'scroll'].includes(style.overflow)
+    if (clips && !boxInside(box, node.getBoundingClientRect())) return false
+    node = node.parentElement
+  }
+  return box.width > 0 && box.height > 0
+}
+
 async function pipStage() {
   const tab = 'tab-pip'
-  const msg: DeskMessage = {
+  const older: DeskMessage = {
     id: 'm_pip',
     ts: at(9, 20),
     from: 'writer',
@@ -839,53 +860,198 @@ async function pipStage() {
       windowOpen: true
     }
   }
-  addFixture(tab, '/fx/pip', MIXED, welcome(), [msg])
-  const { pane, rail } = await mountPane(tab, '8. the corner picture', 640)
-  await until(() => !!pane.querySelector('.desk-pip img'))
-  const pip = pane.querySelector('.desk-pip')
+  const signIn: DeskMessage = {
+    id: 'm_pip_si',
+    ts: at(9, 21),
+    from: 'writer',
+    to: 'me',
+    kind: 'browse',
+    text: 'Writer needs you to sign in, in the desk browser.',
+    browse: {
+      steps: [{ action: 'url', detail: 'https://example.com', url: 'https://example.com/login' }],
+      signIn: true,
+      windowOpen: true
+    }
+  }
+  addFixture(tab, '/fx/pip', MIXED, welcome(), [older, signIn])
+  const { pane } = await mountPane(tab, '8. the picture in the thread', 980)
+  await until(() => pane.querySelectorAll('img').length === 1)
   const thread = pane.querySelector('.thread')
-  const composer = pane.querySelector('.composer')
-  const img = pip?.querySelector('img')
-  const pipBox = pip?.getBoundingClientRect()
+  const cards = () => [...pane.querySelectorAll('.fcard')]
+  const olderCard = () => cards().find((el) => text(el).includes('Example'))
+  const signCard = () => cards().find((el) => text(el).includes('needs you to sign in'))
+  const img = () => pane.querySelector('img')
+  const imgBox = () => img()?.getBoundingClientRect()
+  const shotBox = imgBox()
+  const olderBox = olderCard()?.getBoundingClientRect()
   const threadBox = thread?.getBoundingClientRect()
-  const composerBox = composer?.getBoundingClientRect()
-  const railBox = rail.getBoundingClientRect()
-  const imgBox = img?.getBoundingClientRect()
   check(
-    '8 the picture sits outside the thread, the rail, and the composer',
-    !!pip && !!thread && !!composer && !!pipBox && !!threadBox && !!composerBox &&
-      !thread.contains(pip) && !composer.contains(pip) && !rail.contains(pip) &&
-      !overlaps(pipBox, threadBox) && !overlaps(pipBox, composerBox) && !overlaps(pipBox, railBox),
-    pipBox && threadBox && composerBox ? `pip ${Math.round(pipBox.top)}-${Math.round(pipBox.bottom)} thread ${Math.round(threadBox.bottom)} composer ${Math.round(composerBox.top)}` : 'missing'
+    '8 one picture, inside the latest browse card, and no corner strip',
+    pane.querySelectorAll('img').length === 1 && !pane.querySelector('.desk-pip') &&
+      !!shotBox && !!olderBox && !!threadBox && !!thread?.contains(img()!) &&
+      !!olderCard()?.contains(img()!) && boxInside(shotBox, olderBox) && boxInside(shotBox, threadBox) &&
+      Math.round(shotBox.width) === 240 && Math.round(shotBox.height) === 150 &&
+      !signCard()?.querySelector('img'),
+    shotBox ? `${Math.round(shotBox.width)}x${Math.round(shotBox.height)} imgs ${pane.querySelectorAll('img').length}` : 'no image'
   )
+  let before = calls.length
+  button(signCard(), 'Open browser')?.click()
+  await tick()
+  check('8 sign-in Open browser brings the window forward', since(before).some((c) => c.fn === 'showWindow'), show(since(before).filter((c) => c.fn !== 'picture')))
+  before = calls.length
+  img()?.click()
+  await tick()
+  img()?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  const wide = img()?.getBoundingClientRect()
+  const wideCard = olderCard()?.getBoundingClientRect()
   check(
-    '8 the picture is the small corner size',
-    !!imgBox && Math.round(imgBox.width) === 240 && Math.round(imgBox.height) === 150,
-    imgBox ? `${Math.round(imgBox.width)}x${Math.round(imgBox.height)}` : 'no image'
+    '8 a click enlarges the picture inside the card and does not bring Chrome forward',
+    !!wide && !!wideCard && !!img() && wide.width > 240 && wide.height > 150 && wide.height <= 420 &&
+      boxInside(wide, wideCard) && olderCard()?.contains(img()!) && !img()!.closest('.fcard-body') && fullyVisible(img()!) &&
+      !since(before).some((c) => c.fn === 'showWindow' || c.fn === 'focus'),
+    wide ? `${Math.round(wide.width)}x${Math.round(wide.height)} ${show(since(before).filter((c) => c.fn !== 'picture'))}` : 'no image'
   )
-  check('8 the open picture has Hide', !!button(pip, 'Hide'))
+  button(olderCard(), 'Hide')?.click()
+  await tick()
+  const noteEl = [...(olderCard()?.querySelectorAll('button, p') || [])].find((el) => text(el) === 'There were browsers.')
+  check(
+    '8 Hide leaves the note and no picture',
+    !olderCard()?.querySelector('img') && text(noteEl) === 'There were browsers.' && !noteEl?.closest('.fcard-body') && !text(olderCard()).includes('Desk browser'),
+    text(olderCard())
+  )
+  before = calls.length
+  noteEl?.click()
+  await until(() => {
+    const box = olderCard()?.querySelector('img')?.getBoundingClientRect()
+    return !!box && Math.round(box.width) === 240 && Math.round(box.height) === 150
+  })
+  const restored = olderCard()?.querySelector('img')?.getBoundingClientRect()
+  check(
+    '8 the note brings the small picture back and does not bring Chrome forward',
+    !!restored && Math.round(restored.width) === 240 && Math.round(restored.height) === 150 &&
+      !since(before).some((c) => c.fn === 'showWindow' || c.fn === 'focus'),
+    restored ? `${Math.round(restored.width)}x${Math.round(restored.height)}` : 'no image'
+  )
+  before = calls.length
+  button(olderCard(), 'Open browser')?.click()
+  await tick()
+  img()?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  const opened = img()?.getBoundingClientRect()
+  const openedCard = olderCard()?.getBoundingClientRect()
+  check(
+    '8 Open browser on a step card enlarges the picture and does not bring Chrome forward',
+    !!opened && !!openedCard && !!img() && opened.width > 240 && opened.height > 150 && opened.height <= 420 &&
+      boxInside(opened, openedCard) && !img()!.closest('.fcard-body') && fullyVisible(img()!) &&
+      !since(before).some((c) => c.fn === 'showWindow' || c.fn === 'focus'),
+    opened ? `${Math.round(opened.width)}x${Math.round(opened.height)} ${show(since(before).filter((c) => c.fn !== 'picture'))}` : 'no image'
+  )
+  button(olderCard(), 'Hide')?.click()
+  await until(() => !!olderCard()?.querySelector('.desk-browser-note') && !olderCard()?.querySelector('img'))
+  const pics = () => calls.filter((c) => c.fn === 'picture').length
+  const held = pics()
+  await tick(2000)
+  check('8 the note does not keep refreshing', pics() === held, `${pics() - held}`)
+  const newer: DeskMessage = {
+    id: 'm_pip_2',
+    ts: at(9, 22),
+    from: 'writer',
+    to: 'me',
+    kind: 'browse',
+    text: 'Opened the next page.',
+    browse: {
+      steps: [{ action: 'url', detail: 'https://example.com/next', url: 'https://example.com/next' }],
+      title: 'Next',
+      windowOpen: true
+    }
+  }
+  fx(tab).messages.push(newer)
+  await emit(tab)
+  await until(() => pane.querySelectorAll('img').length === 1 && Math.round(pane.querySelector('img')!.getBoundingClientRect().height) === 150)
+  const nextCard = () => cards().find((el) => text(el).includes('Next'))
+  const back = img()?.getBoundingClientRect()
+  const nextBox = nextCard()?.getBoundingClientRect()
+  check(
+    '8 a newer browse brings the small picture back with no click',
+    pane.querySelectorAll('img').length === 1 && !pane.querySelector('.desk-pip') &&
+      !!back && !!nextBox && Math.round(back.width) === 240 && Math.round(back.height) === 150 &&
+      nextCard()?.contains(img()!) && boxInside(back, nextBox) && !signCard()?.querySelector('img'),
+    back ? `${Math.round(back.width)}x${Math.round(back.height)}` : 'no image'
+  )
+}
+
+async function pasteStage() {
+  const { pane } = await mountPane('tab-paste', '10. a long paste folds')
+  const box = pane.querySelector<HTMLTextAreaElement>('.composer textarea')!
+  const big = 'x'.repeat(1001)
+  const token = '[Pasted text #1 +1 line]'
+  box.focus()
+  const dt = new DataTransfer()
+  dt.setData('text/plain', big)
+  const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })
+  flushSync(() => box.dispatchEvent(ev))
+  await tick()
+  const chip = pane.querySelector('.paste-chip')
+  check('10 a long paste becomes a token', ev.defaultPrevented && box.value === token, JSON.stringify(box.value))
+  check('10 the chip names the paste', !!chip && /Pasted text #1/.test(text(chip)) && /1KB/.test(text(chip)) && /1 line/.test(text(chip)), text(chip))
+  button(pane.querySelector('.composer'), 'Expand')?.click()
+  await until(() => box.value === big)
+  check('10 Expand writes the paste back', box.value === big && !pane.querySelector('.paste-chip'), JSON.stringify(box.value.slice(0, 40)))
+  flushSync(() => typeInto(box, ''))
+  const again = new DataTransfer()
+  again.setData('text/plain', big)
+  const ev2 = new ClipboardEvent('paste', { clipboardData: again, bubbles: true, cancelable: true })
+  flushSync(() => box.dispatchEvent(ev2))
+  await until(() => box.value === token)
   const before = calls.length
-  button(pane, 'Open browser')?.click()
+  button(pane.querySelector('.composer'), 'Send')?.click()
   await tick()
+  const say = since(before).find((c) => c.fn === 'say')
+  const pastes = say?.args[3] as { token: string; text: string }[] | undefined
   check(
-    '8 Open browser on a step card does not bring Chrome forward',
-    !since(before).some((c) => c.fn === 'showWindow' || c.fn === 'focus'),
-    show(since(before).filter((c) => c.fn !== 'picture'))
+    '10 send keeps the token and the paste',
+    say?.args[1] === token && say?.args[2] === 'conductor' && pastes?.[0]?.token === token && pastes?.[0]?.text === big,
+    show(since(before))
   )
-  button(pip, 'Hide')?.click()
+  fx('tab-paste').messages = [{ id: 'm_p', ts: at(9, 1), from: 'me', to: 'conductor', kind: 'task', text: `See ${token}`, pastes: [{ token, text: big }] }]
+  await emit('tab-paste')
+  await until(() => (pane.querySelector('.bubble.me')?.textContent || '').includes(token))
+  const bubble = pane.querySelector('.bubble.me')
+  check('10 the thread folds the paste', !!bubble?.querySelector('.paste-label') && !(bubble.textContent || '').includes(big.slice(0, 40)))
+  bubble?.querySelector<HTMLButtonElement>('.paste-label')?.click()
   await tick()
-  const chip = pane.querySelector('.desk-pip')
-  const chipBox = chip?.getBoundingClientRect()
-  const threadNow = pane.querySelector('.thread')?.getBoundingClientRect()
+  check('10 show opens the paste', pane.querySelector('.paste-body')?.textContent === big)
+}
+
+async function hiddenStage() {
+  localStorage.removeItem('desk-hidden:/fx/welcome')
+  const { pane, rail } = await mountPane('tab-welcome', '9. hidden teammates')
+  const mainBots = () =>
+    [...rail.querySelectorAll<HTMLButtonElement>('.desk-bots:not(.desk-hidden-list) .desk-bot')].map((b) => b.getAttribute('aria-label'))
+  named(rail, 'Writer')?.click()
+  await until(() => text(pane.querySelector('.filetab-head span')) === 'Writer')
+  button(pane.querySelector('.filetab-head'), 'Edit')?.click()
+  await until(() => !!button(rail.querySelector('.desk-form'), 'Hide'))
+  button(rail.querySelector('.desk-form'), 'Hide')?.click()
+  await until(() => !mainBots().includes('Writer') && !!rail.querySelector('.desk-hidden-list'))
   check(
-    '8 Hide leaves a desk browser chip outside the thread',
-    text(button(chip, 'Desk browser')) === 'Desk browser' && !button(chip, 'Hide') && !chip?.querySelector('img') &&
-      !!chip && !!threadNow && !!chipBox && !pane.querySelector('.thread')!.contains(chip) && !overlaps(chipBox, threadNow),
-    text(chip)
+    '9 Hide takes Writer off the rail and keeps Conductor',
+    !mainBots().includes('Writer') && mainBots().includes('Conductor') &&
+      named(rail.querySelector('.desk-hidden-list'), 'Writer')?.getAttribute('aria-label') === 'Writer' &&
+      localStorage.getItem('desk-hidden:/fx/welcome') === '["writer"]'
   )
-  button(chip, 'Desk browser')?.click()
-  await until(() => !!button(pane.querySelector('.desk-pip'), 'Hide'))
-  check('8 the chip opens the picture again', !!button(pane.querySelector('.desk-pip'), 'Hide') && !!pane.querySelector('.desk-pip img'))
+  button(rail, 'Hidden')?.click()
+  await until(() => !rail.querySelector('.desk-hidden-list'))
+  check('9 Hidden closes', !rail.querySelector('.desk-hidden-list') && button(rail, 'Hidden')?.getAttribute('aria-expanded') === 'false')
+  button(rail, 'Hidden')?.click()
+  await until(() => !!rail.querySelector('.desk-hidden-list'))
+  check('9 Hidden opens onto Writer', named(rail.querySelector('.desk-hidden-list'), 'Writer')?.getAttribute('aria-label') === 'Writer')
+  named(rail.querySelector('.desk-hidden-list'), 'Writer')?.click()
+  await until(() => text(pane.querySelector('.filetab-head span')) === 'Writer')
+  button(pane.querySelector('.filetab-head'), 'Edit')?.click()
+  await until(() => !!button(rail.querySelector('.desk-form'), 'Show'))
+  button(rail.querySelector('.desk-form'), 'Show')?.click()
+  await until(() => mainBots().includes('Writer') && !button(rail, 'Hidden'))
+  check('9 Show puts Writer back and the Hidden section goes', mainBots().includes('Writer') && !rail.querySelector('.desk-hidden'))
 }
 
 async function main() {
@@ -897,6 +1063,8 @@ async function main() {
   await formStage()
   cardStage()
   await pipStage()
+  await pasteStage()
+  await hiddenStage()
   await tick()
   const all = document.getElementById('root')!.textContent || ''
   const banned = all.match(/\b(pack|assign|fence|job|bus)\b/gi) || []

@@ -10,7 +10,7 @@ import { AwayBlock } from './AwayBlock'
 import { ActivityRail } from './ActivityRail'
 import { SessionCard, type SessionRow } from './SessionCard'
 import { railFor, type Activity } from './activity'
-import { bgLine, chatActivity, fileAction, nextAction, type ActionState } from './chat-activity'
+import { bgLine, chatActivity, fileAction, mergePlanSteps, nextAction, type ActionState } from './chat-activity'
 import { sameCwd } from '../../shared/paths'
 import { APP_SLASH, TUI_ONLY_SLASH } from '../../shared/slash-lanes'
 import { routeLine } from '../../shared/slash-route'
@@ -720,11 +720,15 @@ export function ChatPane({
     setBusy(next)
   }
 
-  /** Every new turn (composer, phone, skill, Claude's own, /clear, /home) starts the rail's Plan and Done so far empty. */
+  /** A new message clears Done so far. The plan stays, and a later plan event adds to it. /clear and /home empty the plan. */
   function freshTurnRail() {
     setAction({ log: [] })
-    setRailSteps([])
     setTurnAt(Date.now())
+  }
+
+  function resetRail() {
+    freshTurnRail()
+    setRailSteps([])
   }
 
   function reportFiles(files: FileHit[]) {
@@ -824,7 +828,7 @@ export function ChatPane({
       }
       if (ev.kind === 'plan' && ev.steps?.length) {
         const steps = ev.steps
-        setRailSteps(steps)
+        setRailSteps((prev) => mergePlanSteps(prev, steps))
         setMessages((msgs) => {
           const next = [...msgs]
           let lastMe = -1
@@ -1267,7 +1271,7 @@ export function ChatPane({
       filesRef.current = []
       reportFiles([])
       setBgTasks([])
-      freshTurnRail()
+      resetRail()
       void resetCli()
         .then(() => {
           if (skinOn) setTuiGen((g) => g + 1)
@@ -1459,7 +1463,7 @@ export function ChatPane({
       filesRef.current = []
       reportFiles([])
       setBgTasks([])
-      freshTurnRail()
+      resetRail()
       void resetCli()
         .then(() => {
           if (skinOn) setTuiGen((g) => g + 1)

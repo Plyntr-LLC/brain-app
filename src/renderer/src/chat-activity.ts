@@ -24,6 +24,30 @@ export function fileAction(path: string, tool?: string): string {
 
 const STEP: Record<string, RailState> = { completed: 'done', in_progress: 'live' }
 
+/** A later plan may move a step forward. It may not send a finished step back to pending. */
+const PLAN_RANK: Record<string, number> = { pending: 0, in_progress: 1, completed: 2 }
+
+/** Keep the steps already on the rail. Update a matching title only when the new status is as far along, and append titles the rail does not have. */
+export function mergePlanSteps(
+  prev: { title: string; status?: string }[],
+  next: { title: string; status?: string }[]
+): { title: string; status?: string }[] {
+  const out = prev.map((s) => ({ title: s.title, status: s.status }))
+  for (const step of next) {
+    const title = step.title.trim()
+    if (!title) continue
+    const i = out.findIndex((s) => s.title.trim() === title)
+    if (i < 0) {
+      out.push({ title, status: step.status })
+      continue
+    }
+    const oldRank = PLAN_RANK[out[i].status || ''] ?? 0
+    const newRank = PLAN_RANK[step.status || ''] ?? 0
+    if (newRank >= oldRank) out[i] = { title: out[i].title, status: step.status }
+  }
+  return out
+}
+
 export type BgTask = { label: string; at: number }
 
 /** One line for the CLI's background jobs: the first job, then "(+N more)". */
