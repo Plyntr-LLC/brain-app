@@ -1,21 +1,19 @@
 import { realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { app, BrowserWindow, ipcMain } from 'electron'
-import puppeteer from 'puppeteer-core'
 import type { BotState, DeskBot, DeskCli, DeskMessage, DeskWelcome } from '../../shared/desk.ts'
 import { binEnv, detect, resolveBin } from '../ai-cli.ts'
 import { plyntrOwnerProfile } from '../agency-brain.ts'
 import { brainIdForFolder, roleForKeylessWrite } from '../plyntr-seats.ts'
 import { loadAccount } from '../session-token.ts'
 import { roleForBrainWrite } from '../write-guard-role.ts'
-import { createDeskBrowser } from './browser.ts'
-import { deskProfileDir, macChromePath, makeDeskLaunch } from './chrome.ts'
 import { createDeskController } from './controller.ts'
 import type { DeskController } from './controller.ts'
 import { createDeskRunner } from './runner.ts'
 import { seedDesk } from './seed.ts'
 import { createSenders } from './senders.ts'
 import { buildWelcome, deskGreeting } from './welcome.ts'
+import { clickShared, faceShared, pressShared, sharedDeskBrowser, showShared, typeShared, wheelShared } from '../shared-browser.ts'
 
 /**
  * One controller per brain folder. The renderer attaches a Desk tab, asks
@@ -63,11 +61,7 @@ export function openDeskController(brain: string): DeskController {
     brain,
     role,
     runner: createDeskRunner({ resolveBin, binEnv, detect: deskDetect }),
-    browser: createDeskBrowser({
-      launch: makeDeskLaunch(puppeteer.launch),
-      chromePath: macChromePath(),
-      profileDir: deskProfileDir()
-    }),
+    browser: sharedDeskBrowser(),
     senders: createSenders({
       dryRun: process.env.BRAIN_APP_DRY_RUN === '1',
       getAppPath: () => app.getAppPath(),
@@ -224,6 +218,14 @@ export function registerDeskIpc(): void {
   ipcMain.handle('desk:focus', (_e, tab: string) => host.focus(String(tab || '')))
   ipcMain.handle('desk:showWindow', (_e, tab: string) => host.showWindow(String(tab || '')))
   ipcMain.handle('desk:picture', (_e, tab: string) => host.picture(String(tab || '')))
+  ipcMain.handle('browser:face', () => faceShared())
+  ipcMain.handle('browser:clickAt', (_e, x: number, y: number) => clickShared(Number(x), Number(y)))
+  ipcMain.handle('browser:typeText', (_e, text: string) => typeShared(String(text || '')))
+  ipcMain.handle('browser:pressKey', (_e, key: string) => pressShared(String(key || '')))
+  ipcMain.handle('browser:wheel', (_e, deltaY: number) => wheelShared(Number(deltaY) || 0))
+  ipcMain.handle('browser:showWindow', () => {
+    showShared()
+  })
   ipcMain.handle('desk:view', (_e, tab: string, botId: string | null) => host.view(String(tab || ''), botId || null))
   app.on('before-quit', () => {
     void host.quitAll()

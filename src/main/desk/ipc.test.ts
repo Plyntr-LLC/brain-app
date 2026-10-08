@@ -222,9 +222,13 @@ test('before-quit stops busy bots and writes the quit sentence', async () => {
   }
 })
 
-test('the live wiring uses the desk Chrome launch and the dry-run env', () => {
+test('the live wiring uses one shared desk Chrome launch and the dry-run env', () => {
   const src = readFileSync(new URL('./ipc.ts', import.meta.url), 'utf8')
-  assert.match(src, /makeDeskLaunch\(\s*puppeteer\.launch\s*\)/)
+  const shared = readFileSync(new URL('../shared-browser.ts', import.meta.url), 'utf8')
+  const fn = src.slice(src.indexOf('export function openDeskController'), src.indexOf('export function createDeskHost'))
+  assert.equal(fn.includes('makeDeskLaunch'), false)
+  assert.match(fn, /sharedDeskBrowser\(\)/)
+  assert.equal(shared.match(/makeDeskLaunch\(\s*puppeteer\.launch\s*\)/g)?.length, 1)
   assert.doesNotMatch(src, /launch:\s*puppeteer\.launch\b/)
   assert.match(src, /process\.env\.BRAIN_APP_DRY_RUN === '1'/)
   assert.match(src, /roleForBrainWrite/)

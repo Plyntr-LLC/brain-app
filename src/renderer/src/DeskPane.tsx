@@ -553,6 +553,10 @@ export function DeskPane({
               onPictureToggle={() => setBrowserView((v) => (v === 'small' ? 'wide' : v))}
               onPictureHide={() => setBrowserView('note')}
               onPictureShow={() => setBrowserView('small')}
+              onPictureClick={(x, y) => void window.brain.browser.clickAt(x, y)}
+              onPictureType={(text) => void window.brain.browser.typeText(text)}
+              onPicturePress={(key) => void window.brain.browser.pressKey(key)}
+              onPictureWheel={(deltaY) => void window.brain.browser.wheel(deltaY)}
               onOpenBrowser={(opts) => {
                 if (opts?.signIn) {
                   void window.brain.desk.showWindow(id)

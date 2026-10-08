@@ -89,6 +89,7 @@ import { rememberPhoneChats } from './phone'
 import { emitChat, markChatBusy } from './chat-fan'
 import { acpGrokAccount, acpGrokReady } from './acp-session'
 import { cancelWarm, closeWarm, forkSession, planModeWarm, promptWarm, resetWarm, resumeSession, warmSession } from './warm'
+import { openSharedPage } from './shared-browser'
 import { justUpdated } from './update'
 import { contextBlurb, grokCli, grokPlanText, grokTranscript, listGrokSessions, listSlash, usageBlurb } from './slash'
 import { expandSlash } from './slash-skills'
@@ -2103,6 +2104,7 @@ export function registerStubIpc(): void {
         attachments?: { path: string; name: string; mime: string }[]
       }
     ) => {
+      const pageOpened = openSharedPage(String(payload?.text || ''))
       const watching = readWatching()
       const cwd = payload.cwd && payload.cwd.length ? payload.cwd : watching.brainPath
       if (!cwd) throw new Error('No brain folder on this computer to talk against')
@@ -2117,6 +2119,7 @@ export function registerStubIpc(): void {
         })
       }
       try {
+        await pageOpened
         const reply = await promptWarm({
           kind,
           tabId: payload.tabId,

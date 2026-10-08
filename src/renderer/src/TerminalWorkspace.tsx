@@ -29,6 +29,9 @@ import { isHiddenStreamKind, isProtocolNoise } from '../../shared/skin/hidden-ki
 import { isSkinComponent } from '../../shared/skin/catalog'
 import { appendThought, collapseAdjacentThinks, paintsThreadSpec } from '../../shared/think-run'
 import { CHAT_RULES } from '../../shared/chat-reach'
+import { pageAfterSend } from '@shared/page-picture'
+import { ChatPageTurn } from './ChatPageTurn'
+import { usePageFollow } from './pin-thread'
 import type { Paste } from '../../shared/saved-msg'
 import { expandPastes, isBigPaste, livePastes, nextPasteNumber, pasteLines, pasteSize, pasteToken } from './paste'
 import {
@@ -631,6 +634,10 @@ export function ChatPane({
     initialMessages && initialMessages.length ? initialMessages : [{ who: 'brain', text: greeting }]
   )
   const [say, setSay] = useState('')
+  const [pageAt, setPageAt] = useState<number | null>(null)
+  const [pageView, setPageView] = useState<'small' | 'wide' | 'note'>('small')
+  const [pageShot, setPageShot] = useState<string | null>(null)
+  const [pageSignIn, setPageSignIn] = useState(false)
   const [busy, setBusy] = useState(false)
   const [warming, setWarming] = useState(false)
   const [waitLabel, setWaitLabel] = useState('Working')
@@ -738,6 +745,28 @@ export function ChatPane({
 
   const onActivityRef = useRef(onActivity)
   onActivityRef.current = onActivity
+  useEffect(() => {
+    if (!active || pageAt == null || pageView === 'note') return
+    let dead = false
+    let busyShot = false
+    const tickShot = () => {
+      if (busyShot || dead || !window.brain.browser?.face) return
+      busyShot = true
+      void window.brain.browser.face().then((face) => {
+        if (dead || !face) return
+        if (face.src) setPageShot(face.src)
+        setPageSignIn(!!face.signIn)
+      }).finally(() => {
+        busyShot = false
+      })
+    }
+    tickShot()
+    const timer = window.setInterval(tickShot, 1500)
+    return () => {
+      dead = true
+      window.clearInterval(timer)
+    }
+  }, [active, pageAt, pageView])
   // Only real changes reach the workspace: the rail runs its own timer from since.
   useEffect(() => {
     onActivityRef.current(id, chatActivity({ busy, turnAt, action, permission, steps: railSteps, files: railFiles, bg: bgTasks }))
@@ -1056,6 +1085,8 @@ export function ChatPane({
     if (!pinBottom.current) return
     thread.current?.scrollTo(0, thread.current.scrollHeight)
   }, [messages, busy, queue, permission, skinOn])
+
+  usePageFollow(thread, pinBottom, `${pageView}:${pageShot ?? ''}`)
 
   function onThreadScroll() {
     const el = thread.current
@@ -1924,7 +1955,14 @@ export function ChatPane({
       setDropNote('')
     }
     const shown = attached.length ? `${t}${t ? '\n' : ''}${attached.map((a) => a.name).join(', ')}` : t
-    setMessages((m) => [...m, { who: 'me', text: shown, files: attached, at: Date.now(), ...(folded.length ? { pastes: folded } : {}) }])
+    const at = Date.now()
+    const opened = pageAfterSend(wire, at)
+    if (opened) {
+      setPageAt(opened.at)
+      setPageView(opened.view)
+      setPageSignIn(false)
+    }
+    setMessages((m) => [...m, { who: 'me', text: shown, files: attached, at, ...(folded.length ? { pastes: folded } : {}) }])
     try {
       await window.brain.chat.send({
         tabId: id,
@@ -1947,6 +1985,22 @@ export function ChatPane({
     }
   }
   sendTextRef.current = sendText
+
+  const pageSlot = pageAt == null ? null : (
+    <ChatPageTurn
+      mode={pageView}
+      src={pageShot}
+      signIn={pageSignIn}
+      onToggle={() => setPageView((v) => (v === 'small' ? 'wide' : v))}
+      onHide={() => setPageView('note')}
+      onShow={() => setPageView('small')}
+      onClickAt={(x, y) => void window.brain.browser.clickAt(x, y)}
+      onTypeText={(text) => void window.brain.browser.typeText(text)}
+      onPressKey={(key) => void window.brain.browser.pressKey(key)}
+      onWheel={(deltaY) => void window.brain.browser.wheel(deltaY)}
+      onShowWindow={() => void window.brain.browser.showWindow()}
+    />
+  )
 
   return (
     <div
@@ -2070,6 +2124,8 @@ export function ChatPane({
         wantPower={wantPower}
         canPeel={false}
         cliName={label(kind)}
+        pageAt={pageAt}
+        pageSlot={pageSlot}
         onAction={(actionId, spec) => {
           if (actionId === 'selectOption') {
             const opt = String(spec.props.value || '')
@@ -2147,6 +2203,7 @@ export function ChatPane({
               ) : (
                 <Rich text={m.text} />
               )}
+              {m.who === 'me' && m.at === pageAt ? pageSlot : null}
               {m.who === 'me' && m.files && m.files.some((f) => f.preview) ? (
                 <div className="attachrow in-bubble">
                   {m.files.map((a, j) =>

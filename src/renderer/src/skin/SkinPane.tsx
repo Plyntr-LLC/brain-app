@@ -121,7 +121,9 @@ export function SkinPane({
   showPower,
   wantPower,
   canPeel: _canPeel,
-  cliName
+  cliName,
+  pageAt,
+  pageSlot
 }: {
   tabId: string
   cwd: string
@@ -152,11 +154,17 @@ export function SkinPane({
   wantPower: boolean
   canPeel: boolean
   cliName: string
+  pageAt?: number | null
+  pageSlot?: ReactNode
 }) {
   const [openThink, setOpenThink] = useState<Record<string, boolean>>({})
   const specs: Row[] = []
   messages.forEach((m, i) => {
-    if (m.who === 'me' && m.text) specs.push({ spec: userMessageSpec(m.text, m.pastes) })
+    if (m.who === 'me' && m.text) {
+      const spec = userMessageSpec(m.text, m.pastes)
+      if (pageAt != null && m.at === pageAt) spec.props = { ...spec.props, pageTurn: true }
+      specs.push({ spec })
+    }
     else if (m.who === 'tool' && m.path) {
       const s = specFromStreamEvent({ kind: 'file', path: m.path, tool: m.tool })
       if (s) specs.push({ spec: { ...s, props: { ...s.props, live: Boolean(m.live) } } })
@@ -316,7 +324,10 @@ export function SkinPane({
       <div className="skin-thread" ref={threadRef} onScroll={onScroll}>
         {turns.map((t) =>
           t.user ? (
-            card(t.user)
+            <div key={t.key} className="skin-user-turn">
+              {card(t.user)}
+              {t.user.spec.props.pageTurn ? pageSlot : null}
+            </div>
           ) : (
             <div key={t.key} className="skin-row">
               <span className="skin-gutter">{t.avatar ? <span className="who w-lead skin-avatar">{cliLetter(kind)}</span> : null}</span>

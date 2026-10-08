@@ -1151,6 +1151,14 @@ const brain = {
     // send: dragstart cannot wait for a reply, or the drop comes out empty.
     startDrag: (opts: { folder?: string; mediaId: string }) => ipcRenderer.send('media:startDrag', opts)
   },
+  browser: {
+    face: () => ipcRenderer.invoke('browser:face') as Promise<{ src: string | null; signIn: boolean }>,
+    clickAt: (x: number, y: number) => ipcRenderer.invoke('browser:clickAt', x, y) as Promise<void>,
+    typeText: (text: string) => ipcRenderer.invoke('browser:typeText', text) as Promise<void>,
+    pressKey: (key: string) => ipcRenderer.invoke('browser:pressKey', key) as Promise<void>,
+    wheel: (deltaY: number) => ipcRenderer.invoke('browser:wheel', deltaY) as Promise<void>,
+    showWindow: () => ipcRenderer.invoke('browser:showWindow') as Promise<void>
+  },
   desk: {
     attach: (tab: string, brain: string) => ipcRenderer.invoke('desk:attach', tab, brain) as Promise<{ brain: string }>,
     closeCheck: (tab: string) =>

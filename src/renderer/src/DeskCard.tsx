@@ -1,5 +1,6 @@
 import type { JSX, ReactNode } from 'react'
 import { CLI_LABEL, ME, type DeskMessage } from '@shared/desk'
+import { BrowserPicture } from './BrowserPicture'
 
 /**
  * One Desk message as one card, from the Cards table. The store folds tiles and groups browse steps
@@ -144,6 +145,10 @@ export function DeskCard(props: {
   onPictureToggle?: () => void
   onPictureHide?: () => void
   onPictureShow?: () => void
+  onPictureClick?: (x: number, y: number) => void
+  onPictureType?: (text: string) => void
+  onPicturePress?: (key: string) => void
+  onPictureWheel?: (deltaY: number) => void
 }): JSX.Element {
   const { msg } = props
   const name = (id: string) => props.names[id] || (id === ME ? 'You' : 'Someone')
@@ -319,14 +324,17 @@ export function DeskCard(props: {
           Hide
         </button>
       ) : null
-      const shot = pic?.mode === 'note' ? (
-        <button type="button" className="ghost desk-browser-note" onClick={props.onPictureShow}>
-          There were browsers.
-        </button>
-      ) : pic ? (
-        <button type="button" className="desk-browser-shot" onClick={props.onPictureToggle}>
-          {pic.src ? <img className={pic.mode === 'wide' ? 'wide' : ''} src={`data:image/jpeg;base64,${pic.src}`} alt="" /> : null}
-        </button>
+      const shot = pic ? (
+        <BrowserPicture
+          mode={pic.mode}
+          src={pic.src}
+          onToggle={() => props.onPictureToggle?.()}
+          onShow={() => props.onPictureShow?.()}
+          onClickAt={props.onPictureClick}
+          onTypeText={props.onPictureType}
+          onPressKey={props.onPicturePress}
+          onWheel={props.onPictureWheel}
+        />
       ) : null
       return (
         <Card

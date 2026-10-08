@@ -1,6 +1,7 @@
 import { BROWSE_MAX_CONTROLS, BROWSE_TEXT_CHARS, payCheck } from '../../shared/desk.ts'
 import type { BrowseStepResult, DeskBrowser, DeskLaunch, PageSnapshot } from '../../shared/desk.ts'
 import type { DeskPage } from './chrome.ts'
+import { startPageTurn } from './page-lane.ts'
 
 /**
  * The one desk browser. One browse at a time: a session is the lock, the browseId, and the open page,
@@ -165,15 +166,65 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
     return null
   }
 
-  async function runStep(browseId: string, step: Step): Promise<BrowseStepResult> {
-    if (signedOut?.id === browseId) return signedOut.result
-    const s = session
-    // The controller posts no-page before it gets here. This is a wiring bug, not a sentence.
-    if (!s || s.id !== browseId) throw new Error(`desk browser: runStep for ${browseId} without an open session`)
+  async function page(): Promise<DeskPage | { noChrome: true } | null> {
+    if (!adapter || !windowOpen()) return null
+    return adapter
+  }
+
+  async function goTo(url: string) {
     const a = await chrome()
-    if ('noChrome' in a) return a
+    if ('noChrome' in a) return
+    await a.goto(url)
+  }
+
+  async function clickAt(x: number, y: number) {
+    const a = await page()
+    if (!a || 'noChrome' in a) return
+    await a.clickAt?.(x, y)
+  }
+
+  async function typeText(text: string) {
+    const a = await page()
+    if (!a || 'noChrome' in a) return
+    await a.typeText?.(text)
+  }
+
+  async function pressKey(key: string) {
+    const a = await page()
+    if (!a || 'noChrome' in a) return
+    await a.pressKey?.(key)
+  }
+
+  async function wheel(deltaY: number) {
+    const a = await page()
+    if (!a || 'noChrome' in a) return
+    await a.wheel?.(deltaY)
+  }
+
+  async function look(): Promise<{ signIn: boolean } | null> {
+    const a = await page()
+    if (!a || 'noChrome' in a) return null
+    try {
+      const p = await a.snapshot()
+      return { signIn: p.hasPassword || SIGN_IN_TITLE.test(p.title) }
+    } catch {
+      return { signIn: false }
+    }
+  }
+
+  async function runStep(browseId: string, step: Step): Promise<BrowseStepResult> {
     const action = step.action.toLowerCase()
     const detail = (step.detail ?? '').trim()
+    const mutates = action === 'url' || action === 'click' || action === 'type' || action === 'press' || action === 'scroll'
+    const turn = mutates ? startPageTurn() : null
+    try {
+      if (turn && !(await turn.promise)) return { refused: 'missing', name: (step.url ?? detail).trim(), url: session?.page?.url ?? '' }
+      if (signedOut?.id === browseId) return signedOut.result
+      const s = session
+      // The controller posts no-page before it gets here. This is a wiring bug, not a sentence.
+      if (!s || s.id !== browseId) throw new Error(`desk browser: runStep for ${browseId} without an open session`)
+      const a = await chrome()
+      if ('noChrome' in a) return a
 
     if (action === 'url') {
       const url = (step.url ?? detail).trim()
@@ -217,23 +268,32 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
       return read(a, s)
     }
     return { refused: 'missing', name: detail, url }
+    } finally {
+      turn?.release()
+    }
   }
 
   /** Approve on a browser hold: one click on `name`, only on `pageUrl`. With the window closed it
    * reopens `pageUrl` in the desk profile first. The person already said yes, so no pay check. */
   async function clickApproved(name: string, pageUrl: string): Promise<BrowseStepResult> {
-    const wasOpen = windowOpen()
-    const a = await chrome()
-    if ('noChrome' in a) return a
-    if (!wasOpen) await a.goto(pageUrl)
-    const p = await a.snapshot()
-    if (p.url !== pageUrl) return { refused: 'page-changed', url: p.url }
-    if (p.hasPassword || SIGN_IN_TITLE.test(p.title)) return { signIn: true, url: p.url, title: p.title }
-    const hit = findControl(p.controls, name)
-    if (typeof hit !== 'number') return { refused: hit, name, url: p.url }
-    await a.click(hit)
-    return read(a, session)
+    const turn = startPageTurn()
+    try {
+      if (!(await turn.promise)) return { refused: 'missing', name, url: pageUrl }
+      const wasOpen = windowOpen()
+      const a = await chrome()
+      if ('noChrome' in a) return a
+      if (!wasOpen) await a.goto(pageUrl)
+      const p = await a.snapshot()
+      if (p.url !== pageUrl) return { refused: 'page-changed', url: p.url }
+      if (p.hasPassword || SIGN_IN_TITLE.test(p.title)) return { signIn: true, url: p.url, title: p.title }
+      const hit = findControl(p.controls, name)
+      if (typeof hit !== 'number') return { refused: hit, name, url: p.url }
+      await a.click(hit)
+      return read(a, session)
+    } finally {
+      turn.release()
+    }
   }
 
-  return { open, cancel, release, focus, showWindow, picture, windowOpen, clickApproved, runStep }
+  return { open, cancel, release, focus, showWindow, picture, windowOpen, clickApproved, runStep, goTo, clickAt, typeText, pressKey, wheel, look }
 }

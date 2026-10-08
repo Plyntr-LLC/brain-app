@@ -17,13 +17,22 @@ export type ChromePage = {
   click: (selector: string, options?: { count?: number }) => Promise<void>
   type: (selector: string, text: string) => Promise<void>
   bringToFront: () => Promise<void>
-  screenshot?: (options: { type: 'jpeg'; quality: number }) => Promise<Uint8Array>
+  screenshot?: (options: {
+    type: 'jpeg'
+    quality: number
+    fromSurface?: boolean
+    captureBeyondViewport?: boolean
+    clip?: { x: number; y: number; width: number; height: number; scale?: number }
+  }) => Promise<Uint8Array>
   isClosed: () => boolean
   setViewport?: (viewport: null) => Promise<void>
   waitForNetworkIdle?: (options: { idleTime: number; timeout: number }) => Promise<void>
   /** Present on a real puppeteer page. Missing on the fake page, which then skips the park.
    * `any` because puppeteer's send() only accepts protocol command names, so a `string` method would reject Page. */
   createCDPSession?: () => Promise<any>
+  /** `any` so puppeteer's Mouse and Keyboard stay assignable to this page. */
+  mouse?: any
+  keyboard?: any
 }
 
 export type ChromeBrowser = {
@@ -44,6 +53,12 @@ export type DeskPage = PageAdapter & {
   shot?: () => Promise<Uint8Array>
   /** True once the person closed the desk window or quit that Chrome. */
   closed?: () => boolean
+  /** A click at page pixels. The picture maps its own box onto these. */
+  clickAt?: (x: number, y: number) => Promise<void>
+  /** Keys into the focused page, not into a named field. */
+  typeText?: (text: string) => Promise<void>
+  pressKey?: (key: string) => Promise<void>
+  wheel?: (deltaY: number) => Promise<void>
 }
 
 /** What the page reader sees. A test passes a fake with the same fields.
@@ -255,8 +270,30 @@ function adapterFor(browser: ChromeBrowser, page: ChromePage): DeskPage {
       await place(page, SHOWN)
       await page.bringToFront()
     },
-    shot: async () => (page.screenshot ? page.screenshot({ type: 'jpeg', quality: 40 }) : new Uint8Array()),
-    closed: () => page.isClosed() || !browser.connected
+    // mouse.click is CSS pixels. A surface shot is device pixels, so this clip is the parked CSS window at scale 1.
+    shot: async () =>
+      page.screenshot
+        ? page.screenshot({
+            type: 'jpeg',
+            quality: 40,
+            fromSurface: false,
+            captureBeyondViewport: false,
+            clip: { x: 0, y: 0, width: PARKED.width, height: PARKED.height, scale: 1 }
+          })
+        : new Uint8Array(),
+    closed: () => page.isClosed() || !browser.connected,
+    clickAt: async (x, y) => {
+      await page.mouse?.click(x, y)
+    },
+    typeText: async (text) => {
+      await page.keyboard?.type(text)
+    },
+    pressKey: async (key) => {
+      await page.keyboard?.press(key)
+    },
+    wheel: async (deltaY) => {
+      await page.mouse?.wheel?.({ deltaY })
+    }
   }
 }
 

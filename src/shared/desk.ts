@@ -265,6 +265,14 @@ export type DeskBrowser = {
   windowOpen: () => boolean // true while the desk Chrome window is open, with or without a browse session
   clickApproved: (name: string, pageUrl: string) => Promise<BrowseStepResult>
   runStep: (browseId: string, step: { action: string; detail?: string; url?: string }) => Promise<BrowseStepResult>
+  /** Open this address in the shared window. Does not start a browse session. */
+  goTo?: (url: string) => Promise<void>
+  clickAt?: (x: number, y: number) => Promise<void>
+  typeText?: (text: string) => Promise<void>
+  pressKey?: (key: string) => Promise<void>
+  wheel?: (deltaY: number) => Promise<void>
+  /** Whether the open page is asking the person to sign in. */
+  look?: () => Promise<{ signIn: boolean } | null>
 }
 
 /** Built by slice-9, returned by slice-6, rendered by slice-7 as is. */
