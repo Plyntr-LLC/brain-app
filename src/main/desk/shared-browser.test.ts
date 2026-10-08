@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { registerHooks } from 'node:module'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { after, test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -12,31 +12,23 @@ import { argvFor } from './runner.ts'
 const userData = mkdtempSync(join(tmpdir(), 'desk-shared-user-'))
 const brains = [mkdtempSync(join(tmpdir(), 'desk-shared-a-')), mkdtempSync(join(tmpdir(), 'desk-shared-b-'))]
 const jpeg = Uint8Array.from([9, 8, 7, 6])
-const device = Uint8Array.from([2, 2, 0, 0])
 
-type FakePage = {
-  windowId: number
-  viewport: { width: number; height: number; deviceScaleFactor: number } | null
-  windowState: string
-  _url: string
-  _closed: boolean
-  isClosed: () => boolean
-  screenshot: (options?: Record<string, unknown>) => Promise<Uint8Array>
-}
+type FakePage = { windowId: number; _url: string; _closed: boolean }
 type Fake = {
-  launches: Array<Record<string, unknown>>
+  views: Array<{ webPreferences?: { offscreen?: boolean; partition?: string } }>
+  hosts: Array<{ show?: boolean }>
+  partitions: string[]
+  resized: Array<{ from: { width: number; height: number }; to: { width: number; height: number } }>
+  captureSize: { width: number; height: number } | null
   actions: string[]
   pages: FakePage[]
   url: string
   jpeg: Uint8Array
-  device: Uint8Array
-  shots: unknown[]
   shotIds: number[]
   entered: string[]
   holds: Array<{ url: string; release: () => void }>
   nextId: number
   holdGoto: boolean
-  bounds: Array<{ windowId: number; bounds: { left?: number; windowState?: string } }>
   holdClick: boolean
   clickEntered: number
   clickWaiters: Array<() => void>
@@ -65,20 +57,23 @@ const g = globalThis as typeof globalThis & {
   }
 }
 g.__deskUserData = userData
+// Electron sets this; the in-app browser builds its Chrome user agent from it.
+if (!process.versions.chrome) Object.defineProperty(process.versions, 'chrome', { value: '138.0.0.0' })
 g.__browserFake = {
-  launches: [],
+  views: [],
+  hosts: [],
+  partitions: [],
+  resized: [],
+  captureSize: null,
   actions: [],
   pages: [],
   url: '',
   jpeg,
-  device,
-  shots: [],
   shotIds: [],
   entered: [],
   holds: [],
   nextId: 1,
   holdGoto: false,
-  bounds: [],
   holdClick: false,
   clickEntered: 0,
   clickWaiters: [],
@@ -133,118 +128,7 @@ export const protocol = { handle() {}, registerFileProtocol() {} }
 export const safeStorage = { isEncryptionAvailable: () => false }
 const api = { app, BrowserWindow, ipcMain, ipcRenderer, contextBridge, webUtils, dialog, shell, clipboard, nativeImage, protocol, safeStorage }
 export default api
-`
-
-const puppeteerSource = `
-const fake = globalThis.__browserFake
-const PAGE_VIEW = { width: 1100, height: 800, deviceScaleFactor: 1 }
-function clipOk(options) {
-  const clip = options && options.clip
-  return options
-    && options.type === 'jpeg'
-    && options.quality === 40
-    && options.fromSurface === false
-    && options.captureBeyondViewport === false
-    && clip && clip.x === 0 && clip.y === 0 && clip.width === 1100 && clip.height === 800 && clip.scale === 1
-}
-function viewOk(page) {
-  const v = page.viewport
-  return !!v && v.width === PAGE_VIEW.width && v.height === PAGE_VIEW.height && v.deviceScaleFactor === 1
-}
-function makePage() {
-  const page = {
-    windowId: fake.nextId++,
-    viewport: null,
-    windowState: 'normal',
-    _url: 'about:blank',
-    _closed: false,
-    goto(url) {
-      fake.entered.push(url)
-      const finish = () => { page._url = url; fake.url = url }
-      if (!fake.holdGoto) { finish(); return Promise.resolve() }
-      return new Promise((resolve) => {
-        fake.holds.push({ url, page, release() { finish(); resolve() } })
-      })
-    },
-    url() { return page._url },
-    click(sel) { fake.actions.push('click ' + sel); return Promise.resolve() },
-    type() { return Promise.resolve() },
-    bringToFront() { fake.actions.push('bringToFront'); return Promise.resolve() },
-    close() { page._closed = true; return Promise.resolve() },
-    screenshot(options) {
-      fake.shots.push(options || null)
-      fake.shotIds.push(page.windowId)
-      const ok = clipOk(options) && viewOk(page) && page.windowState === 'minimized'
-      return Promise.resolve(ok ? fake.jpeg : new Uint8Array())
-    },
-    isClosed() { return page._closed },
-    target() { return { _targetId: page._targetId } },
-    setViewport(v) {
-      page.viewport = v
-      if (!fake.holdPrepare) return Promise.resolve()
-      fake.prepareEntered += 1
-      return new Promise((resolve) => { fake.prepareWaiters.push(resolve) })
-    },
-    waitForNetworkIdle() { return Promise.resolve() },
-    evaluate(fn) {
-      if (fn && fn.name === 'pageSnapshot') {
-        return Promise.resolve({ title: fake.title || 'Example', text: 'hello', controls: ['link Pricing'], hasPassword: false })
-      }
-      return Promise.resolve(null)
-    },
-    createCDPSession() {
-      return Promise.resolve({
-        send(method, params) {
-          if (method === 'Browser.getWindowForTarget') return Promise.resolve({ windowId: page.windowId })
-          if (method === 'Browser.setWindowBounds' && params && params.bounds) {
-            page.windowState = params.bounds.windowState
-            fake.bounds.push({ windowId: params.windowId, bounds: params.bounds })
-            return Promise.resolve({})
-          }
-          if (method === 'Target.createTarget') {
-            // The new page shows up on a later turn. Two opens that both read pages() first
-            // must still receive two windows, and each page keeps the id createTarget returned.
-            const id = 't' + fake.nextId
-            return Promise.resolve().then(() => {
-              const created = makePage()
-              created._targetId = id
-              return { targetId: id }
-            })
-          }
-          return Promise.resolve({})
-        },
-        detach() { return Promise.resolve() }
-      })
-    },
-    mouse: {
-      click(x, y) {
-        fake.actions.push('mouse ' + x + ' ' + y + ' ' + page.windowId)
-        if (!fake.holdClick) return Promise.resolve()
-        fake.clickEntered += 1
-        return new Promise((resolve) => { fake.clickWaiters.push(resolve) })
-      },
-      wheel(o) { fake.actions.push('wheel ' + (o && o.deltaY) + ' ' + page.windowId); return Promise.resolve() }
-    },
-    keyboard: {
-      type(t) { fake.actions.push('type ' + t + ' ' + page.windowId); return Promise.resolve() },
-      press(k) { fake.actions.push('press ' + k + ' ' + page.windowId); return Promise.resolve() }
-    }
-  }
-  fake.pages.push(page)
-  return page
-}
-const browser = {
-  connected: true,
-  pages() { return Promise.resolve(fake.pages.filter((p) => !p.isClosed())) },
-  newPage() { return Promise.resolve(makePage()) }
-}
-function launch(options) {
-  fake.launches.push(options)
-  return Promise.resolve(browser)
-}
-export { launch }
-export default { launch }
-`
+` + readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'scripts', 'fakes', 'electron-browser.js'), 'utf8')
 
 const warmSource = `
 export async function promptWarm(opts) {
@@ -263,7 +147,6 @@ export async function warmSession() { return {} }
 registerHooks({
   resolve(spec, ctx, next) {
     if (spec === 'electron') return { url: 'stub:electron', shortCircuit: true }
-    if (spec === 'puppeteer-core') return { url: 'stub:puppeteer', shortCircuit: true }
     if (spec === 'electron-updater') return { url: 'stub:updater', shortCircuit: true }
     if (spec === './warm' || spec === './warm.ts') return { url: 'stub:warm', shortCircuit: true }
     if (spec === './line-rpc' || spec === '../line-rpc' || spec.endsWith('/line-rpc')) return { url: 'stub:line-rpc', shortCircuit: true }
@@ -278,7 +161,7 @@ registerHooks({
   load(url, ctx, next) {
     const lineRpc = 'export function asRecord() { return {} }\nexport function asText() { return "" }\nexport function fileHits() { return [] }\nexport function spawnBin() { return null }\nexport class LineRpc { constructor() {} on() {} send() {} kill() {} }\n'
     const source =
-      url === 'stub:electron' ? electronSource : url === 'stub:puppeteer' ? puppeteerSource : url === 'stub:warm' ? warmSource : url === 'stub:updater' ? 'export const autoUpdater = { on() {}, checkForUpdates: async () => null, quitAndInstall() {} }\nexport default { autoUpdater }\n' : url === 'stub:line-rpc' ? lineRpc : ''
+      url === 'stub:electron' ? electronSource : url === 'stub:warm' ? warmSource : url === 'stub:updater' ? 'export const autoUpdater = { on() {}, checkForUpdates: async () => null, quitAndInstall() {} }\nexport default { autoUpdater }\n' : url === 'stub:line-rpc' ? lineRpc : ''
     if (!source) return next(url, ctx)
     return { format: 'module', shortCircuit: true, source }
   }
@@ -343,7 +226,7 @@ function seat(cli: DeskCli) {
   return argvFor({ cli, model: 'default', effort: 'default' }, 'p', '/b')
 }
 
-test('chats and desk bots share one Chrome, and WhatsApp is the one shared window', { timeout: 120_000 }, async () => {
+test('chats and desk bots share the in-app browser, and WhatsApp is the one shared window', { timeout: 120_000 }, async () => {
   registerStubIpc()
   registerBrowserIpc()
   const send = g.__ipcHandlers?.get('chat:send')
@@ -372,20 +255,17 @@ test('chats and desk bots share one Chrome, and WhatsApp is the one shared windo
   await until(() => fake.entered.length === 3)
   assert.deepEqual(fake.entered, ['https://a.example', 'https://b.example', 'https://w.example'])
   assert.ok(live().every((p) => p._url === 'about:blank'))
-  assert.equal(fake.launches.length, 1)
-  const opts = fake.launches[0]
-  assert.equal(opts.pipe, true)
-  assert.equal(opts.headless, false)
-  assert.equal('args' in opts, false)
-  assert.deepEqual(Object.keys(opts).sort(), ['executablePath', 'headless', 'pipe', 'userDataDir'])
-  assert.equal(opts.userDataDir, join(homedir(), '.brain-sessions', 'desk'))
+  assert.equal(fake.views.length, 3)
+  assert.ok(fake.views.every((v) => v.webPreferences?.offscreen === true && v.webPreferences?.partition === 'persist:brain-browser'))
+  assert.ok(fake.hosts.length === 3 && fake.hosts.every((h) => h.show === false))
+  assert.deepEqual(fake.partitions, ['persist:brain-browser'])
   for (const hold of fake.holds) hold.release()
   fake.holds = []
   fake.holdGoto = false
   await Promise.all(opened)
   assert.equal(live().length, 3)
   assert.deepEqual(urls(), ['https://a.example', 'https://b.example', 'https://w.example'])
-  assert.equal(fake.launches.length, 1)
+  assert.deepEqual(fake.partitions, ['persist:brain-browser'])
 
   await browser.goTo!('https://web.whatsapp.com', 'chat:chat-a')
   assert.equal(live().length, 4)
@@ -400,27 +280,20 @@ test('chats and desk bots share one Chrome, and WhatsApp is the one shared windo
   assert.equal(wa!._closed, false)
   const expected = Buffer.from(jpeg).toString('base64')
   const shotsBefore = fake.shotIds.length
-  const cssShot = {
-    type: 'jpeg',
-    quality: 40,
-    fromSurface: false,
-    captureBeyondViewport: false,
-    clip: { x: 0, y: 0, width: 1100, height: 800, scale: 1 }
-  }
-  const shotAt = fake.shots.length
   assert.equal(await browser.picture!('chat:chat-a'), expected)
   assert.equal(await browser.picture!('desk:writer'), expected)
   assert.deepEqual(fake.shotIds.slice(shotsBefore), [wa!.windowId, wa!.windowId])
-  assert.deepEqual(fake.shots.slice(shotAt), [cssShot, cssShot])
-  const wrong = Buffer.from(await wa!.screenshot({ type: 'jpeg', quality: 40 })).toString('base64')
-  assert.equal(wrong, '')
-  assert.notEqual(wrong, expected)
+  assert.deepEqual(fake.resized, [])
+  fake.captureSize = { width: 2200, height: 1600 }
+  assert.equal(await browser.picture!('chat:chat-a'), expected)
+  fake.captureSize = null
+  assert.deepEqual(fake.resized, [{ from: { width: 2200, height: 1600 }, to: { width: 1100, height: 800 } }])
 
   await close!(null, 'chat-a')
   assert.equal(live().some((p) => p._url === 'https://a.example'), false)
   assert.equal(wa!._closed, false)
   assert.ok(live().some((p) => p._url === 'https://b.example'))
-  assert.equal(fake.launches.length, 1)
+  assert.deepEqual(fake.partitions, ['persist:brain-browser'])
   await browser.goTo!('https://web.whatsapp.com', 'chat:chat-a')
   assert.equal(wa!._closed, false)
   assert.equal(openDeskController(brains[0]).removeBot('writer'), null)
@@ -428,7 +301,7 @@ test('chats and desk bots share one Chrome, and WhatsApp is the one shared windo
   assert.equal(live().some((p) => p._url === 'https://w.example'), false)
   assert.equal(wa!._closed, false)
   assert.ok(live().some((p) => p._url === 'https://b.example'))
-  assert.equal(fake.launches.length, 1)
+  assert.deepEqual(fake.partitions, ['persist:brain-browser'])
 
   await browser.goTo!('https://w.example', 'desk:writer')
   const writer = live().find((p) => p._url === 'https://w.example')
@@ -459,7 +332,7 @@ test('chats and desk bots share one Chrome, and WhatsApp is the one shared windo
     assert.equal('jpeg' in call, false)
     assert.equal(/jpeg|data:image|browse/i.test(JSON.stringify(call)), false)
   }
-  assert.equal(fake.launches.length, 1)
+  assert.deepEqual(fake.partitions, ['persist:brain-browser'])
 
   const api = g.__brainApi
   assert.ok(api)
@@ -517,8 +390,8 @@ test('chats and desk bots share one Chrome, and WhatsApp is the one shared windo
   await Promise.all([first, second])
   assert.equal(fake.actions.filter((row) => row.startsWith('mouse 1 2')).length, 1)
   assert.equal(fake.actions.filter((row) => row.startsWith('mouse 3 4')).length, 1)
-  assert.equal(fake.actions.includes('bringToFront'), false)
-  assert.equal(fake.launches.length, 1)
+  assert.equal(fake.actions.some((row) => row === 'show' || row === 'focus'), false)
+  assert.deepEqual(fake.partitions, ['persist:brain-browser'])
 
   // Closing a chat while its window is still opening drops that window. It does not navigate.
   fake.holdPrepare = true
@@ -539,7 +412,8 @@ test('chats and desk bots share one Chrome, and WhatsApp is the one shared windo
   assert.equal(zPage!._closed, true)
   assert.equal(await browser.picture!('chat:chat-z'), null)
   assert.equal(live().some((p) => p._url === 'https://a.example'), true)
-  assert.equal(fake.launches.length, 1)
+  assert.equal(waForClick!._closed, false)
+  assert.deepEqual(fake.partitions, ['persist:brain-browser'])
 
   fake.holdPrepare = true
   fake.prepareEntered = 0
@@ -557,11 +431,10 @@ test('chats and desk bots share one Chrome, and WhatsApp is the one shared windo
   assert.equal(fake.entered.length, enteredBeforeBot)
   assert.equal(dPage!._closed, true)
   assert.equal(await browser.picture!('desk:late'), null)
-  assert.equal(fake.launches.length, 1)
-  for (const row of fake.bounds) {
-    assert.ok((row.bounds.left ?? 1) <= 0, JSON.stringify(row.bounds))
-    assert.ok(row.bounds.windowState === 'normal' || row.bounds.windowState === 'minimized')
-  }
+  assert.equal(waForClick!._closed, false)
+  assert.deepEqual(fake.partitions, ['persist:brain-browser'])
+  assert.equal(fake.actions.some((row) => row === 'show' || row === 'focus'), false)
+  assert.ok(fake.hosts.every((h) => h.show === false))
 
   assert.equal(createSenders().sendWhatsApp().sendable, false)
   const grok = [

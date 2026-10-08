@@ -6,7 +6,7 @@ import test from 'node:test'
 import { BROWSE_MAX_CONTROLS, BROWSE_TEXT_CHARS, payCheck } from '../../shared/desk.ts'
 import type { DeskLaunch } from '../../shared/desk.ts'
 import { createDeskBrowser } from './browser.ts'
-import { deskProfileDir, pageSnapshot } from './chrome.ts'
+import { pageSnapshot } from './chrome.ts'
 import type { DeskPage } from './chrome.ts'
 
 const HOME = 'https://summit.example/'
@@ -129,8 +129,10 @@ function fakeWindow() {
   return { calls, launch, adapter, navigate: (u: string) => (url = u), closeWindow: () => (closed = true) }
 }
 
+const PROFILE = join(homedir(), '.brain-sessions', 'desk')
+
 function deskBrowser(launch: DeskLaunch) {
-  return createDeskBrowser({ launch, chromePath: CHROME, profileDir: deskProfileDir() })
+  return createDeskBrowser({ launch, chromePath: CHROME, profileDir: PROFILE })
 }
 
 /** An open session on `start`, plus the fake window behind it. */
@@ -392,7 +394,7 @@ test('clickApproved with no window reopens pageUrl in the desk profile, clicks o
   const b = deskBrowser(w.launch)
   assert.equal(b.windowOpen(), false)
   const r = await b.clickApproved('Pay now', PRICING)
-  assert.deepEqual(w.calls.launch, [{ chromePath: CHROME, profileDir: deskProfileDir() }])
+  assert.deepEqual(w.calls.launch, [{ chromePath: CHROME, profileDir: PROFILE }])
   assert.deepEqual(w.calls.goto, [PRICING])
   assert.deepEqual(w.calls.click, [0])
   assert.ok('ok' in r)

@@ -329,7 +329,7 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
   async function runStep(browseId: string, step: Step): Promise<BrowseStepResult> {
     const action = step.action.toLowerCase()
     const detail = (step.detail ?? '').trim()
-    const mutates = action === 'url' || action === 'click' || action === 'type' || action === 'press' || action === 'scroll'
+    const mutates = action === 'url' || action === 'click' || action === 'type' || action === 'press' || action === 'key' || action === 'scroll'
     const s0 = sessions.get(browseId)
     const urlForKey = action === 'url' ? (step.url ?? detail).trim() : undefined
     const key = wins()
@@ -346,6 +346,7 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
       if (!s || s.id !== browseId) throw new Error(`desk browser: runStep for ${browseId} without an open session`)
       const a = await stepAdapter(s, action === 'url' ? urlForKey : undefined)
       if ('noChrome' in a) return a
+      if (action === 'read') return read(a, s)
 
     if (action === 'url') {
       const url = (step.url ?? detail).trim()
@@ -382,6 +383,17 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
       const stop = payStop(sub.name, url)
       if (stop) return stop
       await a.submit(sub.index)
+      return read(a, s)
+    }
+    if (action === 'key') {
+      // Enter in a form submits it, so it gets the same pay check as clicking that form's button.
+      if (detail === 'Enter') {
+        const sub = await a.activeSubmit?.()
+        const stop = sub ? payStop(sub.name, url) : null
+        if (stop) return stop
+      }
+      if (!a.pressKey) return { refused: 'missing', name: detail, url }
+      await a.pressKey(detail)
       return read(a, s)
     }
     if (action === 'scroll') {

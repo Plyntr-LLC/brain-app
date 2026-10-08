@@ -1158,7 +1158,15 @@ const brain = {
     pressKey: (owner: string, key: string) => ipcRenderer.invoke('browser:pressKey', owner, key) as Promise<void>,
     wheel: (owner: string, deltaY: number) => ipcRenderer.invoke('browser:wheel', owner, deltaY) as Promise<void>,
     showWindow: () => ipcRenderer.invoke('browser:showWindow') as Promise<void>,
-    close: (owner: string) => ipcRenderer.invoke('browser:close', owner) as Promise<void>
+    close: (owner: string) => ipcRenderer.invoke('browser:close', owner) as Promise<void>,
+    /** A chat CLI's brain-browser tool opened or moved the page for this owner. */
+    onOpened: (fn: (owner: string) => void) => {
+      const h = (_e: unknown, owner: string) => fn(String(owner || ''))
+      ipcRenderer.on('browser:opened', h)
+      return () => {
+        ipcRenderer.removeListener('browser:opened', h)
+      }
+    }
   },
   desk: {
     attach: (tab: string, brain: string) => ipcRenderer.invoke('desk:attach', tab, brain) as Promise<{ brain: string }>,

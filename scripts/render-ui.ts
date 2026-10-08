@@ -2,7 +2,7 @@
 // Chrome, prints the page's own asserts, and saves a screenshot. Exits 1 when any assert fails.
 // node --experimental-strip-types scripts/render-ui.ts away [outDir]   (RENDER_UI_SIZE=1440,900 sets the screenshot size)
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -47,7 +47,8 @@ await esbuild.build({
         'export function join(...p){ return p.filter(Boolean).join("/") }',
         'export function dirname(p){ return String(p).split("/").slice(0,-1).join("/") }',
         'export function resolve(...p){ return p.join("/") }',
-        'export function basename(p){ return String(p).split("/").pop() }'
+        'export function basename(p, ext){ const b = String(p).split("/").pop(); return ext && b.endsWith(ext) ? b.slice(0, -ext.length) : b }',
+        'export function extname(p){ const m = /\\.[^./]*$/.exec(String(p)); return m ? m[0] : "" }'
       ].join('\n')
       const electron = `
         const handlers = (globalThis.__ipcHandlers = globalThis.__ipcHandlers || new Map())
@@ -70,10 +71,9 @@ await esbuild.build({
         export const clipboard = { readText(){ return "" }, writeText(){} }
         export default { app, BrowserWindow, ipcMain, ipcRenderer, contextBridge, webUtils }
       `
-      const pptr = `
-        const fake = (globalThis.__browserFake = globalThis.__browserFake || { launches: [], actions: [], pages: [], shotIds: [], nextId: 1 })
-        function jpegBytes(){
-          if (fake.jpeg) return fake.jpeg
+      const fakeInit = `
+        globalThis.__browserFake = globalThis.__browserFake || { views: [], hosts: [], partitions: [], resized: [], captureSize: null, actions: [], pages: [], shotIds: [], entered: [], holds: [], nextId: 1 }
+        ;(() => {
           const canvas = document.createElement("canvas")
           canvas.width = 1100
           canvas.height = 800
@@ -86,74 +86,18 @@ await esbuild.build({
           const bin = atob(url.slice(url.indexOf(",") + 1))
           const bytes = new Uint8Array(bin.length)
           for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-          fake.jpeg = bytes
-          return bytes
-        }
-        function makePage(){
-          const page = {
-            windowId: fake.nextId++,
-            viewport: null,
-            windowState: "normal",
-            _url: "about:blank",
-            _closed: false,
-            goto(url){ page._url = url; fake.actions.push("goto " + url); return Promise.resolve() },
-            url(){ return page._url },
-            click(){ return Promise.resolve() },
-            type(){ return Promise.resolve() },
-            bringToFront(){ fake.actions.push("bringToFront"); return Promise.resolve() },
-            close(){ page._closed = true; return Promise.resolve() },
-            isClosed(){ return page._closed },
-            target(){ return { _targetId: page._targetId } },
-            setViewport(v){ page.viewport = v; return Promise.resolve() },
-            waitForNetworkIdle(){ return Promise.resolve() },
-            screenshot(options){
-              const clip = options && options.clip
-              const css = options && options.type === "jpeg" && options.quality === 40 && options.fromSurface === false && options.captureBeyondViewport === false && clip && clip.x === 0 && clip.y === 0 && clip.width === 1100 && clip.height === 800 && clip.scale === 1
-              const view = page.viewport && page.viewport.width === 1100 && page.viewport.height === 800 && page.viewport.deviceScaleFactor === 1
-              fake.shotIds.push(page.windowId)
-              return Promise.resolve(css && view && page.windowState === "minimized" ? jpegBytes() : new Uint8Array())
-            },
-            evaluate(fn){
-              if (fn && fn.name === "pageSnapshot") return Promise.resolve({ title: fake.title || "Example", text: "hello", controls: ["link Pricing"], hasPassword: false })
-              return Promise.resolve(null)
-            },
-            createCDPSession(){
-              return Promise.resolve({
-                send(method, params){
-                  if (method === "Browser.getWindowForTarget") return Promise.resolve({ windowId: page.windowId })
-                  if (method === "Browser.setWindowBounds" && params && params.bounds){ page.windowState = params.bounds.windowState; return Promise.resolve({}) }
-                  if (method === "Target.createTarget"){ const id = "t" + fake.nextId; return Promise.resolve().then(() => { const created = makePage(); created._targetId = id; return { targetId: id } }) }
-                  return Promise.resolve({})
-                },
-                detach(){ return Promise.resolve() }
-              })
-            },
-            mouse: {
-              click(x, y){ fake.actions.push("mouse " + x + " " + y + " " + page.windowId); return Promise.resolve() },
-              wheel(o){ fake.actions.push("wheel " + (o && o.deltaY) + " " + page.windowId); return Promise.resolve() }
-            },
-            keyboard: {
-              type(t){ fake.actions.push("type " + t + " " + page.windowId); return Promise.resolve() },
-              press(k){ fake.actions.push("press " + k + " " + page.windowId); return Promise.resolve() }
-            }
-          }
-          fake.pages.push(page)
-          return page
-        }
-        function launch(options){ fake.launches.push(options); return Promise.resolve({ connected: true, pages(){ return Promise.resolve(fake.pages.filter((p) => !p._closed)) }, newPage(){ return Promise.resolve(makePage()) } }) }
-        export { launch }
-        export default { launch }
+          globalThis.__browserFake.jpeg = bytes
+        })()
       `
+      const browserFake = fakeInit + readFileSync(join(root, 'scripts', 'fakes', 'electron-browser.js'), 'utf8')
       build.onResolve({ filter: /^node:/ }, (args) => ({ path: args.path, namespace: 'node-stub' }))
       build.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron', namespace: 'electron-stub' }))
-      build.onResolve({ filter: /^puppeteer-core$/ }, () => ({ path: 'puppeteer-core', namespace: 'pptr-stub' }))
       build.onLoad({ filter: /.*/, namespace: 'node-stub' }, () => ({ contents: node, loader: 'js' }))
-      build.onLoad({ filter: /.*/, namespace: 'electron-stub' }, () => ({ contents: electron, loader: 'js' }))
-      build.onLoad({ filter: /.*/, namespace: 'pptr-stub' }, () => ({ contents: pptr, loader: 'js' }))
+      build.onLoad({ filter: /.*/, namespace: 'electron-stub' }, () => ({ contents: electron + browserFake, loader: 'js' }))
     }
   }] : []
   ,
-  banner: name === 'shared-browser' ? { js: 'globalThis.process = globalThis.process || { env: {}, platform: "darwin", resourcesPath: "" };' } : undefined
+  banner: name === 'shared-browser' ? { js: 'globalThis.process = globalThis.process || { env: {}, platform: "darwin", resourcesPath: "", versions: { chrome: "138.0.0.0" } };' } : undefined
 })
 const css = ['tokens.css', 'shell.css'].map((f) => `<link rel="stylesheet" href="${pathToFileURL(join(root, 'src/renderer/src/styles', f)).href}">`).join('')
 const page = join(outDir, `${name}.html`)

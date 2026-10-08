@@ -5,7 +5,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute } from 'node:path'
 import type { AiKind } from '../shared/contracts'
 import type { SessionCmd, StreamEvent } from './ai-cli'
-import { CHAT_RULES, cursorReachArgs } from '../shared/chat-reach'
+import { BROWSER_RULE, CHAT_RULES, cursorReachArgs } from '../shared/chat-reach'
+import { acpBrowserServers } from './browser-bridge'
 import { binEnv, projectBinEnv, resolveBin } from './ai-cli'
 import { loginCli } from './install'
 import { acpPromptParts, type Attach } from './attach'
@@ -326,11 +327,18 @@ export function poolKey(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat
  * session/new params. Chat Grok keeps yoloMode; Factory never sends it. `_meta` is Grok-only: Cursor
  * (Chat or Factory) never gets it; Factory Cursor's rules lead each brief instead. Exported for the fixture check.
  */
-export function sessionNewParams(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat', rules?: string): Record<string, unknown> {
+export function sessionNewParams(kind: 'grok' | 'cursor', cwd: string, lane: Lane = 'chat', rules?: string, owner?: string): Record<string, unknown> {
   if (lane === 'factory') return kind === 'grok' ? { cwd, mcpServers: [], _meta: { rules: rules || FACTORY_RULES } } : { cwd, mcpServers: [] }
+  const mcpServers = owner ? acpBrowserServers(owner) : []
   return kind === 'grok'
-    ? { cwd, mcpServers: [], _meta: { yoloMode: true, rules: RULES } }
-    : { cwd, mcpServers: [] }
+    ? { cwd, mcpServers, _meta: { yoloMode: true, rules: mcpServers.length ? `${RULES} ${BROWSER_RULE}` : RULES } }
+    : { cwd, mcpServers }
+}
+
+/** session/load params. A chat tab's load gets the same brain-browser server as its session/new; Factory gets none. */
+export function sessionLoadParams(kind: 'grok' | 'cursor', sessionId: string, cwd: string, lane: Lane = 'chat', owner?: string): Record<string, unknown> {
+  const { mcpServers } = sessionNewParams(kind, cwd, lane, undefined, owner)
+  return { sessionId, cwd, mcpServers }
 }
 
 /** Env for every Factory child: shims first on PATH, no ANTHROPIC_API_KEY. */
@@ -1181,7 +1189,7 @@ export async function acpWarm(opts: {
           const loadedRes = asRecord(
             await pool.rpc.request(
               'session/load',
-              { sessionId: opts.resumeId, cwd: opts.cwd, mcpServers: [] },
+              sessionLoadParams(opts.kind, opts.resumeId, opts.cwd, 'chat', `chat:${opts.tabId}`),
               0
             )
           )
@@ -1202,7 +1210,7 @@ export async function acpWarm(opts: {
         const loadedRes = asRecord(
           await pool.rpc.request(
             'session/load',
-            { sessionId: opts.resumeId, cwd: opts.cwd, mcpServers: [] },
+            sessionLoadParams(opts.kind, opts.resumeId, opts.cwd, 'chat', `chat:${opts.tabId}`),
             0
           )
         )
@@ -1217,7 +1225,7 @@ export async function acpWarm(opts: {
       }
     }
     if (!loaded) {
-      const params = sessionNewParams(opts.kind, opts.cwd)
+      const params = sessionNewParams(opts.kind, opts.cwd, 'chat', undefined, `chat:${opts.tabId}`)
       try {
         res = asRecord(await pool.rpc.request('session/new', params, 0))
       } catch (e) {
@@ -1283,7 +1291,7 @@ export async function acpResume(opts: {
     const loadedRes = asRecord(
       await pool.rpc.request(
         'session/load',
-        { sessionId: opts.sessionId, cwd: opts.cwd, mcpServers: [] },
+        sessionLoadParams(opts.kind, opts.sessionId, opts.cwd, 'chat', `chat:${opts.tabId}`),
         0
       )
     )
@@ -1683,7 +1691,7 @@ async function warmFactoryGrok(opts: {
   let live: LiveRun = {}
   if (opts.resumeId) {
     try {
-      const res = asRecord(await pool.rpc.request('session/load', { sessionId: opts.resumeId, cwd: opts.brainPath, mcpServers: [] }, 0))
+      const res = asRecord(await pool.rpc.request('session/load', sessionLoadParams('grok', opts.resumeId, opts.brainPath, 'factory'), 0))
       sid = String(res.sessionId || opts.resumeId || '')
       live = readLive(res)
       loaded = Boolean(sid)
@@ -1743,7 +1751,7 @@ async function warmFactoryCursor(opts: {
   let live: LiveRun = {}
   if (opts.resumeId) {
     try {
-      const res = asRecord(await pool.rpc.request('session/load', { sessionId: opts.resumeId, cwd: opts.brainPath, mcpServers: [] }, 0))
+      const res = asRecord(await pool.rpc.request('session/load', sessionLoadParams('cursor', opts.resumeId, opts.brainPath, 'factory'), 0))
       sid = String(res.sessionId || opts.resumeId || '')
       live = readLive(res)
       loaded = Boolean(sid)

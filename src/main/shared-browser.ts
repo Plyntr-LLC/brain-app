@@ -1,24 +1,26 @@
-import puppeteer from 'puppeteer-core'
 import { onlyWebAddress } from '../shared/page-picture.ts'
 import { createDeskBrowser } from './desk/browser.ts'
-import { deskProfileDir, macChromePath, makeDeskLaunch } from './desk/chrome.ts'
+import { makeInAppLaunch } from './desk/inapp.ts'
 import type { DeskBrowser } from '../shared/desk.ts'
 
 /**
- * One Chrome for the app. Every desk controller and every chat shares this launch.
- * A second puppeteer.launch on the desk profile does not happen.
+ * One browser for the app, inside Brain. Every desk controller, every chat, and every chat CLI's
+ * brain-browser tools share it, so a login made in one is there for all of them.
  */
 let browser: DeskBrowser | null = null
+let launch: ReturnType<typeof makeInAppLaunch> | null = null
 
 export function sharedDeskBrowser(): DeskBrowser {
   if (!browser) {
-    browser = createDeskBrowser({
-      launch: makeDeskLaunch(puppeteer.launch),
-      chromePath: macChromePath(),
-      profileDir: deskProfileDir()
-    })
+    launch = makeInAppLaunch()
+    browser = createDeskBrowser({ launch, chromePath: 'in-app', profileDir: 'in-app' })
   }
   return browser
+}
+
+/** On quit: every hidden browser window goes with the app. */
+export function closeAllShared(): void {
+  launch?.closeAll()
 }
 
 /** When the whole message is one web address, open it on that place's window. Other text does nothing. */

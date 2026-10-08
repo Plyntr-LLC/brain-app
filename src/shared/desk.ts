@@ -243,7 +243,7 @@ export type BrowseStepResult =
   | { refused: 'pay' | 'missing' | 'ambiguous' | 'no-submit'; name?: string; url: string }
   | { signIn: true; url: string; title: string }
   | { noChrome: true }
-/** Not a raw puppeteer.launch, which returns a Browser. This is the factory slice-12's `makeDeskLaunch` returns: it calls puppeteer.launch, takes that Browser's Page, and wraps both as a PageAdapter. A missing chromePath returns { noChrome: true } without launching. */
+/** The launch `createDeskBrowser` takes. The app's is `makeInAppLaunch` (desk/inapp.ts): pages inside Brain, keyed by window through `.windows`. */
 export type DeskLaunch = (opts: { chromePath: string; profileDir: string }) => Promise<PageAdapter | { noChrome: true }>
 export type PageAdapter = {
   goto: (url: string) => Promise<void>
@@ -253,6 +253,8 @@ export type PageAdapter = {
   submit: (i: number) => Promise<void>
   /** The submit control in the form of field `i` (last snapshot's numbering). null when that form has none. */
   submitFor: (i: number) => Promise<{ index: number; name: string } | null>
+  /** The submit control of the focused field's form, by name. null when the focus is not in a form or it has none. */
+  activeSubmit?: () => Promise<{ name: string } | null>
   scroll: (dir: 'down' | 'up') => Promise<void>
 }
 export type DeskBrowser = {

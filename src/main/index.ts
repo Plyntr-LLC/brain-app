@@ -24,6 +24,8 @@ import { handleBrainMediaProtocol, registerBrainMediaScheme } from './media/prot
 import { clearMediaTemp } from './media/export'
 import { startMediaStatePoll } from './media/state-poll'
 import { refreshTray, startTray } from './tray'
+import { bridgeScriptPath, startBrowserBridge, stopBrowserBridge } from './browser-bridge'
+import { closeAllShared, sharedDeskBrowser } from './shared-browser'
 
 registerBrainMediaScheme()
 registerStubIpc()
@@ -126,6 +128,16 @@ app.whenReady().then(() => {
   }
   recordLaunchVersion()
   createWindow()
+  // Before any chat starts: every chat CLI gets this run's brain-browser server.
+  startBrowserBridge({
+    dir: app.getPath('userData'),
+    script: bridgeScriptPath({ resourcesPath: process.resourcesPath, appPath: app.getAppPath() }),
+    exec: process.execPath,
+    browser: sharedDeskBrowser(),
+    onOpened: (owner) => {
+      for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('browser:opened', owner)
+    }
+  }).catch((e) => console.error('browser bridge', e))
   startTray(() => mainWin)
   pushHealth()
   setInterval(pushHealth, 15_000)
@@ -179,6 +191,8 @@ app.on('window-all-closed', () => {
   void stopPhone()
   killAllPtys()
   killAllWarm()
+  stopBrowserBridge()
+  closeAllShared()
 })
 app.on('before-quit', (e) => {
   allowQuit = true
@@ -187,6 +201,8 @@ app.on('before-quit', (e) => {
     void stopPhone()
     killAllPtys()
     killAllWarm()
+    stopBrowserBridge()
+    closeAllShared()
     shutdownFactory()
     return
   }

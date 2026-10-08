@@ -34,6 +34,9 @@ registerHooks({
       shortCircuit: true,
       source: `export const app = { getVersion: () => '0.0.0', getPath: () => globalThis.__deskUserData, getAppPath: () => globalThis.__deskUserData, isPackaged: false, on() {} }
 export const BrowserWindow = { getAllWindows: () => [] }
+export class BaseWindow {}
+export class WebContentsView {}
+export const session = { fromPartition: () => ({}) }
 export const ipcMain = { handle() {}, on() {} }
 export const shell = {}
 export default { app, BrowserWindow, ipcMain, shell }`
@@ -222,14 +225,14 @@ test('before-quit stops busy bots and writes the quit sentence', async () => {
   }
 })
 
-test('the live wiring uses one shared desk Chrome launch and the dry-run env', () => {
+test('the live wiring uses the one shared in-app browser and the dry-run env', () => {
   const src = readFileSync(new URL('./ipc.ts', import.meta.url), 'utf8')
   const shared = readFileSync(new URL('../shared-browser.ts', import.meta.url), 'utf8')
   const fn = src.slice(src.indexOf('export function openDeskController'), src.indexOf('export function createDeskHost'))
-  assert.equal(fn.includes('makeDeskLaunch'), false)
+  assert.equal(fn.includes('makeInAppLaunch'), false)
   assert.match(fn, /sharedDeskBrowser\(\)/)
-  assert.equal(shared.match(/makeDeskLaunch\(\s*puppeteer\.launch\s*\)/g)?.length, 1)
-  assert.doesNotMatch(src, /launch:\s*puppeteer\.launch\b/)
+  assert.equal(shared.match(/makeInAppLaunch\(\)/g)?.length, 1)
+  assert.doesNotMatch(src + shared, /puppeteer/)
   assert.match(src, /process\.env\.BRAIN_APP_DRY_RUN === '1'/)
   assert.match(src, /roleForBrainWrite/)
   assert.match(src, /roleForKeylessWrite/)

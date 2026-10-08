@@ -233,6 +233,8 @@ Do not start signed Mac, Windows, Brain Bridge, or auto-install in a 3-pack with
 
 ## Now
 
+- [ ] 2026-10-08 Joe: the browser inside Brain is the brain's browser (0.1.135). Pages open in hidden offscreen views inside Brain.app on one saved partition (`persist:brain-browser`), never Google Chrome; the picture shows in the thread under the message that asked, and the old small/wide/Hide controls stay. Every chat CLI (Claude `--mcp-config` plus `--disallowedTools mcp__control-chrome`; Grok and Cursor ACP `mcpServers` on session/new and session/load; Codex thread config on start and resume) gets `brain-browser` tools for its own tab (`chat:<tabId>`) through `src/main/browser-mcp.cjs` and the socket bridge (`src/main/browser-bridge.ts`). WhatsApp stays one shared window. Plan: `plans/20261008-inline-browser.md` (Grok 4.7 xhigh-fast APPROVE after four rounds). Checks: `scripts/check-in-app-browser.ts` (IN_APP_BROWSER_PASS), `scripts/render-ui.ts browser-opened` and `shared-browser`, `scripts/check-packaged-browser-mcp.ts`. Needs Joe: scan the WhatsApp QR once in the new browser (the old desk Chrome login does not carry over), then ask a chat to open a site.
+
 - [ ] 2026-10-07 Joe: watch the Fable ask approver on a real Factory run in 0.1.124 (Asks: Fable decides each ask, Approve in advance on). Expect "Checking: ..." then "Fable allowed: ..." lines, a refusal or hand-off as a Reviewer card, and the Approver row in Team. If Fable hands too much to the card or refuses a needed step, the next move is the labeled-ask eval (agency-brain backlog `factory-ask-approver-eval`).
 
 - [ ] 2026-09-29 Joe: Plyntr storage stores big files on its own. Now keeps the local file (upload plus pointer only). Packed in 0.1.107 prerelease; needs Joe's live click-check.

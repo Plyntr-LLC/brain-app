@@ -1,8 +1,9 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+/** BRAIN_GROK_LEADER_SOCK lets a check run its own leader. makeLeader unlinks a socket it did not start, so a check on the default path would take over the running app's leader. */
 export function grokLeaderSocket(): string {
-  return join(homedir(), '.grok', 'leader-brain-app.sock')
+  return process.env.BRAIN_GROK_LEADER_SOCK || join(homedir(), '.grok', 'leader-brain-app.sock')
 }
 
 export function grokAcpArgs(cwd: string, useLeader: boolean): string[] {

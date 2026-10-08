@@ -1,5 +1,6 @@
 import type { StreamEvent } from './ai-cli'
-import { CHAT_RULES, CODEX_CHAT_SANDBOX } from '../shared/chat-reach'
+import { BROWSER_RULE, CHAT_RULES, CODEX_CHAT_SANDBOX } from '../shared/chat-reach'
+import { codexBrowserConfig } from './browser-bridge'
 import { binEnv, resolveBin } from './ai-cli'
 import type { Cap, LiveRun } from './acp-session'
 import { codexInput, type Attach } from './attach'
@@ -8,6 +9,17 @@ import { wrapPromptWithHooks } from './project-hooks'
 import { setupTrace } from './setup-trace'
 
 const RULES = CHAT_RULES
+
+/** thread/start and thread/resume for one chat tab: Chat reach, plus that tab's brain-browser server when Brain's browser is running. */
+export function codexThreadParams(owner: string): Record<string, unknown> {
+  const config = codexBrowserConfig(owner)
+  return {
+    approvalPolicy: 'never',
+    sandbox: CODEX_CHAT_SANDBOX,
+    developerInstructions: config ? `${RULES} ${BROWSER_RULE}` : RULES,
+    ...(config ? { config } : {})
+  }
+}
 
 type Tab = {
   tabId: string
@@ -235,12 +247,7 @@ export async function codexWarm(opts: {
     let threadId = ''
     let thread: Record<string, unknown> = {}
     // Start and resume share Chat reach so a resumed tab is not folder-fenced.
-    const reachParams = {
-      cwd: opts.cwd,
-      approvalPolicy: 'never',
-      sandbox: CODEX_CHAT_SANDBOX,
-      developerInstructions: RULES
-    }
+    const reachParams = { cwd: opts.cwd, ...codexThreadParams(`chat:${opts.tabId}`) }
     if (opts.resumeId) {
       try {
         const resumed = asRecord(

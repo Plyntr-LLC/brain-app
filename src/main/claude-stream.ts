@@ -1,6 +1,7 @@
 import { resolveClaudeRun } from '../shared/claude-defaults'
 import type { StreamEvent } from './ai-cli'
-import { CHAT_RULES, claudeChatMode, claudeChatPermissionArgs } from '../shared/chat-reach'
+import { BROWSER_RULE, CHAT_RULES, claudeChatMode, claudeChatPermissionArgs } from '../shared/chat-reach'
+import { claudeBrowserArgs } from './browser-bridge'
 import { binEnv, resolveBin } from './ai-cli'
 import { claudeContent, type Attach } from './attach'
 import { emitChat, markChatBusy } from './chat-fan'
@@ -391,14 +392,10 @@ export async function claudeWarm(opts: { tabId: string; cwd: string; model?: str
   return s ? claudeLive(s) : run
 }
 
-async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string; effort?: string }): Promise<void> {
-  const run = resolveClaudeRun(opts)
-  const have = sessions.get(opts.tabId)
-  if (have && !have.dead && have.cwd === opts.cwd && have.model === run.model && have.effort === run.effort) return
-  if (have) claudeClose(opts.tabId)
-  const bin = resolveBin('claude')
-  if (!bin) throw new Error('Claude is not installed on this computer')
-  const args = [
+/** The warm Claude chat process for one tab. With Brain's browser running, it gets the brain-browser server for this tab and loses Joe's Chrome control. */
+export function claudeChatArgs(o: { tabId: string; model: string; effort: string; plan: boolean }): string[] {
+  const browser = claudeBrowserArgs(`chat:${o.tabId}`)
+  return [
     '-p',
     '--input-format',
     'stream-json',
@@ -408,16 +405,27 @@ async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string;
     '--include-partial-messages',
     // Claude echoes each prompt when it takes it, so a reply is matched to the turn that answers it.
     '--replay-user-messages',
-    ...claudeChatPermissionArgs(planTabs.has(opts.tabId)),
+    ...claudeChatPermissionArgs(o.plan),
     '--permission-prompts',
     'none',
     '--append-system-prompt',
-    RULES,
+    browser.length ? `${RULES} ${BROWSER_RULE}` : RULES,
     '--model',
-    run.model,
+    o.model,
     '--effort',
-    run.effort
+    o.effort,
+    ...browser
   ]
+}
+
+async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string; effort?: string }): Promise<void> {
+  const run = resolveClaudeRun(opts)
+  const have = sessions.get(opts.tabId)
+  if (have && !have.dead && have.cwd === opts.cwd && have.model === run.model && have.effort === run.effort) return
+  if (have) claudeClose(opts.tabId)
+  const bin = resolveBin('claude')
+  if (!bin) throw new Error('Claude is not installed on this computer')
+  const args = claudeChatArgs({ tabId: opts.tabId, model: run.model, effort: run.effort, plan: planTabs.has(opts.tabId) })
   const proc = spawnBin(bin, args, opts.cwd, binEnv())
   const s: Sess = {
     tabId: opts.tabId,

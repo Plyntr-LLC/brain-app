@@ -638,6 +638,10 @@ export function ChatPane({
   const [pageView, setPageView] = useState<'small' | 'wide' | 'note'>('small')
   const [pageShot, setPageShot] = useState<string | null>(null)
   const [pageSignIn, setPageSignIn] = useState(false)
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
+  const pageAtRef = useRef(pageAt)
+  pageAtRef.current = pageAt
   const [busy, setBusy] = useState(false)
   const [warming, setWarming] = useState(false)
   const [waitLabel, setWaitLabel] = useState('Working')
@@ -761,12 +765,25 @@ export function ChatPane({
       })
     }
     tickShot()
-    const timer = window.setInterval(tickShot, 1500)
+    const timer = window.setInterval(tickShot, pageView === 'wide' ? 500 : 1500)
     return () => {
       dead = true
       window.clearInterval(timer)
     }
   }, [active, pageAt, pageView])
+  // This chat's AI opened or moved a page with its browser tools: the picture goes under the message it is answering.
+  useEffect(
+    () =>
+      window.brain.browser.onOpened((owner) => {
+        if (owner !== `chat:${id}`) return
+        const asked = [...messagesRef.current].reverse().find((m) => m.who === 'me')
+        if (asked?.at == null || asked.at === pageAtRef.current) return
+        setPageAt(asked.at)
+        setPageView('small')
+        setPageSignIn(false)
+      }),
+    [id]
+  )
   // Only real changes reach the workspace: the rail runs its own timer from since.
   useEffect(() => {
     onActivityRef.current(id, chatActivity({ busy, turnAt, action, permission, steps: railSteps, files: railFiles, bg: bgTasks }))

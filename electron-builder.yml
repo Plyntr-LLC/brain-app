@@ -19,6 +19,8 @@ extraResources:
     to: desk/gmail-send.cjs
   - from: src/main/desk/imessage.cjs
     to: desk/imessage.cjs
+  - from: src/main/browser-mcp.cjs
+    to: browser-mcp.cjs
 mac:
   category: public.app-category.productivity
   target:
