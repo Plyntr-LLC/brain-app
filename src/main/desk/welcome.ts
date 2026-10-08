@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { CLI_LABEL, CONDUCTOR, FALLBACK_ORDER } from '../../shared/desk.ts'
 import type { DeskBot, DeskCli, DeskWelcome } from '../../shared/desk.ts'
 import type { HelloAccount, PlyntrOwner } from '../login-identity.ts'
+import { threadGreeting } from './greeting.ts'
 
 /**
  * The welcome card and the readiness lines under the composer. Written by the app, never a model call.
@@ -81,26 +82,6 @@ export function readinessButton(cli: DeskCli, botName: string): string {
   return `Use ${CLI_LABEL[cli]} for ${botName}`
 }
 
-function listNames(names: string[]): string {
-  if (names.length < 3) return names.join(' and ')
-  return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`
-}
-
-function greetingText(greetingName: string | null, bots: DeskBot[]): string {
-  const lead = bots.find((b) => b.id === CONDUCTOR)?.name || 'Conductor'
-  const team = listNames(bots.filter((b) => b.id !== CONDUCTOR).map((b) => b.name))
-  return [
-    greetingName ? `Hi ${greetingName}.` : 'Hi.',
-    `I'm ${lead}.`,
-    team ? `You talk to me, and I hand the work to ${team}.` : 'You talk to me.',
-    team ? 'They work in the background, so you can keep talking to me while they do.' : '',
-    'An email or a text shows up as the message itself, and you send it from there.',
-    'Try one of these:'
-  ]
-    .filter(Boolean)
-    .join(' ')
-}
-
 /** `thread` is the open bot's id; null or missing is the team thread, which talks to the conductor. */
 export function buildWelcome(opts: {
   brain: string
@@ -132,8 +113,8 @@ export function buildWelcome(opts: {
 
   return {
     greetingName,
-    greeting: greetingText(greetingName, bots),
-    starters: starters(opts.brain),
+    greeting: threadGreeting(greetingName, bots, threadId),
+    starters: threadId === CONDUCTOR ? starters(opts.brain) : [],
     readiness,
     composerDisabled,
     composerPlaceholder: composerDisabled ? NO_CLI_PLACEHOLDER : `Message ${threadName}`,

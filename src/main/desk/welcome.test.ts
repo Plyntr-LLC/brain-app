@@ -138,12 +138,27 @@ test('one readiness line per missing bot, in roster order, by screen name', () =
 
 test('no CLI installed: composer disabled with the exact placeholder, no readiness, no everyone line', () => {
   const brain = tmpBrain()
-  const w = buildWelcome({ brain, bots: team(brain, []), detect: detectOf(), greetingName: 'Joe', thread: 'writer' })
+  const bots = team(brain, [], { writer: { description: 'I draft emails, reports, and posts in the house voice. Leave the rest out.' } })
+  const w = buildWelcome({ brain, bots, detect: detectOf(), greetingName: 'Joe', thread: 'writer' })
   assert.equal(w.composerDisabled, true)
   assert.equal(w.composerPlaceholder, 'No model app is installed on this Mac.')
   assert.deepEqual(w.readiness, [])
   assert.equal(w.everyoneLine, null)
-  assert.equal(w.greeting, `Hi Joe. ${TEAM_LINE}`)
+  assert.equal(w.greeting, "Hi Joe. I'm Writer. I draft emails, reports, and posts in the house voice.")
+  assert.deepEqual(w.starters, [])
+})
+
+test('a bot thread greets as that bot, and the team thread still greets as Conductor', () => {
+  const brain = tmpBrain()
+  const bots = team(brain, ['grok'], { writer: { description: 'I draft emails, reports, and posts in the house voice. Leave the rest out.' } })
+  const writer = buildWelcome({ brain, bots, detect: detectOf('grok'), greetingName: 'Joe', thread: 'writer' })
+  assert.equal(writer.greeting, "Hi Joe. I'm Writer. I draft emails, reports, and posts in the house voice.")
+  assert.equal(writer.greeting.includes("I'm Conductor"), false)
+  assert.equal(writer.greeting.includes('hand the work'), false)
+  assert.deepEqual(writer.starters, [])
+  const teamThread = buildWelcome({ brain, bots, detect: detectOf('grok'), greetingName: 'Joe' })
+  assert.equal(teamThread.greeting, `Hi Joe. ${TEAM_LINE}`)
+  assert.equal(teamThread.starters.length, 3)
 })
 
 test('placeholder names the open thread: team is Conductor, a bot thread is that bot', () => {

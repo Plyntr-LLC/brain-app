@@ -1408,8 +1408,15 @@ button.linkish.cmdval { color: var(--ink); font-size: 0.88rem; text-decoration: 
   padding: 0;
 }
 .desk-rail { flex: 1; min-height: 0; overflow: auto; }
-.desk-roster { display: flex; flex-direction: column; gap: 0.45rem; padding: 12px; }
-.desk-row { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.desk-roster { display: flex; flex-direction: column; gap: 0.45rem; padding: 12px 8px; }
+.desk-bots { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.desk-bot { transition: none; }
+.desk-bot.on { border-color: var(--ink); box-shadow: inset 3px 0 0 var(--orange); }
+:root.glass .desk-bot.on { box-shadow: inset 3px 0 0 var(--orange), inset 0 1px 0 var(--glass-edge); }
+.desk-bot.live { color: var(--orange); }
+.desk-thread .bubble.me,
+.desk-thread .bubble.md { white-space: pre-wrap; overflow-wrap: anywhere; }
+.desk-form { width: 100%; }
 .desk-form textarea, .desk-form input, .desk-form select { width: 100%; box-sizing: border-box; }
 .desk-pip { flex-shrink: 0; display: flex; justify-content: flex-end; align-items: center; gap: 0.35rem; padding: 0 14px 6px; }
 .desk-pip img { width: 240px; height: 150px; object-fit: contain; border: 1px solid var(--line); background: var(--card); }

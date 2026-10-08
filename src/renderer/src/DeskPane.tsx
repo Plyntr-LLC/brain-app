@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CLI_LABEL, CONDUCTOR, type BotState, type DeskBot, type DeskCli, type DeskMessage, type DeskWelcome } from '@shared/desk'
 import { DeskBotForm } from './DeskBotForm'
@@ -41,6 +41,29 @@ function withCurrent(list: Cap[], current: string): Cap[] {
   return rows
 }
 
+/** First two letters, then the first letter plus each later letter. The first free pair wins. */
+function botMark(name: string, used: Set<string>): string {
+  const letters = (name.trim().split(/\s+/)[0] || '?').replace(/[^A-Za-z]/g, '').toLowerCase()
+  const pairs: string[] = []
+  if (letters.length >= 2) pairs.push(letters.slice(0, 2))
+  for (let i = 2; i < letters.length; i++) pairs.push(letters[0] + letters[i])
+  const pick = pairs.find((p) => !used.has(p)) || `${letters[0] || '?'}?`
+  used.add(pick)
+  return pick[0].toUpperCase() + pick.slice(1, 2)
+}
+
+const CHAT_KIND = new Set(['task', 'reply', 'pack', 'send'])
+
+function chatShape(msg: DeskMessage, speaker: string): 'me' | 'prose' | 'sent' | 'from' | 'card' {
+  if (!CHAT_KIND.has(msg.kind)) return 'card'
+  if (msg.from === 'me') return 'me'
+  const toSomeoneElse = msg.to !== speaker && msg.to !== 'me'
+  if (msg.from === speaker && toSomeoneElse) return 'sent'
+  if (msg.from !== speaker && toSomeoneElse) return 'sent'
+  if (msg.from !== speaker && msg.to === 'me') return 'from'
+  return 'prose'
+}
+
 export function DeskPane({
   id,
   cwd,
@@ -70,7 +93,6 @@ export function DeskPane({
   const [messages, setMessages] = useState<DeskMessage[]>([])
   const [welcome, setWelcome] = useState<DeskWelcome | null>(null)
   const [openBotId, setOpenBotId] = useState<string | null>(null)
-  const [pickerFor, setPickerFor] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [form, setForm] = useState<DeskBot | null | undefined>(undefined)
   const [note, setNote] = useState('')
@@ -84,6 +106,8 @@ export function DeskPane({
   const openRef = useRef<string | null>(null)
   const brainRef = useRef('')
   const asked = useRef(false)
+  const threadRef = useRef<HTMLDivElement>(null)
+  const stick = useRef(true)
   openRef.current = openBotId
 
   function names(): Record<string, string> {
@@ -192,10 +216,27 @@ export function DeskPane({
   }, [active, windowOn, pip, id])
 
   function openThread(botId: string | null) {
-    setPickerFor(null)
+    stick.current = true
     setForm(undefined)
     setOpenBotId(botId)
   }
+
+  function openOther(botId: string) {
+    if (botId !== CONDUCTOR && !bots.some((b) => b.id === botId)) return
+    openThread(botId === CONDUCTOR ? null : botId)
+  }
+
+  function onThreadScroll() {
+    const el = threadRef.current
+    if (!el) return
+    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+  }
+
+  useLayoutEffect(() => {
+    const el = threadRef.current
+    if (!active || !el || !stick.current) return
+    el.scrollTop = el.scrollHeight
+  }, [messages, welcome, openBotId, active])
 
   async function saveBot(bot: Omit<DeskBot, 'file'>) {
     const err = await window.brain.desk.save(id, bot)
@@ -208,7 +249,10 @@ export function DeskPane({
     const err = await window.brain.desk.remove(id, botId)
     setNote(err || '')
     setRemoveAsk(null)
-    if (!err && openRef.current === botId) setOpenBotId(null)
+    if (!err && openRef.current === botId) {
+      stick.current = true
+      setOpenBotId(null)
+    }
     await loadThread(openRef.current === botId ? null : openRef.current)
   }
 
@@ -237,52 +281,34 @@ export function DeskPane({
   }
   void tick
 
+  const speaker = openBotId || CONDUCTOR
+  const usedMarks = new Set<string>()
+  const nameOf = (botId: string) => who[botId] || (botId === 'me' ? 'You' : 'Someone')
   const roster = (
     <div className="desk-roster">
-      {bots.map((bot) => {
-        const st = states.find((s) => s.id === bot.id)
-        const choices = withCurrent(models[bot.cli] || [], bot.model)
-        return (
-          <div className="desk-row" key={bot.id}>
-            <button type="button" className="flink" onClick={() => openThread(bot.id === CONDUCTOR ? null : bot.id)}>
-              {bot.name}
+      <div className="desk-bots">
+        {bots.map((bot) => {
+          const st = states.find((s) => s.id === bot.id)
+          const choices = withCurrent(models[bot.cli] || [], bot.model)
+          const open = bot.id === speaker
+          const live = st?.state === 'working'
+          return (
+            <button
+              type="button"
+              key={bot.id}
+              className={`ghost title-set title-icon desk-bot${open ? ' on' : ''}${live ? ' live' : ''}`}
+              aria-label={bot.name}
+              title={`${bot.name}. ${stateLine(st, who, choices)}`}
+              onClick={() => openThread(bot.id === CONDUCTOR ? null : bot.id)}
+            >
+              {botMark(bot.name, usedMarks)}
             </button>
-            <span className="tiny">{CLI_LABEL[bot.cli]}</span>
-            <button type="button" className="ghost" onClick={() => setPickerFor(pickerFor === bot.id ? null : bot.id)}>
-              {modelLabel(bot.model, choices)}
-            </button>
-            {pickerFor === bot.id ? (
-              <div className="picker">
-                {choices.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    className="ghost"
-                    onClick={() => {
-                      setPickerFor(null)
-                      void saveBot({ id: bot.id, name: bot.name, cli: bot.cli, model: m.id, effort: bot.effort, description: bot.description })
-                    }}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            <span className="tiny">{stateLine(st, who, choices)}</span>
-            {st?.state === 'working' ? (
-              <button type="button" className="ghost" onClick={() => void window.brain.desk.stop(id, bot.id)}>
-                Stop
-              </button>
-            ) : null}
-            <button type="button" className="ghost" onClick={() => { setForm(bot); setNote('') }}>
-              Edit
-            </button>
-          </div>
-        )
-      })}
-      <button type="button" className="ghost" onClick={() => { setForm(null); setNote('') }}>
-        Add a teammate
-      </button>
+          )
+        })}
+        <button type="button" className="ghost title-set title-icon" aria-label="Add a teammate" title="Add a teammate" onClick={() => { setForm(null); setNote('') }}>
+          +
+        </button>
+      </div>
       {note ? <p className="tiny">{note}</p> : null}
       {form !== undefined ? (
         <>
@@ -312,11 +338,24 @@ export function DeskPane({
     <div className={`chatpane ${active ? 'on' : ''}`}>
       <div className="filetab-head">
         <span>{header}</span>
-        {openBotId ? (
-          <button type="button" className="ghost" onClick={() => openThread(null)}>Team</button>
-        ) : null}
+        <span className="filetab-actions">
+          <button
+            type="button"
+            onClick={() => {
+              const bot = bots.find((b) => b.id === speaker)
+              if (!bot) return
+              setForm(bot)
+              setNote('')
+            }}
+          >
+            Edit
+          </button>
+          {openBotId ? (
+            <button type="button" onClick={() => openThread(null)}>Team</button>
+          ) : null}
+        </span>
       </div>
-      <div className="thread">
+      <div className="thread desk-thread" ref={threadRef} onScroll={onThreadScroll}>
         {messages.length === 0 && welcome ? (
           <div className="bubble md">
             <p>{welcome.greeting}</p>
@@ -326,46 +365,63 @@ export function DeskPane({
           </div>
         ) : null}
         {messages.map((msg) => {
+          const shape = chatShape(msg, speaker)
+          const queued = msg.kind === 'task' && msg.from === 'me' && msg.to === CONDUCTOR && !openBotId && conductor?.state === 'working' && conductor.task.split('\n')[0] !== msg.text.split('\n')[0]
+          if (shape === 'me') {
+            return (
+              <div className="bubble me" key={msg.id}>
+                {msg.text}
+                {queued ? <p className="tiny">Conductor will read this next.</p> : null}
+              </div>
+            )
+          }
+          if (shape === 'prose') return <div className="bubble md" key={msg.id}>{msg.text}</div>
+          if (shape === 'sent' || shape === 'from') {
+            const other = shape === 'sent' ? msg.to : msg.from
+            const label = shape === 'sent' ? `Message sent to ${nameOf(other)}.` : `Message from ${nameOf(other)}.`
+            return (
+              <div className="bubble sys" key={msg.id} onDoubleClick={() => openOther(other)}>
+                {label}
+              </div>
+            )
+          }
           const botId = msg.hire?.id || msg.from
           const st = states.find((s) => s.id === botId)
-          const queued = msg.kind === 'task' && msg.from === 'me' && msg.to === CONDUCTOR && !openBotId && conductor?.state === 'working' && conductor.task.split('\n')[0] !== msg.text.split('\n')[0]
           return (
-            <div key={msg.id}>
-              <DeskCard
-                msg={msg}
-                names={who}
-                busy={busyState(st)}
-                onOpenFile={onOpenFile}
-                onHoldAnswer={(msgId, answer) => void window.brain.desk.answerHold(id, msgId, answer)}
-                onSend={(msgId, sent) => {
-                  const kind = messages.find((m) => m.id === msgId)?.kind
-                  const answer = sent === 'no' ? 'no' : 'yes'
-                  if (kind === 'text') void window.brain.desk.answerText(id, msgId, answer)
-                  else void window.brain.desk.answerEmail(id, msgId, answer)
-                }}
-                onRetry={(msgId) => void window.brain.desk.retry(id, msgId)}
-                onKeepWaiting={(botId) => void window.brain.desk.keepWaiting(id, botId)}
-                onStop={(botId) => void window.brain.desk.stop(id, botId)}
-                onContinueJob={(job) => void window.brain.desk.continueJob(id, job)}
-                onStopJob={(job) => void window.brain.desk.stopJob(id, job)}
-                onTalk={(botId) => openThread(botId)}
-                onOpenLog={() => onOpenFile(`${cwd}/desk/mail/desk.md`)}
-                onOpenMemory={(botId) => onOpenFile(`${cwd}/desk/memory/${botId}.md`)}
-                onOpenBrowser={(opts) => {
-                  setPip('open')
-                  if (opts?.signIn) void window.brain.desk.showWindow(id)
-                }}
-                onRemoveHire={(msgId) => {
-                  const hire = messages.find((m) => m.id === msgId)?.hire
-                  if (!hire) return
-                  const stHire = states.find((s) => s.id === hire.id)
-                  if (busyState(stHire)) return
-                  if (hire.hasWorked) setRemoveAsk({ id: hire.id, name: hire.name })
-                  else void removeBot(hire.id)
-                }}
-              />
-              {queued ? <p className="tiny">Conductor will read this next.</p> : null}
-            </div>
+            <DeskCard
+              key={msg.id}
+              msg={msg}
+              names={who}
+              busy={busyState(st)}
+              onOpenFile={onOpenFile}
+              onHoldAnswer={(msgId, answer) => void window.brain.desk.answerHold(id, msgId, answer)}
+              onSend={(msgId, sent) => {
+                const kind = messages.find((m) => m.id === msgId)?.kind
+                const answer = sent === 'no' ? 'no' : 'yes'
+                if (kind === 'text') void window.brain.desk.answerText(id, msgId, answer)
+                else void window.brain.desk.answerEmail(id, msgId, answer)
+              }}
+              onRetry={(msgId) => void window.brain.desk.retry(id, msgId)}
+              onKeepWaiting={(botId) => void window.brain.desk.keepWaiting(id, botId)}
+              onStop={(botId) => void window.brain.desk.stop(id, botId)}
+              onContinueJob={(job) => void window.brain.desk.continueJob(id, job)}
+              onStopJob={(job) => void window.brain.desk.stopJob(id, job)}
+              onTalk={(botId) => openThread(botId)}
+              onOpenLog={() => onOpenFile(`${cwd}/desk/mail/desk.md`)}
+              onOpenMemory={(botId) => onOpenFile(`${cwd}/desk/memory/${botId}.md`)}
+              onOpenBrowser={(opts) => {
+                setPip('open')
+                if (opts?.signIn) void window.brain.desk.showWindow(id)
+              }}
+              onRemoveHire={(msgId) => {
+                const hire = messages.find((m) => m.id === msgId)?.hire
+                if (!hire) return
+                const stHire = states.find((s) => s.id === hire.id)
+                if (busyState(stHire)) return
+                if (hire.hasWorked) setRemoveAsk({ id: hire.id, name: hire.name })
+                else void removeBot(hire.id)
+              }}
+            />
           )
         })}
       </div>

@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom'
 import type { BotState, DeskBot, DeskCli, DeskMessage, DeskWelcome } from '../../src/shared/desk'
 import { DeskPane } from '../../src/renderer/src/DeskPane'
 import { DeskCard } from '../../src/renderer/src/DeskCard'
+import { buildWelcome } from '../../src/main/desk/welcome.ts'
 
 // Desk render page (slice-8). Mounts the real DeskPane and DeskCard with a fake bridge and fixture
 // messages, not a live brain. node --experimental-strip-types scripts/render-ui.ts desk
@@ -41,7 +42,14 @@ const brain = {
     welcome: (tab: string, thread?: string | null) => {
       const f = fx(tab)
       const bot = thread ? f.bots.find((b) => b.id === thread) : null
-      return Promise.resolve(bot ? { ...f.welcome, composerPlaceholder: `Message ${bot.name}` } : f.welcome)
+      if (!bot) return Promise.resolve(f.welcome)
+      return Promise.resolve(buildWelcome({
+        brain: f.brain,
+        bots: f.bots,
+        detect: () => detectNow,
+        greetingName: f.welcome.greetingName,
+        thread
+      }))
     },
     list: (tab: string) => Promise.resolve({ bots: fx(tab).bots, states: fx(tab).states, removedNames: fx(tab).removedNames }),
     save: (tab: string, bot: unknown) => rec('save', tab, bot),
@@ -212,7 +220,29 @@ const cardsMail: DeskMessage[] = [
     inputs: ['m_01']
   },
   { id: 'm_10', ts: at(9, 19), from: 'designer', to: 'me', kind: 'reply', text: 'Headline ideas are in the thread.' },
-  { id: 'm_11', ts: at(9, 19), from: 'ghost-bot', to: 'me', kind: 'reply', text: 'An old line from a teammate nobody can name.' }
+  { id: 'm_11', ts: at(9, 19), from: 'ghost-bot', to: 'me', kind: 'reply', text: 'An old line from a teammate nobody can name.' },
+  { id: 'm_12', ts: at(9, 20), from: 'me', to: 'writer', kind: 'task', text: 'Draft the three bullets.' },
+  { id: 'm_13', ts: at(9, 21), from: 'writer', to: 'conductor', kind: 'send', text: 'The draft is ready for you.' },
+  { id: 'm_14', ts: at(9, 22), from: 'writer', to: 'me', kind: 'system', system: 'slow', text: 'Writer has been on this for 10 minutes.' },
+  {
+    id: 'm_15',
+    ts: at(9, 23),
+    from: 'writer',
+    to: 'me',
+    kind: 'browse',
+    text: 'Clicked Pricing',
+    browse: {
+      steps: [
+        { action: 'url', detail: 'https://example.com', url: 'https://example.com/' },
+        { action: 'click', detail: 'Pricing', url: 'https://example.com/pricing' },
+        { action: 'type', detail: 'Search | summit', url: 'https://example.com/pricing' },
+        { action: 'click', detail: "Couldn't find Plans.", url: 'https://example.com/pricing' },
+        { action: 'scroll', detail: 'down', url: 'https://example.com/pricing' },
+        { action: 'press', detail: 'Enter', url: 'https://example.com/pricing' }
+      ]
+    }
+  },
+  { id: 'm_16', ts: at(9, 24), from: 'writer', to: 'me', kind: 'note', text: 'Saved.', noteLines: ['Joe wants bullets.'] }
 ]
 
 function addFixture(tab: string, brainPath: string, clis: Record<string, DeskCli>, w: DeskWelcome, messages: DeskMessage[] = [], removedNames: Record<string, string> = {}) {
@@ -225,6 +255,12 @@ addFixture('tab-ready', '/fx/ready', MIXED, welcome({ readiness: [{ botId: 'writ
 addFixture('tab-everyone', '/fx/everyone', ALL_GROK, welcome({ everyoneLine: EVERYONE }))
 addFixture('tab-cards', '/fx/cards', MIXED, welcome(), cardsMail, { designer: 'Designer' })
 addFixture('tab-form', '/fx/form', MIXED, welcome())
+const markConductor = team('/fx/marks', MIXED)[0]
+const markBots: DeskBot[] = [
+  markConductor,
+  { id: 'content', name: 'Content', cli: 'grok', model: 'default', effort: 'low', description: 'I write pages.', file: '/fx/marks/desk/bots/content.md' }
+]
+fixtures.set('tab-marks', { brain: '/fx/marks', bots: markBots, states: idle(markBots), removedNames: {}, welcome: welcome(), messages: [] })
 
 // Smallest jpeg the corner picture can show. The harness never launches Chrome.
 const PIP_JPEG = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCfAA//2Q=='
@@ -261,7 +297,7 @@ async function mountPane(tab: string, title: string, height = 560): Promise<Pane
       effortsFor={effortsFor}
     />
   )
-  await until(() => rail.querySelectorAll('.desk-row').length === fx(tab).bots.length && !!pane.querySelector('.composer textarea'))
+  await until(() => rail.querySelectorAll('.desk-bot').length === fx(tab).bots.length && !!pane.querySelector('.composer textarea'))
   await tick(60)
   return { pane, rail }
 }
@@ -279,6 +315,8 @@ function replace(tab: string, oldId: string, next: DeskMessage) {
 
 const buttons = (scope: Element | null | undefined) => [...(scope?.querySelectorAll<HTMLButtonElement>('button') || [])]
 const button = (scope: Element | null | undefined, label: string) => buttons(scope).find((b) => text(b) === label)
+const named = (scope: Element | null | undefined, label: string) => buttons(scope).find((b) => b.getAttribute('aria-label') === label)
+const WRITER_HI = "Hi Joe. I'm Writer. I draft emails, reports, and posts in the house voice."
 const cards = (scope: Element) => [...scope.querySelectorAll<HTMLElement>('.thread .fcard')]
 const title = (card: Element) => text(card.querySelector(':scope > .fcard-title'))
 const cardTitled = (scope: Element, t: string) => cards(scope).filter((c) => title(c) === t)
@@ -301,14 +339,66 @@ async function welcomeStage() {
   await tick()
   check('1 a starter fills the composer', box.value === STARTERS[0], box.value)
   check('1 a starter does not send', !since(before).some((c) => c.fn === 'say'), show(since(before)))
-  const rows = [...rail.querySelectorAll('.desk-row')]
-  const names = rows.map((r) => text(r.querySelector('.flink')))
-  check('1 roster has five bots in seed order', JSON.stringify(names) === JSON.stringify(['Conductor', 'Researcher', 'Writer', 'Checker', 'Drafts']), JSON.stringify(names))
-  check('1 each roster row has Edit', rows.every((r) => !!button(r, 'Edit')))
-  check('1 roster rows read Idle', rows.every((r) => [...r.querySelectorAll('.tiny')].some((t) => text(t) === 'Idle')))
-  check('1 Add a teammate under the roster', !!button(rail, 'Add a teammate'))
+  const icons = [...rail.querySelectorAll<HTMLButtonElement>('.desk-bot')]
+  check('1 roster has five bots in seed order', JSON.stringify(icons.map((b) => b.getAttribute('aria-label'))) === JSON.stringify(['Conductor', 'Researcher', 'Writer', 'Checker', 'Drafts']), icons.map((b) => b.getAttribute('aria-label')).join(','))
+  check('1 roster marks', JSON.stringify(icons.map((b) => text(b))) === JSON.stringify(['Co', 'Re', 'Wr', 'Ch', 'Dr']), icons.map((b) => text(b)).join(','))
+  check('1 no desk-row', rail.querySelectorAll('.desk-row').length === 0)
+  const railWords = buttons(rail).map(text)
+  check('1 rail has no Idle, Edit, Stop, Grok, or Claude', !railWords.some((w) => ['Idle', 'Edit', 'Stop', 'Grok', 'Claude'].includes(w)) && !text(rail).includes('Idle'), railWords.join(','))
+  const plus = named(rail, 'Add a teammate')
+  check('1 add is a plus', text(plus) === '+' && plus?.getAttribute('aria-label') === 'Add a teammate', text(plus))
   check('1 no readiness button', !buttons(pane.querySelector('.composer')).some((b) => text(b).startsWith('Use ')))
   check('1 no everyone line', !text(pane.querySelector('.composer')).includes('Everyone is on'))
+
+  button(pane.querySelector('.filetab-head'), 'Edit')?.click()
+  await until(() => !!rail.querySelector('.desk-form'))
+  const edit = rail.querySelector<HTMLFormElement>('.desk-form')
+  const editBox = edit?.getBoundingClientRect()
+  const railBox = rail.getBoundingClientRect()
+  const lastIcon = icons[icons.length - 1].getBoundingClientRect()
+  check('1 team Edit opens Conductor', (edit?.querySelector('input')?.value || '') === 'Conductor')
+  check('1 team Edit has a model select and no Remove', !!edit?.querySelector('select') && !button(edit, 'Remove'))
+  check('1 form sits under the icons and fills the rail', !!editBox && editBox.top > lastIcon.bottom && editBox.width > 200 && Math.abs(editBox.width - rail.clientWidth) <= 24, `form=${editBox?.width} rail=${rail.clientWidth}`)
+  button(edit, 'Cancel')?.click()
+  await until(() => !rail.querySelector('.desk-form'))
+
+  fx('tab-welcome').states = fx('tab-welcome').states.map((s) => s.id === 'writer' ? { id: 'writer', state: 'working', since: new Date().toISOString(), task: 'Find the note', model: 'default' } : s)
+  await emit('tab-welcome')
+  const writerIcon = named(rail, 'Writer')
+  const conductorIcon = named(rail, 'Conductor')
+  const orange = paint('color', 'var(--orange)')
+  const inset = paint('box-shadow', 'inset 3px 0 0 var(--orange)')
+  const ink = paint('border-color', 'var(--ink)')
+  check('1 working Writer is orange and still named Writer', writerIcon?.classList.contains('live') === true && getComputedStyle(writerIcon!).color === orange && writerIcon?.getAttribute('aria-label') === 'Writer')
+  check('1 working hover is the full sentence', writerIcon?.getAttribute('title') === 'Writer. Working · 0m · Find the note', writerIcon?.getAttribute('title') || '')
+  check('1 Conductor is selected and working Writer is not', getComputedStyle(conductorIcon!).boxShadow === inset && getComputedStyle(conductorIcon!).borderColor === ink && getComputedStyle(writerIcon!).boxShadow !== inset)
+
+  named(rail, 'Writer')?.click()
+  await until(() => text(pane.querySelector('.bubble.md p')) === WRITER_HI)
+  const hi = pane.querySelector('.bubble.md')
+  check('1 Writer greets as Writer', text(hi?.querySelector('p')) === WRITER_HI, text(hi?.querySelector('p')))
+  check('1 Writer greeting has no starters and does not mention Conductor', buttons(hi).length === 0 && !text(hi).includes("I'm Conductor") && !text(hi).includes('hand the work'))
+  check('1 Writer is selected after the icon click', getComputedStyle(named(rail, 'Writer')!).boxShadow === inset && getComputedStyle(named(rail, 'Conductor')!).boxShadow !== inset)
+  button(pane.querySelector('.filetab-head'), 'Edit')?.click()
+  await until(() => rail.querySelector('input')?.value === 'Writer')
+  const writerForm = rail.querySelector('.desk-form')
+  check('1 Writer Edit shows Writer, a model, and Remove', (writerForm?.querySelector('input')?.value || '') === 'Writer' && !!writerForm?.querySelector('select') && !!button(writerForm, 'Remove'))
+}
+
+function paint(prop: string, value: string): string {
+  const probe = document.createElement('span')
+  probe.style.setProperty(prop, value)
+  document.body.appendChild(probe)
+  const got = getComputedStyle(probe).getPropertyValue(prop)
+  probe.remove()
+  return got
+}
+
+async function marksStage() {
+  const { rail } = await mountPane('tab-marks', '1b. Content does not share Conductor’s mark')
+  const icons = [...rail.querySelectorAll<HTMLButtonElement>('.desk-bot')]
+  check('1b marks are Co and Cn', JSON.stringify(icons.map((b) => text(b))) === JSON.stringify(['Co', 'Cn']), icons.map((b) => text(b)).join(','))
+  check('1b the two marks differ', icons.length === 2 && text(icons[0]) !== text(icons[1]))
 }
 
 async function readinessStage() {
@@ -344,48 +434,42 @@ async function everyoneStage() {
 async function threadStage() {
   detectNow = { grok: true, claude: true, gpt: false, cursor: false }
   const tab = 'tab-cards'
-  const { pane } = await mountPane(tab, '4. the team thread from fixture messages', 1500)
-  await until(() => cards(pane).length >= cardsMail.length)
-  check('4 one card per message', cards(pane).length === cardsMail.length, `cards=${cards(pane).length}`)
-  check('4 no welcome card once the thread has messages', !pane.querySelector('.thread .bubble.md'))
+  const { pane, rail } = await mountPane(tab, '4. the team thread from fixture messages', 220)
+  const thread = pane.querySelector('.thread') as HTMLElement
+  await until(() => thread.scrollHeight > thread.clientHeight && thread.scrollTop > 0)
+  const gap = thread.scrollHeight - thread.clientHeight - thread.scrollTop
+  check('4 the thread scrolls and rests at the bottom', thread.scrollHeight > thread.clientHeight && getComputedStyle(thread).overflowY === 'auto' && Math.abs(gap) <= 2, `gap=${gap} overflow=${getComputedStyle(thread).overflowY}`)
+  thread.scrollTop = 40
+  thread.dispatchEvent(new Event('scroll'))
+  fx(tab).messages = [...fx(tab).messages, { id: 'm_later', ts: at(9, 30), from: 'conductor', to: 'me', kind: 'reply', text: 'A later line arrived.' }]
+  await emit(tab)
+  await until(() => text(thread).includes('A later line arrived.'))
+  check('4 a line that arrives while reading stays put', text(thread).includes('A later line arrived.') && Math.abs(thread.scrollTop - 40) <= 2, `top=${thread.scrollTop}`)
+  check('4 no welcome card once the thread has messages', !text(pane.querySelector('.thread')).includes("I'm Conductor"))
 
-  // You and the conductor's reply.
-  check('4 the task reads You', cardTitled(pane, 'You').length === 1 && text(cardTitled(pane, 'You')[0]).includes(TASK))
-  const reply = cardTitled(pane, 'Conductor')[0]
-  check('4 reply header is the speaker, no Done', !!reply && !title(reply).includes('Done'))
-  check('4 reply has no buttons', !!reply && buttons(reply).length === 0, buttons(reply).map(text).join(' | '))
-
-  // Briefing.
-  const brief = cardTitled(pane, 'Conductor → Researcher · Briefing')[0]
-  check('4 Briefing header', !!brief, cards(pane).map(title).join(' | '))
-  const lines = brief ? bodyLines(brief) : []
-  check('4 Briefing starts with the first sentence of the task', lines[0] === 'Find the newest Summit note and pull out the three main points.', lines[0])
-  check('4 Briefing why line', lines[1] === 'Why: Joe wants three bullets from the newest Summit note.', lines[1])
-  check('4 Briefing reading line', lines[2] === 'Reading 2 files', lines[2])
-  const paths = buttons(brief).map(text)
-  check('4 each file is a link', JSON.stringify(paths) === JSON.stringify([NOTE, 'clients/summit/context.md']), JSON.stringify(paths))
-  const dropped = brief?.querySelector('.tiny')
-  check("4 Couldn't find line is muted", text(dropped) === "Couldn't find: clients/summit/old-notes.md", text(dropped))
-  let before = calls.length
-  button(brief, NOTE)?.click()
-  await tick()
-  check('4 a Briefing path opens the file', same(since(before), 'openFile', tab, NOTE), show(since(before)))
-
-  // Handoff line.
-  const hand = pane.querySelector<HTMLDetailsElement>('.thread details.fcard')
-  const summary = text(hand?.querySelector('summary'))
-  const flat = HANDOFF.replace(/\s+/g, ' ')
-  check('4 handoff is one line: names and the first 80 characters', summary === `Researcher → Writer: ${flat.slice(0, 80)}…`, summary)
-  check('4 handoff is folded until opened', !!hand && !hand.open)
-  if (hand) hand.open = true
-  await tick()
-  const handBody = hand?.querySelector('.fcard-body')
-  check('4 handoff opens to the full text', text(handBody) === HANDOFF, text(handBody))
-  check('4 the named path in the handoff is a link', JSON.stringify(buttons(handBody).map(text)) === JSON.stringify([NOTE]), buttons(handBody).map(text).join(' | '))
-  before = calls.length
-  button(handBody, NOTE)?.click()
-  await tick()
-  check('4 the handoff path opens the file', same(since(before), 'openFile', tab, NOTE), show(since(before)))
+  const mine = [...thread.querySelectorAll<HTMLElement>('.bubble.me')]
+  const prose = [...thread.querySelectorAll<HTMLElement>('.bubble.md')]
+  const hops = [...thread.querySelectorAll<HTMLElement>('.bubble.sys')]
+  const hop = (label: string) => hops.find((el) => text(el) === label)
+  const muted = paint('color', 'var(--muted)')
+  const isMe = (el: HTMLElement | undefined) => !!el && el.classList.contains('bubble') && el.classList.contains('me') && !el.closest('.fcard') && getComputedStyle(el).alignSelf === 'flex-end'
+  const isProse = (el: HTMLElement | undefined) => !!el && el.classList.contains('md') && !el.classList.contains('me') && !el.classList.contains('sys') && !el.closest('.fcard')
+  const isHop = (el: HTMLElement | undefined) => !!el && el.classList.contains('sys') && !el.closest('.fcard') && getComputedStyle(el).color === muted
+  check('4 your task is a right-hand bubble', isMe(mine.find((el) => text(el).includes(TASK))) && text(mine.find((el) => text(el).includes(TASK))!).includes(TASK))
+  check('4 a task to Writer stays a right-hand bubble', isMe(mine.find((el) => text(el) === 'Draft the three bullets.')))
+  check('4 Conductor replies in prose', isProse(prose.find((el) => text(el) === 'Researcher is on it. I will tell you when Writer has a draft.')))
+  check('4 a send to Conductor stays prose', isProse(prose.find((el) => text(el) === 'The draft is ready for you.')))
+  check('4 the briefing is a muted line', isHop(hop('Message sent to Researcher.')))
+  check('4 the handoff is a muted line', isHop(hop('Message sent to Writer.')))
+  check('4 Designer is a muted line', isHop(hop('Message from Designer.')))
+  check('4 an unknown id reads Someone', isHop(hop('Message from Someone.')))
+  const teamText = text(thread)
+  check(
+    '4 the briefing body is not on the team thread',
+    !teamText.includes(PACK_TASK) && !teamText.includes('Reading 2 files') && !teamText.includes('Why: Joe wants three bullets from the newest Summit note.') && !teamText.includes("Couldn't find: clients/summit/old-notes.md") && !buttons(thread).some((b) => text(b) === NOTE || text(b) === 'clients/summit/context.md'),
+    teamText.slice(0, 180)
+  )
+  check('4 the handoff paragraph is not on the team thread', !teamText.includes('Here are the three points'))
 
   // Email tile: Send and Not now, then a folded replacement that reads Not sent, then Sent.
   let mail = cardTitled(pane, 'Drafts')
@@ -398,7 +482,7 @@ async function threadStage() {
   check('4 email has no Cc line when cc is empty, and no Reply', !shown.some((l) => l.startsWith('Cc:')) && !shown.includes('Reply'))
   check('4 email tile is a preview, not a form', !!mail[0] && !mail[0].querySelector('input, textarea, select'))
   check('4 email tile has Send and Not now', !!button(mail[0], 'Send') && !button(mail[0], 'Send')!.disabled && !!button(mail[0], 'Not now'))
-  before = calls.length
+  let before = calls.length
   button(mail[0], 'Not now')?.click()
   await tick()
   check('4 Not now answers no on that tile', same(since(before), 'answerEmail', tab, 'm_05', 'no'), show(since(before)))
@@ -458,8 +542,44 @@ async function threadStage() {
   button(err, 'Try again')?.click()
   await tick()
   check('4 Try again reruns that message', same(since(before), 'retry', tab, 'm_09'), show(since(before)))
-  check('4 a removed bot keeps its name', cardTitled(pane, 'Designer').length === 1)
-  check('4 an unknown id reads Someone', cardTitled(pane, 'Someone').length === 1)
+
+  const slowCard = [...pane.querySelectorAll('.fcard')].find((el) => text(el).includes('Writer has been on this for 10 minutes.'))
+  check('4 the slow card has Keep waiting and Stop', !!button(slowCard, 'Keep waiting') && !!button(slowCard, 'Stop'))
+  check('4 the pane has one Stop and the rail has none', buttons(pane).filter((b) => text(b) === 'Stop').length === 1 && !buttons(rail).some((b) => text(b) === 'Stop'))
+  before = calls.length
+  button(slowCard, 'Keep waiting')?.click()
+  button(slowCard, 'Stop')?.click()
+  await tick()
+  const slowGot = since(before)
+  check('4 Keep waiting and Stop call the bot', slowGot.some((c) => c.fn === 'keepWaiting' && JSON.stringify(c.args) === JSON.stringify([tab, 'writer'])) && slowGot.some((c) => c.fn === 'stop' && JSON.stringify(c.args) === JSON.stringify([tab, 'writer'])), show(slowGot))
+  const browseCard = [...pane.querySelectorAll('.fcard')].find((el) => text(el).includes('Opened https://example.com/'))
+  const browseLines = browseCard ? bodyLines(browseCard) : []
+  check(
+    '4 browse steps are the six sentences',
+    ['Opened https://example.com/', 'Clicked Pricing', 'Typed into Search', "Couldn't find Plans.", 'Scrolled', 'Pressed Enter'].every((line) => browseLines.includes(line)),
+    browseLines.join(' | ')
+  )
+  const noteCard = [...pane.querySelectorAll('.fcard')].find((el) => text(el).includes('Writer saved a note'))
+  before = calls.length
+  button(noteCard, 'Open memory')?.click()
+  await tick()
+  check('4 Open memory opens the memory file', same(since(before), 'openFile', tab, '/fx/cards/desk/memory/writer.md'), show(since(before)))
+  check('4 the mail pane has no corner picture', !pane.querySelector('.desk-pip img'))
+
+  const sent = [...pane.querySelectorAll('.bubble.sys')].find((el) => text(el) === 'Message sent to Writer.')
+  sent?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await tick()
+  check('4 one click leaves the team thread', text(pane.querySelector('.filetab-head span')) === 'Conductor' && !text(pane.querySelector('.thread')).includes('Here are the three points'))
+  before = calls.length
+  sent?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+  await until(() => text(pane.querySelector('.filetab-head span')) === 'Writer')
+  check('4 double-click opens Writer', text(pane.querySelector('.filetab-head span')) === 'Writer' && since(before).some((c) => c.fn === 'view' && c.args[0] === tab && c.args[1] === 'writer'), show(since(before)))
+  const handoff = [...pane.querySelectorAll('.bubble.md')].find((el) => text(el) === HANDOFF)
+  const writerThread = text(pane.querySelector('.thread'))
+  check('4 Writer’s thread shows the handoff prose', !!handoff, writerThread.slice(0, 200))
+  check('4 Writer’s thread does not show the briefing', !writerThread.includes('Reading 2 files') && !writerThread.includes('Why: Joe wants three bullets from the newest Summit note.') && !buttons(pane.querySelector('.thread')).some((b) => text(b) === NOTE))
+  button(pane.querySelector('.filetab-head'), 'Team')?.click()
+  await until(() => text(pane.querySelector('.filetab-head span')) === 'Conductor')
 
   // Talk to Writer opens Writer's thread.
   before = calls.length
@@ -475,7 +595,7 @@ async function formStage() {
   detectNow = { grok: true, claude: true, gpt: false, cursor: false }
   const tab = 'tab-form'
   const { rail } = await mountPane(tab, '5. add a teammate: the 800-character error')
-  button(rail, 'Add a teammate')?.click()
+  named(rail, 'Add a teammate')?.click()
   await until(() => !!rail.querySelector('.desk-form'))
   const form = rail.querySelector<HTMLFormElement>('.desk-form')
   check('5 Add a teammate opens the form', !!form)
@@ -687,6 +807,7 @@ async function pipStage() {
 
 async function main() {
   await welcomeStage()
+  await marksStage()
   await readinessStage()
   await everyoneStage()
   await threadStage()

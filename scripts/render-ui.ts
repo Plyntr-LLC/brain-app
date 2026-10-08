@@ -16,7 +16,7 @@ const esbuild = createRequire(import.meta.url)('esbuild') as typeof import('esbu
 
 mkdirSync(outDir, { recursive: true })
 const js = join(outDir, `${name}.js`)
-esbuild.buildSync({
+await esbuild.build({
   entryPoints: [join(root, 'scripts/render-ui', `${name}.tsx`)],
   bundle: true,
   outfile: js,
@@ -24,7 +24,17 @@ esbuild.buildSync({
   format: 'iife',
   logLevel: 'error',
   define: { 'process.env.NODE_ENV': '"production"' },
-  alias: { '@shared': join(root, 'src/shared'), '@renderer': join(root, 'src/renderer/src') }
+  alias: { '@shared': join(root, 'src/shared'), '@renderer': join(root, 'src/renderer/src') },
+  plugins: name === 'desk' ? [{
+    name: 'node-stub',
+    setup(build) {
+      build.onResolve({ filter: /^node:/ }, (args) => ({ path: args.path, namespace: 'node-stub' }))
+      build.onLoad({ filter: /.*/, namespace: 'node-stub' }, () => ({
+        contents: 'export function readdirSync(){ throw new Error("no fs") }\nexport function statSync(){ throw new Error("no fs") }\nexport function join(){ return "" }\n',
+        loader: 'js'
+      }))
+    }
+  }] : []
 })
 const css = ['tokens.css', 'shell.css'].map((f) => `<link rel="stylesheet" href="${pathToFileURL(join(root, 'src/renderer/src/styles', f)).href}">`).join('')
 const page = join(outDir, `${name}.html`)
