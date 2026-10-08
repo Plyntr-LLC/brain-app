@@ -342,7 +342,8 @@ async function welcomeStage() {
   check('1 a starter does not send', !since(before).some((c) => c.fn === 'say'), show(since(before)))
   const icons = [...rail.querySelectorAll<HTMLButtonElement>('.desk-bot')]
   check('1 roster has five bots in seed order', JSON.stringify(icons.map((b) => b.getAttribute('aria-label'))) === JSON.stringify(['Conductor', 'Researcher', 'Writer', 'Checker', 'Drafts']), icons.map((b) => b.getAttribute('aria-label')).join(','))
-  check('1 roster marks', JSON.stringify(icons.map((b) => text(b))) === JSON.stringify(['Co', 'Re', 'Wr', 'Ch', 'Dr']), icons.map((b) => text(b)).join(','))
+  check('1 roster shows each name', JSON.stringify(icons.map((b) => text(b.querySelector('.desk-name')))) === JSON.stringify(['Conductor', 'Researcher', 'Writer', 'Checker', 'Drafts']), icons.map((b) => text(b.querySelector('.desk-name'))).join(','))
+  check('1 each bot has a face', icons.every((b) => !!b.querySelector('svg.desk-face')))
   check('1 no desk-row', rail.querySelectorAll('.desk-row').length === 0)
   const railWords = buttons(rail).map(text)
   check('1 rail has no Idle, Edit, Stop, Grok, or Claude', !railWords.some((w) => ['Idle', 'Edit', 'Stop', 'Grok', 'Claude'].includes(w)) && !text(rail).includes('Idle'), railWords.join(','))
@@ -370,10 +371,10 @@ async function welcomeStage() {
   const writerIcon = named(rail, 'Writer')
   const conductorIcon = named(rail, 'Conductor')
   const researcherIcon = named(rail, 'Researcher')
-  const inkBg = paint('background-color', 'var(--ink)')
-  const onInk = paint('color', 'var(--on-ink)')
   const paper = paint('background-color', 'var(--paper)')
   const ink = paint('color', 'var(--ink)')
+  const inkFill = paint('fill', 'var(--ink)')
+  const paperFill = paint('fill', 'var(--paper)')
   const orangeBg = paint('background-color', 'var(--orange)')
   const bar = '3px 0px 0px 0px inset'
   const noBar = (el: Element | null | undefined) => !!el && !getComputedStyle(el).boxShadow.includes(bar)
@@ -383,22 +384,28 @@ async function welcomeStage() {
     const box = dot.getBoundingClientRect()
     return getComputedStyle(dot).backgroundColor === orangeBg && Math.abs(box.width - 8) <= 1 && Math.abs(box.height - 8) <= 1
   }
-  const roundOk = (el: HTMLElement) => {
-    const box = el.getBoundingClientRect()
-    const radius = getComputedStyle(el).borderRadius
-    return box.width >= 36 && box.height >= 36 && (radius === '50%' || Math.abs(parseFloat(radius) - box.width / 2) <= 1)
+  const anim = (el: Element | null | undefined, sel: string) => el ? getComputedStyle(el.querySelector(sel)!).animationName : ''
+  const faceInk = (el: Element | null | undefined) => {
+    const body = el?.querySelector('.desk-body')
+    const eye = el?.querySelector('.eye')
+    return !!body && !!eye && getComputedStyle(body).fill === inkFill && getComputedStyle(eye).fill === paperFill
   }
-  check('1 open Conductor is ink with on-ink letters and no bar', getComputedStyle(conductorIcon!).backgroundColor === inkBg && getComputedStyle(conductorIcon!).color === onInk && noBar(conductorIcon))
-  check('1 idle Researcher is paper with ink letters', getComputedStyle(researcherIcon!).backgroundColor === paper && getComputedStyle(researcherIcon!).color === ink)
-  check('1 working Writer keeps ink letters, the name, and an orange dot', getComputedStyle(writerIcon!).backgroundColor === paper && getComputedStyle(writerIcon!).color === ink && writerIcon?.getAttribute('aria-label') === 'Writer' && dotOk(writerIcon) && noBar(writerIcon))
+  check('1 open Conductor shows its name on an ink face with no bar', text(conductorIcon?.querySelector('.desk-name')) === 'Conductor' && conductorIcon?.classList.contains('on') === true && faceInk(conductorIcon) && noBar(conductorIcon) && anim(conductorIcon, '.desk-face') === 'desk-idle')
+  check('1 idle Researcher shows its name and blinks', text(researcherIcon?.querySelector('.desk-name')) === 'Researcher' && !researcherIcon?.classList.contains('on') && faceInk(researcherIcon) && anim(researcherIcon, '.desk-face') === 'desk-idle' && anim(researcherIcon, '.eye') === 'desk-blink')
+  check('1 working Writer shows its name, bobs, and keeps an orange dot', text(writerIcon?.querySelector('.desk-name')) === 'Writer' && writerIcon?.getAttribute('aria-label') === 'Writer' && anim(writerIcon, '.desk-face') === 'desk-bob' && anim(writerIcon, '.eye') === 'desk-glance' && dotOk(writerIcon) && noBar(writerIcon))
   check('1 working hover is the full sentence', writerIcon?.getAttribute('title') === 'Writer. Working · 0m · Find the note', writerIcon?.getAttribute('title') || '')
   fx('tab-welcome').states = fx('tab-welcome').states.map((s) => s.id === 'conductor' ? working('conductor', 'Hand it off') : s)
   await emit('tab-welcome')
-  check('1 an open working Conductor stays ink with on-ink letters, no bar, and an orange dot', getComputedStyle(conductorIcon!).backgroundColor === inkBg && getComputedStyle(conductorIcon!).color === onInk && noBar(conductorIcon) && dotOk(conductorIcon))
+  check('1 an open working Conductor keeps its name, bobs, and shows an orange dot', text(conductorIcon?.querySelector('.desk-name')) === 'Conductor' && conductorIcon?.classList.contains('on') === true && anim(conductorIcon, '.desk-face') === 'desk-bob' && noBar(conductorIcon) && dotOk(conductorIcon))
   const railMid = (rail.getBoundingClientRect().left + rail.getBoundingClientRect().right) / 2
   const markEls = [...rail.querySelectorAll<HTMLElement>('.desk-bot'), plus].filter((el): el is HTMLElement => !!el)
   const centered = markEls.length === 6 && markEls.every((el) => Math.abs((el.getBoundingClientRect().left + el.getBoundingClientRect().right) / 2 - railMid) <= 2)
-  check('1 every mark and the plus are round and centered', markEls.every(roundOk) && centered, `n=${markEls.length}`)
+  const plusBox = plus?.getBoundingClientRect()
+  const plusRadius = plus ? getComputedStyle(plus).borderRadius : ''
+  const plusRound = !!plusBox && plusBox.width >= 36 && plusBox.height >= 36 && (plusRadius === '50%' || Math.abs(parseFloat(plusRadius) - plusBox.width / 2) <= 1)
+  const faces = [...rail.querySelectorAll<SVGElement>('.desk-bot .desk-face')]
+  const facesSized = faces.length === 5 && faces.every((el) => el.getBoundingClientRect().width >= 36 && el.getBoundingClientRect().height >= 36)
+  check('1 faces sit with their names, centered, and the plus stays round', centered && plusRound && facesSized, `n=${markEls.length} faces=${faces.length}`)
   check('1 the plus is paper with ink letters', text(plus) === '+' && plus?.getAttribute('aria-label') === 'Add a teammate' && !!plus && getComputedStyle(plus).backgroundColor === paper && getComputedStyle(plus).color === ink)
 
   named(rail, 'Writer')?.click()
@@ -409,8 +416,8 @@ async function welcomeStage() {
   check('1 Writer greeting has no starters and does not mention Conductor', buttons(hi).length === 0 && !text(hi).includes("I'm Conductor") && !text(hi).includes('hand the work'))
   check('1 Writer greeting sits in mdbody', text(hi?.querySelector('.mdbody')) === WRITER_HI)
   const writerOpen = named(rail, 'Writer')
-  check('1 open Writer is ink with on-ink letters and no bar', getComputedStyle(writerOpen!).backgroundColor === inkBg && getComputedStyle(writerOpen!).color === onInk && noBar(writerOpen))
-  check('1 Conductor is no longer the open mark', getComputedStyle(named(rail, 'Conductor')!).backgroundColor !== inkBg)
+  check('1 open Writer shows its name on the bobbing face', writerOpen?.classList.contains('on') === true && text(writerOpen?.querySelector('.desk-name')) === 'Writer' && anim(writerOpen, '.desk-face') === 'desk-bob' && noBar(writerOpen))
+  check('1 Conductor is no longer the open mark', named(rail, 'Conductor')?.classList.contains('on') !== true)
   button(pane.querySelector('.filetab-head'), 'Edit')?.click()
   await until(() => rail.querySelector('input')?.value === 'Writer')
   const writerForm = rail.querySelector('.desk-form')
@@ -429,8 +436,8 @@ function paint(prop: string, value: string): string {
 async function marksStage() {
   const { rail } = await mountPane('tab-marks', '1b. Content does not share Conductor’s mark')
   const icons = [...rail.querySelectorAll<HTMLButtonElement>('.desk-bot')]
-  check('1b marks are Co and Cn', JSON.stringify(icons.map((b) => text(b))) === JSON.stringify(['Co', 'Cn']), icons.map((b) => text(b)).join(','))
-  check('1b the two marks differ', icons.length === 2 && text(icons[0]) !== text(icons[1]))
+  check('1b names are Conductor and Content', JSON.stringify(icons.map((b) => text(b.querySelector('.desk-name')))) === JSON.stringify(['Conductor', 'Content']), icons.map((b) => text(b.querySelector('.desk-name'))).join(','))
+  check('1b the two faces differ', icons.length === 2 && icons[0].querySelector('.desk-face')?.getAttribute('data-shape') !== icons[1].querySelector('.desk-face')?.getAttribute('data-shape'))
 }
 
 async function readinessStage() {

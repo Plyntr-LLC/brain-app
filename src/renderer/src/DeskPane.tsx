@@ -42,15 +42,27 @@ function withCurrent(list: Cap[], current: string): Cap[] {
   return rows
 }
 
-/** First two letters, then the first letter plus each later letter. The first free pair wins. */
-function botMark(name: string, used: Set<string>): string {
-  const letters = (name.trim().split(/\s+/)[0] || '?').replace(/[^A-Za-z]/g, '').toLowerCase()
-  const pairs: string[] = []
-  if (letters.length >= 2) pairs.push(letters.slice(0, 2))
-  for (let i = 2; i < letters.length; i++) pairs.push(letters[0] + letters[i])
-  const pick = pairs.find((p) => !used.has(p)) || `${letters[0] || '?'}?`
-  used.add(pick)
-  return pick[0].toUpperCase() + pick.slice(1, 2)
+const FACE_SHAPES = ['pebble', 'blob', 'drop', 'squircle'] as const
+
+function faceShape(name: string): (typeof FACE_SHAPES)[number] {
+  let n = 0
+  for (const c of name) n += c.charCodeAt(0)
+  return FACE_SHAPES[n % FACE_SHAPES.length]
+}
+
+function DeskFace({ name }: { name: string }) {
+  const shape = faceShape(name)
+  const delay = `${(name.length % 5) * 0.35}s`
+  return (
+    <svg className="desk-face" data-shape={shape} viewBox="0 0 40 40" aria-hidden="true" style={{ ['--desk-delay' as string]: delay }}>
+      {shape === 'pebble' ? <ellipse className="desk-body" cx="20" cy="21" rx="14" ry="15" /> : null}
+      {shape === 'blob' ? <path className="desk-body" d="M20 5c7 0 14 5 14 13 0 8-4 16-14 16S6 28 6 18 13 5 20 5z" /> : null}
+      {shape === 'drop' ? <path className="desk-body" d="M20 4c8 6 12 12 12 18a12 12 0 1 1-24 0c0-6 4-12 12-18z" /> : null}
+      {shape === 'squircle' ? <rect className="desk-body" x="6" y="6" width="28" height="28" rx="12" /> : null}
+      <rect className="eye" x="13" y="15" width="4.2" height="8" rx="2.1" />
+      <rect className="eye" x="22.8" y="15" width="4.2" height="8" rx="2.1" />
+    </svg>
+  )
 }
 
 const CHAT_KIND = new Set(['task', 'reply', 'pack', 'send'])
@@ -287,7 +299,6 @@ export function DeskPane({
   void tick
 
   const speaker = openBotId || CONDUCTOR
-  const usedMarks = new Set<string>()
   const nameOf = (botId: string) => who[botId] || (botId === 'me' ? 'You' : 'Someone')
   const roster = (
     <div className="desk-roster">
@@ -301,13 +312,16 @@ export function DeskPane({
             <button
               type="button"
               key={bot.id}
-              className={`desk-mark desk-bot${open ? ' on' : ''}${live ? ' live' : ''}`}
+              className={`desk-bot${open ? ' on' : ''}${live ? ' live' : ''}`}
               aria-label={bot.name}
               title={`${bot.name}. ${stateLine(st, who, choices)}`}
               onClick={() => openThread(bot.id === CONDUCTOR ? null : bot.id)}
             >
-              {botMark(bot.name, usedMarks)}
-              {live ? <span className="desk-dot" aria-hidden="true" /> : null}
+              <span className="desk-logo">
+                <DeskFace name={bot.name} />
+                {live ? <span className="desk-dot" aria-hidden="true" /> : null}
+              </span>
+              <span className="desk-name">{bot.name}</span>
             </button>
           )
         })}

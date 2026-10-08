@@ -1409,7 +1409,56 @@ button.linkish.cmdval { color: var(--ink); font-size: 0.88rem; text-decoration: 
 }
 .desk-rail { flex: 1; min-height: 0; overflow: auto; }
 .desk-roster { display: flex; flex-direction: column; gap: 0.45rem; padding: 12px 8px; }
-.desk-bots { display: flex; flex-direction: column; align-items: center; width: 100%; gap: 8px; }
+.desk-bots { display: flex; flex-direction: column; align-items: center; width: 100%; gap: 2px; }
+.desk-bot {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink);
+  box-shadow: none;
+  transition: none;
+  text-align: left;
+}
+.desk-bot.on,
+:root.glass .desk-bot,
+:root.glass .desk-bot.on { background: transparent; color: var(--ink); box-shadow: none; }
+.desk-bot.on .desk-name { font-weight: 700; }
+.desk-logo { position: relative; width: 40px; height: 40px; flex: 0 0 40px; }
+.desk-bot.on .desk-logo { box-shadow: 0 0 0 2px var(--ink); border-radius: 50%; }
+.desk-face {
+  width: 40px;
+  height: 40px;
+  display: block;
+  overflow: visible;
+  animation: desk-idle 3.6s ease-in-out infinite;
+  animation-delay: var(--desk-delay, 0s);
+}
+.desk-body { fill: var(--ink); }
+.eye {
+  fill: var(--paper);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: desk-blink 5.2s ease-in-out infinite;
+  animation-delay: var(--desk-delay, 0s);
+}
+.desk-bot.live .desk-face { animation-name: desk-bob; animation-duration: 1.15s; }
+.desk-bot.live .eye { animation-name: desk-glance; animation-duration: 1.3s; }
+.desk-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.2;
+  color: var(--ink);
+}
 .desk-mark {
   position: relative;
   width: 40px;
@@ -1425,14 +1474,7 @@ button.linkish.cmdval { color: var(--ink); font-size: 0.88rem; text-decoration: 
   transition: none;
   box-shadow: none;
 }
-.desk-mark.on {
-  background: var(--ink);
-  color: var(--on-ink);
-  border-color: var(--ink);
-  box-shadow: none;
-}
-:root.glass .desk-mark,
-:root.glass .desk-mark.on { box-shadow: none; }
+:root.glass .desk-mark { box-shadow: none; }
 .desk-dot {
   position: absolute;
   top: -1px;
@@ -1442,6 +1484,27 @@ button.linkish.cmdval { color: var(--ink); font-size: 0.88rem; text-decoration: 
   border-radius: 50%;
   background: var(--orange);
   pointer-events: none;
+}
+@keyframes desk-idle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.5px); }
+}
+@keyframes desk-bob {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  35% { transform: translateY(-2px) rotate(-5deg); }
+  70% { transform: translateY(1px) rotate(5deg); }
+}
+@keyframes desk-blink {
+  0%, 86%, 100% { transform: scaleY(1); }
+  91% { transform: scaleY(0.12); }
+}
+@keyframes desk-glance {
+  0%, 100% { transform: translateX(0) scaleY(1); }
+  40% { transform: translateX(1.6px) scaleY(1); }
+  72% { transform: translateX(-1.2px) scaleY(0.8); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .desk-face, .desk-bot .eye { animation: none; }
 }
 .desk-thread .bubble.me { white-space: pre-wrap; overflow-wrap: anywhere; }
 .desk-thread .bubble.md .mdbody { white-space: normal; }
