@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto'
-import { chmodSync, existsSync, readdirSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
 import type { BrowseStepResult, DeskBrowser } from '../shared/desk.ts'
+import { keyName } from './desk/browser.ts'
 
 /**
  * Lets a chat CLI drive the browser inside Brain. Brain listens on a socket in its userData; the CLI runs
@@ -17,7 +18,7 @@ export type ServerSpec = { name: string; command: string; args: string[]; env: R
 const SERVER = 'brain-browser'
 const CALL_MS = 40_000
 
-type Running = { server: Server; sock: string; token: string; script: string; exec: string }
+type Running = { server: Server; dir: string; sock: string; token: string; script: string; exec: string }
 let running: Running | null = null
 
 /** browser-mcp.cjs: in the packed app it sits in Resources; in `npm run dev` it is the source file. */
@@ -47,9 +48,11 @@ function describe(r: BrowseStepResult): BridgeReply {
       text: `This page wants a sign-in (${r.title || r.url}). Ask the person to sign in, in the browser picture in this chat thread (a click on the picture opens it larger). Then call browser_read.`
     }
   }
-  if ('hold' in r || ('refused' in r && r.refused === 'pay')) {
-    const name = 'name' in r ? r.name : ''
-    return { ok: false, error: `Not clicked: "${name}" spends money. Ask the person. They can click it themselves in the browser picture in this thread.` }
+  if ('hold' in r) {
+    return { ok: false, error: `Not pressed: "${r.name}" can spend money or change an account. Ask the person. They can click it themselves in the browser picture in this thread.` }
+  }
+  if ('refused' in r && r.refused === 'pay') {
+    return { ok: false, error: `Not pressed: "${r.name ?? ''}" sends or publishes. Ask the person. They can click it themselves in the browser picture in this thread.` }
   }
   if ('refused' in r) {
     if (r.refused === 'ambiguous') return { ok: false, error: `More than one control is named "${r.name}". Use its number from browser_read.` }
@@ -114,15 +117,22 @@ export function makeBrowserTools(browser: DeskBrowser, onOpened: (owner: string)
         return describe(r)
       }
       case 'browser_read':
-        return opened(owner) ? describe(await step(owner, 'read')) : notOpen()
+        return (await shown(owner)) ? describe(await step(owner, 'read')) : notOpen()
       case 'browser_click':
-        return opened(owner) ? after(owner, await step(owner, 'click', str('target'))) : notOpen()
-      case 'browser_type':
-        return opened(owner) ? after(owner, await step(owner, 'type', `${str('target')}|${String(args.text ?? '')}`)) : notOpen()
-      case 'browser_key':
-        return opened(owner) ? after(owner, await step(owner, 'key', str('key'))) : notOpen()
+        return (await shown(owner)) ? after(owner, await step(owner, 'click', str('target'))) : notOpen()
+      case 'browser_type': {
+        if (!(await shown(owner))) return notOpen()
+        const r = await step(owner, 'type', `${str('target')}|${String(args.text ?? '')}`)
+        if ('refused' in r && r.refused === 'missing') return { ok: false, error: `No field named "${str('target')}" on this page. browser_type only types into lines marked "field" in browser_read.` }
+        return after(owner, r)
+      }
+      case 'browser_key': {
+        const key = keyName(str('key'))
+        if (!key) return { ok: false, error: `No key named "${str('key')}". Use Enter, Tab, Escape, Backspace, Delete, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, or Space.` }
+        return (await shown(owner)) ? after(owner, await step(owner, 'key', key)) : notOpen()
+      }
       case 'browser_scroll':
-        return opened(owner) ? describe(await step(owner, 'scroll', str('direction') === 'up' ? 'up' : 'down')) : notOpen()
+        return (await shown(owner)) ? describe(await step(owner, 'scroll', str('direction') === 'up' ? 'up' : 'down')) : notOpen()
       case 'browser_screenshot': {
         const image = await browser.picture(owner)
         return image ? { ok: true, text: 'The page as the person sees it in the thread.', image } : notOpen()
@@ -139,9 +149,9 @@ export function makeBrowserTools(browser: DeskBrowser, onOpened: (owner: string)
     }
   }
 
-  const pages = new Set<string>()
-  function opened(owner: string) {
-    return pages.has(owner)
+  /** This chat has a page showing, however it was opened (a tool, a bare address it sent, or a page it already had). */
+  async function shown(owner: string) {
+    return (await browser.look?.(owner)) != null
   }
   function notOpen(): BridgeReply {
     return { ok: false, error: 'No page is open in this chat. Use browser_open first.' }
@@ -154,10 +164,7 @@ export function makeBrowserTools(browser: DeskBrowser, onOpened: (owner: string)
   return {
     async call(owner: string, tool: string, args: Record<string, unknown>): Promise<BridgeReply> {
       try {
-        const reply = await within(run(owner, tool, args), CALL_MS)
-        if (tool === 'browser_open' && reply.ok) pages.add(owner)
-        if (tool === 'browser_close') pages.delete(owner)
-        return reply
+        return await within(run(owner, tool, args), CALL_MS)
       } catch (e) {
         return { ok: false, error: String((e as Error)?.message || e) }
       }
@@ -193,16 +200,26 @@ function serve(sock: Socket, token: string, tools: ReturnType<typeof makeBrowser
   sock.on('error', () => {})
 }
 
-/** Removes sockets left by Brain runs that are gone. A live run's socket stays. */
+const gone = (pid: number) => {
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch {
+    return true
+  }
+}
+
+/** Removes sockets and Claude config files left by Brain runs that are gone. A live run's stay. */
 function sweep(dir: string) {
   for (const name of readdirSync(dir)) {
     const m = /^browser-(\d+)\.sock$/.exec(name)
-    if (!m || Number(m[1]) === process.pid) continue
-    try {
-      process.kill(Number(m[1]), 0)
-    } catch {
-      rmSync(join(dir, name), { force: true })
-    }
+    if (m && Number(m[1]) !== process.pid && gone(Number(m[1]))) rmSync(join(dir, name), { force: true })
+  }
+  const configs = join(dir, 'browser-mcp')
+  if (!existsSync(configs)) return
+  for (const name of readdirSync(configs)) {
+    const m = /^(\d+)-/.exec(name)
+    if (m && Number(m[1]) !== process.pid && gone(Number(m[1]))) rmSync(join(configs, name), { force: true })
   }
 }
 
@@ -221,7 +238,7 @@ export function startBrowserBridge(opts: {
   const tools = makeBrowserTools(opts.browser, opts.onOpened)
   const server = createServer({ allowHalfOpen: true }, (s) => serve(s, token, tools))
   // Set before listening so a chat that starts in the next moment already gets the server.
-  running = { server, sock, token, script: opts.script, exec: opts.exec }
+  running = { server, dir: opts.dir, sock, token, script: opts.script, exec: opts.exec }
   return new Promise((resolve, reject) => {
     server.once('error', (e) => {
       if (running?.server === server) running = null
@@ -237,10 +254,12 @@ export function startBrowserBridge(opts: {
 
 export function stopBrowserBridge(): void {
   if (!running) return
-  const { server, sock } = running
+  const { server, sock, dir } = running
   running = null
   server.close()
   rmSync(sock, { force: true })
+  const configs = join(dir, 'browser-mcp')
+  if (existsSync(configs)) for (const name of readdirSync(configs)) if (name.startsWith(`${process.pid}-`)) rmSync(join(configs, name), { force: true })
 }
 
 /** The stdio MCP server for one chat. null when the bridge is not running, so the CLI starts without it. */
@@ -249,11 +268,17 @@ export function browserServer(owner: string): ServerSpec | null {
   return serverSpec({ exec: running.exec, script: running.script, sock: running.sock, token: running.token, owner })
 }
 
-/** Claude: the server added beside Joe's own MCP servers, and his Chrome's control tools taken away. */
+/** Claude: the server added beside Joe's own MCP servers, and his Chrome's control tools taken away.
+ * The config (it holds the token) goes in an owner-only file, so the token is never on a command line. */
 export function claudeBrowserArgs(owner: string): string[] {
   const s = browserServer(owner)
-  if (!s) return []
-  return ['--mcp-config', JSON.stringify({ mcpServers: { [s.name]: { command: s.command, args: s.args, env: s.env } } }), '--disallowedTools', 'mcp__control-chrome']
+  if (!s || !running) return []
+  const dir = join(running.dir, 'browser-mcp')
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const file = join(dir, `${process.pid}-${owner.replace(/[^\w.-]/g, '_')}.json`)
+  writeFileSync(file, JSON.stringify({ mcpServers: { [s.name]: { command: s.command, args: s.args, env: s.env } } }), { mode: 0o600 })
+  chmodSync(file, 0o600)
+  return ['--mcp-config', file, '--disallowedTools', 'mcp__control-chrome']
 }
 
 /** Grok and Cursor ACP `session/new` and `session/load`. */

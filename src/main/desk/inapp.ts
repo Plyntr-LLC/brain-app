@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { extname, basename, join } from 'node:path'
 import { BROWSE_MAX_CONTROLS, BROWSE_TEXT_CHARS } from '../../shared/desk.ts'
 import type { DeskLaunch } from '../../shared/desk.ts'
-import { pageActiveSubmit, pageScroll, pageSnapshot, pageSubmitFor, type DeskPage, type DeskWindows } from './chrome.ts'
+import { pageActiveNames, pageScroll, pageSnapshot, pageSubmitFor, type DeskPage, type DeskWindows } from './chrome.ts'
 
 /**
  * The browser inside Brain. Each window is a hidden BaseWindow holding one offscreen WebContentsView,
@@ -189,7 +189,7 @@ function adapterFor(host: BaseWindow, wc: WebContents): DeskPage {
       }),
     submit: (i) => onControl(i, () => clickControl(i)),
     submitFor: (i) => inPage(wc, pageSubmitFor, i),
-    activeSubmit: () => inPage(wc, pageActiveSubmit),
+    activeNames: () => inPage(wc, pageActiveNames),
     scroll: async (dir) => {
       await inPage(wc, pageScroll, dir)
       await settle()

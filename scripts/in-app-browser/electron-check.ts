@@ -3,14 +3,14 @@
 import './set-paths.ts'
 import { app, BaseWindow, BrowserWindow, nativeImage, session, type WebContents, type WebContentsView } from 'electron'
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mapClick } from '../../src/shared/page-picture.ts'
 import { BROWSER_RULE } from '../../src/shared/chat-reach.ts'
-import { clickShared, closeShared, faceShared, sharedDeskBrowser, typeShared, wheelShared } from '../../src/main/shared-browser.ts'
+import { clickShared, closeShared, faceShared, openSharedPage, sharedDeskBrowser, typeShared, wheelShared } from '../../src/main/shared-browser.ts'
 import { BROWSER_PARTITION, VIEW } from '../../src/main/desk/inapp.ts'
 import { bridgeScriptPath, browserServer, startBrowserBridge, stopBrowserBridge } from '../../src/main/browser-bridge.ts'
 import { claudeChatArgs } from '../../src/main/claude-stream.ts'
@@ -48,7 +48,7 @@ const FORM = `<!doctype html><title>Form page</title><h1>Purple Walrus 42</h1>
 <button onclick="window.open('/next')">Pop window</button>
 <div id="box" contenteditable="true" aria-label="Message box" style="border:1px solid #888;min-height:40px;width:400px"></div>
 <p id="echo">nothing yet</p>
-<button onclick="document.getElementById('bought').textContent='purchased'">Buy now</button>
+<button id="buy" onclick="document.getElementById('bought').textContent='purchased'">Buy now</button>
 <p id="bought">not bought</p>
 <a href="/file.txt">Download file</a>
 <button onclick="Notification.requestPermission().then((r) => (document.getElementById('perm').textContent += ' notif:' + r))">Ask notifications</button>
@@ -67,6 +67,10 @@ const PAGES: Record<string, string> = {
   '/checkout': `<!doctype html><title>Checkout</title><h1>Checkout</h1>
 <form onsubmit="event.preventDefault(); document.getElementById('bought').textContent = 'purchased'"><input name="card" placeholder="Card"><button type="submit">Buy now</button></form>
 <p id="bought">not bought</p>`,
+  '/search': `<!doctype html><title>Search</title><h1>Search</h1>
+<form onsubmit="event.preventDefault(); document.getElementById('found').textContent = 'searched'"><input name="q" placeholder="Query"><button type="submit">Search</button>
+<button type="button" id="buyin" onclick="document.getElementById('bought').textContent = 'purchased'">Buy now</button></form>
+<p id="found">no search</p><p id="bought">not bought</p>`,
   '/setcookie': '<!doctype html><title>Set cookie</title><h1>Cookie set</h1><script>document.cookie = "brain=1; max-age=3600; path=/"</script>',
   '/cookie': '<!doctype html><title>Cookie</title><h1>Cookie page</h1><p id="c"></p><script>document.getElementById("c").textContent = "cookies: " + (document.cookie || "none")</script>'
 }
@@ -279,8 +283,10 @@ async function phaseOne() {
 
   await tool(a, 'browser_open', { url: `${base}/form` })
   await tool(a, 'browser_type', { target: 'Message box', text: 'hello from the check' })
-  const keyed = await tool(a, 'browser_key', { key: 'Enter' })
-  check('6 typing into a contenteditable and Enter reach the page (F6)', /echo: hello from the check/.test(keyed.text), keyed.text)
+  const keyed = await tool(a, 'browser_key', { key: 'enter' })
+  check('6 typing into a contenteditable and Enter (asked as "enter") reach the page (F6)', /echo: hello from the check/.test(keyed.text), keyed.text)
+  const badKey = await tool(a, 'browser_key', { key: 'Foo' })
+  check('6 an unknown key name is an error, not a silent no-op', badKey.isError && /No key named "Foo"/.test(badKey.text), badKey.text)
   const boxAt = (await wcAt('/form')[0].executeJavaScript(`(() => { const r = document.getElementById('box').getBoundingClientRect(); return { x: r.left + 20, y: r.top + 10 } })()`)) as { x: number; y: number }
   await clickShared('chat:A', boxAt.x, boxAt.y)
   await typeShared('chat:A', 'Z')
@@ -306,12 +312,25 @@ async function phaseOne() {
   await tool(a, 'browser_open', { url: `${base}/form` })
   const buy = await tool(a, 'browser_click', { target: 'Buy now' })
   const bought = (await wcAt('/form')[0].executeJavaScript(`document.getElementById('bought').textContent`)) as string
-  check('8 Buy now is not clicked by the agent (F13)', buy.isError && /spends money/.test(buy.text) && /click it themselves/.test(buy.text) && bought !== 'purchased', `${buy.text} / ${bought}`)
+  check('8 Buy now is not clicked by the agent (F13)', buy.isError && /can spend money/.test(buy.text) && /click it themselves/.test(buy.text) && bought !== 'purchased', `${buy.text} / ${bought}`)
+  const boughtNow = async (part: string) => (await wcAt(part)[0].executeJavaScript(`document.getElementById('bought').textContent`)) as string
+  const typeByName = await tool(a, 'browser_type', { target: 'Buy now', text: '' })
+  const buyNumber = (/#(\d+) button Buy now/.exec((await tool(a, 'browser_read')).text) || [])[1]
+  const typeByNumber = await tool(a, 'browser_type', { target: `#${buyNumber}`, text: 'x' })
+  check('8 browser_type on Buy now, by name or number, does not press it', typeByName.isError && typeByNumber.isError && /can spend money/.test(typeByName.text + typeByNumber.text) && (await boughtNow('/form')) !== 'purchased', `${typeByName.text} | #${buyNumber} ${typeByNumber.text}`)
+  await wcAt('/form')[0].executeJavaScript(`document.getElementById('buy').focus()`)
+  const enterOnBuy = await tool(a, 'browser_key', { key: 'Enter' })
+  const spaceOnBuy = await tool(a, 'browser_key', { key: 'Space' })
+  check('8 Enter or Space on a focused Buy now outside a form is held', enterOnBuy.isError && spaceOnBuy.isError && /can spend money/.test(enterOnBuy.text + spaceOnBuy.text) && (await boughtNow('/form')) !== 'purchased', `${enterOnBuy.text} | ${spaceOnBuy.text}`)
+  await tool(a, 'browser_open', { url: `${base}/search` })
+  await wcAt('/search')[0].executeJavaScript(`document.getElementById('buyin').focus()`)
+  const enterInForm = await tool(a, 'browser_key', { key: 'Enter' })
+  check('8 Enter on a focused type=button Buy now, in a form whose submit is Search, is held', enterInForm.isError && /"Buy now"/.test(enterInForm.text) && (await boughtNow('/search')) !== 'purchased', enterInForm.text)
   await tool(a, 'browser_open', { url: `${base}/checkout` })
   await tool(a, 'browser_type', { target: 'Card', text: '4242' })
   const payEnter = await tool(a, 'browser_key', { key: 'Enter' })
   const paid = (await wcAt('/checkout')[0].executeJavaScript(`document.getElementById('bought').textContent`)) as string
-  check('8 Enter in a pay form is held the same way (F13, F20)', payEnter.isError && /spends money/.test(payEnter.text) && paid !== 'purchased', `${payEnter.text} / ${paid}`)
+  check('8 Enter in a pay form is held the same way (F13, F20)', payEnter.isError && /can spend money/.test(payEnter.text) && paid !== 'purchased', `${payEnter.text} / ${paid}`)
 
   const downloads = app.getPath('downloads')
   const ses = session.fromPartition(BROWSER_PARTITION)
@@ -337,6 +356,13 @@ async function phaseOne() {
   await tool(a, 'browser_click', { target: 'Next page' })
   const afterLogin = await readUntil(a, /URL: .*\/next/, 8000)
   check('10 a click after a sign-in works on the page that is now shown (F19)', /Next page/.test(afterLogin), afterLogin)
+
+  await openSharedPage(`${base}/next`, 'chat:Q')
+  const q = await mcpFor('chat:Q')
+  const qRead = await tool(q, 'browser_read')
+  check('10 a page opened by a bare-address send is readable by that chat\'s tools without browser_open', !qRead.isError && /Next page/.test(qRead.text), qRead.text)
+  q.kill()
+  await closeShared('chat:Q')
 
   const hostsBefore = BaseWindow.getAllWindows().length
   const waA = await tool(a, 'browser_open', { url: 'https://web.whatsapp.com' })
@@ -398,7 +424,10 @@ async function phaseOne() {
   const grokRules = String((sessionNewParams('grok', cwd, 'chat', undefined, owner)._meta as { rules?: string }).rules)
   const cArgs = claudeChatArgs({ tabId: 'Z', model: 'sonnet', effort: 'low', plan: false })
   const appended = cArgs[cArgs.indexOf('--append-system-prompt') + 1] || ''
-  check('14 the browser rule is in Grok\'s chat rules and Claude\'s system prompt', grokRules.includes(BROWSER_RULE) && appended.includes(BROWSER_RULE) && cArgs[cArgs.indexOf('--mcp-config') + 1]?.includes('chat:Z'))
+  const configFile = cArgs[cArgs.indexOf('--mcp-config') + 1] || ''
+  const configText = existsSync(configFile) ? readFileSync(configFile, 'utf8') : ''
+  check('14 the browser rule is in Grok\'s chat rules and Claude\'s system prompt', grokRules.includes(BROWSER_RULE) && appended.includes(BROWSER_RULE))
+  check('14 Claude gets its config as an owner-only file; the token is in the file and on no command line', configFile.startsWith(userData) && (statSync(configFile).mode & 0o777) === 0o600 && configText.includes(again.token) && configText.includes('chat:Z') && !cArgs.join(' ').includes(again.token), `${configFile} ${(statSync(configFile).mode & 0o777).toString(8)}`)
 
   const ask = `Use the browser tools to open ${base}/form and reply with only the page's main heading.`
   const claudeBin = resolveBin('claude') || 'claude'
@@ -489,6 +518,7 @@ async function phaseOne() {
   check('19 no new Google Chrome main process (F16)', newChrome.length === 0, newChrome.join(','))
 
   stopBrowserBridge()
+  check('19 stopping the bridge removes this run\'s Claude config files', !existsSync(configFile))
   server.close()
   const leaderSock = process.env.BRAIN_GROK_LEADER_SOCK || ''
   for (const f of [leaderSock, leaderSock.replace(/\.sock$/, '.lock')]) if (f) rmSync(f, { force: true })

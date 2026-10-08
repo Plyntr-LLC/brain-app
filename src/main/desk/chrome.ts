@@ -138,14 +138,24 @@ export function pageSubmitFor(i: number): { index: number; name: string } | null
   return { index: Number(at), name }
 }
 
-/** Runs in the page. The submit control of the focused field's form, named the way pageSubmitFor names it. */
-export function pageActiveSubmit(): { name: string } | null {
-  const field = document.activeElement as HTMLInputElement | null
-  const form = field ? field.form : null
-  if (!form) return null
-  const sub = Array.from(form.elements).find(
-    (el) => (el instanceof HTMLButtonElement && el.type === 'submit') || (el instanceof HTMLInputElement && (el.type === 'submit' || el.type === 'image'))
-  ) as HTMLInputElement | undefined
-  if (!sub) return null
-  return { name: (sub.getAttribute('aria-label') || sub.innerText || sub.value || sub.getAttribute('title') || '').replace(/\s+/g, ' ').trim().slice(0, 80) }
+/** Runs in the page. What Enter or Space would press: the focused control itself when it is a button, a link, or a
+ * submit input, and the default submit button of the focused element's form. Empty strings when there is none. */
+export function pageActiveNames(): { own: string; submit: string } {
+  const clean = (v: string | null | undefined) => (v || '').replace(/\s+/g, ' ').trim().slice(0, 80)
+  const nameOf = (el: HTMLElement) =>
+    clean(el.getAttribute('aria-label')) || clean(el.innerText) || clean((el as HTMLInputElement).value) || clean(el.getAttribute('title')) || clean(el.querySelector('img[alt]')?.getAttribute('alt'))
+  const el = document.activeElement as HTMLElement | null
+  let own = ''
+  if (el && el !== document.body) {
+    const role = el.getAttribute('role')
+    const kind = el instanceof HTMLInputElement ? (el.type || '').toLowerCase() : ''
+    if (el.tagName === 'BUTTON' || el.tagName === 'A' || role === 'button' || role === 'link' || ['submit', 'button', 'image', 'reset'].includes(kind)) own = nameOf(el)
+  }
+  const form = el ? (el as HTMLInputElement).form : null
+  const sub = form
+    ? (Array.from(form.elements).find(
+        (f) => (f instanceof HTMLButtonElement && f.type === 'submit') || (f instanceof HTMLInputElement && (f.type === 'submit' || f.type === 'image'))
+      ) as HTMLElement | undefined)
+    : undefined
+  return { own, submit: sub ? nameOf(sub) : '' }
 }

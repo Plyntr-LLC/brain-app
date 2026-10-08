@@ -253,8 +253,8 @@ export type PageAdapter = {
   submit: (i: number) => Promise<void>
   /** The submit control in the form of field `i` (last snapshot's numbering). null when that form has none. */
   submitFor: (i: number) => Promise<{ index: number; name: string } | null>
-  /** The submit control of the focused field's form, by name. null when the focus is not in a form or it has none. */
-  activeSubmit?: () => Promise<{ name: string } | null>
+  /** What Enter or Space would press: the focused control's own name, and its form's default submit button's name. */
+  activeNames?: () => Promise<{ own: string; submit: string }>
   scroll: (dir: 'down' | 'up') => Promise<void>
 }
 export type DeskBrowser = {

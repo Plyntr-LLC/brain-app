@@ -21,6 +21,17 @@ type Session = {
 
 const SIGN_IN_TITLE = /\b(sign|log)[\s-]?in\b/i
 
+const KEY_NAMES = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown', 'Space']
+const KEY_ALIASES: Record<string, string> = { return: 'Enter', esc: 'Escape', del: 'Delete', up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', spacebar: 'Space' }
+
+/** The one key name the page understands, whatever case or common alias the caller used. null for anything else. */
+export function keyName(raw: string): string | null {
+  const text = String(raw ?? '')
+  if (text === ' ') return 'Space'
+  const k = text.trim().toLowerCase()
+  return KEY_NAMES.find((n) => n.toLowerCase() === k) ?? KEY_ALIASES[k] ?? null
+}
+
 /** "link Pricing" is named Pricing. A line with no kind word is all name. */
 function controlName(control: string): string {
   const m = /^(link|button|field) (.*)$/.exec(control)
@@ -372,6 +383,8 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
       const target = bar < 0 ? detail : detail.slice(0, bar).trim()
       const hit = findControl(controls, target, true)
       if (typeof hit !== 'number') return { refused: hit, name: target, url }
+      // Typing clicks the control first. Only a field takes text; a button named here is not clicked.
+      if (!controls[hit].startsWith('field ')) return payStop(controlName(controls[hit]), url) ?? { refused: 'missing', name: target, url }
       await a.type(hit, bar < 0 ? '' : detail.slice(bar + 1).trim())
       s.field = { index: hit, control: controls[hit] }
       return read(a, s)
@@ -386,14 +399,17 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
       return read(a, s)
     }
     if (action === 'key') {
-      // Enter in a form submits it, so it gets the same pay check as clicking that form's button.
-      if (detail === 'Enter') {
-        const sub = await a.activeSubmit?.()
-        const stop = sub ? payStop(sub.name, url) : null
-        if (stop) return stop
+      const key = keyName(detail)
+      if (!key || !a.pressKey) return { refused: 'missing', name: detail, url }
+      // Enter and Space press the focused control, and Enter in a form submits it. Both get a click's pay check.
+      if (key === 'Enter' || key === 'Space') {
+        const names = await a.activeNames?.()
+        for (const name of [names?.own, key === 'Enter' ? names?.submit : '']) {
+          const stop = name ? payStop(name, url) : null
+          if (stop) return stop
+        }
       }
-      if (!a.pressKey) return { refused: 'missing', name: detail, url }
-      await a.pressKey(detail)
+      await a.pressKey(key)
       return read(a, s)
     }
     if (action === 'scroll') {
