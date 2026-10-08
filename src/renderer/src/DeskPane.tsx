@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { CLI_LABEL, CONDUCTOR, type BotState, type DeskBot, type DeskCli, type DeskMessage, type DeskWelcome } from '@shared/desk'
 import { DeskBotForm } from './DeskBotForm'
 import { DeskCard } from './DeskCard'
+import { mdToHtml } from './ptyChat'
 import { visibleBgLine } from '../../shared/agent-label'
 
 type Cap = { id: string; label: string }
@@ -108,6 +109,7 @@ export function DeskPane({
   const asked = useRef(false)
   const threadRef = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
+  const [atBottom, setAtBottom] = useState(true)
   openRef.current = openBotId
 
   function names(): Record<string, string> {
@@ -229,13 +231,16 @@ export function DeskPane({
   function onThreadScroll() {
     const el = threadRef.current
     if (!el) return
-    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    stick.current = near
+    setAtBottom(near)
   }
 
   useLayoutEffect(() => {
     const el = threadRef.current
     if (!active || !el || !stick.current) return
     el.scrollTop = el.scrollHeight
+    setAtBottom(true)
   }, [messages, welcome, openBotId, active])
 
   async function saveBot(bot: Omit<DeskBot, 'file'>) {
@@ -296,16 +301,17 @@ export function DeskPane({
             <button
               type="button"
               key={bot.id}
-              className={`ghost title-set title-icon desk-bot${open ? ' on' : ''}${live ? ' live' : ''}`}
+              className={`desk-mark desk-bot${open ? ' on' : ''}${live ? ' live' : ''}`}
               aria-label={bot.name}
               title={`${bot.name}. ${stateLine(st, who, choices)}`}
               onClick={() => openThread(bot.id === CONDUCTOR ? null : bot.id)}
             >
               {botMark(bot.name, usedMarks)}
+              {live ? <span className="desk-dot" aria-hidden="true" /> : null}
             </button>
           )
         })}
-        <button type="button" className="ghost title-set title-icon" aria-label="Add a teammate" title="Add a teammate" onClick={() => { setForm(null); setNote('') }}>
+        <button type="button" className="desk-mark" aria-label="Add a teammate" title="Add a teammate" onClick={() => { setForm(null); setNote('') }}>
           +
         </button>
       </div>
@@ -358,7 +364,7 @@ export function DeskPane({
       <div className="thread desk-thread" ref={threadRef} onScroll={onThreadScroll}>
         {messages.length === 0 && welcome ? (
           <div className="bubble md">
-            <p>{welcome.greeting}</p>
+            <div className="mdbody" dangerouslySetInnerHTML={{ __html: mdToHtml(welcome.greeting) }} />
             {welcome.starters.map((s) => (
               <button key={s.label} type="button" className="ghost" onClick={() => setDraft(s.fill)}>{s.label}</button>
             ))}
@@ -375,12 +381,19 @@ export function DeskPane({
               </div>
             )
           }
-          if (shape === 'prose') return <div className="bubble md" key={msg.id}>{msg.text}</div>
+          if (shape === 'prose') {
+            return (
+              <div className="bubble md" key={msg.id}>
+                <div className="mdbody" dangerouslySetInnerHTML={{ __html: mdToHtml(msg.text) }} />
+              </div>
+            )
+          }
           if (shape === 'sent' || shape === 'from') {
             const other = shape === 'sent' ? msg.to : msg.from
-            const label = shape === 'sent' ? `Message sent to ${nameOf(other)}.` : `Message from ${nameOf(other)}.`
+            const whoName = nameOf(other)
+            const label = shape === 'sent' ? `Message sent to ${whoName}.` : `Message from ${whoName}.`
             return (
-              <div className="bubble sys" key={msg.id} onDoubleClick={() => openOther(other)}>
+              <div className="bubble sys desk-pill" key={msg.id} title={`Double-click to open ${whoName}.`} onDoubleClick={() => openOther(other)}>
                 {label}
               </div>
             )
@@ -425,6 +438,16 @@ export function DeskPane({
           )
         })}
       </div>
+      {!atBottom ? (
+        <button type="button" className="jump-latest" onClick={() => {
+          const el = threadRef.current
+          stick.current = true
+          if (el) el.scrollTop = el.scrollHeight
+          setAtBottom(true)
+        }}>
+          Latest
+        </button>
+      ) : null}
       {windowOn ? (
         <div className="desk-pip">
           {pip === 'chip' ? (

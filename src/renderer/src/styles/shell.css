@@ -1409,13 +1409,56 @@ button.linkish.cmdval { color: var(--ink); font-size: 0.88rem; text-decoration: 
 }
 .desk-rail { flex: 1; min-height: 0; overflow: auto; }
 .desk-roster { display: flex; flex-direction: column; gap: 0.45rem; padding: 12px 8px; }
-.desk-bots { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
-.desk-bot { transition: none; }
-.desk-bot.on { border-color: var(--ink); box-shadow: inset 3px 0 0 var(--orange); }
-:root.glass .desk-bot.on { box-shadow: inset 3px 0 0 var(--orange), inset 0 1px 0 var(--glass-edge); }
-.desk-bot.live { color: var(--orange); }
-.desk-thread .bubble.me,
-.desk-thread .bubble.md { white-space: pre-wrap; overflow-wrap: anywhere; }
+.desk-bots { display: flex; flex-direction: column; align-items: center; width: 100%; gap: 8px; }
+.desk-mark {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  line-height: 1;
+  transition: none;
+  box-shadow: none;
+}
+.desk-mark.on {
+  background: var(--ink);
+  color: var(--on-ink);
+  border-color: var(--ink);
+  box-shadow: none;
+}
+:root.glass .desk-mark,
+:root.glass .desk-mark.on { box-shadow: none; }
+.desk-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--orange);
+  pointer-events: none;
+}
+.desk-thread .bubble.me { white-space: pre-wrap; overflow-wrap: anywhere; }
+.desk-thread .bubble.md .mdbody { white-space: normal; }
+.desk-thread .bubble.sys.desk-pill {
+  align-self: center;
+  width: fit-content;
+  max-width: 90%;
+  margin: 0;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  cursor: pointer;
+}
 .desk-form { width: 100%; }
 .desk-form textarea, .desk-form input, .desk-form select { width: 100%; box-sizing: border-box; }
 .desk-pip { flex-shrink: 0; display: flex; justify-content: flex-end; align-items: center; gap: 0.35rem; padding: 0 14px 6px; }

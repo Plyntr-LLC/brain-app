@@ -330,6 +330,7 @@ async function welcomeStage() {
   const card = pane.querySelector('.thread .bubble.md')
   check('1 welcome card shows with no messages', !!card)
   check('1 greeting is the welcome payload', text(card?.querySelector('p')) === GREETING, text(card?.querySelector('p')))
+  check('1 the greeting sits in mdbody', !!card?.querySelector('.mdbody') && text(card.querySelector('.mdbody')) === GREETING)
   const starters = buttons(card).map(text)
   check('1 three starters in order', JSON.stringify(starters) === JSON.stringify(STARTERS), JSON.stringify(starters))
   const box = pane.querySelector<HTMLTextAreaElement>('.composer textarea')!
@@ -362,23 +363,54 @@ async function welcomeStage() {
   button(edit, 'Cancel')?.click()
   await until(() => !rail.querySelector('.desk-form'))
 
-  fx('tab-welcome').states = fx('tab-welcome').states.map((s) => s.id === 'writer' ? { id: 'writer', state: 'working', since: new Date().toISOString(), task: 'Find the note', model: 'default' } : s)
+  document.documentElement.classList.add('glass')
+  const working = (id: string, task: string) => ({ id, state: 'working' as const, since: new Date().toISOString(), task, model: 'default' })
+  fx('tab-welcome').states = fx('tab-welcome').states.map((s) => s.id === 'writer' ? working('writer', 'Find the note') : s)
   await emit('tab-welcome')
   const writerIcon = named(rail, 'Writer')
   const conductorIcon = named(rail, 'Conductor')
-  const orange = paint('color', 'var(--orange)')
-  const inset = paint('box-shadow', 'inset 3px 0 0 var(--orange)')
-  const ink = paint('border-color', 'var(--ink)')
-  check('1 working Writer is orange and still named Writer', writerIcon?.classList.contains('live') === true && getComputedStyle(writerIcon!).color === orange && writerIcon?.getAttribute('aria-label') === 'Writer')
+  const researcherIcon = named(rail, 'Researcher')
+  const inkBg = paint('background-color', 'var(--ink)')
+  const onInk = paint('color', 'var(--on-ink)')
+  const paper = paint('background-color', 'var(--paper)')
+  const ink = paint('color', 'var(--ink)')
+  const orangeBg = paint('background-color', 'var(--orange)')
+  const bar = '3px 0px 0px 0px inset'
+  const noBar = (el: Element | null | undefined) => !!el && !getComputedStyle(el).boxShadow.includes(bar)
+  const dotOk = (el: Element | null | undefined) => {
+    const dot = el?.querySelector('.desk-dot')
+    if (!dot) return false
+    const box = dot.getBoundingClientRect()
+    return getComputedStyle(dot).backgroundColor === orangeBg && Math.abs(box.width - 8) <= 1 && Math.abs(box.height - 8) <= 1
+  }
+  const roundOk = (el: HTMLElement) => {
+    const box = el.getBoundingClientRect()
+    const radius = getComputedStyle(el).borderRadius
+    return box.width >= 36 && box.height >= 36 && (radius === '50%' || Math.abs(parseFloat(radius) - box.width / 2) <= 1)
+  }
+  check('1 open Conductor is ink with on-ink letters and no bar', getComputedStyle(conductorIcon!).backgroundColor === inkBg && getComputedStyle(conductorIcon!).color === onInk && noBar(conductorIcon))
+  check('1 idle Researcher is paper with ink letters', getComputedStyle(researcherIcon!).backgroundColor === paper && getComputedStyle(researcherIcon!).color === ink)
+  check('1 working Writer keeps ink letters, the name, and an orange dot', getComputedStyle(writerIcon!).backgroundColor === paper && getComputedStyle(writerIcon!).color === ink && writerIcon?.getAttribute('aria-label') === 'Writer' && dotOk(writerIcon) && noBar(writerIcon))
   check('1 working hover is the full sentence', writerIcon?.getAttribute('title') === 'Writer. Working · 0m · Find the note', writerIcon?.getAttribute('title') || '')
-  check('1 Conductor is selected and working Writer is not', getComputedStyle(conductorIcon!).boxShadow === inset && getComputedStyle(conductorIcon!).borderColor === ink && getComputedStyle(writerIcon!).boxShadow !== inset)
+  fx('tab-welcome').states = fx('tab-welcome').states.map((s) => s.id === 'conductor' ? working('conductor', 'Hand it off') : s)
+  await emit('tab-welcome')
+  check('1 an open working Conductor stays ink with on-ink letters, no bar, and an orange dot', getComputedStyle(conductorIcon!).backgroundColor === inkBg && getComputedStyle(conductorIcon!).color === onInk && noBar(conductorIcon) && dotOk(conductorIcon))
+  const railMid = (rail.getBoundingClientRect().left + rail.getBoundingClientRect().right) / 2
+  const markEls = [...rail.querySelectorAll<HTMLElement>('.desk-bot'), plus].filter((el): el is HTMLElement => !!el)
+  const centered = markEls.length === 6 && markEls.every((el) => Math.abs((el.getBoundingClientRect().left + el.getBoundingClientRect().right) / 2 - railMid) <= 2)
+  check('1 every mark and the plus are round and centered', markEls.every(roundOk) && centered, `n=${markEls.length}`)
+  check('1 the plus is paper with ink letters', text(plus) === '+' && plus?.getAttribute('aria-label') === 'Add a teammate' && !!plus && getComputedStyle(plus).backgroundColor === paper && getComputedStyle(plus).color === ink)
 
   named(rail, 'Writer')?.click()
   await until(() => text(pane.querySelector('.bubble.md p')) === WRITER_HI)
+  document.documentElement.classList.add('glass')
   const hi = pane.querySelector('.bubble.md')
   check('1 Writer greets as Writer', text(hi?.querySelector('p')) === WRITER_HI, text(hi?.querySelector('p')))
   check('1 Writer greeting has no starters and does not mention Conductor', buttons(hi).length === 0 && !text(hi).includes("I'm Conductor") && !text(hi).includes('hand the work'))
-  check('1 Writer is selected after the icon click', getComputedStyle(named(rail, 'Writer')!).boxShadow === inset && getComputedStyle(named(rail, 'Conductor')!).boxShadow !== inset)
+  check('1 Writer greeting sits in mdbody', text(hi?.querySelector('.mdbody')) === WRITER_HI)
+  const writerOpen = named(rail, 'Writer')
+  check('1 open Writer is ink with on-ink letters and no bar', getComputedStyle(writerOpen!).backgroundColor === inkBg && getComputedStyle(writerOpen!).color === onInk && noBar(writerOpen))
+  check('1 Conductor is no longer the open mark', getComputedStyle(named(rail, 'Conductor')!).backgroundColor !== inkBg)
   button(pane.querySelector('.filetab-head'), 'Edit')?.click()
   await until(() => rail.querySelector('input')?.value === 'Writer')
   const writerForm = rail.querySelector('.desk-form')
@@ -439,12 +471,47 @@ async function threadStage() {
   await until(() => thread.scrollHeight > thread.clientHeight && thread.scrollTop > 0)
   const gap = thread.scrollHeight - thread.clientHeight - thread.scrollTop
   check('4 the thread scrolls and rests at the bottom', thread.scrollHeight > thread.clientHeight && getComputedStyle(thread).overflowY === 'auto' && Math.abs(gap) <= 2, `gap=${gap} overflow=${getComputedStyle(thread).overflowY}`)
+  check('4 at the bottom there is no Latest', !pane.querySelector('button.jump-latest'))
   thread.scrollTop = 40
   thread.dispatchEvent(new Event('scroll'))
+  await until(() => !!pane.querySelector('button.jump-latest'))
+  const latest = pane.querySelector<HTMLButtonElement>('button.jump-latest')
+  const paneBox = pane.getBoundingClientRect()
+  const latestBox = latest?.getBoundingClientRect()
+  const hitsPane = !!latestBox && latestBox.left < paneBox.right && latestBox.right > paneBox.left && latestBox.top < paneBox.bottom && latestBox.bottom > paneBox.top
+  check('4 Latest sits outside the thread and on the pane', !!latest && text(latest) === 'Latest' && !latest.closest('.thread') && hitsPane)
   fx(tab).messages = [...fx(tab).messages, { id: 'm_later', ts: at(9, 30), from: 'conductor', to: 'me', kind: 'reply', text: 'A later line arrived.' }]
   await emit(tab)
   await until(() => text(thread).includes('A later line arrived.'))
   check('4 a line that arrives while reading stays put', text(thread).includes('A later line arrived.') && Math.abs(thread.scrollTop - 40) <= 2, `top=${thread.scrollTop}`)
+  const readyText = '**Ready.**\n\n- one\n- two'
+  fx(tab).messages = [
+    ...fx(tab).messages,
+    { id: 'm_ready', ts: at(9, 31), from: 'conductor', to: 'me', kind: 'reply', text: readyText },
+    { id: 'm_stars', ts: at(9, 32), from: 'me', to: 'conductor', kind: 'task', text: 'keep the **stars**' }
+  ]
+  await emit(tab)
+  await until(() => !!thread.querySelector('.bubble.md strong'))
+  check('4 the Ready reply stays put and Latest stays', Math.abs(thread.scrollTop - 40) <= 2 && !!pane.querySelector('button.jump-latest'), `top=${thread.scrollTop}`)
+  const ready = [...thread.querySelectorAll<HTMLElement>('.bubble.md')].find((el) => text(el.querySelector('strong')) === 'Ready.')
+  const readyBody = ready?.querySelector<HTMLElement>('.mdbody')
+  const serifProbe = document.createElement('span')
+  serifProbe.style.fontFamily = 'var(--serif)'
+  document.body.appendChild(serifProbe)
+  const serif = getComputedStyle(serifProbe).fontFamily
+  serifProbe.remove()
+  const readyItems = [...(ready?.querySelectorAll('li') || [])].map((el) => text(el))
+  check(
+    '4 a bot reply renders as serif markdown',
+    !!readyBody && getComputedStyle(readyBody).fontFamily === serif && getComputedStyle(readyBody).whiteSpace === 'normal' && JSON.stringify(readyItems) === JSON.stringify(['one', 'two']) && !text(ready).includes('**'),
+    `font=${readyBody ? getComputedStyle(readyBody).fontFamily : ''} space=${readyBody ? getComputedStyle(readyBody).whiteSpace : ''} items=${readyItems.join(',')}`
+  )
+  const stars = [...thread.querySelectorAll<HTMLElement>('.bubble.me')].find((el) => text(el).includes('**'))
+  check('4 your line keeps the asterisks', !!stars && !stars.querySelector('strong') && text(stars).includes('**stars**'))
+  latest?.click()
+  await until(() => !pane.querySelector('button.jump-latest'))
+  const back = thread.scrollHeight - thread.clientHeight - thread.scrollTop
+  check('4 Latest returns to the bottom and goes away', Math.abs(back) <= 2 && !pane.querySelector('button.jump-latest'), `gap=${back}`)
   check('4 no welcome card once the thread has messages', !text(pane.querySelector('.thread')).includes("I'm Conductor"))
 
   const mine = [...thread.querySelectorAll<HTMLElement>('.bubble.me')]
@@ -459,9 +526,16 @@ async function threadStage() {
   check('4 a task to Writer stays a right-hand bubble', isMe(mine.find((el) => text(el) === 'Draft the three bullets.')))
   check('4 Conductor replies in prose', isProse(prose.find((el) => text(el) === 'Researcher is on it. I will tell you when Writer has a draft.')))
   check('4 a send to Conductor stays prose', isProse(prose.find((el) => text(el) === 'The draft is ready for you.')))
+  const lineColor = paint('border-top-color', 'var(--line)')
+  const isPill = (el: HTMLElement | undefined, titleText: string) => {
+    if (!el || !isHop(el)) return false
+    const style = getComputedStyle(el)
+    const pad = [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft]
+    return el.classList.contains('bubble') && style.borderTopWidth !== '0px' && style.borderTopColor === lineColor && pad.every((p) => p !== '0px') && el.offsetWidth < thread.offsetWidth && el.getAttribute('title') === titleText
+  }
   check('4 the briefing is a muted line', isHop(hop('Message sent to Researcher.')))
-  check('4 the handoff is a muted line', isHop(hop('Message sent to Writer.')))
-  check('4 Designer is a muted line', isHop(hop('Message from Designer.')))
+  check('4 the handoff is a pill', isPill(hop('Message sent to Writer.'), 'Double-click to open Writer.'))
+  check('4 Designer is a pill', isPill(hop('Message from Designer.'), 'Double-click to open Designer.'))
   check('4 an unknown id reads Someone', isHop(hop('Message from Someone.')))
   const teamText = text(thread)
   check(
@@ -567,6 +641,10 @@ async function threadStage() {
   check('4 the mail pane has no corner picture', !pane.querySelector('.desk-pip img'))
 
   const sent = [...pane.querySelectorAll('.bubble.sys')].find((el) => text(el) === 'Message sent to Writer.')
+  hop('Message from Designer.')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+  hop('Message from Someone.')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+  await tick()
+  check('4 Designer and Someone do not open a thread', text(pane.querySelector('.filetab-head span')) === 'Conductor')
   sent?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   await tick()
   check('4 one click leaves the team thread', text(pane.querySelector('.filetab-head span')) === 'Conductor' && !text(pane.querySelector('.thread')).includes('Here are the three points'))
