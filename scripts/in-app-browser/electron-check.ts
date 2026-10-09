@@ -585,7 +585,9 @@ async function phaseOne() {
   const oracleSame = (label: string) => {
     const fresh = chromeMains().filter((pid) => !oracleBefore.pids.has(pid))
     const tabs = chromeTabs()
-    check(`${label}: no new browser process and Chrome's windows/tabs unchanged`, fresh.length === 0 && tabs === oracleBefore.tabs, `new ${fresh.join(',')} tabs ${oracleBefore.tabs} -> ${tabs}`)
+    // A count that could not be read proves nothing, even when the same failure repeats.
+    const unread = [oracleBefore.tabs, tabs].some((t) => t?.startsWith('osascript failed'))
+    check(`${label}: no new browser process and Chrome's windows/tabs unchanged`, fresh.length === 0 && !unread && tabs === oracleBefore.tabs, `new ${fresh.join(',')} tabs ${oracleBefore.tabs} -> ${tabs}`)
   }
   // Brain's own rule tells chats not to open web pages, so a model may decline this unless it knows it is testing that guard.
   const shellAsk =

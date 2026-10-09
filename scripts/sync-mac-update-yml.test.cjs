@@ -30,20 +30,25 @@ test('latest-mac.yml sha512 and size match the zip on disk, not a stale yml', ()
   }
 })
 
-test('the macOS floor electron-updater checks survives the rewrite', () => {
+test('the floor in latest-mac.yml is the Darwin version electron-updater compares, and it turns macOS 12 away', () => {
   const dir = mkdtempSync(join(tmpdir(), 'brain-yml-'))
   try {
     const zipPath = join(dir, 'Brain-0.0.0-mac.zip')
     const ymlPath = join(dir, 'latest-mac.yml')
     const configPath = join(dir, 'electron-builder.yml')
     writeFileSync(zipPath, Buffer.from('abcd'))
+    // electron-builder's own "13.0" in an old yml is ignored: it is not semver and would let every Mac update.
     writeFileSync(ymlPath, "version: 0.0.0\nfiles: []\nminimumSystemVersion: '13.0'\nreleaseDate: '2026-01-01T00:00:00.000Z'\n")
-    writeLatestMacYml({ version: '0.0.0', zipPath, ymlPath })
-    assert.match(readFileSync(ymlPath, 'utf8'), /^minimumSystemVersion: 13\.0$/m)
-    writeFileSync(ymlPath, "version: 0.0.0\nreleaseDate: '2026-01-01T00:00:00.000Z'\n")
     writeFileSync(configPath, 'mac:\n  hardenedRuntime: true\n  minimumSystemVersion: "13.0"\n')
     writeLatestMacYml({ version: '0.0.0', zipPath, ymlPath, configPath })
-    assert.match(readFileSync(ymlPath, 'utf8'), /^minimumSystemVersion: 13\.0$/m)
+    const floor = /^minimumSystemVersion: (.+)$/m.exec(readFileSync(ymlPath, 'utf8'))[1]
+    assert.equal(floor, '22.0.0')
+    // electron-updater's own check: semver.lt(os.release(), minimumSystemVersion) means "not supported".
+    const { lt } = require('../node_modules/electron-updater/node_modules/semver/index.js')
+    assert.equal(lt('21.6.0', floor), true, 'macOS 12 (Darwin 21) is turned away')
+    assert.equal(lt('22.1.0', floor), false, 'macOS 13 (Darwin 22) is offered')
+    assert.equal(lt('25.0.0', floor), false, 'macOS 16 is offered')
+    assert.throws(() => writeLatestMacYml({ version: '0.0.0', zipPath, ymlPath, minimumSystemVersion: '13.0' }))
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
