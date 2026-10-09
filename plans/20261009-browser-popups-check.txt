@@ -1,6 +1,6 @@
-browser popups check 2026-10-09T09:42:44.531Z
-ok   1 the sign-in pop-up opens on top of chat A  ({"popup":true,"url":"http://localhost:52616/auth"})
-ok   1 a read through the bridge reads the pop-up  (Page: Auth URL: http://localhost:52616/auth Controls (use the number or the name): #1 field User name Text: Auth pop-u)
+browser popups check 2026-10-09T09:46:56.199Z
+ok   1 the sign-in pop-up opens on top of chat A  ({"popup":true,"url":"http://localhost:53482/auth"})
+ok   1 a read through the bridge reads the pop-up  (Page: Auth URL: http://localhost:53482/auth Controls (use the number or the name): #1 field User name Text: Auth pop-u)
 ok   1 the live picture showed the pop-up
 ok   1 the pop-up posted to its opener and closed itself; A is back on the opener  (got token-123)
 ok   1 the live picture moved back to the opener
@@ -13,55 +13,56 @@ ok   3 six windows asked at once: three pop-ups, the rest open nothing  (3)
 ok   3 the older of two pop-ups closes itself: the newer stays on top
 ok   3 a crashed pop-up leaves no window behind and C no longer reports a pop-up  ({"src":null,"signIn":false})
 ok   3 after the crash, the place opens again fresh
-ok   3 file:, myapp: and data: pop-ups open nothing  ({"popup":false,"url":"http://localhost:52616/schemes"} views http://localhost:52616/schemes , http://localhost:52616/opener)
+ok   3 file:, myapp: and data: pop-ups open nothing  ({"popup":false,"url":"http://localhost:53482/schemes"} views http://localhost:53482/schemes , http://localhost:53482/opener)
 ok   3 an empty pop-up sent to myapp: and file: stays on about:blank  (about:blank)
 ok   5 a file input written into an empty pop-up asks Brain's panel and gets the file  (1 package.json)
-ok   5 a download from a pop-up that opened an attachment reaches chat A only  ([{"owner":"chat:A","id":"41521bf6a619f668fa","name":"file.txt","state":"completed"}])
+ok   5 a download from a pop-up that opened an attachment reaches chat A only  ([{"owner":"chat:A","id":"190a3f95c3aaca4617","name":"file.txt","state":"completed"}])
 ok   6 a step by number from the opener's read is refused once a pop-up is on top  (A pop-up opened (or closed) since your last read, so nothing was pressed. Read the page again.)
 ok   6 after a new read, typing works in the pop-up
-ok   6 the AI's click that opens a pop-up says so and shows the pop-up  (A pop-up opened on top. This is the pop-up; when it closes, the page under it comes back. Page: Auth URL: http://localhost:52616/auth Controls (use the number)
+ok   6 the AI's click that opens a pop-up says so and shows the pop-up  (A pop-up opened on top. This is the pop-up; when it closes, the page under it comes back. Page: Auth URL: http://localhost:53482/auth Controls (use the number)
 ok   4 a link clicked in WhatsApp opens on top of it
 ok   4 a send while a pop-up covers WhatsApp is refused and types nothing  ({"ok":false,"note":"A pop-up is open over WhatsApp (https://example.test/linked). Close it, then send again."})
 ok   4b a pop-up that opens during the send stops it; nothing sent, nothing typed into the pop-up  ({"ok":false,"note":"A pop-up opened over WhatsApp during the send. Nothing was sent."} [] BODY)
 ok   4b with the pop-up closed, the send goes through  ({"ok":true,"chat":"Sam Lee"})
 ok   4 WhatsApp asking for notifications on load makes no card
 ok   7 before any answer, permissions.query says denied  (denied)
-ok   7 one site card for chat A only, naming the page and camera + microphone  ({"id":"12d33182ae9cd57fe7","kind":"site","site":"http://localhost:52616","uses":["camera","microphone"],"owner":"chat:A"})
+ok   7 one site card for chat A only, naming the page and camera + microphone  ({"id":"9829fc69d4169d01ee","kind":"site","site":"http://localhost:53482","uses":["camera","microphone"],"owner":"chat:A"})
 ok   7 an answer from chat B is refused
 ok   7 Allow asks macOS for camera and microphone and the page gets its stream  (stream 2 camera,microphone)
 ok   7 a second answer to the same card is refused
 ok   7 after reload, live: granted with no card, and query says granted  (stream 2 granted)
 ok   7 the same ask with A small: refused, no card, query says denied  (err NotAllowedError denied)
 ok   7 Forget this site's permissions: the next ask shows a card again
-ok   7 a camera-only ask from another window of the site makes its own card next to the camera + microphone one  ({"id":"08c92f6ce3343d6b2d","kind":"site","site":"http://localhost:52616","uses":["camera"],"owner":"chat:B"})
-ok   7 after Don't allow, five repeats make no card and all five are refused  (5 rejected; 5 reached Brain: http://localhost:52616 camera+microphone | http://localhost:52616 camera+microphone | http://localhost:52616 camera+microphone | http://localhost:52616 camera+microphone | http://localhost:52616 camera+microphon)
+ok   7 a camera-only ask from another window of the site makes its own card next to the camera + microphone one  ({"id":"98ea22cd0fa9fbf27a","kind":"site","site":"http://localhost:53482","uses":["camera"],"owner":"chat:B"})
+ok   7 after Don't allow, five repeats make no card and all five are refused  (5 rejected; 5 reached Brain: http://localhost:53482 camera+microphone | http://localhost:53482 camera+microphone | http://localhost:53482 camera+microphone | http://localhost:53482 camera+microphone | http://localhost:53482 camera+microphon)
 ok   7 Don't allow left its note on the card
 ok   7 clipboard read: a card, Allow gives the text, and the next read asks again  (text clip-123)
-ok   7 a card nobody answers refuses and says it timed out  ([{"owner":"chat:A","id":"6e1ebd8ac46b29f2ce","note":"No answer in time. Nothing was allowed."}])
+ok   7 a card nobody answers refuses and says it timed out  ([{"owner":"chat:A","id":"3673370283e7f9ffbe","note":"No answer in time. Nothing was allowed."}])
 ok   7 a cross-origin iframe asking for the camera is refused with no card  (frame err NotAllowedError)
 ok   7 location, notifications and MIDI are refused with no card  (geo 1 | notif denied | midi NotAllowedError)
-ok   7 macOS saying no: Allow refuses and the card names System Settings  ([{"owner":"chat:D","id":"49bce9371fc2712fef","note":"macOS has Brain's camera turned off. System Settings > Privacy & Security > Camera."}])
+ok   7 macOS saying no: Allow refuses and the card names System Settings  ([{"owner":"chat:D","id":"b8d3b82b292fa4953b","note":"macOS has Brain's camera turned off. System Settings > Privacy & Security > Camera."}])
 ok   7 a page only in a Desk tile (watched there) is refused with no card
 ok   7 a window closed with a card open: the card ends
 ok   7 WhatsApp main's camera Allow does not reach WhatsApp india: india asks
 ok   8 with A small, a passkey get is refused within 1 s and no card shows  (NotAllowedError 1)
 ok   8 a conditional (autofill) get is refused, no card  (NotAllowedError 0)
-ok   8 with A live, one passkey card for chat A  ({"id":"696514b88c55e4ead6","kind":"passkey","site":"http://localhost:52616","owner":"chat:A"})
-ok   8 Cancel ends the page's request (AbortError) within 1 s and the card ends  (AbortError 52)
+ok   8 with A live, one passkey card for chat A  ({"id":"1e8b6c3ec63945f5aa","kind":"passkey","site":"http://localhost:53482","owner":"chat:A"})
+ok   8 Cancel ends the page's request (AbortError) within 1 s and the card ends  (AbortError 51)
 ok   8 a second answer to the passkey card is refused
-ok   8 the page's own AbortSignal still aborts, and the card goes  (AbortError 602 [{"owner":"chat:A","id":"901faf94163a08f4b2","note":""}])
+ok   8 the page's own AbortSignal still aborts, and the card goes  (AbortError 602 [{"owner":"chat:A","id":"e5137eb30be37720bb","note":""}])
 ok   8 a second get while one waits is refused  (NotAllowedError 0)
 ok   8 a same-origin iframe's get and print go through the guard (small: refused, no PDF)  (NotAllowedError 0)
 note ad-hoc iframe print (r2 #3): went through the guard: one PDF of the iframe, the page still answers
 ok   8 an iframe made on the fly prints its own PDF and the page keeps answering  (1 2)
 ok   8 frames[n].print() on a frame made on the fly: one PDF and the page keeps answering  (1 2)
 ok   8 a named frame inserted as HTML: one PDF and the page keeps answering  (1 2)
+ok   8 a frame added after a text node, printed by index: one PDF and the page keeps answering  (1 2)
 ok   8 a frame in the page's own HTML: one PDF and the page keeps answering  (1 2)
 ok   8 a frame in the page's HTML printed by the very next script: the page keeps loading and answering  (after)
 ok   8 a pop-up's first page with A small: its load-time print writes nothing and its get is refused  (NotAllowedError)
 ok   8 the same pop-up with A live: its first page's get makes a card (its key is known on the first document)
 ok   8 the guard's channel from a window Brain does not hold is refused
-ok   8 account picker (handler only): two accounts on the card  ({"id":"3723999ffb72892b4b","kind":"account","site":"http://localhost:52616","accounts":[{"id":"c1","name":"joe@plyntr.com"},{"id":"c2","name":"Joe Two"}],"owner":"chat:A"})
+ok   8 account picker (handler only): two accounts on the card  ({"id":"3cab422cdf6ce7b763","kind":"account","site":"http://localhost:53482","accounts":[{"id":"c1","name":"joe@plyntr.com"},{"id":"c2","name":"Joe Two"}],"owner":"chat:A"})
 ok   8 picking calls back once with that account, and a second answer is refused
 ok   8 a request with no frame is cancelled at once
 ok   8 an account card nobody answers cancels once

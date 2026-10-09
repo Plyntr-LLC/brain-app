@@ -34,10 +34,10 @@ contextBridge.executeInMainWorld({
       let doc = null
       try {
         if (!win || seen.has(win)) return
-        doc = win.document
+        // Marked first, so another site's window (its own guard runs there) is not tried again on every insert.
         seen.add(win)
+        doc = win.document
       } catch (e) {
-        // Another site's window. Its own guard runs there.
         return
       }
 
@@ -124,6 +124,9 @@ contextBridge.executeInMainWorld({
       for (const name of ['append', 'prepend', 'before', 'after', 'replaceWith', 'replaceChildren', 'insertAdjacentElement', 'insertAdjacentHTML', 'setHTMLUnsafe']) after(win.Element && win.Element.prototype, name)
       for (const name of ['write', 'writeln', 'append', 'prepend', 'replaceChildren', 'open']) after(win.Document && win.Document.prototype, name)
       for (const name of ['insertNode', 'surroundContents']) after(win.Range && win.Range.prototype, name)
+      for (const name of ['before', 'after', 'replaceWith']) after(win.CharacterData && win.CharacterData.prototype, name)
+      for (const C of [win.DocumentFragment, win.ShadowRoot]) for (const name of ['append', 'prepend', 'replaceChildren']) after(C && C.prototype, name)
+      after(win.ShadowRoot && win.ShadowRoot.prototype, 'setHTMLUnsafe')
       for (const C of [win.Element, win.ShadowRoot]) if (C) afterSet(C.prototype, 'innerHTML')
       if (win.Element) afterSet(win.Element.prototype, 'outerHTML')
       // Frames the HTML itself brings: on each DOM change, and once the page has loaded.

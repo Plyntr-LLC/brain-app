@@ -134,6 +134,7 @@ addEventListener('message', (e) => r('r', 'frame ' + e.data))
 <button id="own" style="width:160px;height:30px">own</button><button id="two" style="width:160px;height:30px">two</button>
 <button id="ifr" style="width:160px;height:30px">ifr</button><button id="adhoc" style="width:160px;height:30px">adhoc</button>
 <button id="framesn" style="width:160px;height:30px">framesn</button><button id="named" style="width:160px;height:30px">named</button>
+<button id="textafter" style="width:160px;height:30px">textafter</button>
 <iframe id="same" srcdoc="<p>inner</p>" style="width:100px;height:30px"></iframe>
 <script>
 const r = (id, t) => { document.getElementById(id).textContent = t }
@@ -147,6 +148,7 @@ document.getElementById('two').onclick = () => { const s = t0(); navigator.crede
 document.getElementById('ifr').onclick = () => { const w = document.getElementById('same').contentWindow; const s = t0(); w.navigator.credentials.get(pk()).then(...res('r', s)); w.print() }
 document.getElementById('adhoc').onclick = () => { const f = document.createElement('iframe'); document.body.appendChild(f); f.contentDocument.write('<title>Receipt</title><p>Receipt 42</p>'); f.contentDocument.close(); f.contentWindow.print() }
 document.getElementById('framesn').onclick = () => { document.body.appendChild(document.createElement('iframe')); const w = frames[frames.length - 1]; w.document.write('<p>Receipt by index</p>'); w.document.close(); w.print() }
+document.getElementById('textafter').onclick = () => { const t = document.createTextNode(' '); document.body.appendChild(t); t.after(document.createElement('iframe')); const w = frames[frames.length - 1]; w.document.write('<p>Receipt after a text node</p>'); w.document.close(); w.print() }
 document.getElementById('named').onclick = () => { document.body.insertAdjacentHTML('beforeend', '<iframe name="pf"></iframe>'); window.pf.document.write('<p>Receipt by name</p>'); window.pf.document.close(); window.pf.print() }
 </script>`,
   '/pkparse': () => `<!doctype html><title>Parse</title><iframe name="pp"></iframe><button id="go" style="width:160px;height:30px">go</button><script>
@@ -619,6 +621,7 @@ app.whenReady().then(async () => {
     for (const [owner, path, button, label] of [
       ['chat:P1', '/pk', '#framesn', 'frames[n].print() on a frame made on the fly'],
       ['chat:P2', '/pk', '#named', 'a named frame inserted as HTML'],
+      ['chat:P5', '/pk', '#textafter', 'a frame added after a text node, printed by index'],
       ['chat:P3', '/pkparse', '#go', "a frame in the page's own HTML"]
     ]) {
       await browser.goTo!(`${base}${path}?${owner}`, owner)
