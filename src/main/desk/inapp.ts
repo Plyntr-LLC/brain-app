@@ -150,6 +150,12 @@ export function freePath(dir: string, name: string): string {
 }
 
 const ALLOWED = new Set(['clipboard-sanitized-write', 'fullscreen'])
+/**
+ * The second print layer. The page guard (a preload) misses a frame the page's HTML brings when the very next script
+ * prints it; the debugger's new-document script reaches that frame. It turns print() into a console line Brain reads.
+ */
+const PRINT_MARK = '__brain_print__'
+const PRINT_FALLBACK = `(function () { var say = console.debug.bind(console); window.print = function () { try { say(${JSON.stringify(PRINT_MARK)}) } catch (e) {} } })()`
 const prepared = new Map<string, Session>()
 
 function browserSession(partition: string): Session {
@@ -266,26 +272,12 @@ let guardsHeard = false
 function listenToGuards() {
   if (guardsHeard) return
   guardsHeard = true
-  ipcMain.on('page-guard:print', (e, html: unknown, base: unknown) => {
-    const held = heldPageOf(e.sender)
-    if (!held) return
-    const wc = e.sender
-    const partition = partitionOfWc.get(wc.id) ?? BROWSER_PARTITION
-    const frameHtml = typeof html === 'string' && html.length > 0 && html.length <= MAX_PRINT_HTML ? html : null
-    // A frame's print with nothing Brain can draw (too big, or unreadable) prints nothing rather than the wrong page.
-    if (typeof html === 'string' && !frameHtml) return
-    const make = frameHtml
-      ? () => htmlPdf(partition, frameHtml, String(base || ''), wc.getTitle())
-      : async () => {
-          if (!held.page.printPdf) throw new Error('This page cannot print.')
-          return held.page.printPdf()
-        }
-    pageAsks.emit('ask', { kind: 'print', key: held.key, wc, page: held.page, make })
-  })
+  ipcMain.on('page-guard:print', (e, html: unknown, base: unknown) => printFrom(e.sender, html, base))
   ipcMain.handle('page-guard:passkey', (e, use: unknown) => {
     const held = heldPageOf(e.sender)
-    const site = originOf(e.sender.getURL())
     const frame = e.senderFrame
+    // The site that asks: an iframe's own, which is also the name Touch ID shows.
+    const site = (frame && originOf(frame.url)) || originOf(e.sender.getURL())
     if (!held || !site || !frame || !pageAsks.listenerCount('ask')) return null
     return new Promise<string | null>((resolve) => {
       let done = false
@@ -302,6 +294,34 @@ function listenToGuards() {
     const held = heldPageOf(e.sender)
     if (held) pageAsks.emit('ask', { kind: 'passkey-done', key: held.key, id: String(id ?? '') })
   })
+}
+
+/** A print request from a page (the guard's, or the console fallback's): the whole page, or an iframe's own document. */
+function printFrom(wc: WebContents, html: unknown, base: unknown) {
+  const held = heldPageOf(wc)
+  if (!held) return
+  const partition = partitionOfWc.get(wc.id) ?? BROWSER_PARTITION
+  const frameHtml = typeof html === 'string' && html.length > 0 && html.length <= MAX_PRINT_HTML ? html : null
+  // A frame's print with nothing Brain can draw (too big, or unreadable) prints nothing rather than the wrong page.
+  if (typeof html === 'string' && !frameHtml) return
+  const make = frameHtml
+    ? () => htmlPdf(partition, frameHtml, String(base || ''), wc.getTitle())
+    : async () => {
+        if (!held.page.printPdf) throw new Error('This page cannot print.')
+        return held.page.printPdf()
+      }
+  pageAsks.emit('ask', { kind: 'print', key: held.key, wc, page: held.page, make })
+}
+
+/** The console fallback's print: the page itself from its main frame, else that frame's document read in main. */
+async function printFromConsole(wc: WebContents, frame: WebFrameMain | null | undefined) {
+  if (!frame || frame === wc.mainFrame) return printFrom(wc, null, '')
+  try {
+    const got = (await within(frame.executeJavaScript(`({ html: '<!doctype html>' + document.documentElement.outerHTML, base: document.baseURI })`), STEP_MS, 'The frame')) as { html: string; base: string }
+    printFrom(wc, String(got?.html || ''), String(got?.base || ''))
+  } catch {
+    // A frame that went away prints nothing.
+  }
 }
 
 /** A click, key or typed text Brain sends. A page may open a pop-up only shortly after one. */
@@ -612,6 +632,9 @@ function wire(key: string, partition: string, held: Held, cdp: (method: string, 
     }, KEY_GRACE_MS).unref?.()
   })
   wc.setWindowOpenHandler((details) => openWindow(key, partition, wc, details))
+  wc.on('console-message', (e) => {
+    if (e.message === PRINT_MARK) void printFromConsole(wc, e.frame)
+  })
   // Only web pages, an empty page or a page's own blob: in any Brain window. Never a file or another app.
   wc.on('will-navigate', (e) => {
     if (!navAllowed(e.url)) e.preventDefault()
@@ -660,6 +683,7 @@ async function openHeld(key: string, partition: string, openWindow: OpenWindow):
   await cdp('Emulation.setFocusEmulationEnabled', { enabled: true })
   await cdp('Page.enable')
   await cdp('Page.setInterceptFileChooserDialog', { enabled: true })
+  await cdp('Page.addScriptToEvaluateOnNewDocument', { source: PRINT_FALLBACK })
   const held = { host, wc, page: adapterFor(host, wc) }
   wire(key, partition, held, cdp, openWindow)
   return held
@@ -689,7 +713,7 @@ function adoptPopup(key: string, partition: string, wc: WebContents, openWindow:
       Promise.all([
         send('Emulation.setDeviceMetricsOverride', { width: VIEW.width, height: VIEW.height, deviceScaleFactor: 1, mobile: false }),
         send('Emulation.setFocusEmulationEnabled', { enabled: true }),
-        send('Page.enable').then(() => send('Page.setInterceptFileChooserDialog', { enabled: true }))
+        send('Page.enable').then(() => Promise.all([send('Page.setInterceptFileChooserDialog', { enabled: true }), send('Page.addScriptToEvaluateOnNewDocument', { source: PRINT_FALLBACK })]))
       ]).then(() => resolve(), reject)
     })
   )

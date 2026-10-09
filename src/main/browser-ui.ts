@@ -33,10 +33,11 @@ function siteOf(url: string): string {
 type Unowned<T> = T extends unknown ? Omit<T, 'owner'> : never
 
 /** What a card is waiting on, by card id. Every callback in it is called exactly once. */
+type CardBase = { key: string; owners: string[]; timer: NodeJS.Timeout; answered: boolean; /** Stops listening for the page going away. */ unwatch: () => void }
 type OpenCard =
-  | { kind: 'site'; key: string; owners: string[]; ck: string; partition: string; site: string; uses: SiteUse[]; answers: ((yes: boolean) => void)[]; timer: NodeJS.Timeout; answered: boolean }
-  | { kind: 'passkey'; key: string; owners: string[]; frame: WebFrameMain; timer: NodeJS.Timeout; answered: boolean }
-  | { kind: 'account'; key: string; owners: string[]; accounts: { id: string; name: string }[]; pick: (id?: string) => void; timer: NodeJS.Timeout; answered: boolean }
+  | (CardBase & { kind: 'site'; ck: string; partition: string; site: string; uses: SiteUse[]; answers: ((yes: boolean) => void)[] })
+  | (CardBase & { kind: 'passkey'; frame: WebFrameMain })
+  | (CardBase & { kind: 'account'; accounts: { id: string; name: string }[]; pick: (id?: string) => void })
 
 export function startBrowserUi(opts: {
   browser: DeskBrowser
@@ -169,12 +170,21 @@ export function startBrowserUi(opts: {
     for (const owner of owners) send('browser:ask', { ...card, owner })
   }
 
+  /** Calls `gone` if the page goes away; the returned stop removes the listener, so long-lived windows do not collect them. */
+  const watchGone = (wc: Electron.WebContents, gone: () => void) => {
+    wc.once('destroyed', gone)
+    return () => {
+      if (!wc.isDestroyed()) wc.off('destroyed', gone)
+    }
+  }
+
   /** Finishes a card once: its callbacks, and a last line in every chat it was in. */
   function end(id: string, note: string, yes = false, pick?: string) {
     const card = cards.get(id)
     if (!card) return
     cards.delete(id)
     clearTimeout(card.timer)
+    card.unwatch()
     if (card.kind === 'site') {
       for (const answer of card.answers) answer(yes)
     } else if (card.kind === 'account') {
@@ -197,8 +207,8 @@ export function startBrowserUi(opts: {
     if (!owners.length) return ask.answer(false)
     const id = newId()
     const timer = setTimeout(() => end(id, 'No answer in time. Nothing was allowed.'), askMs)
-    cards.set(id, { kind: 'site', key: ask.key, owners, ck, partition: ask.partition, site: ask.site, uses: ask.uses, answers: [ask.answer], timer, answered: false })
-    ask.wc.once('destroyed', () => end(id, 'The page closed. Nothing was allowed.'))
+    const unwatch = watchGone(ask.wc, () => end(id, 'The page closed. Nothing was allowed.'))
+    cards.set(id, { kind: 'site', key: ask.key, owners, ck, partition: ask.partition, site: ask.site, uses: ask.uses, answers: [ask.answer], timer, answered: false, unwatch })
     showCard(owners, { id, kind: 'site', site: ask.site, uses: ask.uses })
   }
 
@@ -209,8 +219,8 @@ export function startBrowserUi(opts: {
     if (!withPerson(ask.page) || busy || !owners.length) return ask.reply(null)
     const id = newId()
     const timer = setTimeout(() => end(id, ''), PASSKEY_CARD_MS)
-    cards.set(id, { kind: 'passkey', key: ask.key, owners, frame: ask.frame, timer, answered: false })
-    ask.wc.once('destroyed', () => end(id, ''))
+    const unwatch = watchGone(ask.wc, () => end(id, ''))
+    cards.set(id, { kind: 'passkey', key: ask.key, owners, frame: ask.frame, timer, answered: false, unwatch })
     showCard(owners, { id, kind: 'passkey', site: ask.site })
     ask.reply(id)
   }
@@ -220,8 +230,8 @@ export function startBrowserUi(opts: {
     if (!owners.length || !ask.accounts.length) return ask.pick()
     const id = newId()
     const timer = setTimeout(() => end(id, 'No account picked in time.'), askMs)
-    cards.set(id, { kind: 'account', key: ask.key, owners, accounts: ask.accounts, pick: ask.pick, timer, answered: false })
-    ask.wc.once('destroyed', () => end(id, ''))
+    const unwatch = watchGone(ask.wc, () => end(id, ''))
+    cards.set(id, { kind: 'account', key: ask.key, owners, accounts: ask.accounts, pick: ask.pick, timer, answered: false, unwatch })
     showCard(owners, { id, kind: 'account', site: ask.site, accounts: ask.accounts })
   }
 
@@ -236,9 +246,11 @@ export function startBrowserUi(opts: {
   ipcMain.handle('browser:askAnswer', async (_e, owner: string, id: string, answer: string) => {
     const card = cards.get(String(id || ''))
     if (!card || card.answered || !card.owners.includes(String(owner || ''))) return { refused: true }
+    // An answer this card does not take changes nothing; the person's real answer still counts.
+    const fits = card.kind === 'passkey' ? answer === 'cancel' : card.kind === 'account' ? answer === 'cancel' || card.accounts.some((a) => a.id === answer) : answer === 'allow' || answer === 'deny'
+    if (!fits) return { refused: true }
     card.answered = true
     if (card.kind === 'passkey') {
-      if (answer !== 'cancel') return { refused: true }
       try {
         card.frame.send('page-guard:passkey-cancel', id)
       } catch {
@@ -252,7 +264,7 @@ export function startBrowserUi(opts: {
       end(id, hit ? `Signing in as ${hit.name}.` : 'Cancelled.', false, hit?.id)
       return { ok: true }
     }
-    if (answer !== 'allow') {
+    if (answer === 'deny') {
       refusedNow.add(card.ck)
       end(id, 'Not allowed.')
       return { ok: true }

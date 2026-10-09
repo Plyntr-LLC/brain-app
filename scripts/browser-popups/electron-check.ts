@@ -133,6 +133,7 @@ addEventListener('message', (e) => r('r', 'frame ' + e.data))
 <button id="get" style="width:160px;height:30px">get</button><button id="cond" style="width:160px;height:30px">cond</button>
 <button id="own" style="width:160px;height:30px">own</button><button id="two" style="width:160px;height:30px">two</button>
 <button id="ifr" style="width:160px;height:30px">ifr</button><button id="adhoc" style="width:160px;height:30px">adhoc</button>
+<button id="framesn" style="width:160px;height:30px">framesn</button><button id="named" style="width:160px;height:30px">named</button>
 <iframe id="same" srcdoc="<p>inner</p>" style="width:100px;height:30px"></iframe>
 <script>
 const r = (id, t) => { document.getElementById(id).textContent = t }
@@ -145,7 +146,14 @@ document.getElementById('own').onclick = () => { const s = t0(); const ac = new 
 document.getElementById('two').onclick = () => { const s = t0(); navigator.credentials.get(pk()).then(...res('r', s)); setTimeout(() => navigator.credentials.get(pk()).then(...res('r2', t0())), 400) }
 document.getElementById('ifr').onclick = () => { const w = document.getElementById('same').contentWindow; const s = t0(); w.navigator.credentials.get(pk()).then(...res('r', s)); w.print() }
 document.getElementById('adhoc').onclick = () => { const f = document.createElement('iframe'); document.body.appendChild(f); f.contentDocument.write('<title>Receipt</title><p>Receipt 42</p>'); f.contentDocument.close(); f.contentWindow.print() }
+document.getElementById('framesn').onclick = () => { document.body.appendChild(document.createElement('iframe')); const w = frames[frames.length - 1]; w.document.write('<p>Receipt by index</p>'); w.document.close(); w.print() }
+document.getElementById('named').onclick = () => { document.body.insertAdjacentHTML('beforeend', '<iframe name="pf"></iframe>'); window.pf.document.write('<p>Receipt by name</p>'); window.pf.document.close(); window.pf.print() }
 </script>`,
+  '/pkparse': () => `<!doctype html><title>Parse</title><iframe name="pp"></iframe><button id="go" style="width:160px;height:30px">go</button><script>
+pp.document.write('<p>Receipt in the page HTML</p>'); pp.document.close()
+document.getElementById('go').onclick = () => pp.print()
+</script>`,
+  '/pkparsenow': () => `<!doctype html><title>ParseNow</title><iframe name="pn"></iframe><script>pn.document.write('<p>now</p>'); pn.document.close(); pn.print()</script><p id="after">after</p>`,
   '/pkpop': () => `<!doctype html><title>PkPop</title><h1>PkPop</h1><p id="r">none</p><script>
 print()
 navigator.credentials.get({ publicKey: { challenge: new Uint8Array(16), timeout: 60000, rpId: 'localhost' } }).then(() => { document.getElementById('r').textContent = 'resolved' }, (e) => { document.getElementById('r').textContent = e.name })
@@ -607,6 +615,28 @@ app.whenReady().then(async () => {
     const adhocOk = pdfs() === pdf0 + 1 && pageAnswers === 2
     note(`ad-hoc iframe print (r2 #3): ${adhocOk ? 'went through the guard: one PDF of the iframe, the page still answers' : `pdfs ${pdfs() - pdf0}, page ${pageAnswers}`}`)
     check("8 an iframe made on the fly prints its own PDF and the page keeps answering", adhocOk, `${pdfs() - pdf0} ${pageAnswers}`)
+    // (diff review r1) frames[n], a named frame, and a frame the page's HTML brings reach a guarded window too.
+    for (const [owner, path, button, label] of [
+      ['chat:P1', '/pk', '#framesn', 'frames[n].print() on a frame made on the fly'],
+      ['chat:P2', '/pk', '#named', 'a named frame inserted as HTML'],
+      ['chat:P3', '/pkparse', '#go', "a frame in the page's own HTML"]
+    ]) {
+      await browser.goTo!(`${base}${path}?${owner}`, owner)
+      await call('browser:watch', owner, true)
+      const wc = wcAt(`${path}?${owner}`)!
+      const had = pdfs()
+      await click(owner, wc, button)
+      await until(() => pdfs() > had, 8000)
+      const answers = await Promise.race([wc.executeJavaScript('1+1'), sleep(3000).then(() => 'stuck')])
+      check(`8 ${label}: one PDF and the page keeps answering`, pdfs() === had + 1 && answers === 2, `${pdfs() - had} ${answers}`)
+      await call('browser:watch', owner, false)
+      await browser.closeOwner!(owner)
+    }
+    await browser.goTo!(`${base}/pkparsenow`, 'chat:P4')
+    const now = wcAt('/pkparsenow')!
+    const nowAnswers = await Promise.race([now.executeJavaScript(`document.getElementById('after') ? 'after' : 'none'`), sleep(3000).then(() => 'stuck')])
+    check("8 a frame in the page's HTML printed by the very next script: the page keeps loading and answering", nowAnswers === 'after', String(nowAnswers))
+    await browser.closeOwner!('chat:P4')
     await call('browser:watch', 'chat:A', false)
     await browser.goTo!(`${base}/opener`, 'chat:A')
     const openerAgain = wcAt('/opener')!

@@ -1,5 +1,7 @@
 import { app } from 'electron'
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 
 /** The keychain group Brain keeps Touch ID passkeys in. It must be in the app's signed keychain-access-groups. */
 export const PASSKEY_GROUP = 'DWYL4KK53B.com.plyntr.brain.webauthn'
@@ -22,6 +24,8 @@ function bundlePath(): string | null {
  */
 export async function enablePasskeys(): Promise<boolean> {
   if (process.platform !== 'darwin' || !app.isPackaged) return false
+  // Without the page guard nothing would keep an AI-driven page from raising Touch ID prompts.
+  if (!existsSync(join(process.resourcesPath, 'page-guard.cjs'))) return false
   const bundle = bundlePath()
   if (!bundle) return false
   const xml = await new Promise<string>((done) => {
