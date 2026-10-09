@@ -235,7 +235,8 @@ export function payCheck(name: string): 'hold' | 'refuse' | null {
   return null
 }
 
-export type PageSnapshot = { url: string; title: string; text: string; controls: string[]; hasPassword: boolean }
+/** `qrLogin`: the page shows a QR code to sign in with (WhatsApp Web draws one on a labelled canvas). */
+export type PageSnapshot = { url: string; title: string; text: string; controls: string[]; hasPassword: boolean; qrLogin?: boolean }
 export type BrowseStepResult =
   | { ok: true; url: string; title: string; text: string; controls: string[] }
   | { hold: 'spend'; name: string; url: string }
@@ -257,6 +258,14 @@ export type PageAdapter = {
   activeNames?: () => Promise<{ own: string; submit: string }>
   scroll: (dir: 'down' | 'up') => Promise<void>
 }
+/** Mouse from the wide picture, in page pixels. `buttons` is the held-button mask; `clickCount` 2 is a double-click. */
+export type PointerInput = { type: 'down' | 'up' | 'move'; x: number; y: number; button: 'left' | 'right' | 'middle' | 'none'; buttons: number; clickCount: number }
+/** A key from the wide picture. `text` is printable text; `command` is an edit command (selectAll, copy, paste, cut, undo, redo);
+ * `modifiers` is the CDP mask (Alt 1, Ctrl 2, Meta 4, Shift 8). */
+export type KeyInput = { key: string; code: string; modifiers: number; text?: string; command?: string }
+/** One frame of the page an owner is showing, for the wide picture. */
+export type PageFrame = { src: string; url: string }
+
 export type DeskBrowser = {
   open: (browseId: string, owner?: string) => Promise<void | { noChrome: true }>
   cancel: (browseId: string) => void
@@ -277,6 +286,11 @@ export type DeskBrowser = {
   look?: (owner?: string) => Promise<{ signIn: boolean } | null>
   /** Close that place's own site window. Never closes the shared WhatsApp window. */
   closeOwner?: (owner: string) => Promise<void>
+  /** Mouse and keys from the wide picture, on the window that place is showing. */
+  pointer?: (owner: string, ev: PointerInput) => Promise<void>
+  keyInput?: (owner: string, ev: KeyInput) => Promise<void>
+  /** Frames of the window that place is showing, following it when it changes (to WhatsApp, say). Returns the stop. */
+  watch?: (owner: string, send: (frame: PageFrame) => void) => () => void
 }
 
 /** Built by slice-9, returned by slice-6, rendered by slice-7 as is. */

@@ -1,5 +1,5 @@
 import { BROWSE_MAX_CONTROLS, BROWSE_TEXT_CHARS, payCheck } from '../../shared/desk.ts'
-import type { BrowseStepResult, DeskBrowser, DeskLaunch, PageSnapshot } from '../../shared/desk.ts'
+import type { BrowseStepResult, DeskBrowser, DeskLaunch, KeyInput, PageFrame, PageSnapshot, PointerInput } from '../../shared/desk.ts'
 import { windowKey } from '../../shared/page-picture.ts'
 import type { DeskPage } from './chrome.ts'
 import { startPageTurn } from './page-lane.ts'
@@ -20,6 +20,9 @@ type Session = {
 }
 
 const SIGN_IN_TITLE = /\b(sign|log)[\s-]?in\b/i
+
+/** A password field, a QR code to sign in with, or a sign-in title. */
+const asksSignIn = (p: { hasPassword: boolean; qrLogin?: boolean; title: string }) => p.hasPassword || !!p.qrLogin || SIGN_IN_TITLE.test(p.title)
 
 const KEY_NAMES = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown', 'Space']
 const KEY_ALIASES: Record<string, string> = { return: 'Enter', esc: 'Escape', del: 'Delete', up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', spacebar: 'Space' }
@@ -228,7 +231,7 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
   /** Reads the page after a step. A sign-in page ends the session; the window stays open. */
   async function read(a: DeskPage, s: Session | null): Promise<BrowseStepResult> {
     const p = await a.snapshot()
-    if (p.hasPassword || SIGN_IN_TITLE.test(p.title)) {
+    if (asksSignIn(p)) {
       const result: BrowseStepResult = { signIn: true, url: p.url, title: p.title }
       if (s && lockFor(s.lock).holder === s.id) {
         signedOut = { id: s.id, result }
@@ -267,7 +270,10 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
         const a = await w.page(key)
         // A close during the open wins. Do not point this place at a window that was not kept.
         if ('noChrome' in a || !w.has(key)) return
-        if (owner) showing.set(owner, key)
+        if (owner) {
+          showing.set(owner, key)
+          rewatch(owner)
+        }
         await a.goto(url)
         return
       }
@@ -294,6 +300,47 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
     }
   }
 
+  type Watcher = { send: (frame: PageFrame) => void; key: string | null; stop: (() => void) | null }
+  const watchers = new Map<string, Set<Watcher>>()
+
+  /** Points every watcher of this place at the window it shows now. A watcher already on that window stays. */
+  function rewatch(owner: string) {
+    const rows = watchers.get(owner)
+    if (!rows) return
+    const w = wins()
+    const key = w ? showing.get(owner) ?? null : 'page'
+    for (const row of rows) {
+      if (row.key === key && row.stop) continue
+      row.stop?.()
+      row.stop = null
+      row.key = key
+      const page = !key ? null : w ? w.peek(key) : adapter && windowOpen() ? adapter : null
+      if (page?.watch) row.stop = page.watch(row.send)
+    }
+  }
+
+  function watch(owner: string, send: (frame: PageFrame) => void) {
+    const row: Watcher = { send, key: null, stop: null }
+    const rows = watchers.get(owner) ?? new Set<Watcher>()
+    rows.add(row)
+    watchers.set(owner, rows)
+    rewatch(owner)
+    return () => {
+      row.stop?.()
+      row.stop = null
+      rows.delete(row)
+      if (!rows.size && watchers.get(owner) === rows) watchers.delete(owner)
+    }
+  }
+
+  function pointer(owner: string, ev: PointerInput) {
+    return onShown(owner, (a) => a.pointer?.(ev) ?? Promise.resolve())
+  }
+
+  function keyInput(owner: string, ev: KeyInput) {
+    return onShown(owner, (a) => a.key?.(ev) ?? Promise.resolve())
+  }
+
   function clickAt(x: number, y: number, owner?: string) {
     return onShown(owner, (a) => a.clickAt?.(x, y) ?? Promise.resolve())
   }
@@ -315,7 +362,7 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
     if (!a || 'noChrome' in a) return null
     try {
       const p = await a.snapshot()
-      return { signIn: p.hasPassword || SIGN_IN_TITLE.test(p.title) }
+      return { signIn: asksSignIn(p) }
     } catch {
       return { signIn: false }
     }
@@ -329,7 +376,9 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
     if (url) showing.set(owner, key)
     const connected = await w.connect({ chromePath, profileDir })
     if (isNoChrome(connected)) return { noChrome: true }
-    return w.page(key)
+    const page = await w.page(key)
+    rewatch(owner)
+    return page
   }
 
   function sessionNow(owner?: string): Session | null {
@@ -438,6 +487,7 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
         a = await w.page(key)
         if ('noChrome' in a || !w.has(key)) return { noChrome: true }
         showing.set(owner, key)
+        rewatch(owner)
         if (!had) await a.goto(pageUrl)
       } else {
         const wasOpen = windowOpen()
@@ -447,7 +497,7 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
       }
       const p = await a.snapshot()
       if (p.url !== pageUrl) return { refused: 'page-changed', url: p.url }
-      if (p.hasPassword || SIGN_IN_TITLE.test(p.title)) return { signIn: true, url: p.url, title: p.title }
+      if (asksSignIn(p)) return { signIn: true, url: p.url, title: p.title }
       const hit = findControl(p.controls, name)
       if (typeof hit !== 'number') return { refused: hit, name, url: p.url }
       await a.click(hit)
@@ -460,10 +510,11 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
   async function closeOwner(owner: string) {
     const w = wins()
     showing.delete(owner)
+    rewatch(owner)
     if (!w || !owner || owner === 'wa') return
     // `has` is false while the page is still being opened. The close still has to win.
     await w.close(owner)
   }
 
-  return { open, cancel, release, focus, showWindow, picture, windowOpen, clickApproved, runStep, goTo, clickAt, typeText, pressKey, wheel, look, closeOwner }
+  return { open, cancel, release, focus, showWindow, picture, windowOpen, clickApproved, runStep, goTo, clickAt, typeText, pressKey, wheel, look, closeOwner, pointer, keyInput, watch }
 }

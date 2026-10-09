@@ -8,13 +8,15 @@ import { CLAUDE_DEFAULT_EFFORT, CLAUDE_DEFAULT_MODEL } from '../shared/claude-de
 import type { AiKind } from '../shared/contracts'
 import { extraPath, resolveBin } from './ai-cli'
 import { ensureGrokLeader, grokLeaderLive, grokTuiArgs } from './grok-leader'
+import { asChatEnv } from './chat-env'
 
 type Sess = { proc: IPty; sender: WebContents }
 
 const sessions = new Map<string, Sess>()
 
 /** Login Terminal and Show terminal env. Never pins a CLI to the open folder. */
-export function ptyEnv(): Record<string, string> {
+/** A shell tab's env. `chat` (a CLI TUI of a Brain chat) adds the chat marker and shims, like the chat processes. */
+export function ptyEnv(chat = false): Record<string, string> {
   const e: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (typeof v === 'string') e[k] = v
   e.HOME = homedir()
@@ -22,7 +24,7 @@ export function ptyEnv(): Record<string, string> {
   e.COLORTERM = 'truecolor'
   e.PATH = `${extraPath()}${delimiter}${e.PATH || ''}`
   for (const k of PROJECT_DIR_ENV) delete e[k]
-  return e
+  return chat ? (asChatEnv(e) as Record<string, string>) : e
 }
 
 function cliCommand(
@@ -104,7 +106,7 @@ export function registerPtyIpc(): void {
           cols: Math.max(20, opts.cols || 80),
           rows: Math.max(8, opts.rows || 24),
           cwd: opts.cwd || homedir(),
-          env: ptyEnv()
+          env: ptyEnv(!!opts.kind)
         })
       } catch (err) {
         throw new Error(`Could not start the terminal: ${String((err as Error).message || err)}`)

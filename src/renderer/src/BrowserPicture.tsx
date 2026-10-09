@@ -1,29 +1,56 @@
-import { useEffect, useRef, type KeyboardEvent, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { mapClick } from '@shared/page-picture'
 
-/** The live page. A small click only enlarges. A wide click, key, or wheel reaches the page. */
+const EDIT: Record<string, string> = { a: 'selectAll', c: 'copy', v: 'paste', x: 'cut' }
+const LONE = new Set(['Meta', 'Shift', 'Control', 'Alt', 'CapsLock', 'Fn'])
+const MAC = /mac/i.test(navigator.platform)
+
+/** CDP modifier bits: Alt 1, Ctrl 2, Meta 4, Shift 8. */
+function modifiers(e: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): number {
+  return (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0)
+}
+
+/** The live page. A small click only enlarges. Wide, it shows the page as it changes and takes the mouse and keys. */
 export function BrowserPicture(props: {
   mode: 'small' | 'wide' | 'note'
   src: string | null
+  /** The browser place this picture shows: `chat:<tab>` or `desk:<bot>`. */
+  owner: string
+  /** The tab or Desk holding the picture is the one on screen. */
+  active: boolean
   onToggle: () => void
   onShow: () => void
-  onClickAt?: (x: number, y: number) => void
-  onTypeText?: (text: string) => void
-  onPressKey?: (key: string) => void
-  onWheel?: (deltaY: number) => void
 }) {
   const shot = useRef<HTMLButtonElement>(null)
+  const lastMove = useRef(0)
+  const [live, setLive] = useState<string | null>(null)
+  const wide = props.mode === 'wide' && !!props.owner
+  const watching = wide && props.active
+
+  useEffect(() => {
+    if (!watching) return
+    const owner = props.owner
+    const off = window.brain.browser.onFrame((f) => {
+      if (f.owner === owner) setLive(f.src)
+    })
+    void window.brain.browser.watch(owner, true)
+    return () => {
+      off()
+      void window.brain.browser.watch(owner, false)
+      setLive(null)
+    }
+  }, [watching, props.owner])
 
   useEffect(() => {
     const el = shot.current
-    if (props.mode !== 'wide' || !el) return
+    if (!wide || !el) return
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
-      props.onWheel?.(e.deltaY)
+      void window.brain.browser.wheel(props.owner, e.deltaY)
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [props.mode, props.onWheel])
+  }, [wide, props.owner])
 
   if (props.mode === 'note') {
     return (
@@ -33,51 +60,91 @@ export function BrowserPicture(props: {
     )
   }
 
-  function onClick(e: MouseEvent<HTMLButtonElement>) {
-    if (props.mode !== 'wide') {
-      props.onToggle()
-      return
-    }
-    shot.current?.focus()
+  /** The page point under the mouse, or null in the empty bands around the page. */
+  function pagePoint(e: MouseEvent<HTMLButtonElement>, clamp: boolean) {
     const img = shot.current?.querySelector('img')
-    if (!img || !img.naturalWidth || !img.naturalHeight) return
+    if (!img || !img.naturalWidth || !img.naturalHeight) return null
     const rect = img.getBoundingClientRect()
     const style = getComputedStyle(img)
-    const borderLeft = Number.parseFloat(style.borderLeftWidth) || 0
-    const borderTop = Number.parseFloat(style.borderTopWidth) || 0
-    const mapped = mapClick(
-      { x: e.clientX - rect.left - borderLeft, y: e.clientY - rect.top - borderTop },
-      { width: img.clientWidth, height: img.clientHeight },
-      { width: img.naturalWidth, height: img.naturalHeight }
-    )
-    if (!mapped) return
-    props.onClickAt?.(mapped.x, mapped.y)
+    const left = Number.parseFloat(style.borderLeftWidth) || 0
+    const top = Number.parseFloat(style.borderTopWidth) || 0
+    const box = { width: img.clientWidth, height: img.clientHeight }
+    const natural = { width: img.naturalWidth, height: img.naturalHeight }
+    let x = e.clientX - rect.left - left
+    let y = e.clientY - rect.top - top
+    if (clamp) {
+      x = Math.min(Math.max(x, 0), box.width)
+      y = Math.min(Math.max(y, 0), box.height)
+    }
+    return mapClick({ x, y }, box, natural)
+  }
+
+  function pointer(type: 'down' | 'up' | 'move', e: MouseEvent<HTMLButtonElement>) {
+    const at = pagePoint(e, type !== 'down')
+    if (!at) return
+    const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left'
+    void window.brain.browser.pointer(props.owner, {
+      type,
+      x: at.x,
+      y: at.y,
+      button: type === 'move' && !e.buttons ? 'none' : button,
+      buttons: e.buttons,
+      clickCount: type === 'move' ? 0 : Math.max(1, e.detail)
+    })
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
-    if (props.mode !== 'wide') return
-    if (e.key === 'Enter' || e.key === 'Backspace' || e.key.startsWith('Arrow')) {
+    if (!wide || LONE.has(e.key)) return
+    const command = MAC ? e.metaKey : e.ctrlKey
+    if (command && !e.altKey) {
+      const k = e.key.toLowerCase()
+      const edit = k === 'z' ? (e.shiftKey ? 'redo' : 'undo') : EDIT[k]
+      // Cmd+Q, Cmd+W and the other app shortcuts stay Brain's.
+      if (!edit) return
       e.preventDefault()
       e.stopPropagation()
-      props.onPressKey?.(e.key)
+      void window.brain.browser.key(props.owner, { key: e.key, code: e.code, modifiers: modifiers(e), command: edit })
       return
     }
-    if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      e.preventDefault()
-      e.stopPropagation()
-      props.onTypeText?.(e.key)
-    }
+    e.preventDefault()
+    e.stopPropagation()
+    const text = e.key.length === 1 && !e.ctrlKey && !e.metaKey ? e.key : undefined
+    void window.brain.browser.key(props.owner, { key: e.key, code: e.code, modifiers: modifiers(e), text })
   }
 
+  const src = (wide && live) || props.src
   return (
     <button
       type="button"
       ref={shot}
       className="desk-browser-shot"
-      onClick={onClick}
+      onClick={() => {
+        if (!wide) props.onToggle()
+      }}
+      onMouseDown={(e) => {
+        if (!wide) return
+        e.preventDefault()
+        pointer('down', e)
+        // Keys go to the page while the picture has focus. Scrolling it into view would move it under the mouse.
+        shot.current?.focus({ preventScroll: true })
+      }}
+      onMouseUp={(e) => {
+        if (wide) pointer('up', e)
+      }}
+      onMouseMove={(e) => {
+        if (!wide) return
+        const now = performance.now()
+        if (now - lastMove.current < 33) return
+        lastMove.current = now
+        pointer('move', e)
+      }}
+      onContextMenu={(e) => {
+        if (wide) e.preventDefault()
+      }}
+      onDragStart={(e) => e.preventDefault()}
       onKeyDown={onKeyDown}
     >
-      {props.src ? <img className={props.mode === 'wide' ? 'wide' : ''} src={`data:image/jpeg;base64,${props.src}`} alt="" /> : null}
+      {src ? <img className={props.mode === 'wide' ? 'wide' : ''} src={`data:image/jpeg;base64,${src}`} alt="" draggable={false} /> : null}
     </button>
   )
 }

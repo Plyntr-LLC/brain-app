@@ -26,6 +26,7 @@ import { startMediaStatePoll } from './media/state-poll'
 import { refreshTray, startTray } from './tray'
 import { bridgeScriptPath, startBrowserBridge, stopBrowserBridge } from './browser-bridge'
 import { closeAllShared, sharedDeskBrowser } from './shared-browser'
+import { ensureChatShims, guardScriptPath } from './chat-env'
 
 registerBrainMediaScheme()
 registerStubIpc()
@@ -128,7 +129,8 @@ app.whenReady().then(() => {
   }
   recordLaunchVersion()
   createWindow()
-  // Before any chat starts: every chat CLI gets this run's brain-browser server.
+  // Before any chat starts: every chat CLI gets this run's brain-browser server and the `open` guard.
+  ensureChatShims(guardScriptPath({ resourcesPath: process.resourcesPath, appPath: app.getAppPath() }))
   startBrowserBridge({
     dir: app.getPath('userData'),
     script: bridgeScriptPath({ resourcesPath: process.resourcesPath, appPath: app.getAppPath() }),

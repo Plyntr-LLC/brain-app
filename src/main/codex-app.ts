@@ -1,7 +1,8 @@
 import type { StreamEvent } from './ai-cli'
 import { BROWSER_RULE, CHAT_RULES, CODEX_CHAT_SANDBOX } from '../shared/chat-reach'
 import { codexBrowserConfig } from './browser-bridge'
-import { binEnv, resolveBin } from './ai-cli'
+import { chatEnv } from './chat-env'
+import { resolveBin } from './ai-cli'
 import type { Cap, LiveRun } from './acp-session'
 import { codexInput, type Attach } from './attach'
 import { asRecord, fileHits, LineRpc, spawnBin, type RpcMsg } from './line-rpc'
@@ -193,7 +194,7 @@ async function bootPoolNow(cwd: string): Promise<Pool> {
   if (again && !again.rpc.dead) return again
   const bin = resolveBin('gpt')
   if (!bin) throw new Error('Codex is not installed on this computer')
-  const proc = spawnBin(bin, ['app-server', '--listen', 'stdio://'], cwd, binEnv())
+  const proc = spawnBin(bin, ['app-server', '--listen', 'stdio://'], cwd, chatEnv())
   const pool: Pool = {
     cwd,
     rpc: null as unknown as LineRpc,

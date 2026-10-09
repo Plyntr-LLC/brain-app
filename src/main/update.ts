@@ -70,6 +70,8 @@ export function registerUpdateIpc(): void {
 
 export function startAutoUpdate(): void {
   if (!app.isPackaged) return
+  // A test launch of the packed app must not download or install anything.
+  if (process.env.BRAIN_APP_NO_AUTO_UPDATE === '1') return
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
   autoUpdater.setFeedURL({

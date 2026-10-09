@@ -49,6 +49,7 @@ class FakeContents {
   isLoading() { return false }
   on(ev, fn) { (this._on[ev] = this._on[ev] || []).push(fn) }
   once(ev, fn) { this.on(ev, fn) }
+  off(ev, fn) { this._on[ev] = (this._on[ev] || []).filter((f) => f !== fn) }
   executeJavaScript(code) {
     if (code.includes('pageSnapshot')) {
       return Promise.resolve({ title: fake.title || 'Example', text: 'hello', controls: ['link Pricing'], hasPassword: false })

@@ -145,10 +145,9 @@ export function DeskCard(props: {
   onPictureToggle?: () => void
   onPictureHide?: () => void
   onPictureShow?: () => void
-  onPictureClick?: (x: number, y: number) => void
-  onPictureType?: (text: string) => void
-  onPicturePress?: (key: string) => void
-  onPictureWheel?: (deltaY: number) => void
+  /** The browser place the picture shows (`desk:<bot>`), and whether Desk is on screen. */
+  pictureOwner?: string
+  pictureActive?: boolean
 }): JSX.Element {
   const { msg } = props
   const name = (id: string) => props.names[id] || (id === ME ? 'You' : 'Someone')
@@ -329,12 +328,10 @@ export function DeskCard(props: {
         <BrowserPicture
           mode={pic.mode}
           src={pic.src}
+          owner={props.pictureOwner || ''}
+          active={!!props.pictureActive}
           onToggle={() => props.onPictureToggle?.()}
           onShow={() => props.onPictureShow?.()}
-          onClickAt={props.onPictureClick}
-          onTypeText={props.onPictureType}
-          onPressKey={props.onPicturePress}
-          onWheel={props.onPictureWheel}
         />
       ) : null
       return (

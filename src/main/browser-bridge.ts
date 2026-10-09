@@ -18,7 +18,13 @@ export type ServerSpec = { name: string; command: string; args: string[]; env: R
 const SERVER = 'brain-browser'
 const CALL_MS = 40_000
 
-type Running = { server: Server; dir: string; sock: string; token: string; script: string; exec: string }
+type Running = { server: Server; dir: string; sock: string; pipe: boolean; token: string; script: string; exec: string }
+
+/** Where the bridge listens: a named pipe on Windows (no unix sockets there), else an owner-only socket file in userData. */
+export function socketPath(platform: NodeJS.Platform, dir: string, pid: number): string {
+  if (platform === 'win32') return `\\\\.\\pipe\\brain-browser-${pid}-${randomBytes(4).toString('hex')}`
+  return join(dir, `browser-${pid}.sock`)
+}
 let running: Running | null = null
 
 /** browser-mcp.cjs: in the packed app it sits in Resources; in `npm run dev` it is the source file. */
@@ -72,7 +78,7 @@ function within<T>(work: Promise<T>, ms: number): Promise<T> {
 }
 
 /** The tool calls for one browser. Exported so the check drives the same code the socket does. */
-export function makeBrowserTools(browser: DeskBrowser, onOpened: (owner: string) => void) {
+export function makeBrowserTools(browser: DeskBrowser, onOpened: (owner: string, url?: string) => void) {
   const sessions = new Map<string, string>()
   let n = 0
 
@@ -113,7 +119,7 @@ export function makeBrowserTools(browser: DeskBrowser, onOpened: (owner: string)
         const url = str('url')
         if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'browser_open needs an http or https address.' }
         const r = await step(owner, 'url', url, url)
-        onOpened(owner)
+        onOpened(owner, 'url' in r ? r.url : url)
         return describe(r)
       }
       case 'browser_read':
@@ -157,7 +163,7 @@ export function makeBrowserTools(browser: DeskBrowser, onOpened: (owner: string)
     return { ok: false, error: 'No page is open in this chat. Use browser_open first.' }
   }
   function after(owner: string, r: BrowseStepResult): BridgeReply {
-    onOpened(owner)
+    onOpened(owner, 'url' in r ? r.url : undefined)
     return describe(r)
   }
 
@@ -228,17 +234,21 @@ export function startBrowserBridge(opts: {
   script: string
   exec: string
   browser: DeskBrowser
-  onOpened: (owner: string) => void
+  onOpened: (owner: string, url?: string) => void
+  platform?: NodeJS.Platform
 }): Promise<{ sock: string; token: string }> {
   if (running) return Promise.resolve({ sock: running.sock, token: running.token })
-  sweep(opts.dir)
-  const sock = join(opts.dir, `browser-${process.pid}.sock`)
-  if (existsSync(sock)) rmSync(sock, { force: true })
+  const pipe = (opts.platform ?? process.platform) === 'win32'
+  const sock = socketPath(opts.platform ?? process.platform, opts.dir, process.pid)
+  if (!pipe) {
+    sweep(opts.dir)
+    if (existsSync(sock)) rmSync(sock, { force: true })
+  }
   const token = randomBytes(24).toString('hex')
   const tools = makeBrowserTools(opts.browser, opts.onOpened)
   const server = createServer({ allowHalfOpen: true }, (s) => serve(s, token, tools))
   // Set before listening so a chat that starts in the next moment already gets the server.
-  running = { server, dir: opts.dir, sock, token, script: opts.script, exec: opts.exec }
+  running = { server, dir: opts.dir, sock, pipe, token, script: opts.script, exec: opts.exec }
   return new Promise((resolve, reject) => {
     server.once('error', (e) => {
       if (running?.server === server) running = null
@@ -246,18 +256,24 @@ export function startBrowserBridge(opts: {
     })
     server.listen(sock, () => {
       // Brain's userData folder is already 0700. The socket itself is owner-only too.
-      chmodSync(sock, 0o600)
+      if (!pipe) chmodSync(sock, 0o600)
       resolve({ sock, token })
     })
   })
 }
 
+/** What the running bridge actually listens on. */
+export function bridgeAddress(): string | null {
+  const at = running?.server.address()
+  return typeof at === 'string' ? at : null
+}
+
 export function stopBrowserBridge(): void {
   if (!running) return
-  const { server, sock, dir } = running
+  const { server, sock, dir, pipe } = running
   running = null
   server.close()
-  rmSync(sock, { force: true })
+  if (!pipe) rmSync(sock, { force: true })
   const configs = join(dir, 'browser-mcp')
   if (existsSync(configs)) for (const name of readdirSync(configs)) if (name.startsWith(`${process.pid}-`)) rmSync(join(configs, name), { force: true })
 }

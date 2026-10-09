@@ -1,4 +1,4 @@
-import type { PageAdapter } from '../../shared/desk.ts'
+import type { KeyInput, PageAdapter, PageFrame, PointerInput } from '../../shared/desk.ts'
 
 /**
  * What a page in the browser inside Brain can do, and the functions that run inside the page.
@@ -30,12 +30,17 @@ export type DeskPage = PageAdapter & {
   typeText?: (text: string) => Promise<void>
   pressKey?: (key: string) => Promise<void>
   wheel?: (deltaY: number) => Promise<void>
+  /** Mouse and keys from the wide picture. */
+  pointer?: (ev: PointerInput) => Promise<void>
+  key?: (ev: KeyInput) => Promise<void>
+  /** Sends a frame now and then one each time the page changes, at most 15 a second. Returns the stop. */
+  watch?: (send: (frame: PageFrame) => void) => () => void
 }
 
 /** What the page reader sees. A test passes a fake with the same fields.
  * `scrollY` is where the window starts, in characters of `bodyText`. The live page maps its pixel
  * scroll onto the text by the share of the page height scrolled past. */
-export type PageDoc = { bodyText: string; controls: string[]; hasPassword: boolean; scrollY: number; title?: string }
+export type PageDoc = { bodyText: string; controls: string[]; hasPassword: boolean; qrLogin?: boolean; scrollY: number; title?: string }
 
 /**
  * The snapshot body. It runs inside the page through `executeJavaScript`, so it uses only its arguments and
@@ -48,7 +53,7 @@ export function pageSnapshot(
   doc: PageDoc | null,
   maxText: number,
   maxControls: number
-): { title: string; text: string; controls: string[]; hasPassword: boolean } {
+): { title: string; text: string; controls: string[]; hasPassword: boolean; qrLogin: boolean } {
   if (!doc) {
     const clean = (s: string | null | undefined) => (s || '').replace(/\s+/g, ' ').trim().slice(0, 80)
     const shown = (el: HTMLElement) => {
@@ -100,6 +105,7 @@ export function pageSnapshot(
       bodyText,
       controls,
       hasPassword: Array.from(document.querySelectorAll<HTMLElement>('input[type=password]')).some(shown),
+      qrLogin: Array.from(document.querySelectorAll<HTMLElement>('canvas[aria-label]')).some((el) => /QR code/i.test(el.getAttribute('aria-label') || '') && shown(el)),
       scrollY: Math.round((bodyText.length * window.scrollY) / height)
     }
   }
@@ -111,7 +117,7 @@ export function pageSnapshot(
     const cut = text.lastIndexOf('\n', maxText)
     text = text.slice(0, cut > 0 ? cut : maxText)
   }
-  return { title: doc.title || '', text, controls: doc.controls.slice(0, maxControls), hasPassword: !!doc.hasPassword }
+  return { title: doc.title || '', text, controls: doc.controls.slice(0, maxControls), hasPassword: !!doc.hasPassword, qrLogin: !!doc.qrLogin }
 }
 
 /** Runs in the page. One window height, a little less so a line stays in view. */

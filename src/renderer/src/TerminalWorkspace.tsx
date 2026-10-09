@@ -2009,13 +2009,11 @@ export function ChatPane({
       mode={pageView}
       src={pageShot}
       signIn={pageSignIn}
+      owner={pageOwner}
+      active={active}
       onToggle={() => setPageView((v) => (v === 'small' ? 'wide' : v))}
       onHide={() => setPageView('note')}
       onShow={() => setPageView('small')}
-      onClickAt={(x, y) => void window.brain.browser.clickAt(pageOwner, x, y)}
-      onTypeText={(text) => void window.brain.browser.typeText(pageOwner, text)}
-      onPressKey={(key) => void window.brain.browser.pressKey(pageOwner, key)}
-      onWheel={(deltaY) => void window.brain.browser.wheel(pageOwner, deltaY)}
       onWiden={() => setPageView('wide')}
     />
   )

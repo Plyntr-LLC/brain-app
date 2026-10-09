@@ -554,10 +554,8 @@ export function DeskPane({
               onPictureToggle={() => setBrowserView((v) => (v === 'small' ? 'wide' : v))}
               onPictureHide={() => setBrowserView('note')}
               onPictureShow={() => setBrowserView('small')}
-              onPictureClick={(x, y) => void window.brain.browser.clickAt(pictureFrom ? `desk:${pictureFrom}` : '', x, y)}
-              onPictureType={(text) => void window.brain.browser.typeText(pictureFrom ? `desk:${pictureFrom}` : '', text)}
-              onPicturePress={(key) => void window.brain.browser.pressKey(pictureFrom ? `desk:${pictureFrom}` : '', key)}
-              onPictureWheel={(deltaY) => void window.brain.browser.wheel(pictureFrom ? `desk:${pictureFrom}` : '', deltaY)}
+              pictureOwner={pictureFrom ? `desk:${pictureFrom}` : ''}
+              pictureActive={active}
               onOpenBrowser={() => setBrowserView('wide')}
               onRemoveHire={(msgId) => {
                 const hire = messages.find((m) => m.id === msgId)?.hire

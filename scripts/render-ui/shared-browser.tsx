@@ -167,15 +167,11 @@ function clickPoint(img: HTMLImageElement, x: number, y: number) {
   const style = getComputedStyle(img)
   const borderLeft = Number.parseFloat(style.borderLeftWidth) || 0
   const borderTop = Number.parseFloat(style.borderTopWidth) || 0
-  img.dispatchEvent(
-    new MouseEvent('click', {
-      bubbles: true,
-      cancelable: true,
-      clientX: rect.left + borderLeft + x,
-      clientY: rect.top + borderTop + y,
-      button: 0
-    })
-  )
+  const at = { bubbles: true, cancelable: true, clientX: rect.left + borderLeft + x, clientY: rect.top + borderTop + y, button: 0, detail: 1 }
+  // A real click is press, release, then click, with the button held between the first two.
+  img.dispatchEvent(new MouseEvent('mousedown', { ...at, buttons: 1 }))
+  img.dispatchEvent(new MouseEvent('mouseup', { ...at, buttons: 0 }))
+  img.dispatchEvent(new MouseEvent('click', { ...at, buttons: 0 }))
 }
 
 function key(el: Element, name: string) {

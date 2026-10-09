@@ -2,7 +2,7 @@ import { app, BaseWindow, WebContentsView, session, type Session, type WebConten
 import { existsSync } from 'node:fs'
 import { extname, basename, join } from 'node:path'
 import { BROWSE_MAX_CONTROLS, BROWSE_TEXT_CHARS } from '../../shared/desk.ts'
-import type { DeskLaunch } from '../../shared/desk.ts'
+import type { DeskLaunch, KeyInput, PageFrame, PointerInput } from '../../shared/desk.ts'
 import { pageActiveNames, pageScroll, pageSnapshot, pageSubmitFor, type DeskPage, type DeskWindows } from './chrome.ts'
 
 /**
@@ -14,6 +14,8 @@ import { pageActiveNames, pageScroll, pageSnapshot, pageSubmitFor, type DeskPage
 export const BROWSER_PARTITION = 'persist:brain-browser'
 export const VIEW = { width: 1100, height: 800 }
 const STEP_MS = 15_000
+const FRAME_MS = 66
+const EDIT_COMMANDS = new Set(['selectAll', 'copy', 'paste', 'cut', 'undo', 'redo'])
 const LOAD_MS = 30_000
 
 const KEYS: Record<string, { code: string; vk: number; text?: string }> = {
@@ -153,7 +155,80 @@ function adapterFor(host: BaseWindow, wc: WebContents): DeskPage {
     await settle()
   }
 
+  /** A key from the wide picture. Edit commands use the page's own editing (paste reads the Mac clipboard). */
+  const key = async (ev: KeyInput) => {
+    const mods = ev.modifiers | 0
+    if (ev.command && EDIT_COMMANDS.has(ev.command)) {
+      const base = { key: ev.key, code: ev.code, modifiers: mods, windowsVirtualKeyCode: ev.key.toUpperCase().charCodeAt(0) }
+      await cdp('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base, commands: [ev.command] })
+      await cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...base })
+      return
+    }
+    if (ev.text && !(mods & 0b0110)) {
+      await cdp('Input.insertText', { text: ev.text })
+      return
+    }
+    const named = KEYS[ev.key === ' ' ? 'Space' : ev.key]
+    const vk = named?.vk ?? ev.key.toUpperCase().charCodeAt(0)
+    const base = { key: ev.key, code: named?.code ?? ev.code, modifiers: mods, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk }
+    const text = named?.text && !(mods & 0b0110) ? { text: named.text, unmodifiedText: named.text } : {}
+    await cdp('Input.dispatchKeyEvent', { type: 'text' in text ? 'keyDown' : 'rawKeyDown', ...base, ...text })
+    await cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...base })
+  }
+
+  const pointer = async (ev: PointerInput) => {
+    const type = ev.type === 'down' ? 'mousePressed' : ev.type === 'up' ? 'mouseReleased' : 'mouseMoved'
+    await cdp('Input.dispatchMouseEvent', {
+      type,
+      x: ev.x,
+      y: ev.y,
+      button: ev.type === 'move' && !ev.buttons ? 'none' : ev.button,
+      buttons: ev.buttons | 0,
+      clickCount: ev.type === 'move' ? 0 : Math.max(1, ev.clickCount | 0)
+    })
+  }
+
+  let watchers = 0
+  const frameOf = async (): Promise<PageFrame | null> => {
+    const img = await wc.capturePage()
+    if (img.isEmpty()) return null
+    const size = img.getSize()
+    const sized = size.width === VIEW.width && size.height === VIEW.height ? img : img.resize({ width: VIEW.width, height: VIEW.height, quality: 'good' })
+    return { src: Buffer.from(sized.toJPEG(60)).toString('base64'), url: wc.getURL() }
+  }
+  /** Paint events fire only when the page changes. A burst sends its first frame and, after 66 ms, one more of the latest state. */
+  const watch = (send: (frame: PageFrame) => void) => {
+    let stopped = false
+    let last = 0
+    let timer: NodeJS.Timeout | null = null
+    const emit = () => {
+      timer = null
+      last = Date.now()
+      void frameOf().then((f) => {
+        if (f && !stopped) send(f)
+      }).catch(() => {})
+    }
+    const onPaint = () => {
+      if (timer || stopped) return
+      timer = setTimeout(emit, Math.max(0, FRAME_MS - (Date.now() - last)))
+    }
+    wc.on('paint', onPaint)
+    if (++watchers === 1) wc.setFrameRate(30)
+    emit()
+    return () => {
+      if (stopped) return
+      stopped = true
+      if (timer) clearTimeout(timer)
+      if (wc.isDestroyed()) return
+      wc.off('paint', onPaint)
+      if (--watchers === 0) wc.setFrameRate(10)
+    }
+  }
+
   return {
+    pointer,
+    key,
+    watch,
     goto: async (url) => {
       // A dead link or a slow page still leaves something in the window to read.
       await within(wc.loadURL(url), LOAD_MS, 'The page').catch((e) => {

@@ -7,6 +7,7 @@ import type { AiKind } from '../shared/contracts'
 import type { SessionCmd, StreamEvent } from './ai-cli'
 import { BROWSER_RULE, CHAT_RULES, cursorReachArgs } from '../shared/chat-reach'
 import { acpBrowserServers } from './browser-bridge'
+import { chatEnv } from './chat-env'
 import { binEnv, projectBinEnv, resolveBin } from './ai-cli'
 import { loginCli } from './install'
 import { acpPromptParts, type Attach } from './attach'
@@ -956,7 +957,7 @@ async function bootPoolNow(kind: 'grok' | 'cursor', cwd: string, key: string, la
   if (again && !again.rpc.dead) return again
   const bin = resolveBin(kind)
   if (!bin) throw new Error(`${kind} is not installed on this computer`)
-  const env = lane === 'factory' ? factoryChildEnv(cwd) : binEnv()
+  const env = lane === 'factory' ? factoryChildEnv(cwd) : chatEnv()
   const factoryDir = lane === 'factory' && kind === 'cursor' ? workRepo : undefined
   const proc = spawnBin(bin, await spawnArgs(kind, cwd, lane, factoryDir), cwd, env)
   const pool: Pool = {

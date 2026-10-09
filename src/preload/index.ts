@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AiKind } from '../shared/contracts'
 import type { Approver, FactoryTriage, RepoProfile, RunRecord as FactoryRun } from '../shared/factory'
-import type { BotState, DeskBot, DeskMessage, DeskWelcome } from '../shared/desk'
+import type { BotState, DeskBot, DeskMessage, DeskWelcome, KeyInput, PointerInput } from '../shared/desk'
 import type { MediaAddResult, MediaEnableResult, MediaLibraryResult, MediaStatus } from '../shared/media'
 
 type FactoryResult = { ok: true; run: FactoryRun | null } | { ok: false; error: string }
@@ -1159,6 +1159,17 @@ const brain = {
     wheel: (owner: string, deltaY: number) => ipcRenderer.invoke('browser:wheel', owner, deltaY) as Promise<void>,
     showWindow: () => ipcRenderer.invoke('browser:showWindow') as Promise<void>,
     close: (owner: string) => ipcRenderer.invoke('browser:close', owner) as Promise<void>,
+    /** Frames for a wide picture: on starts them, off stops them. */
+    watch: (owner: string, on: boolean) => ipcRenderer.invoke('browser:watch', owner, on) as Promise<void>,
+    onFrame: (fn: (frame: { owner: string; url: string; src: string }) => void) => {
+      const h = (_e: unknown, frame: { owner: string; url: string; src: string }) => fn(frame)
+      ipcRenderer.on('browser:frame', h)
+      return () => {
+        ipcRenderer.removeListener('browser:frame', h)
+      }
+    },
+    pointer: (owner: string, ev: PointerInput) => ipcRenderer.invoke('browser:pointer', owner, ev) as Promise<void>,
+    key: (owner: string, ev: KeyInput) => ipcRenderer.invoke('browser:key', owner, ev) as Promise<void>,
     /** A chat CLI's brain-browser tool opened or moved the page for this owner. */
     onOpened: (fn: (owner: string) => void) => {
       const h = (_e: unknown, owner: string) => fn(String(owner || ''))

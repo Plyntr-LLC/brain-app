@@ -6,13 +6,11 @@ export function ChatPageTurn(props: {
   mode: 'small' | 'wide' | 'note'
   src: string | null
   signIn: boolean
+  owner: string
+  active: boolean
   onToggle: () => void
   onHide: () => void
   onShow: () => void
-  onClickAt: (x: number, y: number) => void
-  onTypeText: (text: string) => void
-  onPressKey: (key: string) => void
-  onWheel: (deltaY: number) => void
   onWiden: () => void
 }): ReactNode {
   return (
@@ -21,12 +19,10 @@ export function ChatPageTurn(props: {
       <BrowserPicture
         mode={props.mode}
         src={props.src}
+        owner={props.owner}
+        active={props.active}
         onToggle={props.onToggle}
         onShow={props.onShow}
-        onClickAt={props.onClickAt}
-        onTypeText={props.onTypeText}
-        onPressKey={props.onPressKey}
-        onWheel={props.onWheel}
       />
       {props.signIn ? (
         <button type="button" className="ghost" onClick={props.onWiden}>

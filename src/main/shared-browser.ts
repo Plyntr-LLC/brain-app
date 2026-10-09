@@ -1,7 +1,7 @@
 import { onlyWebAddress } from '../shared/page-picture.ts'
 import { createDeskBrowser } from './desk/browser.ts'
 import { makeInAppLaunch } from './desk/inapp.ts'
-import type { DeskBrowser } from '../shared/desk.ts'
+import type { DeskBrowser, KeyInput, PageFrame, PointerInput } from '../shared/desk.ts'
 
 /**
  * One browser for the app, inside Brain. Every desk controller, every chat, and every chat CLI's
@@ -44,6 +44,19 @@ export function pressShared(owner: string, key: string): Promise<void> {
 
 export function wheelShared(owner: string, deltaY: number): Promise<void> {
   return sharedDeskBrowser().wheel?.(deltaY, owner) ?? Promise.resolve()
+}
+
+export function pointerShared(owner: string, ev: PointerInput): Promise<void> {
+  return sharedDeskBrowser().pointer?.(owner, ev) ?? Promise.resolve()
+}
+
+export function keyShared(owner: string, ev: KeyInput): Promise<void> {
+  return sharedDeskBrowser().keyInput?.(owner, ev) ?? Promise.resolve()
+}
+
+/** Frames of that place's page for a wide picture. Returns the stop. */
+export function watchShared(owner: string, send: (frame: PageFrame) => void): () => void {
+  return sharedDeskBrowser().watch?.(owner, send) ?? (() => {})
 }
 
 export function showShared(): void {

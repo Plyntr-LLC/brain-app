@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { binEnv, resolveBin } from './ai-cli'
 import { grokAcpArgs, grokFactoryAcpArgs, grokFactorySocket, grokLeaderSocket, grokTuiArgs } from './grok-args'
+import { chatEnv } from './chat-env'
 
 export { grokAcpArgs, grokFactoryAcpArgs, grokFactorySocket, grokLeaderSocket, grokTuiArgs }
 
@@ -85,7 +86,8 @@ export function makeLeader(socketFn: () => string, envFn: () => NodeJS.ProcessEn
   }
 }
 
-const chatLeader = makeLeader(grokLeaderSocket)
+// The chat leader runs every chat Grok session and Show terminal's Grok TUI, so it gets the chat env.
+const chatLeader = makeLeader(grokLeaderSocket, () => chatEnv())
 let factoryEnvFn: () => NodeJS.ProcessEnv = () => binEnv()
 const factoryLeader = makeLeader(grokFactorySocket, () => factoryEnvFn())
 

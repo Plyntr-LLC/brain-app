@@ -2,7 +2,8 @@ import { resolveClaudeRun } from '../shared/claude-defaults'
 import type { StreamEvent } from './ai-cli'
 import { BROWSER_RULE, CHAT_RULES, claudeChatMode, claudeChatPermissionArgs } from '../shared/chat-reach'
 import { claudeBrowserArgs } from './browser-bridge'
-import { binEnv, resolveBin } from './ai-cli'
+import { chatEnv } from './chat-env'
+import { resolveBin } from './ai-cli'
 import { claudeContent, type Attach } from './attach'
 import { emitChat, markChatBusy } from './chat-fan'
 import { controlAnswered, controlTimedOut, newPlanControls, type PlanControls } from './claude-plan'
@@ -426,7 +427,7 @@ async function claudeWarmNow(opts: { tabId: string; cwd: string; model?: string;
   const bin = resolveBin('claude')
   if (!bin) throw new Error('Claude is not installed on this computer')
   const args = claudeChatArgs({ tabId: opts.tabId, model: run.model, effort: run.effort, plan: planTabs.has(opts.tabId) })
-  const proc = spawnBin(bin, args, opts.cwd, binEnv())
+  const proc = spawnBin(bin, args, opts.cwd, chatEnv())
   const s: Sess = {
     tabId: opts.tabId,
     cwd: opts.cwd,

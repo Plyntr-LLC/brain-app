@@ -55,14 +55,23 @@ await esbuild.build({
         export const app = { getPath(){ return "/tmp" }, getAppPath(){ return "/tmp" }, getVersion(){ return "0" }, isPackaged: false, on(){}, quit(){} }
         export const BrowserWindow = { getAllWindows(){ return [] }, fromWebContents(){ return null } }
         export const ipcMain = { handle(channel, fn){ handlers.set(channel, fn) }, on(){} }
+        const listeners = new Map()
+        // The one window: what main sends to it reaches the preload's listeners, as in the app.
+        const sender = {
+          isDestroyed(){ return false },
+          once(){},
+          send(channel, payload){ for (const h of listeners.get(channel) || []) h({}, payload) }
+        }
         export const ipcRenderer = {
           invoke(channel, ...args){
             globalThis.__ipcLog = globalThis.__ipcLog || []
             globalThis.__ipcLog.push([channel, ...args])
             const fn = handlers.get(channel)
-            return fn ? Promise.resolve(fn(null, ...args)) : Promise.resolve(undefined)
+            return fn ? Promise.resolve().then(() => fn({ sender }, ...args)) : Promise.resolve(undefined)
           },
-          on(){}, removeListener(){}, send(){}
+          on(channel, h){ listeners.set(channel, [...(listeners.get(channel) || []), h]) },
+          removeListener(channel, h){ listeners.set(channel, (listeners.get(channel) || []).filter((x) => x !== h)) },
+          send(){}
         }
         export const contextBridge = { exposeInMainWorld(name, api){ if (name === "brain") window.brain = api } }
         export const webUtils = { getPathForFile(){ return "" } }

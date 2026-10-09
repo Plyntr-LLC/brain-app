@@ -21,6 +21,8 @@ extraResources:
     to: desk/imessage.cjs
   - from: src/main/browser-mcp.cjs
     to: browser-mcp.cjs
+  - from: src/main/open-guard.cjs
+    to: open-guard.cjs
 mac:
   category: public.app-category.productivity
   target:

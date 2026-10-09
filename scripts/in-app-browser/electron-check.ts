@@ -1,23 +1,26 @@
 // Runs under Electron (see scripts/check-in-app-browser.ts). Phase 1 is the whole check; phase 2 only proves
 // the cookie phase 1 saved is still there after a restart on the same userData.
 import './set-paths.ts'
-import { app, BaseWindow, BrowserWindow, nativeImage, session, type WebContents, type WebContentsView } from 'electron'
+import { app, BaseWindow, BrowserWindow, clipboard, nativeImage, session, type WebContents, type WebContentsView } from 'electron'
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { connect } from 'node:net'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mapClick } from '../../src/shared/page-picture.ts'
 import { BROWSER_RULE } from '../../src/shared/chat-reach.ts'
-import { clickShared, closeShared, faceShared, openSharedPage, sharedDeskBrowser, typeShared, wheelShared } from '../../src/main/shared-browser.ts'
+import { clickShared, closeShared, faceShared, keyShared, openSharedPage, pointerShared, sharedDeskBrowser, typeShared, watchShared, wheelShared } from '../../src/main/shared-browser.ts'
 import { BROWSER_PARTITION, VIEW } from '../../src/main/desk/inapp.ts'
-import { bridgeScriptPath, browserServer, startBrowserBridge, stopBrowserBridge } from '../../src/main/browser-bridge.ts'
-import { claudeChatArgs } from '../../src/main/claude-stream.ts'
+import { bridgeAddress, bridgeScriptPath, browserServer, socketPath, startBrowserBridge, stopBrowserBridge } from '../../src/main/browser-bridge.ts'
+import { claudeChatArgs, claudeKillAll, claudePrompt, claudeWarm } from '../../src/main/claude-stream.ts'
+import { chatEnv, ensureChatShims } from '../../src/main/chat-env.ts'
+import { ptyEnv } from '../../src/main/pty.ts'
+import { ensureShims, factoryEnv } from '../../src/main/factory/gates.ts'
 import { acpKillAll, acpPrompt, acpResume, acpWarm, sessionLoadParams, sessionNewParams } from '../../src/main/acp-session.ts'
 import { codexKillAll, codexPrompt, codexWarm } from '../../src/main/codex-app.ts'
 import { LineRpc } from '../../src/main/line-rpc.ts'
-import { binEnv, resolveBin } from '../../src/main/ai-cli.ts'
+import { binEnv, projectBinEnv, resolveBin } from '../../src/main/ai-cli.ts'
 
 const ROOT = process.env.BB_ROOT || process.cwd()
 const PHASE = process.env.BB_PHASE || '1'
@@ -71,6 +74,13 @@ const PAGES: Record<string, string> = {
 <form onsubmit="event.preventDefault(); document.getElementById('found').textContent = 'searched'"><input name="q" placeholder="Query"><button type="submit">Search</button>
 <button type="button" id="buyin" onclick="document.getElementById('bought').textContent = 'purchased'">Buy now</button></form>
 <p id="found">no search</p><p id="bought">not bought</p>`,
+  '/qr': '<!doctype html><title>WhatsApp</title><h1>Use WhatsApp on your computer</h1><canvas aria-label="Scan this QR code to link a device!" width="200" height="200"></canvas>',
+  '/scantext': '<!doctype html><title>Help</title><h1>How to link</h1><p>Scan to log in with your phone.</p>',
+  '/input': `<!doctype html><title>Input</title>
+<input id="f1" value="hello world here" style="font-size:28px;width:520px;display:block;margin:20px">
+<input id="f2" value="second" style="font-size:28px;width:520px;display:block;margin:20px">
+<div id="hover" style="width:240px;height:90px;margin:20px;background:#ddd">hover me</div><p id="log"></p>
+<script>document.getElementById('hover').addEventListener('mouseover', () => { document.getElementById('log').textContent += 'over;' })</script>`,
   '/setcookie': '<!doctype html><title>Set cookie</title><h1>Cookie set</h1><script>document.cookie = "brain=1; max-age=3600; path=/"</script>',
   '/cookie': '<!doctype html><title>Cookie</title><h1>Cookie page</h1><p id="c"></p><script>document.getElementById("c").textContent = "cookies: " + (document.cookie || "none")</script>'
 }
@@ -162,11 +172,20 @@ function rawCall(sock: string, body: unknown): Promise<any> {
   })
 }
 
+/** Browser main processes by executable path (helpers end in "Helper…" and never match). */
 function chromeMains(): string[] {
+  const rows = execFileSync('ps', ['-axo', 'pid=,comm='], { encoding: 'utf8' }).split('\n').map((l) => l.trim())
+  return rows.filter((l) => /\/MacOS\/(Google Chrome|Google Chrome for Testing|Chromium)$/.test(l)).map((l) => l.split(/\s+/)[0])
+}
+
+/** Google Chrome's window and tab counts, only when it is already running (asking a closed Chrome would start it). */
+function chromeTabs(): string | null {
+  const running = execFileSync('ps', ['-axo', 'comm='], { encoding: 'utf8' }).split('\n').some((l) => l.trim().endsWith('/Google Chrome.app/Contents/MacOS/Google Chrome'))
+  if (!running) return null
   try {
-    return execFileSync('pgrep', ['-x', 'Google Chrome'], { encoding: 'utf8' }).split('\n').filter(Boolean)
-  } catch {
-    return []
+    return execFileSync('osascript', ['-e', 'tell application "Google Chrome"\nset n to 0\nrepeat with w in windows\nset n to n + (count of tabs of w)\nend repeat\nreturn ((count of windows) as text) & "/" & (n as text)\nend tell'], { encoding: 'utf8' }).trim()
+  } catch (e) {
+    return `osascript failed: ${String((e as Error).message).slice(0, 60)}`
   }
 }
 
@@ -233,12 +252,18 @@ async function phaseOne() {
   const chromeBefore = new Set(chromeMains())
   const { server, base } = await serve()
   const opened: string[] = []
+  const openedUrls: { owner: string; url: string }[] = []
+  const onOpened = (o: string, u?: string) => {
+    opened.push(o)
+    if (u) openedUrls.push({ owner: o, url: u })
+  }
+  ensureChatShims(join(ROOT, 'src', 'main', 'open-guard.cjs'))
   const bridge = await startBrowserBridge({
     dir: userData,
     script: bridgeScriptPath({ appPath: ROOT }),
     exec: process.execPath,
     browser: sharedDeskBrowser(),
-    onOpened: (o) => opened.push(o)
+    onOpened
   })
   log(`bridge ${bridge.sock}`)
 
@@ -367,9 +392,11 @@ async function phaseOne() {
   const hostsBefore = BaseWindow.getAllWindows().length
   const waA = await tool(a, 'browser_open', { url: 'https://web.whatsapp.com' })
   const waB = await tool(b, 'browser_open', { url: 'https://web.whatsapp.com' })
-  const waText = await readUntil(b, /Scan to log in|Log in with phone number/i, 25_000)
+  const waSays = await readUntil(b, /wants a sign-in/, 25_000)
   writeFileSync(join(SHOTS, 'whatsapp.jpg'), picture((await faceShared('chat:B')).src).buf)
+  const waText = String(await wcAt('web.whatsapp.com')[0].executeJavaScript('document.body.innerText'))
   check('11 WhatsApp is the scan-to-log-in page, not the unsupported-browser page', /Scan to log in|Log in with phone number/i.test(waText) && !/works with Google Chrome|update (Google Chrome|your browser)/i.test(waText), `${waA.text.slice(0, 60)} | ${waText.slice(0, 160)}`)
+  check('5b WhatsApp\'s QR page is a sign-in for the tool and the thread picture (just works 5)', /wants a sign-in/.test(waSays) && (await faceShared('chat:B')).signIn, waSays.slice(0, 120))
   check('11 two chats share one WhatsApp window (F4)', BaseWindow.getAllWindows().length === hostsBefore + 1 && wcAt('web.whatsapp.com').length === 1, `${hostsBefore} -> ${BaseWindow.getAllWindows().length}, ${waB.isError}`)
   const waWc = wcAt('web.whatsapp.com')[0]
   await tool(a, 'browser_close')
@@ -402,7 +429,7 @@ async function phaseOne() {
   const cwd = mkdtempSync(join(tmpdir(), 'bb-cli-'))
   const baseArgs = claudeChatArgs({ tabId: 'base', model: 'sonnet', effort: 'low', plan: false })
   check('15 with the bridge stopped, Claude gets no browser args', !baseArgs.includes('--mcp-config'))
-  const again = await startBrowserBridge({ dir: userData, script: bridgeScriptPath({ appPath: ROOT }), exec: process.execPath, browser: sharedDeskBrowser(), onOpened: (o) => opened.push(o) })
+  const again = await startBrowserBridge({ dir: userData, script: bridgeScriptPath({ appPath: ROOT }), exec: process.execPath, browser: sharedDeskBrowser(), onOpened })
   const stale = await rawCall(again.sock, { token: oldToken, owner: 'chat:A', tool: 'browser_open', args: { url: `${base}/next` } })
   check('13 a second start listens, and the first run\'s token is refused (F12, F17)', existsSync(again.sock) && again.token !== oldToken && stale?.ok === false, JSON.stringify(stale))
   a.kill()
@@ -513,6 +540,225 @@ async function phaseOne() {
   const gr = await deadline(codexPrompt({ tabId: 'G2', cwd, text: ask, onEvent: noop }), 300_000, 'Codex resumed turn')
   check('18 the resumed Codex tab browses as chat:G2', /Purple Walrus 42/.test(gr) && opened.includes('chat:G2'), gr.slice(0, 120))
   codexKillAll()
+
+  // ── 0.1.136: just works ──────────────────────────────────────────────────────────────────────
+  const brainDir = join(homedir(), 'Projects', 'agency-brain')
+  const recorder = join(userData, 'open-recorder.sh')
+  const recorded = join(userData, 'open-recorded.txt')
+  writeFileSync(recorder, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${recorded}'\n`)
+  chmodSync(recorder, 0o755)
+  const openVia = (args: string[]) => {
+    rmSync(recorded, { force: true })
+    const ran = spawnSync('open', args, { env: { ...chatEnv(), BRAIN_OPEN_BIN: recorder }, encoding: 'utf8' })
+    return { code: ran.status, err: ran.stderr || '', rec: existsSync(recorded) ? readFileSync(recorded, 'utf8').trim() : null }
+  }
+  const refused = [
+    ['https://example.com'], ['-a', 'Google Chrome', 'https://example.com'], ['README.md', 'https://example.com'],
+    ['https://example.com/sample'], ['https://example.com/devices'], ['https://example.com/association'], ['https://example.com/?callback=x'],
+    ['https://example.com/login/devicex'], ['https://example.com/?redirect_uri=x'], ['http://localhost:3000'],
+    ['https://example.com/device'], ['https://example.com/login/device'], ['https://example.com/?client_id=a&response_type=code'],
+    ['https://github.com/pulls'], ['https://github.com/login/devicex'], ['https://github.com/devices'], ['https://accounts.google.com/o/oauth2/auth?client_id=a'],
+    ['https://not.github.com/login/device'], ['https://github.com.evil.com/login/device'], ['https://github.com/login/device', 'https://example.com']
+  ]
+  const badRefuse = refused.map((args) => ({ args, r: openVia(args) })).filter(({ r }) => !(r.code === 1 && /do not open web pages in Chrome/.test(r.err) && r.rec === null))
+  check('J1 the open shim refuses every web page, near-miss and mixed call, and opens nothing', badRefuse.length === 0, JSON.stringify(badRefuse.slice(0, 3)))
+  const passed = [
+    ['/no/such/file'], ['-a', 'TextEdit'], ['https://github.com/login/device'], ['-a', 'Google Chrome', 'https://github.com/login/device'],
+    ['https://accounts.google.com/o/oauth2/auth?client_id=a&response_type=code&redirect_uri=http://localhost:1'], ['https://dashboard.doppler.com/workplace/auth/cli/abc']
+  ]
+  const badPass = passed.map((args) => ({ args, r: openVia(args) })).filter(({ args, r }) => r.rec !== args.join(' '))
+  check('J1 files, apps and CLI sign-in links reach the real open with their exact arguments', badPass.length === 0, JSON.stringify(badPass.slice(0, 3)))
+
+  const shimDir = ensureChatShims()
+  const hasChat = (env: Record<string, string | undefined>) => env.BRAIN_CHAT === '1' && String(env.PATH || '').split(':')[0] === shimDir
+  const noChat = (env: Record<string, string | undefined>) => env.BRAIN_CHAT === undefined && !String(env.PATH || '').split(':').includes(shimDir)
+  check('J4 chat env and CLI TUIs get the marker and shims; shell tabs, Desk and Factory do not',
+    hasChat(chatEnv()) && hasChat(ptyEnv(true)) && noChat(ptyEnv(false)) && noChat(binEnv()) && noChat(factoryEnv(projectBinEnv(cwd), ensureShims(join(userData, 'factory-shims')))))
+
+  const oracleBefore = { pids: new Set(chromeMains()), tabs: chromeTabs() }
+  const oracleSame = (label: string) => {
+    const fresh = chromeMains().filter((pid) => !oracleBefore.pids.has(pid))
+    const tabs = chromeTabs()
+    check(`${label}: no new browser process and Chrome's windows/tabs unchanged`, fresh.length === 0 && tabs === oracleBefore.tabs, `new ${fresh.join(',')} tabs ${oracleBefore.tabs} -> ${tabs}`)
+  }
+  const shellAsk = 'Run exactly this in the shell and then show me its exact output, nothing else: command -v open; open https://example.com'
+  const shimSeen = (answer: string) => answer.includes('chat-shims/open') && /do not open web pages/i.test(answer)
+  await claudeWarm({ tabId: 'K1', cwd, model: 'sonnet', effort: 'low' })
+  const k1 = await deadline(claudePrompt({ tabId: 'K1', cwd, text: shellAsk, onEvent: noop }), 300_000, 'Claude shell turn')
+  check('J2 Claude\'s shell has the open shim and it refuses', shimSeen(k1), k1.slice(0, 200))
+  await acpWarm({ kind: 'grok', tabId: 'K2', cwd })
+  const k2 = await deadline(acpPrompt({ kind: 'grok', tabId: 'K2', cwd, text: shellAsk, alwaysApprove: true, onEvent: noop }), 300_000, 'Grok shell turn')
+  check('J2 Grok\'s shell (its chat leader) has the open shim and it refuses', shimSeen(k2), k2.slice(0, 200))
+  await acpWarm({ kind: 'cursor', tabId: 'K3', cwd })
+  const k3 = await deadline(acpPrompt({ kind: 'cursor', tabId: 'K3', cwd, text: shellAsk, alwaysApprove: true, onEvent: noop }), 300_000, 'Cursor shell turn')
+  check('J2 Cursor\'s shell has the open shim and it refuses', shimSeen(k3), k3.slice(0, 200))
+  await codexWarm({ tabId: 'K4', cwd })
+  const k4 = await deadline(codexPrompt({ tabId: 'K4', cwd, text: shellAsk, onEvent: noop }), 300_000, 'Codex shell turn')
+  check('J2 Codex\'s shell has the open shim and it refuses', shimSeen(k4), k4.slice(0, 200))
+  oracleSame('J2')
+
+  const plain1 = 'Open https://example.com and tell me the main heading.'
+  const plain2 = 'Check my WhatsApp. Is it asking me to log in?'
+  const plainRuns: [string, (text: string) => Promise<string>][] = [
+    ['Claude', async (text) => { await claudeWarm({ tabId: 'P1', cwd: brainDir, model: 'sonnet', effort: 'low' }); return claudePrompt({ tabId: 'P1', cwd: brainDir, text, onEvent: noop }) }],
+    ['Grok', async (text) => { await acpWarm({ kind: 'grok', tabId: 'P2', cwd: brainDir }); return acpPrompt({ kind: 'grok', tabId: 'P2', cwd: brainDir, text, alwaysApprove: true, onEvent: noop }) }],
+    ['Cursor', async (text) => { await acpWarm({ kind: 'cursor', tabId: 'P3', cwd: brainDir }); return acpPrompt({ kind: 'cursor', tabId: 'P3', cwd: brainDir, text, alwaysApprove: true, onEvent: noop }) }],
+    ['Codex', async (text) => { await codexWarm({ tabId: 'P4', cwd: brainDir }); return codexPrompt({ tabId: 'P4', cwd: brainDir, text, onEvent: noop }) }]
+  ]
+  for (const [i, [name, run]] of plainRuns.entries()) {
+    const owner = `chat:P${i + 1}`
+    const first = await deadline(run(plain1), 300_000, `${name} plain turn 1`)
+    const second = await deadline(run(plain2), 300_000, `${name} plain turn 2`)
+    const urls = openedUrls.filter((r) => r.owner === owner).map((r) => r.url)
+    check(`J3 ${name}, asked in plain words in the agency brain, used the in-app browser for both`,
+      urls.some((u) => /example\.com/.test(u)) && urls.some((u) => /web\.whatsapp\.com/.test(u)) && /Example Domain/i.test(first) && /scan|QR|log ?in|sign ?in|link/i.test(second),
+      `${urls.join(' ')} | ${first.slice(0, 80)} | ${second.slice(0, 80)}`)
+  }
+  oracleSame('J3')
+  claudeKillAll()
+  acpKillAll()
+  codexKillAll()
+
+  const waDir = join(brainDir, 'code', 'whatsapp')
+  const stub = join(userData, 'stub-playwright.cjs')
+  writeFileSync(stub, `const Module = require('module')
+const load = Module._load
+Module._load = function (request) {
+  const m = load.apply(this, arguments)
+  if (request !== 'playwright') return m
+  return { ...m, chromium: { launchPersistentContext: async () => { console.log('STUB-LAUNCH'); process.exit(0) } } }
+}
+`)
+  const label = 'bbcheck-throwaway'
+  const waRun = (args: string[], chat: boolean) => {
+    const env: NodeJS.ProcessEnv = { ...cliEnv() }
+    delete env.BRAIN_CHAT
+    if (chat) env.BRAIN_CHAT = '1'
+    const t = Date.now()
+    const ran = spawnSync('node', ['--require', stub, 'wa.cjs', ...args], { cwd: waDir, env, encoding: 'utf8', timeout: 20_000 })
+    return { code: ran.status, out: `${ran.stdout}${ran.stderr}`, ms: Date.now() - t }
+  }
+  const fileForSend = join(userData, 'note.txt')
+  writeFileSync(fileForSend, 'x')
+  const launching = [['link', label], ['status', label], ['read', label], ['voices', label, '--chat', 'X'], ['reply', label, '--chat', 'X', '--text', 't'], ['send', label, '--chat', 'X', '--file', fileForSend], ['batch', label, '--steps', '[{"action":"read","chat":"X"}]'], ['stay', label]]
+  const waOracle = new Set(chromeMains())
+  const waBad = launching.map((args) => ({ args, r: waRun(args, true) })).filter(({ r }) => !(r.code === 2 && /use the brain-browser tools on https:\/\/web\.whatsapp\.com/.test(r.out) && !r.out.includes('STUB-LAUNCH') && r.ms < 2000))
+  check('J4 every wa.cjs command that would open Chrome stops inside Brain, before launching', waBad.length === 0 && chromeMains().every((pid) => waOracle.has(pid)), JSON.stringify(waBad.slice(0, 2)))
+  const selfTest = waRun(['self-test'], true)
+  check('J4 wa.cjs self-test still runs inside Brain', /\bok\b/.test(selfTest.out) && !selfTest.out.includes('STUB-LAUNCH'), selfTest.out.slice(-120))
+  const withWindow = waRun(['status', label, '--window'], true)
+  const outside = waRun(['status', label], false)
+  rmSync(join(waDir, 'profiles', label), { recursive: true, force: true })
+  check('J4 --window, or running outside Brain, gets past the guard to the launch', withWindow.out.includes('STUB-LAUNCH') && outside.out.includes('STUB-LAUNCH'), `${withWindow.out.slice(-80)} | ${outside.out.slice(-80)}`)
+
+  const v = await mcpFor('chat:V')
+  const qr = await tool(v, 'browser_open', { url: `${base}/qr` })
+  const qrFace = await faceShared('chat:V')
+  const scan = await tool(v, 'browser_open', { url: `${base}/scantext` })
+  const scanFace = await faceShared('chat:V')
+  check('J5 a QR login canvas is a sign-in; a page that only mentions scanning is not', /wants a sign-in/.test(qr.text) && qrFace.signIn && !/wants a sign-in/.test(scan.text) && !scanFace.signIn, `${qr.text.slice(0, 60)} | ${scan.text.slice(0, 60)}`)
+
+  const u = await mcpFor('chat:U')
+  await tool(u, 'browser_open', { url: `${base}/tall` })
+  const uFrames: { url: string; src: string }[] = []
+  const stopU = watchShared('chat:U', (f) => uFrames.push(f))
+  await tool(v, 'browser_open', { url: `${base}/form` })
+  const vFrames: { url: string; src: string }[] = []
+  const stopV = watchShared('chat:V', (f) => vFrames.push(f))
+  const tw = Date.now()
+  while (!vFrames.length && Date.now() - tw < 2000) await sleep(50)
+  const formFrame = vFrames[vFrames.length - 1]
+  check('J6 a watch sends a frame within 2 s (1100x800, this page)', !!formFrame && /\/form$/.test(formFrame.url) && picture(formFrame.src).width === 1100, formFrame?.url)
+  await sleep(300)
+  const quietFrom = vFrames.length
+  await sleep(1000)
+  check('J6 a quiet page sends no frame for a second', vFrames.length === quietFrom, `${vFrames.length - quietFrom} frames`)
+  const uBefore = uFrames.length
+  await tool(v, 'browser_open', { url: `${base}/next` })
+  const t1 = Date.now()
+  while (!vFrames.some((f) => /\/next$/.test(f.url)) && Date.now() - t1 < 2000) await sleep(50)
+  const nextFrame = [...vFrames].reverse().find((f) => /\/next$/.test(f.url))
+  check('J6 after navigating, a new frame of the new page arrives within 2 s', !!nextFrame && nextFrame.src !== formFrame?.src, nextFrame?.url)
+  check('J6 another place\'s watcher got none of these frames', uFrames.slice(uBefore).every((f) => !/\/(form|next)$/.test(f.url)))
+  await tool(v, 'browser_open', { url: 'https://web.whatsapp.com' })
+  const t2 = Date.now()
+  while (!vFrames.some((f) => /web\.whatsapp\.com/.test(f.url)) && Date.now() - t2 < 5000) await sleep(50)
+  const waFrame = [...vFrames].reverse().find((f) => /web\.whatsapp\.com/.test(f.url))
+  check('J6 when the place switches to WhatsApp, its frames come from the WhatsApp window', !!waFrame && waFrame.src !== nextFrame?.src, waFrame?.url)
+  stopV()
+  stopU()
+  await tool(v, 'browser_open', { url: `${base}/form` })
+  const afterStop = vFrames.length
+  await sleep(2000)
+  check('J6 after unwatch, a navigation sends nothing', vFrames.length === afterStop)
+
+  await tool(v, 'browser_open', { url: `${base}/input` })
+  const inputWc = wcAt('/input')[0]
+  const rectOf = async (sel: string) => (await inputWc.executeJavaScript(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom } })()`)) as { l: number; r: number; t: number; b: number }
+  const js = (code: string) => inputWc.executeJavaScript(code)
+  const box1 = await rectOf('#f1')
+  const midY = (box1.t + box1.b) / 2
+  const press = (type: 'down' | 'up' | 'move', x: number, y: number, clickCount = 1, buttons = 1) => pointerShared('chat:V', { type, x, y, button: 'left', buttons, clickCount })
+  await press('down', box1.l + 6, midY)
+  for (let i = 1; i <= 4; i++) await press('move', box1.l + 6 + ((box1.r - box1.l - 12) * i) / 4, midY, 0, 1)
+  await press('up', box1.r - 6, midY, 1, 0)
+  const sel = (await js('[document.activeElement.id, f1.selectionStart, f1.selectionEnd]')) as [string, number, number]
+  check('J7 a drag across the field selects text', sel[0] === 'f1' && sel[2] > sel[1], JSON.stringify(sel))
+  const wordX = box1.l + 30
+  await press('down', wordX, midY, 1)
+  await press('up', wordX, midY, 1, 0)
+  await press('down', wordX, midY, 2)
+  await press('up', wordX, midY, 2, 0)
+  const word = await js('f1.value.slice(f1.selectionStart, f1.selectionEnd)')
+  check('J7 a double-click selects one word', word === 'hello', JSON.stringify(word))
+  const hv = await rectOf('#hover')
+  await pointerShared('chat:V', { type: 'move', x: (hv.l + hv.r) / 2, y: (hv.t + hv.b) / 2, button: 'none', buttons: 0, clickCount: 0 })
+  await sleep(100)
+  check('J7 moving the mouse over a box fires its mouseover', /over;/.test(String(await js('document.getElementById("log").textContent'))))
+  const K = (key: string, code: string, modifiers = 0, extra: Record<string, string> = {}) => keyShared('chat:V', { key, code, modifiers, ...extra })
+  await K('Tab', 'Tab')
+  const afterTab = await js('document.activeElement.id')
+  await K('Tab', 'Tab', 8)
+  const afterShiftTab = await js('document.activeElement.id')
+  check('J7 Tab moves to the next field and Shift+Tab back', afterTab === 'f2' && afterShiftTab === 'f1', `${afterTab} ${afterShiftTab}`)
+  await K('Home', 'Home')
+  await K('Delete', 'Delete')
+  check('J7 Delete removes a character', (await js('f1.value')) === 'ello world here', JSON.stringify(await js('f1.value')))
+  clipboard.writeText('pasted 7')
+  await K('a', 'KeyA', 4, { command: 'selectAll' })
+  await K('v', 'KeyV', 4, { command: 'paste' })
+  check('J7 Cmd+V pastes the Mac clipboard into the field', (await js('f1.value')) === 'pasted 7', JSON.stringify(await js('f1.value')))
+  await K('a', 'KeyA', 4, { command: 'selectAll' })
+  await K('x', 'KeyX', 4, { command: 'cut' })
+  const cutValue = await js('f1.value')
+  const board = clipboard.readText()
+  await K('z', 'KeyZ', 4, { command: 'undo' })
+  check('J7 Cmd+A, Cmd+X empties the field into the clipboard and Cmd+Z brings it back', cutValue === '' && board === 'pasted 7' && (await js('f1.value')) === 'pasted 7', `${JSON.stringify(cutValue)} ${JSON.stringify(board)}`)
+  u.kill()
+  v.kill()
+
+  const macAt = bridgeAddress()
+  check('J8 the bridge listens on socketPath for this platform, owner-only', macAt === socketPath(process.platform, userData, process.pid) && (statSync(macAt!).mode & 0o777) === 0o600, String(macAt))
+  const winPath = socketPath('win32', userData, process.pid)
+  const pipePrefix = String.raw`\\.\pipe\brain-browser-` + `${process.pid}-`
+  check('J8 on Windows the path is a named pipe', winPath.startsWith(pipePrefix) && /^[0-9a-f]{8,}$/.test(winPath.slice(pipePrefix.length)), winPath)
+  stopBrowserBridge()
+  const winCwd = mkdtempSync(join(tmpdir(), 'bb-win-'))
+  const sentinel = join(userData, 'browser-999999.sock')
+  writeFileSync(sentinel, '')
+  const home = process.cwd()
+  process.chdir(winCwd)
+  try {
+    await startBrowserBridge({ dir: userData, script: bridgeScriptPath({ appPath: ROOT }), exec: process.execPath, browser: sharedDeskBrowser(), onOpened, platform: 'win32' })
+    const winAt = bridgeAddress()
+    const made = winAt ? join(winCwd, winAt) : ''
+    check('J8 a win32 start listens on the pipe path, sweeps nothing and chmods nothing', !!winAt && winAt.startsWith(pipePrefix) && existsSync(sentinel) && existsSync(made) && (statSync(made).mode & 0o777) !== 0o600, `${winAt} sentinel ${existsSync(sentinel)}`)
+    stopBrowserBridge()
+  } finally {
+    process.chdir(home)
+    rmSync(winCwd, { recursive: true, force: true })
+    rmSync(sentinel, { force: true })
+  }
 
   const newChrome = chromeMains().filter((p) => !chromeBefore.has(p))
   check('19 no new Google Chrome main process (F16)', newChrome.length === 0, newChrome.join(','))
