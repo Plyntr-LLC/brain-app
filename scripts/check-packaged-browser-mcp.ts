@@ -1,5 +1,5 @@
 // After `npm run pack:mac`: start the browser MCP server exactly as the packed app would hand it to a chat CLI
-// (same path builder, same spec builder, the packed Brain executable), then require initialize and the 8 tools.
+// (same path builder, same spec builder, the packed Brain executable), then require initialize and the 9 tools.
 // node --experimental-strip-types scripts/check-packaged-browser-mcp.ts
 import { spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
@@ -38,7 +38,7 @@ child.stdout.on('data', (d) => {
       const init = got.get(1)
       const tools = (m.result?.tools || []).map((t: { name: string }) => t.name)
       if (init?.result?.serverInfo?.name !== 'brain-browser') fail(`initialize: ${JSON.stringify(init)}`)
-      if (tools.length !== 8) fail(`tools: ${tools.join(',')}`)
+      if (tools.length !== 9 || !tools.includes('whatsapp_send')) fail(`tools: ${tools.join(',')}`)
       console.log(`${spec.command} ${script}\ntools: ${tools.join(', ')}\nPACKAGED_BROWSER_MCP_PASS`)
       process.exit(0)
     }

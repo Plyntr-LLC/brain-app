@@ -65,6 +65,15 @@ function typeInto(el: HTMLTextAreaElement, value: string) {
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(el, value)
   el.dispatchEvent(new Event('input', { bubbles: true }))
 }
+/** Waits for the condition (a busy machine renders late) and says whether it came true. */
+async function settles(fn: () => boolean, ms = 3000): Promise<boolean> {
+  const end = Date.now() + ms
+  while (!fn()) {
+    if (Date.now() > end) return false
+    await tick(20)
+  }
+  return true
+}
 async function until(fn: () => boolean, label: string, ms = 4000) {
   const end = Date.now() + ms
   while (!fn()) {
@@ -183,12 +192,12 @@ async function main() {
   toEnd()
   await tick(80)
   await send('next')
-  await tick(200)
+  await settles(() => turns().length === 1 && ownerTurnText(turns()[0]) === 'next' && atEnd())
   const next = turns()
   check('3 a new message moves the small picture under it, thread at the end (F4)', next.length === 1 && ownerTurnText(next[0]) === 'next' && (next[0].querySelector('img') as HTMLImageElement)?.className === '' && atEnd(), next[0] ? ownerTurnText(next[0]) : String(next.length))
   press(next[0], 'Wide')
   await until(() => !!document.querySelector('#stage .page-turn img.wide'), 'wide at the end')
-  await tick(80)
+  await settles(() => atEnd())
   const inView = () => {
     const t = thread().getBoundingClientRect()
     const p = (document.querySelector('#stage .page-turn img.wide') as HTMLElement).getBoundingClientRect()
@@ -203,7 +212,7 @@ async function main() {
   const off4 = watches(false)
   done()
   await send('wide move')
-  await tick(200)
+  await settles(() => turns().length === 1 && ownerTurnText(turns()[0]) === 'wide move' && atEnd())
   const moved = turns()
   check('4 a new message moves the wide picture under it, still wide, thread at the end', moved.length === 1 && ownerTurnText(moved[0]) === 'wide move' && !!moved[0].querySelector('img.wide') && atEnd(), moved[0] ? ownerTurnText(moved[0]) : String(moved.length))
   check('4 across the move at most one stop and one start, one live watch, never two (F5)', watches(true) - on4 <= 1 && watches(false) - off4 <= 1 && watches(true) - watches(false) === 1 && balanced(), `${on4}/${off4} -> ${watches(true)}/${watches(false)}`)
@@ -215,7 +224,7 @@ async function main() {
   await tick(100)
   done()
   await send('small move')
-  await tick(150)
+  await settles(() => turns().length === 1 && ownerTurnText(turns()[0]) === 'small move')
   const small = turns()
   check('5 a small picture moves too', small.length === 1 && ownerTurnText(small[0]) === 'small move' && (small[0].querySelector('img') as HTMLImageElement)?.className === '', small[0] ? ownerTurnText(small[0]) : String(small.length))
 

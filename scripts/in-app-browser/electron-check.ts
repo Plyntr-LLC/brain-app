@@ -270,8 +270,8 @@ async function phaseOne() {
   const a = await mcpFor('chat:A')
   const listed = await a.call('tools/list')
   const names = ((listed?.result?.tools || []) as { name: string }[]).map((t) => t.name).sort()
-  const want = ['browser_click', 'browser_close', 'browser_key', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_scroll', 'browser_type']
-  check('1 tools/list has exactly the 8 tools', JSON.stringify(names) === JSON.stringify(want), names.join(','))
+  const want = ['browser_click', 'browser_close', 'browser_key', 'browser_open', 'browser_read', 'browser_screenshot', 'browser_scroll', 'browser_type', 'whatsapp_send']
+  check('1 tools/list has exactly the 9 tools', JSON.stringify(names) === JSON.stringify(want), names.join(','))
   const t0 = Date.now()
   const first = await tool(a, 'browser_open', { url: `${base}/form` })
   check('1 browser_open returns the heading and numbered controls (F2: under 45 s)', /Purple Walrus 42/.test(first.text) && /#1 link Next page/.test(first.text), `${Date.now() - t0} ms ${first.text}`)
