@@ -182,11 +182,17 @@ function chromeMains(): string[] {
 function chromeTabs(): string | null {
   const running = execFileSync('ps', ['-axo', 'comm='], { encoding: 'utf8' }).split('\n').some((l) => l.trim().endsWith('/Google Chrome.app/Contents/MacOS/Google Chrome'))
   if (!running) return null
-  try {
-    return execFileSync('osascript', ['-e', 'tell application "Google Chrome"\nset n to 0\nrepeat with w in windows\nset n to n + (count of tabs of w)\nend repeat\nreturn ((count of windows) as text) & "/" & (n as text)\nend tell'], { encoding: 'utf8' }).trim()
-  } catch (e) {
-    return `osascript failed: ${String((e as Error).message).slice(0, 60)}`
+  // A running Chrome sometimes answers one Apple Event with -600 (not running); ask again before calling it a failure.
+  let last = ''
+  for (let tries = 0; tries < 3; tries++) {
+    try {
+      return execFileSync('osascript', ['-e', 'tell application "Google Chrome"\nset n to 0\nrepeat with w in windows\nset n to n + (count of tabs of w)\nend repeat\nreturn ((count of windows) as text) & "/" & (n as text)\nend tell'], { encoding: 'utf8' }).trim()
+    } catch (e) {
+      last = String((e as Error).message).slice(0, 60)
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000)
+    }
   }
+  return `osascript failed: ${last}`
 }
 
 function cliEnv(): NodeJS.ProcessEnv {
