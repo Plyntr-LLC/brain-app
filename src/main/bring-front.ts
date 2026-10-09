@@ -21,16 +21,16 @@ export function bringAppFront(): void {
   app.focus({ steal: true })
 }
 
-export function clipOrgLogin(): string {
+export async function clipOrgLogin(): Promise<string> {
   try {
-    return parseGithubOrgLogin(clipboard.readText())
+    return parseGithubOrgLogin(await clipboard.readText())
   } catch {
     return ''
   }
 }
 
-export function notifySetupBack(): void {
-  const org = clipOrgLogin()
+export async function notifySetupBack(): Promise<void> {
+  const org = await clipOrgLogin()
   for (const win of BrowserWindow.getAllWindows()) {
     if (win.isDestroyed()) continue
     win.webContents.send('setup:back', { org })
@@ -47,15 +47,15 @@ export function stopClipboardOrgWatch(): void {
 /** Poll the clipboard until they copy a GitHub org name, then steal focus back. */
 export async function watchClipboardOrg(ms = 180000): Promise<string> {
   const gen = ++orgWatchGen
-  const start = clipboard.readText()
+  const start = await clipboard.readText()
   const until = Date.now() + ms
   while (Date.now() < until && gen === orgWatchGen) {
-    const now = clipboard.readText()
+    const now = await clipboard.readText()
     if (now !== start) {
       const org = parseGithubOrgLogin(now)
       if (org) {
         bringAppFront()
-        notifySetupBack()
+        await notifySetupBack()
         return org
       }
     }
@@ -63,6 +63,6 @@ export async function watchClipboardOrg(ms = 180000): Promise<string> {
   }
   if (gen !== orgWatchGen) return ''
   bringAppFront()
-  notifySetupBack()
+  await notifySetupBack()
   return clipOrgLogin()
 }

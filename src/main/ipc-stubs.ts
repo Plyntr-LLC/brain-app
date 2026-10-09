@@ -1191,7 +1191,7 @@ export function registerStubIpc(): void {
     bringAppFront()
     return { ok: true }
   })
-  ipcMain.handle('setup:clipOrg', () => ({ ok: true, org: clipOrgLogin() }))
+  ipcMain.handle('setup:clipOrg', async () => ({ ok: true, org: await clipOrgLogin() }))
   ipcMain.handle('setup:ensureRepo', async (_e, slug: string) => {
     const id = String(slug || '').trim()
     if (!id) throw new Error('No GitHub team.')

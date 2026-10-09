@@ -174,7 +174,7 @@ app.whenReady().then(() => {
     else mainWin.show()
   })
   app.on('browser-window-focus', () => {
-    notifySetupBack()
+    void notifySetupBack()
     void import('./media/state-poll').then((mod) => mod.pollMediaState())
   })
 })

@@ -21,6 +21,20 @@ function releaseDateFrom(ymlPath) {
   return m ? m[1] : new Date().toISOString()
 }
 
+/** The macOS floor electron-updater checks before it installs, from the yml electron-builder wrote. */
+function minimumFrom(ymlPath) {
+  if (!existsSync(ymlPath)) return ''
+  const m = /^minimumSystemVersion:\s*['"]?([\d.]+)['"]?\s*$/m.exec(readFileSync(ymlPath, 'utf8'))
+  return m ? m[1] : ''
+}
+
+/** The same floor from electron-builder.yml, for a yml electron-builder did not stamp. */
+function minimumFromConfig(configPath) {
+  if (!configPath || !existsSync(configPath)) return ''
+  const m = /^\s+minimumSystemVersion:\s*['"]?([\d.]+)['"]?\s*$/m.exec(readFileSync(configPath, 'utf8'))
+  return m ? m[1] : ''
+}
+
 function writeLatestMacYml(opts) {
   const version = String(opts.version || '')
   const zipPath = String(opts.zipPath || '')
@@ -30,6 +44,7 @@ function writeLatestMacYml(opts) {
   const { size, sha512 } = zipMeta(zipPath)
   const name = require('node:path').basename(zipPath)
   const releaseDate = opts.releaseDate || releaseDateFrom(ymlPath)
+  const minimum = opts.minimumSystemVersion || minimumFrom(ymlPath) || minimumFromConfig(opts.configPath)
   const body = [
     `version: ${version}`,
     'files:',
@@ -39,6 +54,7 @@ function writeLatestMacYml(opts) {
     `path: ${name}`,
     `sha512: ${sha512}`,
     `releaseDate: '${releaseDate}'`,
+    ...(minimum ? [`minimumSystemVersion: ${minimum}`] : []),
     ''
   ].join('\n')
   writeFileSync(ymlPath, body)
@@ -49,7 +65,7 @@ function syncFromRepo(root) {
   const pkg = require(join(root, 'package.json'))
   const zipPath = join(root, 'dist', `Brain-${pkg.version}-mac.zip`)
   const ymlPath = join(root, 'dist', 'latest-mac.yml')
-  return writeLatestMacYml({ version: pkg.version, zipPath, ymlPath })
+  return writeLatestMacYml({ version: pkg.version, zipPath, ymlPath, configPath: join(root, 'electron-builder.yml') })
 }
 
 module.exports = { zipMeta, writeLatestMacYml, syncFromRepo }
