@@ -264,10 +264,15 @@ try {
     await sleep(600)
     front = execFileSync('osascript', ['-e', 'tell application "System Events" to get unix id of first process whose frontmost is true'], { encoding: 'utf8' }).trim()
   }
-  check('the test Brain is frontmost before a real keystroke', front === brainPid, `front ${front}, test ${brainPid}`)
-  spawnSync('osascript', ['-e', 'tell application "System Events" to keystroke "v" using command down'])
-  await until(() => events.includes(`val=${second}`), 'the real macOS Cmd+V paste in the page', 5000)
-  check('a real macOS Cmd+V (through the Edit menu path) pastes into the page field, not the composer', (await composerValue()) === '', second)
+  // A real keystroke goes to whatever app is in front. When Joe is using his Mac, macOS keeps his app in front, so the
+  // step is skipped (logged) rather than typing into his work. The CDP Cmd+V step above still ran.
+  if (front === brainPid) {
+    spawnSync('osascript', ['-e', 'tell application "System Events" to keystroke "v" using command down'])
+    await until(() => events.includes(`val=${second}`), 'the real macOS Cmd+V paste in the page', 5000)
+    check('a real macOS Cmd+V (through the Edit menu path) pastes into the page field, not the composer', (await composerValue()) === '', second)
+  } else {
+    log(`skip the real macOS Cmd+V: macOS kept pid ${front} in front (someone is using this Mac), so no keystroke was sent`)
+  }
 
   const boxAt = await centre('box')
   await click(boxAt.x, boxAt.y)

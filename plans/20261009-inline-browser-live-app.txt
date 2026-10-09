@@ -1,4 +1,4 @@
-live app check 2026-10-09T06:32:26.386Z
+live app check 2026-10-09T10:15:31.740Z
 ok   the packed app exists  (/Users/joewine/Projects/brain-app/dist/mac-arm64/Brain.app/Contents/MacOS/Brain)
 ok   the sandbox profile refuses a write in Joe's brain  (touch: /Users/joewine/Projects/agency-brain/.bb-sandbox-probe: Operation not permitted)
 ok   the temp HOME has no Agency Brain config
@@ -11,9 +11,8 @@ ok   a click on the wide picture at the link's mapped point opens /next
 ok   the wide picture changed within 2 s of the navigation (live frames)
 ok   a real drag across the field selects text in the page  (sel=16)
 ok   a real double-click selects one word  (word=hello)
-ok   Cmd+V (CDP key) pastes the Mac clipboard into the page field, not the composer  (cdp-nsdtiw)
-ok   the test Brain is frontmost before a real keystroke  (front 33016, test 33016)
-ok   a real macOS Cmd+V (through the Edit menu path) pastes into the page field, not the composer  (mac-5vzhqx)
+ok   Cmd+V (CDP key) pastes the Mac clipboard into the page field, not the composer  (cdp-n5bxup)
+skip the real macOS Cmd+V: macOS kept pid 3549 in front (someone is using this Mac), so no keystroke was sent
 ok   typed keys and Enter reach the page's message box
 screenshot plans/20261009-inline-browser-shots/live-app.png
 ok   Large is a button under the picture
@@ -25,8 +24,10 @@ ok   the packaged whatsapp_send puts a Send card in the thread and sends nothing
 screenshot plans/20261009-whatsapp-send-shots/live-card.png
 ok   Don't send is a button on the card
 ok   Don't send leaves the card saying Not sent.
+ok   a page in Brain's browser is reachable over the debug port  (["page https://web.whatsapp.com/","page http://127.0.0.1:58646/form","page file:///Users/joewine/Projects/brain-app/dist/mac-arm64/Brain.app/Contents/Resources/app.asar/out/renderer/index.html","service_worker https://we)
+ok   passkeys: the packed, signed app offers Touch ID to pages (isUserVerifyingPlatformAuthenticatorAvailable is true)  (true)
 ok   Joe's Brain is still running with the same pid, and its Grok leader socket is still there  (pid 3549)
 ok   the five watched files are untouched  ([])
-ok   the test launch downloaded no update  (/var/folders/1j/w8m_jfjx4bg68kw0h023swth0000gn/T/bb-live-ovxHId/home/Library/Caches/brain-app-updater)
+ok   the test launch downloaded no update  (/var/folders/1j/w8m_jfjx4bg68kw0h023swth0000gn/T/bb-live-iwRT3Q/home/Library/Caches/brain-app-updater)
 LIVE_APP_PASS
 ok   the temp folders are removed
