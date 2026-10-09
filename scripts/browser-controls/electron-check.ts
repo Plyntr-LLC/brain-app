@@ -69,7 +69,7 @@ ipcMain.handle = ((ch: string, fn: (...a: unknown[]) => unknown) => {
   return handle(ch, fn as never)
 }) as typeof ipcMain.handle
 const sent: { channel: string; payload: unknown }[] = []
-const fakeWin = { isDestroyed: () => false, isVisible: () => true, webContents: { send: (channel: string, payload: unknown) => sent.push({ channel, payload }) } }
+const fakeWin = { isDestroyed: () => false, isVisible: () => true, isMinimized: () => false, isFocused: () => true, webContents: { send: (channel: string, payload: unknown) => sent.push({ channel, payload }) } }
 ;(BrowserWindow as unknown as { getAllWindows: unknown }).getAllWindows = () => [fakeWin]
 const sender = { once() {}, isDestroyed: () => false, send() {} }
 const call = (ch: string, ...args: unknown[]) => handlers.get(ch)!({ sender }, ...args) as Promise<unknown>

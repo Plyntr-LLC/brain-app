@@ -27,6 +27,7 @@ import { refreshTray, startTray } from './tray'
 import { answerSend, bridgeScriptPath, startBrowserBridge, stopBrowserBridge } from './browser-bridge'
 import { closeAllShared, sharedDeskBrowser } from './shared-browser'
 import { startBrowserUi } from './browser-ui'
+import { enablePasskeys } from './passkeys'
 import { ensureChatShims, guardScriptPath } from './chat-env'
 
 registerBrainMediaScheme()
@@ -146,6 +147,7 @@ app.whenReady().then(() => {
     }
   }).catch((e) => console.error('browser bridge', e))
   startBrowserUi({ browser: sharedDeskBrowser(), window: () => (mainWin && !mainWin.isDestroyed() ? mainWin : null) })
+  void enablePasskeys().catch(() => false)
   startTray(() => mainWin)
   pushHealth()
   setInterval(pushHealth, 15_000)

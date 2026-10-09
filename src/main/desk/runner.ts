@@ -398,7 +398,7 @@ const WORKER_GUIDE = [
 ].join('\n')
 
 export type PageView = { url: string; title: string; text: string; controls: string[] }
-export type BrowseRefusal = { refused: 'pay' | 'missing' | 'ambiguous' | 'no-submit' | 'page-changed'; name?: string }
+export type BrowseRefusal = { refused: 'pay' | 'missing' | 'ambiguous' | 'no-submit' | 'page-changed' | 'window-changed'; name?: string }
 /** What woke the bot when no new message did. */
 export type DeskWake = 'no' | 'sign-in' | 'sent' | 'approved'
 
@@ -614,6 +614,8 @@ export function refusalLine(r: BrowseRefusal, controls: string[] = []): string {
       return "Couldn't find a submit button."
     case 'page-changed':
       return 'The page changed, so that click was not made.'
+    case 'window-changed':
+      return 'A pop-up opened or closed since the last look, so nothing was pressed. Look at the page again.'
     case 'pay':
       return 'That button stays unclicked. Send it from a tile instead.'
   }

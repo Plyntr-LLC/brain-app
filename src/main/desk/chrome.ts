@@ -9,15 +9,26 @@ import type { KeyInput, PageAdapter, PageFrame, PointerInput } from '../../share
 /** The pages Brain has open, by window key. `page` creates a window. `peek` does not. */
 export type DeskWindows = {
   connect: (opts: { chromePath: string; profileDir: string }) => Promise<unknown>
+  /** The window on top for that key: its newest pop-up, else the window itself (opened when missing). */
   page: (key: string) => Promise<DeskPage | { noChrome: true }>
   peek: (key: string) => DeskPage | null
   has: (key: string) => boolean
   close: (key: string) => Promise<void>
   anyOpen: () => boolean
+  /** The key's own window, under any pop-ups. */
+  base?: (key: string) => DeskPage | null
+  /** How many pop-ups are open on top of it. */
+  layers?: (key: string) => number
+  /** Closes the newest pop-up. False when there is none. */
+  closeTop?: (key: string) => Promise<boolean>
+  /** Called with the key each time a pop-up opens or closes on it. Returns the stop. */
+  onTop?: (fn: (key: string) => void) => () => void
 }
 
 /** What the adapter adds beyond `PageAdapter`. Optional so a test adapter can leave them out. */
 export type DeskPage = PageAdapter & {
+  /** Which window this is (its webContents id), so a step can tell it is still on the window it read. */
+  id?: number
   /** The live page does not move the operating-system window. Tests may still record a call. */
   front?: () => Promise<void>
   /** A jpeg of the open page, for the picture in the thread. Empty when the page cannot take one. */

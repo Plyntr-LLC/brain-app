@@ -19,6 +19,7 @@ const TOOLS = [
     description:
       `${WHERE} Opens a web address and returns the page text and its numbered links, buttons, and fields. ` +
       'If a page asks for a file, Brain shows a file picker to the person; only the person picks files. ' +
+      'A link or button that opens a new window shows it on top as a pop-up; when it closes, the page under it comes back, and browser_close closes the pop-up first. ' +
       'For WhatsApp Web, each number has its own login: leave account out for the main WhatsApp, or pass a name such as india for another number. A new name shows a QR code to link that number.',
     inputSchema: {
       type: 'object',
@@ -80,7 +81,7 @@ const TOOLS = [
   },
   {
     name: 'browser_close',
-    description: 'Closes this chat\'s page. WhatsApp windows stay open, every account.',
+    description: 'Closes the pop-up on top of this chat\'s page if there is one; otherwise closes this chat\'s page. WhatsApp windows stay open, every account.',
     inputSchema: { type: 'object', properties: {} }
   }
 ]

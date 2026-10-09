@@ -1,0 +1,39 @@
+browser popups check 2026-10-09T09:29:15.162Z
+ok   1 the sign-in pop-up opens on top of chat A  ({"popup":true,"url":"http://localhost:49629/auth"})
+ok   1 a read through the bridge reads the pop-up  (Page: Auth URL: http://localhost:49629/auth Controls (use the number or the name): #1 field User name Text: Auth pop-u)
+ok   1 the live picture showed the pop-up
+ok   1 the pop-up posted to its opener and closed itself; A is back on the opener  (got token-123)
+ok   1 the live picture moved back to the opener
+ok   1 a bridge read reads the opener again
+ok   2 a target=_blank link opens on top
+ok   2 Close pop-up (its page has a beforeunload) returns to the opener with its text
+ok   2 browser_close with a pop-up up closes only the pop-up  (Closed the pop-up. The page under it is back; call browser_read.)
+ok   3 a load-time and a timer window.open with no click open nothing (B stays, no pop-up)
+ok   3 six windows asked at once: three pop-ups, the rest open nothing  (3)
+ok   3 the older of two pop-ups closes itself: the newer stays on top
+ok   3 a crashed pop-up leaves no window behind and C no longer reports a pop-up  ({"src":null,"signIn":false})
+ok   3 after the crash, the place opens again fresh
+ok   3 file:, myapp: and data: pop-ups open nothing  ({"popup":false,"url":"http://localhost:49629/schemes"} views http://localhost:49629/schemes , http://localhost:49629/opener)
+ok   3 an empty pop-up sent to myapp: and file: stays on about:blank  (about:blank)
+ok   5 a file input written into an empty pop-up asks Brain's panel and gets the file  (1 package.json)
+ok   5 a download from a pop-up that opened an attachment reaches chat A only  ([{"owner":"chat:A","id":"f40bb0d46eb73ad103","name":"file.txt","state":"completed"}])
+ok   6 a step by number from the opener's read is refused once a pop-up is on top  (A pop-up opened (or closed) since your last read, so nothing was pressed. Read the page again.)
+ok   6 after a new read, typing works in the pop-up
+ok   6 the AI's click that opens a pop-up says so and shows the pop-up  (A pop-up opened on top. This is the pop-up; when it closes, the page under it comes back. Page: Auth URL: http://localhost:49629/auth Controls (use the number)
+ok   4 a link clicked in WhatsApp opens on top of it
+ok   4 a send while a pop-up covers WhatsApp is refused and types nothing  ({"ok":false,"note":"A pop-up is open over WhatsApp (https://example.test/linked). Close it, then send again."})
+ok   4b a pop-up that opens during the send stops it; nothing sent, nothing typed into the pop-up  ({"ok":false,"note":"A pop-up opened over WhatsApp during the send. Nothing was sent."} [] BODY)
+ok   4b with the pop-up closed, the send goes through  ({"ok":true,"chat":"Sam Lee"})
+ok   4 WhatsApp asking for notifications on load makes no card
+ok   7 before any answer, permissions.query says denied  (denied)
+ok   7 one site card for chat A only, naming the page and camera + microphone  ({"id":"83601118578de8d205","kind":"site","site":"http://localhost:49629","uses":["camera","microphone"],"owner":"chat:A"})
+ok   7 an answer from chat B is refused
+ok   7 Allow asks macOS for camera and microphone and the page gets its stream  (stream 2 camera,microphone)
+ok   7 a second answer to the same card is refused
+ok   7 after reload, live: granted with no card, and query says granted  (stream 2 granted)
+ok   7 the same ask with A small: refused, no card, query says denied  (err NotAllowedError denied)
+ok   7 Forget this site's permissions: the next ask shows a card again
+ok   7 a camera-only ask from another window of the site makes its own card next to the camera + microphone one  ({"id":"fc8872d843293eb286","kind":"site","site":"http://localhost:49629","uses":["camera"],"owner":"chat:B"})
+ok   7 after Don't allow, five repeats make no card and all five are refused  (5 rejected; 5 reached Brain: http://localhost:49629 camera+microphone | http://localhost:49629 camera+microphone | http://localhost:49629 camera+microphone | http://localhost:49629 camera+microphone | http://localhost:49629 camera+microphon)
+ok   7 Don't allow left its note on the card
+ok   7 clipboard read: a card, Allow gives the text, and the next read asks again  (text clip-123)

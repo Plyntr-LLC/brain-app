@@ -19,6 +19,8 @@ type Session = {
   lock: string
   page: PageSnapshot | null
   field: { index: number; control: string } | null
+  /** The window (webContents id) the last read was of. A step by number only acts on that window. */
+  readOn: number | null
 }
 
 const SIGN_IN_TITLE = /\b(sign|log)[\s-]?in\b/i
@@ -77,6 +79,10 @@ type WindowsApi = {
   has: (key: string) => boolean
   close: (key: string) => Promise<void>
   anyOpen: () => boolean
+  base?: (key: string) => DeskPage | null
+  layers?: (key: string) => number
+  closeTop?: (key: string) => Promise<boolean>
+  onTop?: (fn: (key: string) => void) => () => void
 }
 
 function windowsOf(launch: DeskLaunch): WindowsApi | null {
@@ -184,7 +190,7 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
       handOn(name)
       return got && 'noChrome' in got ? got : undefined
     }
-    sessions.set(browseId, { id: browseId, owner: owner ?? '', lock: name, page: null, field: null })
+    sessions.set(browseId, { id: browseId, owner: owner ?? '', lock: name, page: null, field: null, readOn: null })
   }
 
   function cancel(browseId: string) {
@@ -243,8 +249,24 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
     }
     const text = p.text.slice(0, BROWSE_TEXT_CHARS)
     const controls = p.controls.slice(0, BROWSE_MAX_CONTROLS)
-    if (s) s.page = { ...p, text, controls }
+    if (s) {
+      s.page = { ...p, text, controls }
+      s.readOn = a.id ?? null
+    }
     return { ok: true, url: p.url, title: p.title, text, controls }
+  }
+
+  /**
+   * The read after a step. A pop-up that opened or closed during it is on top now: the read is of that window, and
+   * the result says so, so the agent's next numbers belong to the window it was shown.
+   */
+  async function readAfter(a: DeskPage, s: Session, key: string, layersBefore: number): Promise<BrowseStepResult> {
+    const w = wins()
+    const top = w?.peek(key) ?? null
+    if (!w || !top || top === a) return read(a, s)
+    const r = await read(top, s)
+    if (!('ok' in r)) return r
+    return { ...r, popup: (w.layers?.(key) ?? 0) > layersBefore ? 'opened' : 'closed' }
   }
 
   /** The pay check runs on the control's name before anything is clicked or pressed. */
@@ -302,27 +324,33 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
     }
   }
 
-  type Watcher = { send: (frame: PageFrame) => void; key: string | null; stop: (() => void) | null }
+  type Watcher = { send: (frame: PageFrame) => void; key: string | null; page: DeskPage | null; stop: (() => void) | null }
   const watchers = new Map<string, Set<Watcher>>()
 
-  /** Points every watcher of this place at the window it shows now. A watcher already on that window stays. */
+  /** Points every watcher of this place at the window on top for the key it shows now. A watcher already there stays. */
   function rewatch(owner: string) {
     const rows = watchers.get(owner)
     if (!rows) return
     const w = wins()
     const key = w ? showing.get(owner) ?? null : 'page'
+    const page = !key ? null : w ? w.peek(key) : adapter && windowOpen() ? adapter : null
     for (const row of rows) {
-      if (row.key === key && row.stop) continue
+      if (row.key === key && row.page === page && row.stop) continue
       row.stop?.()
       row.stop = null
       row.key = key
-      const page = !key ? null : w ? w.peek(key) : adapter && windowOpen() ? adapter : null
+      row.page = page
       if (page?.watch) row.stop = page.watch(row.send)
     }
   }
 
+  // A pop-up opening or closing moves the live picture of every place showing that window.
+  wins()?.onTop?.((key) => {
+    for (const owner of ownersShowing(key)) rewatch(owner)
+  })
+
   function watch(owner: string, send: (frame: PageFrame) => void) {
-    const row: Watcher = { send, key: null, stop: null }
+    const row: Watcher = { send, key: null, page: null, stop: null }
     const rows = watchers.get(owner) ?? new Set<Watcher>()
     rows.add(row)
     watchers.set(owner, rows)
@@ -410,6 +438,11 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
       const a = await stepAdapter(s, action === 'url' ? urlForKey : undefined, step.account)
       if ('noChrome' in a) return a
       if (action === 'read') return read(a, s)
+      const layersBefore = wins()?.layers?.(key) ?? 0
+      // Numbers and names come from the last read. On another window they would name something else.
+      if ((action === 'click' || action === 'type' || action === 'press' || action === 'key') && a.id != null && s.readOn != null && a.id !== s.readOn) {
+        return { refused: 'window-changed', url: a.url?.() ?? s.page?.url ?? '' }
+      }
 
     if (action === 'url') {
       const url = (step.url ?? detail).trim()
@@ -428,7 +461,7 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
       const stop = payStop(name, url)
       if (stop) return stop
       await a.click(hit)
-      return read(a, s)
+      return readAfter(a, s, key, layersBefore)
     }
     if (action === 'type') {
       const bar = detail.indexOf('|')
@@ -439,7 +472,7 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
       if (!controls[hit].startsWith('field ')) return payStop(controlName(controls[hit]), url) ?? { refused: 'missing', name: target, url }
       await a.type(hit, bar < 0 ? '' : detail.slice(bar + 1).trim())
       s.field = { index: hit, control: controls[hit] }
-      return read(a, s)
+      return readAfter(a, s, key, layersBefore)
     }
     if (action === 'press') {
       const field = s.field && fieldNow(controls, s.field)
@@ -448,23 +481,23 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
       const stop = payStop(sub.name, url)
       if (stop) return stop
       await a.submit(sub.index)
-      return read(a, s)
+      return readAfter(a, s, key, layersBefore)
     }
     if (action === 'key') {
-      const key = keyName(detail)
-      if (!key || !a.pressKey) return { refused: 'missing', name: detail, url }
+      const pressed = keyName(detail)
+      if (!pressed || !a.pressKey) return { refused: 'missing', name: detail, url }
       // Enter in WhatsApp's message box sends the message. Only the Send card does that.
-      if (key === 'Enter' && onWhatsApp && (await a.run?.<boolean>(messageBoxFocused))) return { refused: 'pay', name: WHATSAPP_BOX, url }
+      if (pressed === 'Enter' && onWhatsApp && (await a.run?.<boolean>(messageBoxFocused))) return { refused: 'pay', name: WHATSAPP_BOX, url }
       // Enter and Space press the focused control, and Enter in a form submits it. Both get a click's pay check.
-      if (key === 'Enter' || key === 'Space') {
+      if (pressed === 'Enter' || pressed === 'Space') {
         const names = await a.activeNames?.()
-        for (const name of [names?.own, key === 'Enter' ? names?.submit : '']) {
+        for (const name of [names?.own, pressed === 'Enter' ? names?.submit : '']) {
           const stop = name ? payStop(name, url) : null
           if (stop) return stop
         }
       }
-      await a.pressKey(key)
-      return read(a, s)
+      await a.pressKey(pressed)
+      return readAfter(a, s, key, layersBefore)
     }
     if (action === 'scroll') {
       await a.scroll(detail.toLowerCase() === 'up' ? 'up' : 'down')
@@ -537,13 +570,28 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
   }
 
   /** Where this place's page is, for the address field and the Back and Forward buttons. */
-  function facts(owner: string): { url: string; canGoBack: boolean; canGoForward: boolean; shared: boolean } | null {
+  function facts(owner: string): { url: string; canGoBack: boolean; canGoForward: boolean; shared: boolean; popup: boolean } | null {
     const key = showing.get(owner)
-    const a = key ? wins()?.peek(key) : null
+    const w = wins()
+    const a = key ? w?.peek(key) : null
     const f = a?.facts?.()
     if (!key || !f) return null
     const shared = isWhatsAppKey(key)
-    return { url: f.url, canGoBack: !shared && f.canGoBack, canGoForward: !shared && f.canGoForward, shared }
+    return { url: f.url, canGoBack: !shared && f.canGoBack, canGoForward: !shared && f.canGoForward, shared, popup: (w?.layers?.(key) ?? 0) > 0 }
+  }
+
+  /** Closes the pop-up on top of the window this place shows, in that window's lane. */
+  async function closeTop(owner: string): Promise<boolean> {
+    const key = showing.get(owner)
+    const w = wins()
+    if (!key || !w?.closeTop || !(w.layers?.(key) ?? 0)) return false
+    const turn = startPageTurn(key)
+    try {
+      await turn.promise
+      return await w.closeTop(key)
+    } finally {
+      turn.release()
+    }
   }
 
   /** The page this place shows, as a PDF, in that window's lane. */
@@ -570,9 +618,14 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
       await turn.promise
       const connected = await w.connect({ chromePath, profileDir })
       if (isNoChrome(connected)) return { ok: false, note: "Brain's browser is not available. Nothing was sent." }
-      const a = await w.page(key)
-      if ('noChrome' in a || !a.run || !a.url || !a.clickAt || !a.typeText || !a.key || !a.pressKey) return { ok: false, note: "Brain's browser is not available. Nothing was sent." }
-      return await sendOnWhatsApp(a as DeskPage & WhatsAppPage, msg)
+      const opened = await w.page(key)
+      if ('noChrome' in opened) return { ok: false, note: "Brain's browser is not available. Nothing was sent." }
+      // The send drives WhatsApp's own window, never a pop-up on top of it, and stops if one is there or opens.
+      const a = w.base?.(key) ?? opened
+      const popupUrl = () => (w.layers?.(key) ? w.peek(key)?.url?.() || 'a pop-up' : '')
+      if (popupUrl()) return { ok: false, note: `A pop-up is open over WhatsApp (${popupUrl()}). Close it, then send again.` }
+      if (!a.run || !a.url || !a.clickAt || !a.typeText || !a.key || !a.pressKey) return { ok: false, note: "Brain's browser is not available. Nothing was sent." }
+      return await sendOnWhatsApp(a as DeskPage & WhatsAppPage, msg, undefined, () => !popupUrl())
     } catch (e) {
       return { ok: false, note: `Sending stopped: ${String((e as Error)?.message || e)}. Check the chat before sending again.` }
     } finally {
@@ -589,5 +642,5 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
     await w.close(owner)
   }
 
-  return { open, cancel, release, focus, showWindow, picture, windowOpen, clickApproved, runStep, goTo, clickAt, typeText, pressKey, wheel, look, closeOwner, pointer, keyInput, watch, whatsappSend, nav, go, facts, printPage, ownersShowing }
+  return { open, cancel, release, focus, showWindow, picture, windowOpen, clickApproved, runStep, goTo, clickAt, typeText, pressKey, wheel, look, closeOwner, closeTop, pointer, keyInput, watch, whatsappSend, nav, go, facts, printPage, ownersShowing }
 }
