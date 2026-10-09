@@ -63,8 +63,8 @@ export function BrowserPicture(props: {
     )
   }
 
-  /** The page point under the mouse. A press in the empty bands around the page is null; a move or release
-   * (a drag can end anywhere, even outside the picture) is pulled onto the nearest edge of the page. */
+  /** The page point under the mouse, or null in the empty bands around the page. `clamp` (a drag that started on
+   * the page, which can end anywhere, even outside the picture) pulls the point onto the page's nearest edge instead. */
   function pagePoint(e: { clientX: number; clientY: number }, clamp: boolean) {
     const img = shot.current?.querySelector('img')
     if (!img || !img.naturalWidth || !img.naturalHeight) return null
@@ -86,9 +86,10 @@ export function BrowserPicture(props: {
     return mapClick({ x, y }, box, natural)
   }
 
-  function pointer(type: 'down' | 'up' | 'move', e: { clientX: number; clientY: number; button: number; buttons: number; detail: number }) {
-    const at = pagePoint(e, type !== 'down')
-    if (!at) return
+  /** Sends one mouse event to the page. False when the point is off the page and nothing was sent. */
+  function pointer(type: 'down' | 'up' | 'move', e: { clientX: number; clientY: number; button: number; buttons: number; detail: number }, clamp = false) {
+    const at = pagePoint(e, clamp)
+    if (!at) return false
     const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left'
     void window.brain.browser.pointer(props.owner, {
       type,
@@ -98,6 +99,7 @@ export function BrowserPicture(props: {
       buttons: e.buttons,
       clickCount: type === 'move' ? 0 : Math.max(1, e.detail)
     })
+    return true
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
@@ -131,22 +133,22 @@ export function BrowserPicture(props: {
       onMouseDown={(e) => {
         if (!wide) return
         e.preventDefault()
-        pointer('down', e)
         // Keys go to the page while the picture has focus. Scrolling it into view would move it under the mouse.
         shot.current?.focus({ preventScroll: true })
-        // Until the button comes up, the whole window's mouse belongs to this press, inside the picture or not.
+        if (!pointer('down', e)) return
+        // A press on the page owns the window's mouse until the button comes up, inside the picture or not.
         dragging.current = true
         const move = (ev: globalThis.MouseEvent) => {
           const now = performance.now()
           if (now - lastMove.current < 33) return
           lastMove.current = now
-          pointer('move', ev)
+          pointer('move', ev, true)
         }
         const up = (ev: globalThis.MouseEvent) => {
           window.removeEventListener('mousemove', move, true)
           window.removeEventListener('mouseup', up, true)
           dragging.current = false
-          pointer('up', ev)
+          pointer('up', ev, true)
         }
         window.addEventListener('mousemove', move, true)
         window.addEventListener('mouseup', up, true)

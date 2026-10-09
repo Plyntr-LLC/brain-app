@@ -249,6 +249,18 @@ async function exercise(root: string, owner: string, widen: () => Promise<void>)
   mouse(wide, 'mousemove', inside, { buttons: 0 })
   await tick(45)
   check(`${root}: after the release, a plain hover is a move with no button held`, (since(n4, 'browser.pointer').at(-1)?.args[1] as { buttons: number; type: string })?.buttons === 0)
+  const band = { clientX: wrect.left + 4, clientY: wrect.top + wrect.height / 2 }
+  const n5 = calls.length
+  await tick(45)
+  mouse(wide, 'mousemove', band, { buttons: 0 })
+  await tick(45)
+  mouse(wide, 'mousedown', band, { detail: 1, buttons: 1 })
+  await tick(45)
+  window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: inside.clientX, clientY: inside.clientY, buttons: 1 }))
+  window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: inside.clientX, clientY: inside.clientY, button: 0, buttons: 0, detail: 1 }))
+  mouse(wide, 'mouseup', band, { detail: 1, buttons: 0 })
+  await tick(45)
+  check(`${root}: a hover, press or release in the empty band beside the page sends nothing`, since(n5, 'browser.pointer').length === 0, JSON.stringify(since(n5, 'browser.pointer').map((c) => c.args[1])))
 
   const btn = shotButton(root)!
   const composer = document.querySelector(`#chat .composer textarea`) as HTMLTextAreaElement | null
