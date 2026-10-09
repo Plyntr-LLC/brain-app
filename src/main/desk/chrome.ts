@@ -35,6 +35,10 @@ export type DeskPage = PageAdapter & {
   key?: (ev: KeyInput) => Promise<void>
   /** Sends a frame now and then one each time the page changes, at most 15 a second. Returns the stop. */
   watch?: (send: (frame: PageFrame) => void) => () => void
+  /** Runs a self-contained reader in the page (it uses only its arguments and the page's globals). */
+  run?: <T>(fn: (...args: any[]) => unknown, ...args: unknown[]) => Promise<T>
+  /** The address the page is on now. */
+  url?: () => string
 }
 
 /** What the page reader sees. A test passes a fake with the same fields.

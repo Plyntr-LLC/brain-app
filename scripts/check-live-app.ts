@@ -279,6 +279,48 @@ try {
   const png = await cdp('Page.captureScreenshot', { format: 'png' })
   writeFileSync(join(shots, 'live-app.png'), Buffer.from(png.data, 'base64'))
   log('screenshot plans/20261009-inline-browser-shots/live-app.png')
+
+  const shot = async (file: string) => {
+    const p = await cdp('Page.captureScreenshot', { format: 'png' })
+    mkdirSync(dirname(join(root, file)), { recursive: true })
+    writeFileSync(join(root, file), Buffer.from(p.data, 'base64'))
+    log(`screenshot ${file}`)
+  }
+  const press = (label: string, scope: string) =>
+    js<boolean>(`(() => { const s = ${scope}; const b = s && [...s.querySelectorAll('button')].find((x) => x.textContent.trim() === ${JSON.stringify(label)}); if (!b) return false; b.click(); return true })()`)
+  const say = async (text: string) => {
+    const at = await js<{ x: number; y: number }>(`(() => { const r = document.querySelector('.composer textarea').getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height / 2 } })()`)
+    await click(at.x, at.y)
+    await cdp('Input.insertText', { text })
+    await key('Enter', 'Enter', 0, '\r')
+  }
+  const saidAfter = (marker: string, re: RegExp) => js<boolean>(`(() => { const t = document.body.innerText; const i = t.lastIndexOf(${JSON.stringify(marker)}); return i >= 0 && ${re.toString()}.test(t.slice(i + ${marker.length})) })()`)
+
+  check('Large is a button under the picture', await press('Large', `document.querySelector('.page-turn')`))
+  await until(() => js<boolean>(`!!document.querySelector('.chatpane.on > .page-dock img.large')`), 'the large dock', 5000)
+  await sleep(600)
+  const dock = await js<{ dock: number; pane: number; hit: boolean; imgs: number }>(
+    `(() => { const p = document.querySelector('.chatpane.on'); const d = p.querySelector(':scope > .page-dock').getBoundingClientRect(); const t = p.querySelector('.composer textarea'); const r = t.getBoundingClientRect(); return { dock: d.height, pane: p.getBoundingClientRect().height, hit: document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === t, imgs: p.querySelectorAll('.desk-browser-shot img').length } })()`
+  )
+  check('Large docks one picture above the conversation and the message box stays usable', dock.dock / dock.pane > 0.5 && dock.hit && dock.imgs === 1, JSON.stringify(dock))
+  await shot('plans/20261009-browser-sizes-shots/live-large.png')
+
+  const waAsk = 'Open https://web.whatsapp.com with the browser tools, using the WhatsApp account named india. Then reply with the account line from the tool reply.'
+  await say(waAsk)
+  await until(() => saidAfter(waAsk, /account on screen: india|\bindia\b/i), 'the answer naming india', 300_000)
+  check('a real chat opened WhatsApp account india through the packaged tools', existsSync(join(userData, 'Partitions', 'brain-wa-india')), String(existsSync(join(userData, 'Partitions'))))
+  await sleep(4000)
+  await shot('plans/20261009-whatsapp-accounts-shots/live-india.png')
+
+  const sendAsk = 'Use whatsapp_send to send the text "hello from the check" to Raj Patel from the WhatsApp account india. Do nothing else.'
+  await say(sendAsk)
+  await until(() => js<boolean>(`!!document.querySelector('.wa-send-card')`), 'the Send card', 300_000)
+  const card = await js<string>(`document.querySelector('.wa-send-card').innerText`)
+  check('the packaged whatsapp_send puts a Send card in the thread and sends nothing', /WhatsApp \(india\) to Raj Patel/.test(card) && /hello from the check/.test(card) && /Don't send/.test(card), card)
+  await shot('plans/20261009-whatsapp-send-shots/live-card.png')
+  check("Don't send is a button on the card", await press("Don't send", `document.querySelector('.wa-send-card')`))
+  await until(() => js<boolean>(`document.querySelector('.wa-send-card .wa-send-outcome')?.textContent === 'Not sent.'`), 'the card saying Not sent.', 10_000)
+  check("Don't send leaves the card saying Not sent.", true)
   ws.close()
 
   process.kill(Number(brainPid), 'SIGTERM')

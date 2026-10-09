@@ -51,7 +51,7 @@ export type DeskMessage = {
   pack?: ContextPack
   hold?: { need: 'spend' | 'ads'; answer?: 'yes' | 'no'; browseClick?: string; pageUrl?: string; browseId?: string }
   email?: { replyTo: string; to: string; cc: string; subject: string; body: string; from: string; sent?: 'yes' | 'no'; sendable: boolean; note?: string }
-  textMsg?: { to: string; via: 'iMessage' | 'WhatsApp'; body: string; sent?: 'yes' | 'no'; sendable: boolean; note?: string; chatGuid?: string; chatLabel?: string }
+  textMsg?: { to: string; via: 'iMessage' | 'WhatsApp'; body: string; sent?: 'yes' | 'no'; sendable: boolean; note?: string; chatGuid?: string; chatLabel?: string; account?: string }
   hire?: { id: string; name: string; cli: DeskCli; model: string; description: string; hasWorked: boolean }
   browse?: { steps: { action: string; detail: string; url: string }[]; title?: string; signIn?: boolean; noChrome?: boolean; windowOpen?: boolean }
   noteLines?: string[]
@@ -275,9 +275,11 @@ export type DeskBrowser = {
   picture: (owner?: string) => Promise<string | null> // jpeg base64 of that place's page, or null when it is closed
   windowOpen: () => boolean // true while a desk Chrome window is open, with or without a browse session
   clickApproved: (name: string, pageUrl: string, owner?: string) => Promise<BrowseStepResult>
-  runStep: (browseId: string, step: { action: string; detail?: string; url?: string }) => Promise<BrowseStepResult>
+  runStep: (browseId: string, step: { action: string; detail?: string; url?: string; account?: string }) => Promise<BrowseStepResult>
   /** Open this address on that place's window. Does not start a browse session. */
   goTo?: (url: string, owner?: string) => Promise<void>
+  /** One WhatsApp message through that account's window ('' is main). Only a person's Send click calls this. */
+  whatsappSend?: (msg: { account: string; to: string; body: string }) => Promise<{ ok: true; chat: string } | { ok: false; note: string }>
   clickAt?: (x: number, y: number, owner?: string) => Promise<void>
   typeText?: (text: string, owner?: string) => Promise<void>
   pressKey?: (key: string, owner?: string) => Promise<void>
@@ -306,3 +308,7 @@ export type DeskWelcome = {
 
 /** What senders.ts returns. Senders never append mail. The controller copies `note` and `sendable` onto the replacement. */
 export type DeskSendResult = { ok: boolean; dryRun?: boolean; killed?: boolean; sendable?: boolean; note?: string }
+/** A Send card for the chat that asked. `account` is the name shown ('main' for the main WhatsApp). */
+export type WhatsAppSendAsk = { owner: string; id: string; account: string; to: string; text: string }
+/** What a Send card's answer did. `refused`: the card was already answered, or is not this chat's. */
+export type WhatsAppSendAnswer = { ok: true; chat: string } | { ok: false; note: string } | { refused: true }

@@ -30,7 +30,8 @@ import { isSkinComponent } from '../../shared/skin/catalog'
 import { appendThought, collapseAdjacentThinks, paintsThreadSpec } from '../../shared/think-run'
 import { CHAT_RULES } from '../../shared/chat-reach'
 import { pageAfterSend } from '@shared/page-picture'
-import { ChatPageTurn } from './ChatPageTurn'
+import { ChatPageTurn, type PageView } from './ChatPageTurn'
+import { WhatsAppSendCard, type SendCardState } from './WhatsAppSendCard'
 import { usePageFollow } from './pin-thread'
 import type { Paste } from '../../shared/saved-msg'
 import { expandPastes, isBigPaste, livePastes, nextPasteNumber, pasteLines, pasteSize, pasteToken } from './paste'
@@ -635,13 +636,16 @@ export function ChatPane({
   )
   const [say, setSay] = useState('')
   const [pageAt, setPageAt] = useState<number | null>(null)
-  const [pageView, setPageView] = useState<'small' | 'wide' | 'note'>('small')
+  const [pageView, setPageView] = useState<PageView>('small')
   const [pageShot, setPageShot] = useState<string | null>(null)
   const [pageSignIn, setPageSignIn] = useState(false)
+  const [sendCards, setSendCards] = useState<SendCardState[]>([])
   const messagesRef = useRef(messages)
   messagesRef.current = messages
   const pageAtRef = useRef(pageAt)
   pageAtRef.current = pageAt
+  const pageViewRef = useRef(pageView)
+  pageViewRef.current = pageView
   const [busy, setBusy] = useState(false)
   const [warming, setWarming] = useState(false)
   const [waitLabel, setWaitLabel] = useState('Working')
@@ -765,7 +769,7 @@ export function ChatPane({
       })
     }
     tickShot()
-    const timer = window.setInterval(tickShot, pageView === 'wide' ? 500 : 1500)
+    const timer = window.setInterval(tickShot, pageView === 'wide' || pageView === 'large' ? 500 : 1500)
     return () => {
       dead = true
       window.clearInterval(timer)
@@ -779,8 +783,26 @@ export function ChatPane({
         const asked = [...messagesRef.current].reverse().find((m) => m.who === 'me')
         if (asked?.at == null || asked.at === pageAtRef.current) return
         setPageAt(asked.at)
-        setPageView('small')
+        // The picture keeps its size on the new turn. Only a hidden one comes back.
+        setPageView((v) => (v === 'note' ? 'small' : v))
         setPageSignIn(false)
+      }),
+    [id]
+  )
+  // The picture follows the work: a new message takes a showing picture with it. A hidden one stays where it was.
+  const newestAsk = [...messages].reverse().find((m) => m.who === 'me')?.at
+  useEffect(() => {
+    if (newestAsk == null || pageAtRef.current == null || pageViewRef.current === 'note') return
+    if (newestAsk !== pageAtRef.current) setPageAt(newestAsk)
+  }, [newestAsk])
+  // This chat's AI asked to send a WhatsApp message: its Send card goes in the turn of the message it is answering.
+  useEffect(
+    () =>
+      window.brain.browser.onSendAsk((ask) => {
+        if (ask.owner !== `chat:${id}`) return
+        const asked = [...messagesRef.current].reverse().find((m) => m.who === 'me')
+        if (asked?.at == null) return
+        setSendCards((cards) => (cards.some((c) => c.id === ask.id) ? cards : [...cards, { ...ask, at: asked.at!, state: 'waiting' }]))
       }),
     [id]
   )
@@ -2015,8 +2037,24 @@ export function ChatPane({
       onHide={() => setPageView('note')}
       onShow={() => setPageView('small')}
       onWiden={() => setPageView('wide')}
+      onSize={setPageView}
     />
   )
+  async function answerCard(cardId: string, yes: boolean) {
+    const set = (next: Partial<SendCardState>) => setSendCards((cards) => cards.map((c) => (c.id === cardId ? { ...c, ...next } : c)))
+    set({ state: yes ? 'sending' : 'not-sent' })
+    const r = await window.brain.browser.sendAnswer(pageOwner, cardId, yes)
+    if ('refused' in r) set({ state: 'not-sent', note: 'This card was already answered.' })
+    else if (r.ok) set({ state: 'sent', chat: r.chat })
+    else set({ state: 'not-sent', note: yes ? r.note : undefined })
+  }
+  const cardsFor = (at: number) => {
+    const mine = sendCards.filter((c) => c.at === at)
+    return mine.length ? mine.map((c) => <WhatsAppSendCard key={c.id} card={c} onAnswer={(yes) => void answerCard(c.id, yes)} />) : null
+  }
+  // Large sits above the conversation, so the thread does not show a second copy.
+  const docked = pageSlot != null && pageView === 'large'
+  const threadSlot = docked ? null : pageSlot
 
   return (
     <div
@@ -2117,6 +2155,7 @@ export function ChatPane({
           </div>
         </div>
       ) : null}
+      {docked ? <div className="page-dock">{pageSlot}</div> : null}
       <SkinPane
         tabId={id}
         cwd={cwd}
@@ -2141,7 +2180,8 @@ export function ChatPane({
         canPeel={false}
         cliName={label(kind)}
         pageAt={pageAt}
-        pageSlot={pageSlot}
+        pageSlot={threadSlot}
+        turnSlot={cardsFor}
         onAction={(actionId, spec) => {
           if (actionId === 'selectOption') {
             const opt = String(spec.props.value || '')
@@ -2219,7 +2259,8 @@ export function ChatPane({
               ) : (
                 <Rich text={m.text} />
               )}
-              {m.who === 'me' && m.at === pageAt ? pageSlot : null}
+              {m.who === 'me' && m.at === pageAt ? threadSlot : null}
+              {m.who === 'me' && m.at != null ? cardsFor(m.at) : null}
               {m.who === 'me' && m.files && m.files.some((f) => f.preview) ? (
                 <div className="attachrow in-bubble">
                   {m.files.map((a, j) =>

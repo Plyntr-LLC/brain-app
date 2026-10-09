@@ -113,11 +113,14 @@ const page = join(outDir, `${name}.html`)
 writeFileSync(page, `<!doctype html><html><head><meta charset="utf-8">${css}</head><body><div id="root"></div><pre id="out"></pre><script src="${pathToFileURL(js).href}"></script></body></html>`)
 
 const flags = ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--allow-file-access-from-files', '--virtual-time-budget=12000']
-const dom = execFileSync(chrome, [...flags, '--dump-dom', pathToFileURL(page).href], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+// RENDER_UI_SIZE also sizes the checking run when set; RENDER_UI_HASH goes on the page address of both runs.
+const size = process.env.RENDER_UI_SIZE
+const href = pathToFileURL(page).href + (process.env.RENDER_UI_HASH ? `#${process.env.RENDER_UI_HASH}` : '')
+const dom = execFileSync(chrome, [...flags, ...(size ? [`--window-size=${size}`] : []), '--dump-dom', href], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
 const raw = (dom.match(/<pre id="out">([\s\S]*?)<\/pre>/) || [])[1] || ''
 const text = raw.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
 const shot = join(outDir, `${name}.png`)
-execFileSync(chrome, [...flags, `--window-size=${process.env.RENDER_UI_SIZE || '1100,1400'}`, `--screenshot=${shot}`, pathToFileURL(page).href], { stdio: 'ignore' })
+execFileSync(chrome, [...flags, `--window-size=${size || '1100,1400'}`, `--screenshot=${shot}`, href], { stdio: 'ignore' })
 
 let results: { name: string; ok: boolean; detail?: string }[] = []
 try {

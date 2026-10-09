@@ -6,7 +6,7 @@ export const CHAT_RULES =
 
 /** Added to the chat rules only when Brain gave that session its browser tools. */
 export const BROWSER_RULE =
-  'Web pages go through the brain-browser tools (browser_open, browser_read, browser_click, browser_type, browser_key, browser_scroll, browser_screenshot). They drive the browser inside Brain, which shows in this chat thread and keeps logins such as WhatsApp Web. Do not open Chrome, control-chrome, Playwright or puppeteer windows, or `open <url>` for a web page unless the person asks for their own Chrome. Sending a message or posting anything still needs the person\'s yes.'
+  'Web pages go through the brain-browser tools (browser_open, browser_read, browser_click, browser_type, browser_key, browser_scroll, browser_screenshot). They drive the browser inside Brain, which shows in this chat thread and keeps logins such as WhatsApp Web. Each WhatsApp number has its own login: leave the account of browser_open out for the main WhatsApp, or pass a name such as india for another number; a new name shows a QR code to link it. To send a WhatsApp message, draft it and call whatsapp_send: the person presses Send on the card it puts in this thread, and only then does it go. Pressing Enter in the WhatsApp message box is refused. Do not open Chrome, control-chrome, Playwright or puppeteer windows, or `open <url>` for a web page unless the person asks for their own Chrome. Sending a message or posting anything still needs the person\'s yes.'
 
 /** Claude warm session permission args. Plan tabs stay `plan`; the allow flag lets plan off go to bypass. */
 export function claudeChatPermissionArgs(plan: boolean): string[] {

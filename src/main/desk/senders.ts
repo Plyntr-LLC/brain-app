@@ -168,9 +168,5 @@ export function createSenders(opts: SendersOpts = {}) {
     return { ok: false, sendable: true, note: ran.stderr.trim().split('\n')[0] || 'Message was not sent.' }
   }
 
-  function sendWhatsApp(): DeskSendResult {
-    return { ok: false, sendable: false }
-  }
-
-  return { gmailScript, textScript, gmailFrom, check, sendEmail, lookupText, sendText, sendWhatsApp }
+  return { gmailScript, textScript, gmailFrom, check, sendEmail, lookupText, sendText }
 }

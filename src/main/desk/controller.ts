@@ -14,8 +14,9 @@ import {
   cleanSummary,
   isoWeek
 } from '../../shared/desk.ts'
-import type { BotState, DeskBot, DeskCli, DeskMessage, DeskSendResult, DeskSystem } from '../../shared/desk.ts'
+import type { BotState, DeskBot, DeskBrowser, DeskCli, DeskMessage, DeskSendResult, DeskSystem } from '../../shared/desk.ts'
 import type { BrowseStepResult } from '../../shared/desk.ts'
+import { whatsappAccount } from '../../shared/page-picture.ts'
 import { createDeskBus, jobIsOpen } from './bus.ts'
 import type { DeskBus, JobView, Turn } from './bus.ts'
 import { parseFences } from './fences.ts'
@@ -42,7 +43,7 @@ import type { DeskStore, NewDeskMessage, Role } from './store.ts'
 const GMAIL_OUT = "Gmail isn't signed in on this Mac."
 const GMAIL_MISSING = "That email isn't in Gmail, so this stays a draft."
 const SPEND_NOTE = 'Approving records your yes. It does not spend money or change the ads account.'
-const WHATSAPP_NOTE = "WhatsApp send from Desk isn't set up. This stays a draft."
+const NO_WHATSAPP = "Brain's browser cannot send WhatsApp messages here."
 const NO_CHROME = 'The desk browser needs Google Chrome on this Mac.'
 const PAGE_CHANGED = 'The page changed, so that click was not made.'
 const NO_SUBMIT = "Couldn't find a submit button."
@@ -60,7 +61,6 @@ export type DeskSenders = {
   sendEmail: (brain: string, tile: EmailTile) => Promise<DeskSendResult>
   lookupText: (brain: string, to: string) => Promise<TextLookup>
   sendText: (brain: string, guid: string, body: string) => Promise<DeskSendResult>
-  sendWhatsApp: () => DeskSendResult
 }
 
 type SendBack = DeskSendResult & { error?: string }
@@ -80,6 +80,7 @@ export type ControllerOpts = {
     clickApproved: (name: string, pageUrl: string, owner?: string) => Promise<BrowseStepResult>
     closeOwner?: (owner: string) => Promise<void>
     runStep: (browseId: string, step: { action: string; detail?: string; url?: string }) => Promise<BrowseStepResult>
+    whatsappSend?: DeskBrowser['whatsappSend']
   }
   senders: DeskSenders
   detect: () => Record<DeskCli, boolean>
@@ -442,13 +443,17 @@ export function createDeskController(opts: ControllerOpts) {
   async function storeSms(bot: DeskBot, block: NonNullable<ParsedTurn['sms']>, replaces?: string) {
     const body = cutBody(block.body)
     if (block.via === 'WhatsApp') {
+      const account = whatsappAccount(block.account)
       post({
         from: bot.id,
         to: ME,
         kind: 'text',
         text: block.to,
         ...(replaces ? { replaces } : {}),
-        textMsg: { to: block.to, via: 'WhatsApp', body, sendable: false, note: WHATSAPP_NOTE }
+        textMsg:
+          account === null
+            ? { to: block.to, via: 'WhatsApp', body, sendable: false, account: String(block.account), note: `"${block.account}" cannot be a WhatsApp account name, so this stays a draft.` }
+            : { to: block.to, via: 'WhatsApp', body, sendable: true, account: account || 'main', note: `Sends from WhatsApp (${account || 'main'}) in Brain's browser.` }
       })
       return
     }
@@ -876,7 +881,20 @@ export function createDeskController(opts: ControllerOpts) {
     await whenIdle()
   }
 
+  const answering = new Set<string>()
+
+  /** One answer at a time per tile. A second click while a send is still running does nothing. */
   async function answerMail(id: string, answer: 'yes' | 'no', kind: 'email' | 'text') {
+    if (answering.has(id)) return
+    answering.add(id)
+    try {
+      await answerTile(id, answer, kind)
+    } finally {
+      answering.delete(id)
+    }
+  }
+
+  async function answerTile(id: string, answer: 'yes' | 'no', kind: 'email' | 'text') {
     const tile = visible(id)
     if (!tile || tile.kind !== kind || tile.actedAt) return
     const payload = kind === 'email' ? tile.email : tile.textMsg
@@ -891,8 +909,15 @@ export function createDeskController(opts: ControllerOpts) {
         ...(tile.email.replyTo ? { replyTo: tile.email.replyTo } : {})
       })
     }
-    if (answer === 'yes' && kind === 'text' && tile.textMsg) {
-      if (tile.textMsg.via === 'WhatsApp' || !tile.textMsg.chatGuid) return
+    if (answer === 'yes' && kind === 'text' && tile.textMsg?.via === 'WhatsApp') {
+      const account = whatsappAccount(tile.textMsg.account)
+      if (account === null) return
+      const sent = opts.browser.whatsappSend
+        ? await opts.browser.whatsappSend({ account, to: tile.textMsg.to, body: tile.textMsg.body })
+        : { ok: false as const, note: NO_WHATSAPP }
+      result = sent.ok ? { ok: true, note: `Sent to ${sent.chat}.` } : { ok: false, sendable: false, note: sent.note }
+    } else if (answer === 'yes' && kind === 'text' && tile.textMsg) {
+      if (!tile.textMsg.chatGuid) return
       result = await senders.sendText(opts.brain, tile.textMsg.chatGuid, tile.textMsg.body)
     }
     if (answer === 'yes' && result) {

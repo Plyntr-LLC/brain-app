@@ -170,6 +170,7 @@ function createBrowser() {
   const got: string[] = []
   const steps: { id: string; action: string; detail?: string; url?: string }[] = []
   const clicks: { name: string; url: string }[] = []
+  const whatsapp: { account: string; to: string; body: string }[] = []
   let focuses = 0
   const stepResults: BrowseStepResult[] = []
   const clickResults: BrowseStepResult[] = []
@@ -191,6 +192,11 @@ function createBrowser() {
     got,
     steps,
     clicks,
+    whatsapp,
+    async whatsappSend(msg: { account: string; to: string; body: string }) {
+      whatsapp.push(msg)
+      return { ok: true as const, chat: msg.to }
+    },
     focuses: () => focuses,
     holder: () => holder,
     windowOpen: () => window,
@@ -261,8 +267,7 @@ function createSenderBox() {
     checkResult: 'ok' as 'ok' | 'missing' | 'no-token',
     lookup: { sendable: true, guid: 'guid-brent', label: 'Brent · home' } as TextLookup,
     emailResult: { ok: true, note: 'sent' } as { ok: boolean; dryRun?: boolean; killed?: boolean; sendable?: boolean; note?: string; error?: string },
-    textResult: { ok: true } as { ok: boolean; sendable?: boolean; note?: string; error?: string },
-    whatsapp: 0
+    textResult: { ok: true } as { ok: boolean; sendable?: boolean; note?: string; error?: string }
   }
   const senders: DeskSenders = {
     gmailFrom: async () => box.from,
@@ -278,10 +283,6 @@ function createSenderBox() {
     sendText: async (_brain, guid, body) => {
       texts.push({ guid, body })
       return box.textResult
-    },
-    sendWhatsApp: () => {
-      box.whatsapp++
-      return { ok: false, sendable: false }
     }
   }
   return { box, senders }
@@ -940,8 +941,8 @@ test('a failed sender copies the note and does not stamp sent', async () => {
   }
 })
 
-test('an sms to Brent follows the chat match, and WhatsApp stays a draft', async () => {
-  const { runner, box, desk, cleanup } = boot()
+test('an sms to Brent follows the chat match, and WhatsApp goes through the browser, never the iMessage sender', async () => {
+  const { runner, browser, box, desk, cleanup } = boot()
   try {
     box.lookup = { sendable: false, note: 'More than one iMessage chat matches Brent.' }
     runner.queue('drafts', [{ text: sms('Brent', 'Hello Brent.') }])
@@ -964,11 +965,18 @@ test('an sms to Brent follows the chat match, and WhatsApp stays a draft', async
     runner.queue('drafts', [{ text: sms('Brent', 'On WhatsApp.', 'WhatsApp') }])
     await desk.say('WhatsApp instead.', 'drafts')
     const wa = mail(desk).filter((m) => m.kind === 'text').at(-1)
-    assert.equal(wa?.textMsg?.sendable, false)
-    assert.equal(wa?.textMsg?.note, "WhatsApp send from Desk isn't set up. This stays a draft.")
+    assert.equal(wa?.textMsg?.sendable, true)
+    assert.equal(wa?.textMsg?.account, 'main')
+    assert.equal(browser.whatsapp.length, 0)
     await desk.answerText(wa?.id || '', 'yes')
-    assert.equal(box.whatsapp, 0)
+    assert.deepEqual(browser.whatsapp, [{ account: '', to: 'Brent', body: 'On WhatsApp.' }])
     assert.equal(box.texts.length, 1)
+    assert.equal(mail(desk).find((m) => m.replaces === wa?.id)?.textMsg?.sent, 'yes')
+    runner.queue('drafts', [{ text: sms('Brent', 'Pressed twice.', 'WhatsApp') }])
+    await desk.say('WhatsApp again.', 'drafts')
+    const twice = mail(desk).filter((m) => m.kind === 'text').at(-1)
+    await Promise.all([desk.answerText(twice?.id || '', 'yes'), desk.answerText(twice?.id || '', 'yes')])
+    assert.equal(browser.whatsapp.filter((m) => m.body === 'Pressed twice.').length, 1)
   } finally {
     cleanup()
   }

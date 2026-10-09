@@ -101,8 +101,7 @@ function quietSenders() {
     check: async () => 'ok' as const,
     sendEmail: async () => ({ ok: true }),
     lookupText: async () => ({ sendable: true, label: 'Brent' }),
-    sendText: async () => ({ ok: true }),
-    sendWhatsApp: () => ({ ok: false, sendable: false })
+    sendText: async () => ({ ok: true })
   }
 }
 

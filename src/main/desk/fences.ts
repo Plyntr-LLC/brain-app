@@ -12,7 +12,8 @@ export type AssignBlock = { bot: string; task: string; why: string; files: strin
 export type SendBlock = { to: string; files: string[]; text: string }
 export type HoldBlock = { need: 'spend' | 'ads'; text: string }
 export type EmailBlock = { replyTo: string; to: string; cc: string; subject: string; body: string }
-export type SmsBlock = { to: string; via: 'iMessage' | 'WhatsApp'; body: string }
+/** `account`: the WhatsApp number to send from, as written (none is the main one). */
+export type SmsBlock = { to: string; via: 'iMessage' | 'WhatsApp'; body: string; account?: string }
 export type HireBlock = { name: string; cli: DeskCli; model: string; effort: string; description: string }
 export type BrowseBlock =
   | { action: 'url'; detail: string; url: string }
@@ -173,10 +174,11 @@ function parseBlock(b: RawBlock): Parsed | null {
     case 'sms': {
       const sp = splitBody(b.body)
       if (!sp) return null
-      const { map } = header(sp.head, ['to', 'via'])
+      const { map } = header(sp.head, ['to', 'via', 'account'])
       const via = String(map.via || 'iMessage').toLowerCase()
       if (!map.to || (via !== 'imessage' && via !== 'whatsapp')) return null
-      return { tag: 'sms', v: { to: map.to, via: via === 'whatsapp' ? 'WhatsApp' : 'iMessage', body: sp.rest } }
+      if (via === 'whatsapp') return { tag: 'sms', v: { to: map.to, via: 'WhatsApp', body: sp.rest, ...(map.account ? { account: map.account } : {}) } }
+      return { tag: 'sms', v: { to: map.to, via: 'iMessage', body: sp.rest } }
     }
     case 'remember': {
       const lines = b.body

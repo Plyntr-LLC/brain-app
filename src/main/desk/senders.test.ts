@@ -204,13 +204,6 @@ test('sendText passes the guid and maps the child results', async () => {
   }
 })
 
-test('WhatsApp does not call the text sender', () => {
-  const fake = fakeSpawn(() => ({ out: '' }))
-  const senders = createSenders({ spawn: fake.spawn })
-  assert.deepEqual(senders.sendWhatsApp(), { ok: false, sendable: false })
-  assert.equal(fake.calls.length, 0)
-})
-
 test('a 15 second email kill and a 25 second text kill return the check notes', async () => {
   const hang: DeskSpawn = () => {
     const child = {

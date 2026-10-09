@@ -12,9 +12,9 @@ function modifiers(e: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shi
   return (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0)
 }
 
-/** The live page. A small click only enlarges. Wide, it shows the page as it changes and takes the mouse and keys. */
+/** The live page. A small click only enlarges. Wide or large, it shows the page as it changes and takes the mouse and keys. */
 export function BrowserPicture(props: {
-  mode: 'small' | 'wide' | 'note'
+  mode: 'small' | 'wide' | 'large' | 'note'
   src: string | null
   /** The browser place this picture shows: `chat:<tab>` or `desk:<bot>`. */
   owner: string
@@ -27,7 +27,7 @@ export function BrowserPicture(props: {
   const lastMove = useRef(0)
   const dragging = useRef(false)
   const [live, setLive] = useState<string | null>(null)
-  const wide = props.mode === 'wide' && !!props.owner
+  const wide = (props.mode === 'wide' || props.mode === 'large') && !!props.owner
   const watching = wide && props.active
 
   useEffect(() => {
@@ -166,7 +166,7 @@ export function BrowserPicture(props: {
       onDragStart={(e) => e.preventDefault()}
       onKeyDown={onKeyDown}
     >
-      {src ? <img className={props.mode === 'wide' ? 'wide' : ''} src={`data:image/jpeg;base64,${src}`} alt="" draggable={false} /> : null}
+      {src ? <img className={props.mode === 'small' ? '' : props.mode} src={`data:image/jpeg;base64,${src}`} alt="" draggable={false} /> : null}
     </button>
   )
 }

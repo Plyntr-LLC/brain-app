@@ -26,7 +26,8 @@ type Msg = {
   tool?: string
   live?: boolean
 }
-type Row = { spec: SkinSpec; thinkKey?: string; thinkLive?: boolean }
+/** `at`: when a message you sent was sent, so a turn can hold what belongs to it. */
+type Row = { spec: SkinSpec; thinkKey?: string; thinkLive?: boolean; at?: number }
 
 function protocolJunk(text: string): boolean {
   return isProtocolNoise(text)
@@ -123,7 +124,8 @@ export function SkinPane({
   canPeel: _canPeel,
   cliName,
   pageAt,
-  pageSlot
+  pageSlot,
+  turnSlot
 }: {
   tabId: string
   cwd: string
@@ -156,6 +158,8 @@ export function SkinPane({
   cliName: string
   pageAt?: number | null
   pageSlot?: ReactNode
+  /** What else sits in the turn of the message sent at `at`, after the page (Send cards). */
+  turnSlot?: (at: number) => ReactNode
 }) {
   const [openThink, setOpenThink] = useState<Record<string, boolean>>({})
   const specs: Row[] = []
@@ -163,7 +167,7 @@ export function SkinPane({
     if (m.who === 'me' && m.text) {
       const spec = userMessageSpec(m.text, m.pastes)
       if (pageAt != null && m.at === pageAt) spec.props = { ...spec.props, pageTurn: true }
-      specs.push({ spec })
+      specs.push({ spec, at: m.at })
     }
     else if (m.who === 'tool' && m.path) {
       const s = specFromStreamEvent({ kind: 'file', path: m.path, tool: m.tool })
@@ -327,6 +331,7 @@ export function SkinPane({
             <div key={t.key} className="skin-user-turn">
               {card(t.user)}
               {t.user.spec.props.pageTurn ? pageSlot : null}
+              {t.user.at != null ? turnSlot?.(t.user.at) : null}
             </div>
           ) : (
             <div key={t.key} className="skin-row">

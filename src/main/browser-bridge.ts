@@ -2,8 +2,10 @@ import { randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
-import type { BrowseStepResult, DeskBrowser } from '../shared/desk.ts'
+import type { BrowseStepResult, DeskBrowser, WhatsAppSendAnswer, WhatsAppSendAsk } from '../shared/desk.ts'
 import { keyName } from './desk/browser.ts'
+import { WHATSAPP_BOX } from './desk/wa-send.ts'
+import { isWhatsApp, whatsappAccount, WHATSAPP_PARTITION_PREFIX } from '../shared/page-picture.ts'
 
 /**
  * Lets a chat CLI drive the browser inside Brain. Brain listens on a socket in its userData; the CLI runs
@@ -14,11 +16,13 @@ import { keyName } from './desk/browser.ts'
 export type BridgeCall = { token?: unknown; owner?: unknown; tool?: unknown; args?: unknown }
 export type BridgeReply = { ok: true; text: string; image?: string } | { ok: false; error: string }
 export type ServerSpec = { name: string; command: string; args: string[]; env: Record<string, string> }
+export type SendAsk = WhatsAppSendAsk
+export type SendAnswer = WhatsAppSendAnswer
 
 const SERVER = 'brain-browser'
 const CALL_MS = 40_000
 
-type Running = { server: Server; dir: string; sock: string; pipe: boolean; token: string; script: string; exec: string }
+type Running = { server: Server; dir: string; sock: string; pipe: boolean; token: string; script: string; exec: string; tools: ReturnType<typeof makeBrowserTools> }
 
 /** Where the bridge listens: a named pipe on Windows (no unix sockets there), else an owner-only socket file in userData. */
 export function socketPath(platform: NodeJS.Platform, dir: string, pid: number): string {
@@ -57,6 +61,9 @@ function describe(r: BrowseStepResult): BridgeReply {
   if ('hold' in r) {
     return { ok: false, error: `Not pressed: "${r.name}" can spend money or change an account. Ask the person. They can click it themselves in the browser picture in this thread.` }
   }
+  if ('refused' in r && r.refused === 'pay' && r.name === WHATSAPP_BOX) {
+    return { ok: false, error: "Not pressed: Enter in WhatsApp's message box sends the message. Use whatsapp_send; the person presses Send on the card in this thread." }
+  }
   if ('refused' in r && r.refused === 'pay') {
     return { ok: false, error: `Not pressed: "${r.name ?? ''}" sends or publishes. Ask the person. They can click it themselves in the browser picture in this thread.` }
   }
@@ -77,10 +84,36 @@ function within<T>(work: Promise<T>, ms: number): Promise<T> {
   return Promise.race([work, late]).finally(() => clearTimeout(timer))
 }
 
+/** `main` and every other WhatsApp account that has a saved partition under this userData. */
+export function whatsappAccounts(userData?: string): string[] {
+  const dir = userData ? join(userData, 'Partitions') : ''
+  const named = dir && existsSync(dir) ? readdirSync(dir).filter((n) => n.startsWith(WHATSAPP_PARTITION_PREFIX)).map((n) => n.slice(WHATSAPP_PARTITION_PREFIX.length)) : []
+  return ['main', ...named.filter((n) => whatsappAccount(n) === n).sort()]
+}
+
 /** The tool calls for one browser. Exported so the check drives the same code the socket does. */
-export function makeBrowserTools(browser: DeskBrowser, onOpened: (owner: string, url?: string) => void) {
+export function makeBrowserTools(
+  browser: DeskBrowser,
+  onOpened: (owner: string, url?: string) => void,
+  userData?: string,
+  onSendAsk: (ask: SendAsk) => void = () => {}
+) {
   const sessions = new Map<string, string>()
   let n = 0
+  type Card = { owner: string; account: string; to: string; text: string; state: 'waiting' | 'sending' | 'sent' | 'not-sent' }
+  const cards = new Map<string, Card>()
+
+  /** The person's answer on a Send card. One answer per card, from the chat that holds it. */
+  async function answerSend(id: string, yes: boolean, owner: string): Promise<SendAnswer> {
+    const card = cards.get(id)
+    if (!card || card.owner !== owner || card.state !== 'waiting') return { refused: true }
+    // Set before anything is awaited, so a second answer arriving now is refused.
+    card.state = yes ? 'sending' : 'not-sent'
+    if (!yes) return { ok: false, note: 'Not sent.' }
+    const sent = browser.whatsappSend ? await browser.whatsappSend({ account: card.account, to: card.to, body: card.text }) : { ok: false as const, note: "Brain's browser cannot send WhatsApp messages." }
+    card.state = sent.ok ? 'sent' : 'not-sent'
+    return sent
+  }
 
   async function session(owner: string): Promise<string> {
     const have = sessions.get(owner)
@@ -91,7 +124,7 @@ export function makeBrowserTools(browser: DeskBrowser, onOpened: (owner: string,
     return id
   }
 
-  async function step(owner: string, action: string, detail = '', url?: string): Promise<BrowseStepResult> {
+  async function step(owner: string, action: string, detail = '', url?: string, account?: string): Promise<BrowseStepResult> {
     for (let tries = 1; ; tries++) {
       const fresh = !sessions.has(owner)
       const id = await session(owner)
@@ -101,7 +134,7 @@ export function makeBrowserTools(browser: DeskBrowser, onOpened: (owner: string,
           const looked = await browser.runStep(id, { action: 'read' })
           if (!('ok' in looked)) return looked
         }
-        const r = await browser.runStep(id, { action, detail, url })
+        const r = await browser.runStep(id, { action, detail, url, account })
         // A sign-in ends the desk session. The next call opens a new one on the same window.
         if ('signIn' in r) sessions.delete(owner)
         return r
@@ -118,9 +151,16 @@ export function makeBrowserTools(browser: DeskBrowser, onOpened: (owner: string,
       case 'browser_open': {
         const url = str('url')
         if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'browser_open needs an http or https address.' }
-        const r = await step(owner, 'url', url, url)
+        const account = whatsappAccount(str('account'))
+        if (account === null) return { ok: false, error: `"${str('account')}" cannot be a WhatsApp account name. Use letters, digits and dashes, like india.` }
+        const wa = isWhatsApp(url)
+        if (account && !wa) return { ok: false, error: 'account is only for https://web.whatsapp.com. Leave it out for other addresses.' }
+        const r = await step(owner, 'url', url, url, account)
         onOpened(owner, 'url' in r ? r.url : url)
-        return describe(r)
+        const reply = describe(r)
+        if (!wa || !reply.ok) return reply
+        const line = `WhatsApp account on screen: ${account || 'main'}. Accounts on this computer: ${whatsappAccounts(userData).join(', ')}.`
+        return { ...reply, text: `${reply.text}\n\n${line}` }
       }
       case 'browser_read':
         return (await shown(owner)) ? describe(await step(owner, 'read')) : notOpen()
@@ -143,12 +183,27 @@ export function makeBrowserTools(browser: DeskBrowser, onOpened: (owner: string,
         const image = await browser.picture(owner)
         return image ? { ok: true, text: 'The page as the person sees it in the thread.', image } : notOpen()
       }
+      case 'whatsapp_send': {
+        const account = whatsappAccount(str('account'))
+        if (account === null) return { ok: false, error: `"${str('account')}" cannot be a WhatsApp account name. Use letters, digits and dashes, like india.` }
+        const to = str('to')
+        const text = String(args.text ?? '').trim()
+        if (!to || !text) return { ok: false, error: 'whatsapp_send needs who it goes to (to) and the message (text).' }
+        if (text.length > 4000) return { ok: false, error: 'That message is over 4,000 characters. Make it shorter.' }
+        const id = randomBytes(12).toString('hex')
+        cards.set(id, { owner, account, to, text, state: 'waiting' })
+        onSendAsk({ owner, id, account: account || 'main', to, text })
+        return {
+          ok: true,
+          text: `A Send card for WhatsApp (${account || 'main'}) to ${to} is in this chat. Nothing is sent until the person presses Send on it. The card shows what happened.`
+        }
+      }
       case 'browser_close': {
         const id = sessions.get(owner)
         sessions.delete(owner)
         if (id) browser.release(id)
         await browser.closeOwner?.(owner)
-        return { ok: true, text: 'Closed. The shared WhatsApp window, if open, stays open.' }
+        return { ok: true, text: 'Closed. WhatsApp windows stay open.' }
       }
       default:
         return { ok: false, error: `No tool named ${tool}.` }
@@ -168,6 +223,7 @@ export function makeBrowserTools(browser: DeskBrowser, onOpened: (owner: string,
   }
 
   return {
+    answerSend,
     async call(owner: string, tool: string, args: Record<string, unknown>): Promise<BridgeReply> {
       try {
         return await within(run(owner, tool, args), CALL_MS)
@@ -235,6 +291,7 @@ export function startBrowserBridge(opts: {
   exec: string
   browser: DeskBrowser
   onOpened: (owner: string, url?: string) => void
+  onSendAsk?: (ask: SendAsk) => void
   platform?: NodeJS.Platform
 }): Promise<{ sock: string; token: string }> {
   if (running) return Promise.resolve({ sock: running.sock, token: running.token })
@@ -245,10 +302,10 @@ export function startBrowserBridge(opts: {
     if (existsSync(sock)) rmSync(sock, { force: true })
   }
   const token = randomBytes(24).toString('hex')
-  const tools = makeBrowserTools(opts.browser, opts.onOpened)
+  const tools = makeBrowserTools(opts.browser, opts.onOpened, opts.dir, opts.onSendAsk)
   const server = createServer({ allowHalfOpen: true }, (s) => serve(s, token, tools))
   // Set before listening so a chat that starts in the next moment already gets the server.
-  running = { server, dir: opts.dir, sock, pipe, token, script: opts.script, exec: opts.exec }
+  running = { server, dir: opts.dir, sock, pipe, token, script: opts.script, exec: opts.exec, tools }
   return new Promise((resolve, reject) => {
     server.once('error', (e) => {
       if (running?.server === server) running = null
@@ -260,6 +317,11 @@ export function startBrowserBridge(opts: {
       resolve({ sock, token })
     })
   })
+}
+
+/** The person pressed Send or Don't send on a card in that chat. */
+export function answerSend(id: string, yes: boolean, owner: string): Promise<SendAnswer> {
+  return running ? running.tools.answerSend(String(id || ''), !!yes, String(owner || '')) : Promise.resolve({ refused: true })
 }
 
 /** What the running bridge actually listens on. */

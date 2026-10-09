@@ -371,7 +371,10 @@ export const EXAMPLES = {
     'September numbers are in the note.',
     '```'
   ].join('\n'),
-  sms: ['```sms', 'to: Brent', 'via: iMessage', '', 'The September note is ready.', '```'].join('\n'),
+  sms: [
+    ['```sms', 'to: Brent', 'via: iMessage', '', 'The September note is ready.', '```'].join('\n'),
+    ['```sms', 'to: Raj Patel', 'via: whatsapp', 'account: <leave this line out for the main WhatsApp, or a number name such as india>', '', 'The September note is ready.', '```'].join('\n')
+  ].join('\n'),
   remember: ['```remember', '- <one line the bot should still know tomorrow>', '```'].join('\n'),
   summary: ['```summary', '<one or two sentences naming what you did and the result>', '```'].join('\n'),
   hire: ['```hire', 'name: Designer', 'cli: claude', 'model: default', 'effort: low', '', '<description, after a blank line, plain sentences, 800 characters max>', '```'].join('\n'),

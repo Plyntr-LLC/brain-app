@@ -1,0 +1,5 @@
+real whatsapp accounts 2026-10-09T04:23:20.194Z
+ok   main: signIn true storagePath /var/folders/1j/w8m_jfjx4bg68kw0h023swth0000gn/T/wa-accounts-cIDcvH/Partitions/brain-browser first result ok,url,title,text,controls text Download WhatsApp for Mac Make calls and get a faster experience when you download the Mac
+ok   india: signIn true storagePath /var/folders/1j/w8m_jfjx4bg68kw0h023swth0000gn/T/wa-accounts-cIDcvH/Partitions/brain-wa-india first result ok,url,title,text,controls text Download WhatsApp for Mac Make calls and get a faster experience when you download the Mac
+ok   two WhatsApp windows on two stores: /var/folders/1j/w8m_jfjx4bg68kw0h023swth0000gn/T/wa-accounts-cIDcvH/Partitions/brain-wa-india | /var/folders/1j/w8m_jfjx4bg68kw0h023swth0000gn/T/wa-accounts-cIDcvH/Partitions/brain-browser
+WHATSAPP_REAL_PASS

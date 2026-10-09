@@ -436,7 +436,6 @@ test('chats and desk bots share the in-app browser, and WhatsApp is the one shar
   assert.equal(fake.actions.some((row) => row === 'show' || row === 'focus'), false)
   assert.ok(fake.hosts.every((h) => h.show === false))
 
-  assert.equal(createSenders().sendWhatsApp().sendable, false)
   const grok = [
     '-p',
     'p',

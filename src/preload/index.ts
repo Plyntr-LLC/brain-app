@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AiKind } from '../shared/contracts'
 import type { Approver, FactoryTriage, RepoProfile, RunRecord as FactoryRun } from '../shared/factory'
-import type { BotState, DeskBot, DeskMessage, DeskWelcome, KeyInput, PointerInput } from '../shared/desk'
+import type { BotState, DeskBot, DeskMessage, DeskWelcome, KeyInput, PointerInput, WhatsAppSendAnswer, WhatsAppSendAsk } from '../shared/desk'
 import type { MediaAddResult, MediaEnableResult, MediaLibraryResult, MediaStatus } from '../shared/media'
 
 type FactoryResult = { ok: true; run: FactoryRun | null } | { ok: false; error: string }
@@ -1177,7 +1177,17 @@ const brain = {
       return () => {
         ipcRenderer.removeListener('browser:opened', h)
       }
-    }
+    },
+    /** A chat CLI asked to send a WhatsApp message: the Send card for that owner. */
+    onSendAsk: (fn: (ask: WhatsAppSendAsk) => void) => {
+      const h = (_e: unknown, ask: WhatsAppSendAsk) => fn(ask)
+      ipcRenderer.on('browser:sendAsk', h)
+      return () => {
+        ipcRenderer.removeListener('browser:sendAsk', h)
+      }
+    },
+    /** The person's Send (yes) or Don't send (no) on that card. */
+    sendAnswer: (owner: string, id: string, yes: boolean) => ipcRenderer.invoke('browser:sendAnswer', owner, id, yes) as Promise<WhatsAppSendAnswer>
   },
   desk: {
     attach: (tab: string, brain: string) => ipcRenderer.invoke('desk:attach', tab, brain) as Promise<{ brain: string }>,

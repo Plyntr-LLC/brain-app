@@ -1,8 +1,9 @@
 import { BROWSE_MAX_CONTROLS, BROWSE_TEXT_CHARS, payCheck } from '../../shared/desk.ts'
 import type { BrowseStepResult, DeskBrowser, DeskLaunch, KeyInput, PageFrame, PageSnapshot, PointerInput } from '../../shared/desk.ts'
-import { windowKey } from '../../shared/page-picture.ts'
+import { isWhatsAppKey, windowKey } from '../../shared/page-picture.ts'
 import type { DeskPage } from './chrome.ts'
 import { startPageTurn } from './page-lane.ts'
+import { messageBoxFocused, sendOnWhatsApp, WHATSAPP_BOX, WHATSAPP_URL, type WhatsAppMessage, type WhatsAppPage, type WhatsAppSent } from './wa-send.ts'
 
 /**
  * The desk browser. Callers that omit an owner share one lock, so one browse at a time.
@@ -10,7 +11,7 @@ import { startPageTurn } from './page-lane.ts'
  * the page or a refusal. The controller writes every sentence; this file returns only results.
  */
 
-type Step = { action: string; detail?: string; url?: string }
+type Step = { action: string; detail?: string; url?: string; account?: string }
 type Session = {
   id: string
   owner: string
@@ -368,11 +369,11 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
     }
   }
 
-  async function stepAdapter(s: Session, url?: string): Promise<DeskPage | { noChrome: true }> {
+  async function stepAdapter(s: Session, url?: string, account?: string): Promise<DeskPage | { noChrome: true }> {
     const w = wins()
     if (!w) return chrome()
     const owner = s.owner || 'desk'
-    const key = url ? windowKey(owner, url) : showing.get(owner) || owner
+    const key = url ? windowKey(owner, url, account) : showing.get(owner) || owner
     if (url) showing.set(owner, key)
     const connected = await w.connect({ chromePath, profileDir })
     if (isNoChrome(connected)) return { noChrome: true }
@@ -394,9 +395,10 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
     const urlForKey = action === 'url' ? (step.url ?? detail).trim() : undefined
     const key = wins()
       ? urlForKey
-        ? windowKey(s0?.owner || 'desk', urlForKey)
+        ? windowKey(s0?.owner || 'desk', urlForKey, step.account)
         : showing.get(s0?.owner || '') || s0?.owner || 'desk'
       : 'page'
+    const onWhatsApp = isWhatsAppKey(key)
     const turn = mutates ? startPageTurn(key) : null
     try {
       if (turn) await turn.promise
@@ -404,7 +406,7 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
       const s = sessions.get(browseId)
       // The controller posts no-page before it gets here. This is a wiring bug, not a sentence.
       if (!s || s.id !== browseId) throw new Error(`desk browser: runStep for ${browseId} without an open session`)
-      const a = await stepAdapter(s, action === 'url' ? urlForKey : undefined)
+      const a = await stepAdapter(s, action === 'url' ? urlForKey : undefined, step.account)
       if ('noChrome' in a) return a
       if (action === 'read') return read(a, s)
 
@@ -450,6 +452,8 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
     if (action === 'key') {
       const key = keyName(detail)
       if (!key || !a.pressKey) return { refused: 'missing', name: detail, url }
+      // Enter in WhatsApp's message box sends the message. Only the Send card does that.
+      if (key === 'Enter' && onWhatsApp && (await a.run?.<boolean>(messageBoxFocused))) return { refused: 'pay', name: WHATSAPP_BOX, url }
       // Enter and Space press the focused control, and Enter in a form submits it. Both get a click's pay check.
       if (key === 'Enter' || key === 'Space') {
         const names = await a.activeNames?.()
@@ -475,7 +479,10 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
    * reopens `pageUrl` in the desk profile first. The person already said yes, so no pay check. */
   async function clickApproved(name: string, pageUrl: string, owner?: string): Promise<BrowseStepResult> {
     const w = wins()
-    const key = w ? windowKey(owner || 'page', pageUrl) : 'page'
+    // A hold on a WhatsApp page was raised on the account this place shows.
+    const shownKey = owner ? showing.get(owner) : undefined
+    const account = shownKey && isWhatsAppKey(shownKey) ? shownKey.slice(3) : ''
+    const key = w ? windowKey(owner || 'page', pageUrl, account) : 'page'
     const turn = startPageTurn(key)
     try {
       await turn.promise
@@ -507,14 +514,34 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
     }
   }
 
+  /** One message through that account's WhatsApp window. The window's lane is held for the whole send. */
+  async function whatsappSend(msg: WhatsAppMessage): Promise<WhatsAppSent> {
+    const w = wins()
+    if (!w) return { ok: false, note: "Brain's browser is not available. Nothing was sent." }
+    const key = windowKey('page', WHATSAPP_URL, msg.account)
+    const turn = startPageTurn(key)
+    try {
+      await turn.promise
+      const connected = await w.connect({ chromePath, profileDir })
+      if (isNoChrome(connected)) return { ok: false, note: "Brain's browser is not available. Nothing was sent." }
+      const a = await w.page(key)
+      if ('noChrome' in a || !a.run || !a.url || !a.clickAt || !a.typeText || !a.key || !a.pressKey) return { ok: false, note: "Brain's browser is not available. Nothing was sent." }
+      return await sendOnWhatsApp(a as DeskPage & WhatsAppPage, msg)
+    } catch (e) {
+      return { ok: false, note: `Sending stopped: ${String((e as Error)?.message || e)}. Check the chat before sending again.` }
+    } finally {
+      turn.release()
+    }
+  }
+
   async function closeOwner(owner: string) {
     const w = wins()
     showing.delete(owner)
     rewatch(owner)
-    if (!w || !owner || owner === 'wa') return
+    if (!w || !owner || isWhatsAppKey(owner)) return
     // `has` is false while the page is still being opened. The close still has to win.
     await w.close(owner)
   }
 
-  return { open, cancel, release, focus, showWindow, picture, windowOpen, clickApproved, runStep, goTo, clickAt, typeText, pressKey, wheel, look, closeOwner, pointer, keyInput, watch }
+  return { open, cancel, release, focus, showWindow, picture, windowOpen, clickApproved, runStep, goTo, clickAt, typeText, pressKey, wheel, look, closeOwner, pointer, keyInput, watch, whatsappSend }
 }

@@ -4,11 +4,13 @@ import { extname, basename, join } from 'node:path'
 import { BROWSE_MAX_CONTROLS, BROWSE_TEXT_CHARS } from '../../shared/desk.ts'
 import type { DeskLaunch, KeyInput, PageFrame, PointerInput } from '../../shared/desk.ts'
 import { pageActiveNames, pageScroll, pageSnapshot, pageSubmitFor, type DeskPage, type DeskWindows } from './chrome.ts'
+import { isWhatsAppKey, whatsappPartition } from '../../shared/page-picture.ts'
 
 /**
  * The browser inside Brain. Each window is a hidden BaseWindow holding one offscreen WebContentsView,
  * so nothing shows on screen and Brain's BrowserWindow.getAllWindows() never lists it.
  * Every window shares one saved partition, so a login made in one chat is there for every chat and Desk bot.
+ * A WhatsApp account other than main has its own, so each number keeps its own login.
  */
 
 export const BROWSER_PARTITION = 'persist:brain-browser'
@@ -71,16 +73,17 @@ function freePath(dir: string, name: string): string {
 }
 
 const ALLOWED = new Set(['clipboard-sanitized-write', 'fullscreen'])
-let prepared: Session | null = null
+const prepared = new Map<string, Session>()
 
-function browserSession(): Session {
-  if (prepared) return prepared
-  const ses = session.fromPartition(BROWSER_PARTITION)
+function browserSession(partition: string): Session {
+  const have = prepared.get(partition)
+  if (have) return have
+  const ses = session.fromPartition(partition)
   ses.setUserAgent(chromeAgent())
   ses.setPermissionRequestHandler((_wc, permission, done) => done(ALLOWED.has(permission)))
   ses.setPermissionCheckHandler((_wc, permission) => ALLOWED.has(permission))
   ses.on('will-download', (_e, item) => item.setSavePath(freePath(app.getPath('downloads'), item.getFilename())))
-  prepared = ses
+  prepared.set(partition, ses)
   return ses
 }
 
@@ -257,6 +260,8 @@ function adapterFor(host: BaseWindow, wc: WebContents): DeskPage {
     pointer,
     key,
     watch,
+    run: (fn, ...args) => inPage(wc, fn, ...args),
+    url: () => wc.getURL(),
     goto: async (url) => {
       // A dead link or a slow page still leaves something in the window to read.
       await within(wc.loadURL(url), LOAD_MS, 'The page').catch((e) => {
@@ -321,11 +326,11 @@ function adapterFor(host: BaseWindow, wc: WebContents): DeskPage {
 
 type Held = { host: BaseWindow; wc: WebContents; page: DeskPage }
 
-async function openHeld(): Promise<Held> {
-  browserSession()
+async function openHeld(partition: string): Promise<Held> {
+  browserSession(partition)
   const host = new BaseWindow({ show: false, width: VIEW.width, height: VIEW.height, skipTaskbar: true })
   const view = new WebContentsView({
-    webPreferences: { offscreen: true, partition: BROWSER_PARTITION, backgroundThrottling: false, sandbox: true, contextIsolation: true, nodeIntegration: false }
+    webPreferences: { offscreen: true, partition, backgroundThrottling: false, sandbox: true, contextIsolation: true, nodeIntegration: false }
   })
   host.contentView.addChildView(view)
   view.setBounds({ x: 0, y: 0, ...VIEW })
@@ -351,7 +356,7 @@ async function openHeld(): Promise<Held> {
   return { host, wc, page: adapterFor(host, wc) }
 }
 
-/** The launch the desk browser takes. Same keyed windows as before: `wa` is the one WhatsApp window and is never closed by a place. */
+/** The launch the desk browser takes. Same keyed windows as before: `wa` and `wa:<name>` are the WhatsApp windows and are never closed by a place. */
 export function makeInAppLaunch(): DeskLaunch & { windows: DeskWindows; closeAll: () => void } {
   const byKey = new Map<string, Held>()
   const opening = new Map<string, Promise<DeskPage | { noChrome: true }>>()
@@ -368,7 +373,7 @@ export function makeInAppLaunch(): DeskLaunch & { windows: DeskWindows; closeAll
     if (held) byKey.delete(key)
     dropped.delete(key)
     const job = (async (): Promise<DeskPage | { noChrome: true }> => {
-      const fresh = await openHeld()
+      const fresh = await openHeld(whatsappPartition(key) ?? BROWSER_PARTITION)
       if (dropped.has(key)) {
         dropped.delete(key)
         fresh.host.destroy()
@@ -399,7 +404,7 @@ export function makeInAppLaunch(): DeskLaunch & { windows: DeskWindows; closeAll
     peek,
     has: (key) => peek(key) !== null,
     async close(key) {
-      if (!key || key === 'wa') return
+      if (!key || isWhatsAppKey(key)) return
       if (opening.has(key)) dropped.add(key)
       const held = byKey.get(key)
       byKey.delete(key)

@@ -16,8 +16,20 @@ const WHERE =
 const TOOLS = [
   {
     name: 'browser_open',
-    description: `${WHERE} Opens a web address and returns the page text and its numbered links, buttons, and fields.`,
-    inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'http or https address' } }, required: ['url'] }
+    description:
+      `${WHERE} Opens a web address and returns the page text and its numbered links, buttons, and fields. ` +
+      'For WhatsApp Web, each number has its own login: leave account out for the main WhatsApp, or pass a name such as india for another number. A new name shows a QR code to link that number.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'http or https address' },
+        account: {
+          type: 'string',
+          description: 'Only for https://web.whatsapp.com. Leave it out for the main WhatsApp. A name such as india opens that number\'s own WhatsApp; a new name shows a QR code to link it.'
+        }
+      },
+      required: ['url']
+    }
   },
   {
     name: 'browser_read',
@@ -50,8 +62,24 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {} }
   },
   {
+    name: 'whatsapp_send',
+    description:
+      'Sends one WhatsApp message, only after the person presses Send. It puts a Send card in this chat thread (which WhatsApp, to whom, the text) and answers at once. ' +
+      'Nothing is sent until the person presses Send on the card, and the card shows whether WhatsApp sent it. Draft the message first. ' +
+      'It goes to an existing chat or contact whose name matches to; it never starts a new chat.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', description: 'The chat or contact name as WhatsApp shows it, such as Raj Patel.' },
+        text: { type: 'string', description: 'The message. Line breaks stay line breaks in one message.' },
+        account: { type: 'string', description: 'Leave it out for the main WhatsApp. A name such as india sends from that number.' }
+      },
+      required: ['to', 'text']
+    }
+  },
+  {
     name: 'browser_close',
-    description: 'Closes this chat\'s page. The shared WhatsApp window stays open.',
+    description: 'Closes this chat\'s page. WhatsApp windows stay open, every account.',
     inputSchema: { type: 'object', properties: {} }
   }
 ]

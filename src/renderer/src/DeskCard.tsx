@@ -1,4 +1,4 @@
-import type { JSX, ReactNode } from 'react'
+import { useState, type JSX, type ReactNode } from 'react'
 import { CLI_LABEL, ME, type DeskMessage } from '@shared/desk'
 import { BrowserPicture } from './BrowserPicture'
 
@@ -97,11 +97,17 @@ function Card(props: { tone?: 'ok' | 'fail' | 'info'; title?: string; body?: Rea
   )
 }
 
-/** Send and Not now on an email or a text. Sent wins; Not sent keeps Send while it can still go. */
-function tileActions(t: { actedAt?: string; sent?: 'yes' | 'no'; canSend: boolean; onAnswer: (sent: 'yes' | 'no') => void }): ReactNode {
+/** Send and Not now on an email or a text. Sent wins; Not sent keeps Send while it can still go.
+ * After a click both wait until the tile changes, so a slow send cannot be pressed twice. */
+function TileActions(t: { actedAt?: string; sent?: 'yes' | 'no'; canSend: boolean; onAnswer: (sent: 'yes' | 'no') => void }): ReactNode {
+  const [pending, setPending] = useState(false)
+  const answer = (sent: 'yes' | 'no') => {
+    setPending(true)
+    t.onAnswer(sent)
+  }
   if (t.actedAt) return <span className="tiny">{stamp('Sent', t.actedAt)}</span>
   const send = (
-    <button type="button" className="primary" disabled={!t.canSend} onClick={() => t.onAnswer('yes')}>
+    <button type="button" className="primary" disabled={!t.canSend || pending} onClick={() => answer('yes')}>
       Send
     </button>
   )
@@ -116,7 +122,7 @@ function tileActions(t: { actedAt?: string; sent?: 'yes' | 'no'; canSend: boolea
   return (
     <>
       {send}
-      <button type="button" className="ghost" onClick={() => t.onAnswer('no')}>
+      <button type="button" className="ghost" disabled={pending} onClick={() => answer('no')}>
         Not now
       </button>
     </>
@@ -229,7 +235,15 @@ export function DeskCard(props: {
               {e.note ? <div className="tiny">{e.note}</div> : null}
             </>
           }
-          actions={tileActions({ actedAt: msg.actedAt, sent: e.sent, canSend: e.sendable, onAnswer: (sent) => props.onSend(msg.id, sent) })}
+          actions={
+            <TileActions
+              key={`${msg.id}|${msg.actedAt || ''}|${e.sent || ''}|${e.note || ''}|${e.sendable}`}
+              actedAt={msg.actedAt}
+              sent={e.sent}
+              canSend={e.sendable}
+              onAnswer={(sent) => props.onSend(msg.id, sent)}
+            />
+          }
         />
       )
     }
@@ -244,16 +258,20 @@ export function DeskCard(props: {
             <>
               <div>To: {t.chatLabel || t.to}</div>
               <div>Via: {t.via}</div>
+              {t.via === 'WhatsApp' && t.account && t.account !== 'main' ? <div>Account: {t.account}</div> : null}
               <div>{t.body}</div>
               {t.note ? <div className="tiny">{t.note}</div> : null}
             </>
           }
-          actions={tileActions({
-            actedAt: msg.actedAt,
-            sent: t.sent,
-            canSend: t.sendable && t.via !== 'WhatsApp',
-            onAnswer: (sent) => props.onSend(msg.id, sent)
-          })}
+          actions={
+            <TileActions
+              key={`${msg.id}|${msg.actedAt || ''}|${t.sent || ''}|${t.note || ''}|${t.sendable}`}
+              actedAt={msg.actedAt}
+              sent={t.sent}
+              canSend={t.sendable}
+              onAnswer={(sent) => props.onSend(msg.id, sent)}
+            />
+          }
         />
       )
     }

@@ -20,10 +20,32 @@ export function isWhatsApp(url: string): boolean {
   }
 }
 
-/** WhatsApp is one window for the whole app. Every other address uses the place that opened it. */
-export function windowKey(owner: string, url?: string): string {
-  if (url && isWhatsApp(url)) return 'wa'
-  return owner
+/** The WhatsApp account a name means: '' is the main one (no name, or `main`). null when it cannot be an account name. */
+export function whatsappAccount(raw?: string): string | null {
+  const name = String(raw ?? '').trim().toLowerCase().replace(/\s+/g, '-')
+  if (!name || name === 'main') return ''
+  return /^[a-z0-9][a-z0-9-]{0,31}$/.test(name) ? name : null
+}
+
+/** Each WhatsApp account other than main keeps its login in its own saved partition. */
+export const WHATSAPP_PARTITION_PREFIX = 'brain-wa-'
+
+/** The window of a WhatsApp account: `wa` for the main one, `wa:<name>` for another. */
+export function isWhatsAppKey(key: string): boolean {
+  return key === 'wa' || key.startsWith('wa:')
+}
+
+/** The saved partition a window lives on. null for the shared one every other page uses. */
+export function whatsappPartition(key: string): string | null {
+  const name = key.startsWith('wa:') ? whatsappAccount(key.slice(3)) : ''
+  return name ? `persist:${WHATSAPP_PARTITION_PREFIX}${name}` : null
+}
+
+/** Each WhatsApp account is one window for the whole app. Every other address uses the place that opened it. */
+export function windowKey(owner: string, url?: string, account?: string): string {
+  if (!url || !isWhatsApp(url)) return owner
+  const name = whatsappAccount(account)
+  return name ? `wa:${name}` : 'wa'
 }
 
 /** A send whose whole text is one web address opens the shared page and shows it small. */

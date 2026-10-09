@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 
-/** Follow the page picture while the thread is already pinned. The message list keeps its own scroll. */
+/** While the thread is pinned to the end, a new picture frame or size keeps it at the end. It never scrolls up to the picture. */
 export function usePageFollow(
   thread: { current: HTMLElement | null },
   pinned: { current: boolean },
@@ -8,7 +8,7 @@ export function usePageFollow(
 ) {
   useEffect(() => {
     if (!pinned.current) return
-    const turn = thread.current?.querySelector('.page-turn')
-    if (turn instanceof HTMLElement) turn.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    const el = thread.current
+    if (el) el.scrollTo(0, el.scrollHeight)
   }, [thread, pinned, watch])
 }

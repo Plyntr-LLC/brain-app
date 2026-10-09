@@ -24,7 +24,7 @@ import { handleBrainMediaProtocol, registerBrainMediaScheme } from './media/prot
 import { clearMediaTemp } from './media/export'
 import { startMediaStatePoll } from './media/state-poll'
 import { refreshTray, startTray } from './tray'
-import { bridgeScriptPath, startBrowserBridge, stopBrowserBridge } from './browser-bridge'
+import { answerSend, bridgeScriptPath, startBrowserBridge, stopBrowserBridge } from './browser-bridge'
 import { closeAllShared, sharedDeskBrowser } from './shared-browser'
 import { ensureChatShims, guardScriptPath } from './chat-env'
 
@@ -37,6 +37,7 @@ registerFactoryIpc()
 registerPhoneIpc()
 registerMediaIpc()
 registerDeskIpc()
+ipcMain.handle('browser:sendAnswer', (_e, owner: string, id: string, yes: boolean) => answerSend(String(id || ''), yes === true, String(owner || '')))
 
 process.on('uncaughtException', (err) => {
   const msg = String((err as NodeJS.ErrnoException).message || err)
@@ -138,6 +139,9 @@ app.whenReady().then(() => {
     browser: sharedDeskBrowser(),
     onOpened: (owner) => {
       for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('browser:opened', owner)
+    },
+    onSendAsk: (ask) => {
+      for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('browser:sendAsk', ask)
     }
   }).catch((e) => console.error('browser bridge', e))
   startTray(() => mainWin)

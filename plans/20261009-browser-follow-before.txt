@@ -1,0 +1,18 @@
+FAIL setup: the reply makes the thread much taller than the window  1983/669
+PASS 1 the picture appears in the "open it" turn, above the reply
+FAIL 1 the picture appearing keeps a pinned thread at the end  top 1314 -> 88, end false
+FAIL 1 the picture is far above the end  179.578125 vs 0
+PASS 1 two or more frames landed while waiting
+FAIL 1 pinned at the end, frames do not pull the thread up to the picture (F1)  top 88 -> 88, end false
+PASS 2 scrolled up, a frame lands and the thread does not move (F2)
+FAIL 2 scrolled up, Wide leaves the lines being read in place  Paragraph 1 of 279.578125 -> 449.578125 -> 449.578125
+FAIL 3 a new message moves the small picture under it, thread at the end (F4)  open it
+FAIL 3 Wide while pinned keeps the end and the whole wide picture in view (F3, F1)  0.03125-320.03125 in 0-669.21875, end false | 0.03125-320.03125 in 0-669.21875, end false
+FAIL 4 a new message moves the wide picture under it, still wide, thread at the end  open it
+PASS 4 across the move at most one stop and one start, one live watch, never two (F5)
+PASS 4 a live frame after the move shows in the one picture
+FAIL 5 a small picture moves too  open it
+FAIL 6 a hidden picture stays where it was, nothing under the new message (F4)  open it
+
+RENDER_UI_FAIL browser-follow (15 checks)
+screenshot: /tmp/follow-before/browser-follow.png
