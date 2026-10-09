@@ -1,12 +1,14 @@
 // The real update, rehearsed on this Mac before a build is published: the old Brain (a release zip) takes this
 // repo's dist/ build from a feed on 127.0.0.1 (BRAIN_TEST_UPDATE_FEED, src/main/update-feed.ts), Squirrel installs it
-// on quit, and the relaunched app must be the new version. Launches Brain twice in a visible window, under the same
-// write-protecting sandbox as check-live-app.ts (temp HOME, temp userData, a scratch brain).
+// on quit, and the relaunched app must be the new version. Launches Brain twice in a visible window, with a temp HOME,
+// temp userData and a scratch brain. Not under sandbox-exec: Squirrel installs through a launchd job, which
+// sandbox-exec forbids (CFErrorDomainLaunchd error 4). Squirrel's own staging lives in the real
+// ~/Library/Caches/com.plyntr.brain.ShipIt either way.
 // node --experimental-strip-types scripts/rehearse-update.ts <old Brain-x.y.z-mac.zip> [--notarized]
 // Prints UPDATE_REHEARSAL_PASS. Note: macOS keeps one ShipIt state for Brain's app ID; do not run it while the
 // installed Brain is quitting to install an update of its own.
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { copyFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -56,9 +58,6 @@ spawnSync('git', ['init', '-q'], { cwd: scratch })
 if (existsSync(join(real, '.grok', 'auth.json'))) copyFileSync(join(real, '.grok', 'auth.json'), join(home, '.grok', 'auth.json'))
 writeFileSync(join(userData, 'account.json'), JSON.stringify({ email: 'update-check@plyntr.com', token: 'update-check', name: 'Update Check', role: 'owner', source: 'local', folder: scratch, brains: [] }))
 writeFileSync(join(userData, 'brains.json'), JSON.stringify({ active: scratch, rows: [{ path: scratch, name: 'Scratch', slug: 'scratch', watching: false, syncMode: 'local' }] }))
-const deny = [join(real, 'Projects', 'agency-brain'), join(real, 'Library', 'Application Support', 'brain-app'), join(real, 'Library', 'Application Support', 'Agency Brain'), '/Applications/Brain.app', join(real, '.grok'), join(real, '.claude'), join(real, '.codex'), join(real, '.cursor')]
-const profile = join(work, 'deny.sb')
-writeFileSync(profile, `(version 1)\n(allow default)\n${deny.map((d) => `(deny file-write* (subpath ${JSON.stringify(d)}))`).join('\n')}\n`)
 
 // The old app, unpacked the way Squirrel leaves an install: no quarantine, so it is not translocated.
 execFileSync('ditto', ['-x', '-k', oldZip, apps])
@@ -88,7 +87,9 @@ const launch = () => {
   delete env.ELECTRON_RUN_AS_NODE
   delete env.BRAIN_CHAT
   delete env.BRAIN_APP_NO_AUTO_UPDATE
-  return spawn('sandbox-exec', ['-f', profile, join(app, 'Contents', 'MacOS', 'Brain'), `--user-data-dir=${userData}`], { env, stdio: 'ignore' })
+  // The app's output goes to a log in the work folder for when a step fails.
+  const out = openSync(join(work, 'app.log'), 'a')
+  return spawn(join(app, 'Contents', 'MacOS', 'Brain'), [`--user-data-dir=${userData}`], { env, stdio: ['ignore', out, out] })
 }
 const quit = async (child: ReturnType<typeof spawn>) => {
   child.kill('SIGTERM')
@@ -101,7 +102,16 @@ try {
   const cache = join(home, 'Library', 'Caches', 'brain-app-updater', 'pending')
   const downloaded = await until(() => served.some((s) => s.endsWith('.zip')) && existsSync(cache) && execFileSync('find', [cache, '-name', '*.zip'], { encoding: 'utf8' }).trim() !== '', 180_000)
   check('the old app asked the rehearsal feed and downloaded the new zip', downloaded, served.join(', '))
-  await sleep(5000)
+  // Squirrel fetches the zip again through electron-updater's proxy, checks its signature and stages it. Quit after that.
+  const staged = await until(() => {
+    try {
+      return /Download completed to/.test(readFileSync(join(work, 'app.log'), 'utf8'))
+    } catch {
+      return false
+    }
+  }, 180_000)
+  check('Squirrel fetched and staged the update', staged)
+  await sleep(8000)
   await quit(first)
   const swapped = await until(() => {
     try {
@@ -119,7 +129,7 @@ try {
       return false
     }
   }, 90_000)
-  const path = execFileSync('ps', ['-o', 'comm=', '-p', String(second.pid)], { encoding: 'utf8' }).trim()
+  const path = spawnSync('ps', ['-o', 'comm=', '-p', String(second.pid)], { encoding: 'utf8' }).stdout.trim() || '(not running)'
   check(`the relaunched app is ${newVersion} and runs from the temp folder, not a translocated copy`, recorded && !/AppTranslocation/.test(path), path)
   await sleep(3000)
   check('the new version stays running (macOS did not kill it at launch)', second.exitCode === null && second.signalCode === null)
@@ -132,6 +142,7 @@ try {
 } catch (e) {
   check('rehearsal ran', false, String((e as Error)?.stack || e))
 } finally {
+  if (failed) console.log(`app log: ${join(work, 'app.log')}`)
   server.close()
 }
 console.log(failed ? 'UPDATE_REHEARSAL_FAIL' : 'UPDATE_REHEARSAL_PASS')
