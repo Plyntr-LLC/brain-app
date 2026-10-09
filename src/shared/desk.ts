@@ -278,6 +278,12 @@ export type DeskBrowser = {
   runStep: (browseId: string, step: { action: string; detail?: string; url?: string; account?: string }) => Promise<BrowseStepResult>
   /** Open this address on that place's window. Does not start a browse session. */
   goTo?: (url: string, owner?: string) => Promise<void>
+  /** The picture's controls: Back, Forward, Reload, the address field, Print, and which places show a window. */
+  nav?: (owner: string, action: 'back' | 'forward' | 'reload') => Promise<boolean>
+  go?: (owner: string, text: string) => Promise<boolean>
+  facts?: (owner: string) => { url: string; canGoBack: boolean; canGoForward: boolean; shared: boolean } | null
+  printPage?: (owner: string) => Promise<{ pdf: Buffer; title: string } | null>
+  ownersShowing?: (key: string) => string[]
   /** One WhatsApp message through that account's window ('' is main). Only a person's Send click calls this. */
   whatsappSend?: (msg: { account: string; to: string; body: string }) => Promise<{ ok: true; chat: string } | { ok: false; note: string }>
   clickAt?: (x: number, y: number, owner?: string) => Promise<void>

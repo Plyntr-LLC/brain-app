@@ -1,0 +1,9 @@
+electron 44 check 2026-10-09T07:37:21.679Z
+ok   electron is 44.7.0  (44.7.0)
+ok   setup:clipOrg answers the copied org, not a pending Promise  ({"ok":true,"org":"acme-test-org"})
+ok   notifySetupBack delivers the copied org on setup:back  ({"org":"acme-test-org"})
+ok   watchClipboardOrg returns the org copied while it waits  (acme-test-org)
+ok   node-pty spawns under Electron 44 and reads the child back  ("pty-ok\r\n")
+ELECTRON_44_DEV_PASS
+ok   the Electron 44 run finished  (0)
+ELECTRON_44_PASS

@@ -1,10 +1,10 @@
-whatsapp send check 2026-10-09T05:55:50.228Z
+whatsapp send check 2026-10-09T08:23:53.675Z
 ok   1 whatsapp_send has to, text and account
 ok   1 its description says nothing is sent until the person presses Send  (Sends one WhatsApp message, only after the person presses Send. It puts a Send card in this chat thread (which WhatsApp, to whom, the text) and answers at once. Nothing is sent until the person presses Send on the card, and the card shows whether WhatsApp sent)
 ok   1 BROWSER_RULE says to draft and call whatsapp_send  (Web pages go through the brain-browser tools (browser_open, browser_read, browser_click, browser_type, browser_key, browser_scroll, browser_screenshot). They drive the browser inside Brain, which shows in this chat thread and keeps logins such as WhatsApp Web.)
 ok   0 main and india are linked stand-ins
 ok   whatsapp_send to Raj puts up a card  (A Send card for WhatsApp (india) to Raj is in this chat. Nothing is sent until the person presses Send on it. The card shows what happened.)
-ok   2 the card names chat A, india, Raj and the text  ({"owner":"chat:A","id":"1fce0ce0533aa36c8ec75712","account":"india","to":"Raj","text":"Hello Raj\nSecond line"})
+ok   2 the card names chat A, india, Raj and the text  ({"owner":"chat:A","id":"4d6e50fb0ed1579a2cf37079","account":"india","to":"Raj","text":"Hello Raj\nSecond line"})
 ok   2 nothing is sent before the answer (F1)
 ok   3 two answers at once start one send  ([{"ok":true,"chat":"Raj Patel"},{"refused":true}])
 ok   3 india got one message with both lines and no old draft (F4, F10)  ([{"chat":"Raj Patel","text":"Hello Raj\nSecond line"}])
@@ -41,7 +41,7 @@ ok   whatsapp_send to Fancy puts up a card  (A Send card for WhatsApp (india) to
 ok   8b a message WhatsApp draws without its *marks* and with the emoji as an image is reported sent, once (review 2)  ({"ok":true,"chat":"Fancy"} <b>Reminder</b> <img alt="🙏" src="data:," width="16" height="16"> call at 5)
 ok   9 chat B has Raj open with the message box on its list  (Page: WhatsApp URL: https://web.whatsapp.com/ Controls (use the number or the name): #1 field Search or start a new chat #2 field Type a message #3 button Send Text: Raj Patellast message Raj Patel )
 ok   whatsapp_send to Raj Patel puts up a card  (A Send card for WhatsApp (india) to Raj Patel is in this chat. Nothing is sent until the person presses Send on it. The card shows what happened.)
-ok   9 a browser step on the window waits for the send (F6)  ({"ok":true,"chat":"Raj Patel"} send 1791525461742 type 1791525462056 {"chat":"Raj Patel","text":"Lane check"})
+ok   9 a browser step on the window waits for the send (F6)  ({"ok":true,"chat":"Raj Patel"} send 1791534344317 type 1791534344623 {"chat":"Raj Patel","text":"Lane check"})
 ok   10 Enter in the search box is not refused  (Page: WhatsApp URL: https://web.whatsapp.com/ Controls (use the number or the name): #1 field Search or start a new cha)
 ok   10 Enter and return in the message box are refused and name whatsapp_send (F1)  (Not pressed: Enter in WhatsApp's message box sends the message. Use whatsapp_send; the person presses Send on the card in this thread. | Not pressed: Enter in WhatsApp's message box sends the message. Use whatsapp_send; the person presses Send on the card in t)
 ok   10 the Send button is refused too, and nothing went  (Not pressed: "Send" sends or publishes. Ask the person. They can click it themselves in the browser picture in this thread.)

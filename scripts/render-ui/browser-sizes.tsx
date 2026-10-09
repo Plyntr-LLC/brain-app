@@ -127,7 +127,8 @@ const done = () => flushSync(() => chatListeners.forEach((l) => l({ tabId: 'a', 
 const turns = () => [...pane().querySelectorAll('.page-turn')]
 const dock = () => pane().querySelector(':scope > .page-dock') as HTMLElement | null
 const pictures = () => [...pane().querySelectorAll('.desk-browser-shot img')] as HTMLImageElement[]
-const labels = (root: Element | null) => [...(root?.querySelectorAll('.page-turn-actions button') || [])].map((b) => (b.textContent || '').trim())
+// The size buttons only; Back, Forward and Reload are browser-controls' job.
+const labels = (root: Element | null) => [...(root?.querySelectorAll('.page-turn-actions button:not(.page-nav)') || [])].map((b) => (b.textContent || '').trim())
 const press = (root: Element | null, label: string) => {
   const b = [...(root?.querySelectorAll('button') || [])].find((x) => (x.textContent || '').trim() === label) as HTMLButtonElement | undefined
   if (!b) throw new Error(`no ${label} button`)

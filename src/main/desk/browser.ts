@@ -1,5 +1,6 @@
 import { BROWSE_MAX_CONTROLS, BROWSE_TEXT_CHARS, payCheck } from '../../shared/desk.ts'
 import type { BrowseStepResult, DeskBrowser, DeskLaunch, KeyInput, PageFrame, PageSnapshot, PointerInput } from '../../shared/desk.ts'
+import { addressFor } from '../../shared/browser-menu.ts'
 import { isWhatsAppKey, windowKey } from '../../shared/page-picture.ts'
 import type { DeskPage } from './chrome.ts'
 import { startPageTurn } from './page-lane.ts'
@@ -514,6 +515,51 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
     }
   }
 
+  /** Back, Forward or Reload on the page this place shows, in that window's lane. A WhatsApp window is shared: no Back or Forward. */
+  async function nav(owner: string, action: 'back' | 'forward' | 'reload'): Promise<boolean> {
+    const key = showing.get(owner)
+    if (!key || (isWhatsAppKey(key) && action !== 'reload')) return false
+    let done = false
+    await onShown(owner, async (a) => {
+      if (!a.nav) return
+      await a.nav(action)
+      done = true
+    })
+    return done
+  }
+
+  /** What the address field opens for this place: http(s) only, through the same path as a bare address. */
+  async function go(owner: string, text: string): Promise<boolean> {
+    const url = addressFor(text)
+    if (!url) return false
+    await goTo(url, owner)
+    return true
+  }
+
+  /** Where this place's page is, for the address field and the Back and Forward buttons. */
+  function facts(owner: string): { url: string; canGoBack: boolean; canGoForward: boolean; shared: boolean } | null {
+    const key = showing.get(owner)
+    const a = key ? wins()?.peek(key) : null
+    const f = a?.facts?.()
+    if (!key || !f) return null
+    const shared = isWhatsAppKey(key)
+    return { url: f.url, canGoBack: !shared && f.canGoBack, canGoForward: !shared && f.canGoForward, shared }
+  }
+
+  /** The page this place shows, as a PDF, in that window's lane. */
+  async function printPage(owner: string): Promise<{ pdf: Buffer; title: string } | null> {
+    let out: { pdf: Buffer; title: string } | null = null
+    await onShown(owner, async (a) => {
+      if (a.printPdf) out = await a.printPdf()
+    })
+    return out
+  }
+
+  /** Every place whose picture is showing that window. */
+  function ownersShowing(key: string): string[] {
+    return [...showing].filter(([, k]) => k === key).map(([o]) => o)
+  }
+
   /** One message through that account's WhatsApp window. The window's lane is held for the whole send. */
   async function whatsappSend(msg: WhatsAppMessage): Promise<WhatsAppSent> {
     const w = wins()
@@ -543,5 +589,5 @@ export function createDeskBrowser(opts: { launch: DeskLaunch; chromePath: string
     await w.close(owner)
   }
 
-  return { open, cancel, release, focus, showWindow, picture, windowOpen, clickApproved, runStep, goTo, clickAt, typeText, pressKey, wheel, look, closeOwner, pointer, keyInput, watch, whatsappSend }
+  return { open, cancel, release, focus, showWindow, picture, windowOpen, clickApproved, runStep, goTo, clickAt, typeText, pressKey, wheel, look, closeOwner, pointer, keyInput, watch, whatsappSend, nav, go, facts, printPage, ownersShowing }
 }

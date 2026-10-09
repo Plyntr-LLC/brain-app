@@ -1,4 +1,5 @@
-import { app, BaseWindow, WebContentsView, session, type Session, type WebContents } from 'electron'
+import { app, BaseWindow, WebContentsView, session, type ContextMenuParams, type Session, type WebContents } from 'electron'
+import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { extname, basename, join } from 'node:path'
 import { BROWSE_MAX_CONTROLS, BROWSE_TEXT_CHARS } from '../../shared/desk.ts'
@@ -64,7 +65,17 @@ function chromeAgent(): string {
   return `Mozilla/5.0 (${os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`
 }
 
-function freePath(dir: string, name: string): string {
+/** What a page asked of the person. browser-ui.ts answers; this file only reports, with the window's key. */
+export type PageAsk =
+  | { kind: 'file'; key: string; wc: WebContents; wcId: number; multiple: boolean; put: (files: string[]) => Promise<void> }
+  | { kind: 'menu'; key: string; wc: WebContents; page: DeskPage; params: ContextMenuParams }
+  | { kind: 'print'; key: string; wc: WebContents; page: DeskPage }
+  | { kind: 'download'; key: string; name: string; path: string; state: 'completed' | 'interrupted' | 'cancelled' }
+export const pageAsks = new EventEmitter<{ ask: [PageAsk] }>()
+/** The key of the window each page lives in, for asks that arrive from the session (downloads). */
+const keyOfPage = new Map<number, string>()
+
+export function freePath(dir: string, name: string): string {
   const ext = extname(name)
   const stem = basename(name, ext) || 'download'
   let file = join(dir, `${stem}${ext}`)
@@ -73,6 +84,8 @@ function freePath(dir: string, name: string): string {
 }
 
 const ALLOWED = new Set(['clipboard-sanitized-write', 'fullscreen'])
+/** What a page's replaced print() writes to its console. */
+const PRINT_MARK = '__brain_print__'
 const prepared = new Map<string, Session>()
 
 function browserSession(partition: string): Session {
@@ -82,7 +95,22 @@ function browserSession(partition: string): Session {
   ses.setUserAgent(chromeAgent())
   ses.setPermissionRequestHandler((_wc, permission, done) => done(ALLOWED.has(permission)))
   ses.setPermissionCheckHandler((_wc, permission) => ALLOWED.has(permission))
-  ses.on('will-download', (_e, item) => item.setSavePath(freePath(app.getPath('downloads'), item.getFilename())))
+  ses.on('will-download', (_e, item, from) => {
+    const path = freePath(app.getPath('downloads'), item.getFilename())
+    item.setSavePath(path)
+    const key = from ? keyOfPage.get(from.id) : undefined
+    // A download that breaks off reports 'interrupted' as an update and stays resumable; it never reaches done.
+    let told = false
+    const tell = (state: 'completed' | 'interrupted' | 'cancelled') => {
+      if (told || !key) return
+      told = true
+      pageAsks.emit('ask', { kind: 'download', key, name: basename(path), path, state })
+    }
+    item.on('updated', (_d, state) => {
+      if (state === 'interrupted') tell('interrupted')
+    })
+    item.once('done', (_d, state) => tell(state))
+  })
   prepared.set(partition, ses)
   return ses
 }
@@ -244,7 +272,10 @@ function adapterFor(host: BaseWindow, wc: WebContents): DeskPage {
       timer = setTimeout(emit, Math.max(0, FRAME_MS - (Date.now() - last)))
     }
     wc.on('paint', onPaint)
-    if (++watchers === 1) wc.setFrameRate(30)
+    if (++watchers === 1) {
+      wc.setFrameRate(30)
+      wc.setAudioMuted(false)
+    }
     emit()
     return () => {
       if (stopped) return
@@ -252,7 +283,10 @@ function adapterFor(host: BaseWindow, wc: WebContents): DeskPage {
       if (timer) clearTimeout(timer)
       if (wc.isDestroyed()) return
       wc.off('paint', onPaint)
-      if (--watchers === 0) wc.setFrameRate(10)
+      if (--watchers === 0) {
+        wc.setFrameRate(10)
+        wc.setAudioMuted(true)
+      }
     }
   }
 
@@ -260,6 +294,22 @@ function adapterFor(host: BaseWindow, wc: WebContents): DeskPage {
     pointer,
     key,
     watch,
+    live: () => watchers > 0,
+    facts: () => ({ url: wc.getURL(), title: wc.getTitle(), canGoBack: wc.navigationHistory.canGoBack(), canGoForward: wc.navigationHistory.canGoForward() }),
+    nav: async (action) => {
+      if (action === 'back' && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack()
+      else if (action === 'forward' && wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward()
+      else if (action === 'reload') wc.reload()
+      else return
+      await settle()
+    },
+    printPdf: async () => ({ pdf: Buffer.from(await within(wc.printToPDF({ printBackground: true }), STEP_MS, 'The page')), title: wc.getTitle() }),
+    edit: (action) => {
+      if (action === 'copy') wc.copy()
+      else if (action === 'cut') wc.cut()
+      else if (action === 'paste') wc.paste()
+      else wc.selectAll()
+    },
     run: (fn, ...args) => inPage(wc, fn, ...args),
     url: () => wc.getURL(),
     goto: async (url) => {
@@ -326,7 +376,7 @@ function adapterFor(host: BaseWindow, wc: WebContents): DeskPage {
 
 type Held = { host: BaseWindow; wc: WebContents; page: DeskPage }
 
-async function openHeld(partition: string): Promise<Held> {
+async function openHeld(key: string, partition: string): Promise<Held> {
   browserSession(partition)
   const host = new BaseWindow({ show: false, width: VIEW.width, height: VIEW.height, skipTaskbar: true })
   const view = new WebContentsView({
@@ -352,8 +402,44 @@ async function openHeld(partition: string): Promise<Held> {
   // The debugger has to attach after a first load; a command sent before it never returns.
   await wc.loadURL('about:blank')
   wc.debugger.attach('1.3')
-  await within(wc.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }), STEP_MS, 'The page')
-  return { host, wc, page: adapterFor(host, wc) }
+  const cdp = (method: string, params?: Record<string, unknown>) => within(wc.debugger.sendCommand(method, params), STEP_MS, 'The page')
+  await cdp('Emulation.setFocusEmulationEnabled', { enabled: true })
+  const page = adapterFor(host, wc)
+  keyOfPage.set(wc.id, key)
+  wc.once('destroyed', () => keyOfPage.delete(wc.id))
+  // A file input asks Brain, not an invisible macOS panel on this hidden window.
+  await cdp('Page.enable')
+  await cdp('Page.setInterceptFileChooserDialog', { enabled: true })
+  // The page's own print() becomes a request; it never opens a print dialog nobody can see. It speaks through the
+  // console, not a debugger binding: an enabled Runtime domain is something bot checks look for.
+  await cdp('Page.addScriptToEvaluateOnNewDocument', {
+    source: `(function () { var say = console.debug.bind(console); window.print = function () { try { say(${JSON.stringify(PRINT_MARK)}) } catch (e) {} } })()`
+  })
+  wc.on('console-message', (e) => {
+    if (e.message === PRINT_MARK) pageAsks.emit('ask', { kind: 'print', key, wc, page })
+  })
+  wc.debugger.on('message', (_e, method, params) => {
+    if (method === 'Page.fileChooserOpened') {
+      const node = (params as { backendNodeId?: number }).backendNodeId
+      if (node == null) return
+      pageAsks.emit('ask', {
+        kind: 'file',
+        key,
+        wc,
+        // Read now: a destroyed window throws on every property, and the queue still has to let go of it.
+        wcId: wc.id,
+        multiple: (params as { mode?: string }).mode === 'selectMultiple',
+        put: async (files) => {
+          await cdp('DOM.setFileInputFiles', { files, backendNodeId: node })
+        }
+      })
+    }
+  })
+  // A right-click from a live picture. A small picture sends none.
+  wc.on('context-menu', (_e, params) => {
+    if (page.live?.()) pageAsks.emit('ask', { kind: 'menu', key, wc, page, params })
+  })
+  return { host, wc, page }
 }
 
 /** The launch the desk browser takes. Same keyed windows as before: `wa` and `wa:<name>` are the WhatsApp windows and are never closed by a place. */
@@ -373,7 +459,7 @@ export function makeInAppLaunch(): DeskLaunch & { windows: DeskWindows; closeAll
     if (held) byKey.delete(key)
     dropped.delete(key)
     const job = (async (): Promise<DeskPage | { noChrome: true }> => {
-      const fresh = await openHeld(whatsappPartition(key) ?? BROWSER_PARTITION)
+      const fresh = await openHeld(key, whatsappPartition(key) ?? BROWSER_PARTITION)
       if (dropped.has(key)) {
         dropped.delete(key)
         fresh.host.destroy()

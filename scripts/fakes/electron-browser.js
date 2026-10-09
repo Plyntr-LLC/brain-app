@@ -26,6 +26,7 @@ class FakeContents {
     this.debugger = {
       attach() {},
       isAttached: () => true,
+      on() {},
       sendCommand: (method, params) => self._cdp(method, params || {})
     }
     fake.pages.push(this)

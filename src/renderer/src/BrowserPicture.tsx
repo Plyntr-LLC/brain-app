@@ -22,6 +22,8 @@ export function BrowserPicture(props: {
   active: boolean
   onToggle: () => void
   onShow: () => void
+  /** Cmd+P on a wide or large picture. The page never gets the key. */
+  onPrint?: () => void
 }) {
   const shot = useRef<HTMLButtonElement>(null)
   const lastMove = useRef(0)
@@ -105,6 +107,12 @@ export function BrowserPicture(props: {
   function onKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
     if (!wide || LONE.has(e.key)) return
     const command = MAC ? e.metaKey : e.ctrlKey
+    if (command && !e.altKey && e.key.toLowerCase() === 'p') {
+      e.preventDefault()
+      e.stopPropagation()
+      props.onPrint?.()
+      return
+    }
     if (command && !e.altKey && !MOVES.has(e.key)) {
       const k = e.key.toLowerCase()
       const edit = k === 'z' ? (e.shiftKey ? 'redo' : 'undo') : EDIT[k]

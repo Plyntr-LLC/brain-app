@@ -1,0 +1,50 @@
+browser controls check 2026-10-09T08:23:14.260Z
+ok   1 the address field opens /b for A
+ok   1 Back shows A
+ok   1 Forward shows B
+ok   1 Reload asks the server again
+ok   1 the face says A can go back, not forward  ({"signIn":false,"url":"http://127.0.0.1:55733/b","canGoBack":true,"canGoForward":false,"shared":false})
+ok   1 chat B is untouched (F1)
+ok   1 Back waits for a held step on that window (F1)
+ok   1b A on WhatsApp: Back and Forward unavailable, shared  ({"signIn":false,"url":"https://web.whatsapp.com/","canGoBack":false,"canGoForward":false,"shared":true})
+ok   1b Back for A on WhatsApp is refused, the window stays (F10)
+ok   1b Reload on WhatsApp reloads it, B still on WhatsApp
+ok   1b an address typed while A shows WhatsApp loads in A's own window
+ok   2 example.test opens https://example.test
+ok   2 plain words search
+ok   2 javascript:, file: and custom schemes open nothing (F2)
+ok   2 web.whatsapp.com from A lands in the WhatsApp window, not A's own
+ok   3 the panel names the site that asks  (127.0.0.1:55733 wants a file.)
+ok   3 one panel, single file, on the Brain window; the file lands in #one only  ([{"win":{"webContents":{}},"properties":["openFile"],"message":"127.0.0.1:55733 wants a file."}] one.txt,3,0)
+ok   3 multiple asks for multiple, both land  (one.txt,two.txt)
+ok   3 cancel leaves the input and the page answers (F3)
+ok   3 no tool takes a file path
+ok   3 the AI's click on an upload control opens the panel for the person
+ok   3b one panel open; A asking again is refused; B waits (F11)
+ok   3b each set of files lands in the input that asked  (one.txt two.txt)
+ok   3c B closed while its ask waited: no panel for it, and A's next ask opens one  (queued true, 2 panels)
+ok   4 a page nobody watches is muted
+ok   4 the watched page plays
+ok   4 muted again when the watch stops (F4)
+ok   4 A moving to WhatsApp: its own window goes muted, WhatsApp plays (F13)
+ok   4 A stopping does not mute WhatsApp while B watches
+ok   4 A moving back: /a plays again
+ok   4 nobody on WhatsApp: muted
+ok   5 a link menu copies that link  (http://127.0.0.1:55733/b)
+ok   5 Paste goes into the page's box (F5)
+ok   5 Copy copies the selection  (Select this sentence)
+ok   5 B's menu Reload reloads B, not A (F5)
+ok   5 an http link can open in your browser (openExternal with it)  (["https://example.test/x"])
+ok   5 file: and custom-scheme links cannot (F9)
+ok   5 a file: page has no Open page in your browser (F9)
+ok   5 a right-click on a small picture builds no menu (F8)
+ok   6 print writes A.pdf then A (2).pdf and opens each (F6)
+ok   6 the page never saw a key
+ok   6 a small picture: the page print() writes nothing and the page goes on
+ok   6 live: a-b- c.pdf, opened once, no dialog, page goes on (F12)
+ok   6 print() in a loop while live: one PDF, opened once, the page kept running (F12)  (1 pdfs, 1 opens, counter 30)
+ok   6 Print to PDF from the menu inside the page cooldown still writes one
+ok   7 a download reaches chat A only, completed (F7)  ([{"owner":"chat:A","id":"bf6e3d0269e89bfbda","name":"file.txt","state":"completed"}])
+ok   7 a broken download reports interrupted to A  ([{"owner":"chat:A","id":"f2a9f8ad33c529955f","name":"broken.bin","state":"interrupted"}])
+ok   7 a WhatsApp download reaches A and B, not C  (["chat:A","chat:B"])
+BROWSER_CONTROLS_PASS

@@ -26,6 +26,7 @@ import { startMediaStatePoll } from './media/state-poll'
 import { refreshTray, startTray } from './tray'
 import { answerSend, bridgeScriptPath, startBrowserBridge, stopBrowserBridge } from './browser-bridge'
 import { closeAllShared, sharedDeskBrowser } from './shared-browser'
+import { startBrowserUi } from './browser-ui'
 import { ensureChatShims, guardScriptPath } from './chat-env'
 
 registerBrainMediaScheme()
@@ -144,6 +145,7 @@ app.whenReady().then(() => {
       for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('browser:sendAsk', ask)
     }
   }).catch((e) => console.error('browser bridge', e))
+  startBrowserUi({ browser: sharedDeskBrowser(), window: () => (mainWin && !mainWin.isDestroyed() ? mainWin : null) })
   startTray(() => mainWin)
   pushHealth()
   setInterval(pushHealth, 15_000)

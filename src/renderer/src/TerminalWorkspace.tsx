@@ -30,7 +30,7 @@ import { isSkinComponent } from '../../shared/skin/catalog'
 import { appendThought, collapseAdjacentThinks, paintsThreadSpec } from '../../shared/think-run'
 import { CHAT_RULES } from '../../shared/chat-reach'
 import { pageAfterSend } from '@shared/page-picture'
-import { ChatPageTurn, type PageView } from './ChatPageTurn'
+import { ChatPageTurn, type PageDownload, type PageNav, type PageView } from './ChatPageTurn'
 import { WhatsAppSendCard, type SendCardState } from './WhatsAppSendCard'
 import { usePageFollow } from './pin-thread'
 import type { Paste } from '../../shared/saved-msg'
@@ -150,6 +150,8 @@ type FileNode = { name: string; path: string; dir: boolean; kids?: FileNode[] }
 type Cap = { id: string; label: string }
 type SessionCmd = { name: string; description: string; hint?: string }
 
+/** Download lines kept under a chat's picture. */
+const MAX_DOWNLOAD_LINES = 5
 const SESSION_QUIET = new Set(['compact', 'rewind', 'undo', 'flush', 'dream', 'context', 'session-info', 'usage'])
 
 const SLASH_ALIAS: Record<string, string> = {
@@ -639,6 +641,8 @@ export function ChatPane({
   const [pageView, setPageView] = useState<PageView>('small')
   const [pageShot, setPageShot] = useState<string | null>(null)
   const [pageSignIn, setPageSignIn] = useState(false)
+  const [pageNav, setPageNav] = useState<PageNav | undefined>(undefined)
+  const [pageDownloads, setPageDownloads] = useState<PageDownload[]>([])
   const [sendCards, setSendCards] = useState<SendCardState[]>([])
   const messagesRef = useRef(messages)
   messagesRef.current = messages
@@ -764,6 +768,7 @@ export function ChatPane({
         if (dead || !face) return
         if (face.src) setPageShot(face.src)
         setPageSignIn(!!face.signIn)
+        if (face.url != null) setPageNav({ url: face.url, canGoBack: !!face.canGoBack, canGoForward: !!face.canGoForward, shared: !!face.shared })
       }).finally(() => {
         busyShot = false
       })
@@ -795,6 +800,16 @@ export function ChatPane({
     if (newestAsk == null || pageAtRef.current == null || pageViewRef.current === 'note') return
     if (newestAsk !== pageAtRef.current) setPageAt(newestAsk)
   }, [newestAsk])
+  // A finished download from the page this chat shows: a line under its picture.
+  useEffect(
+    () =>
+      window.brain.browser.onDownload((d) => {
+        if (d.owner !== `chat:${id}`) return
+        // The newest few lines only: a page that starts many downloads does not grow the thread.
+        setPageDownloads((list) => (list.some((x) => x.id === d.id) ? list : [...list, { id: d.id, name: d.name, state: d.state }].slice(-MAX_DOWNLOAD_LINES)))
+      }),
+    [id]
+  )
   // This chat's AI asked to send a WhatsApp message: its Send card goes in the turn of the message it is answering.
   useEffect(
     () =>
@@ -2038,6 +2053,12 @@ export function ChatPane({
       onShow={() => setPageView('small')}
       onWiden={() => setPageView('wide')}
       onSize={setPageView}
+      nav={pageNav}
+      downloads={pageDownloads}
+      onNav={(action) => void window.brain.browser.nav(pageOwner, action)}
+      onGo={(text) => void window.brain.browser.go(pageOwner, text)}
+      onPrint={() => void window.brain.browser.print(pageOwner)}
+      onDownload={(dlId, how) => void window.brain.browser.openDownload(dlId, how)}
     />
   )
   async function answerCard(cardId: string, yes: boolean) {

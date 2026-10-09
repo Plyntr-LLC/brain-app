@@ -39,6 +39,15 @@ export type DeskPage = PageAdapter & {
   run?: <T>(fn: (...args: any[]) => unknown, ...args: unknown[]) => Promise<T>
   /** The address the page is on now. */
   url?: () => string
+  /** Someone is watching this window's live picture (wide or large, on screen). */
+  live?: () => boolean
+  /** Where the page is and which ways it can go. */
+  facts?: () => { url: string; title: string; canGoBack: boolean; canGoForward: boolean }
+  nav?: (action: 'back' | 'forward' | 'reload') => Promise<void>
+  /** The page as a PDF, with its title for the file name. */
+  printPdf?: () => Promise<{ pdf: Buffer; title: string }>
+  /** An edit command on the page's focused element (right-click menu). */
+  edit?: (action: 'copy' | 'cut' | 'paste' | 'selectAll') => void
 }
 
 /** What the page reader sees. A test passes a fake with the same fields.
@@ -72,7 +81,7 @@ export function pageSnapshot(
       if (el.tagName === 'BUTTON' || role === 'button') return 'button'
       if (el.tagName === 'INPUT') {
         const t = ((el as HTMLInputElement).type || 'text').toLowerCase()
-        if (['submit', 'button', 'reset', 'image'].includes(t)) return 'button'
+        if (['submit', 'button', 'reset', 'image', 'file'].includes(t)) return 'button'
         return ['text', 'search', 'email', 'tel', 'url', 'number', 'password'].includes(t) ? 'field' : ''
       }
       return el.tagName === 'TEXTAREA' || role === 'textbox' || role === 'searchbox' || el.isContentEditable ? 'field' : ''
@@ -86,6 +95,7 @@ export function pageSnapshot(
         const labels = (el as HTMLInputElement).labels
         return clean(labels && labels[0] ? labels[0].innerText : '') || clean(el.getAttribute('placeholder')) || clean(el.getAttribute('title')) || clean(el.getAttribute('name'))
       }
+      if ((el as HTMLInputElement).type === 'file') return clean((el as HTMLInputElement).labels?.[0]?.innerText) || 'Choose file'
       return clean(el.innerText) || clean((el as HTMLInputElement).value) || clean(el.getAttribute('title')) || clean(el.querySelector('img[alt]')?.getAttribute('alt'))
     }
     document.querySelectorAll('[data-desk-n]').forEach((el) => el.removeAttribute('data-desk-n'))

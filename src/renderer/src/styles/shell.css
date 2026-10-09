@@ -2419,3 +2419,7 @@ button.rail-file:hover .rail-path { text-decoration: underline; }
 .rail-file.live .rail-path { color: var(--orange-deep); font-weight: 600; }
 .factory-deploy { margin: 0 0 0.3rem; font-size: 0.82rem; font-weight: 600; color: var(--orange-deep); }
 .rail-deploy { color: var(--orange-deep); font-weight: 600; }
+.page-nav { min-width: 2rem; padding-left: 0.5rem; padding-right: 0.5rem; }
+.page-address { flex: 1 1 14rem; min-width: 10rem; font: inherit; font-size: 12.5px; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius-card, 4px); background: var(--card); color: var(--ink); }
+.page-downloads { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.page-download { display: flex; gap: 8px; align-items: baseline; }

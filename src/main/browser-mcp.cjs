@@ -18,6 +18,7 @@ const TOOLS = [
     name: 'browser_open',
     description:
       `${WHERE} Opens a web address and returns the page text and its numbered links, buttons, and fields. ` +
+      'If a page asks for a file, Brain shows a file picker to the person; only the person picks files. ' +
       'For WhatsApp Web, each number has its own login: leave account out for the main WhatsApp, or pass a name such as india for another number. A new name shows a QR code to link that number.',
     inputSchema: {
       type: 'object',

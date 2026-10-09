@@ -1152,7 +1152,23 @@ const brain = {
     startDrag: (opts: { folder?: string; mediaId: string }) => ipcRenderer.send('media:startDrag', opts)
   },
   browser: {
-    face: (owner: string) => ipcRenderer.invoke('browser:face', owner) as Promise<{ src: string | null; signIn: boolean }>,
+    face: (owner: string) =>
+      ipcRenderer.invoke('browser:face', owner) as Promise<{ src: string | null; signIn: boolean; url?: string; canGoBack?: boolean; canGoForward?: boolean; shared?: boolean }>,
+    /** Back, Forward or Reload on the page this place shows. False when refused (Back or Forward on a shared WhatsApp window). */
+    nav: (owner: string, action: 'back' | 'forward' | 'reload') => ipcRenderer.invoke('browser:nav', owner, action) as Promise<boolean>,
+    /** What the address field opens. False when it opens nothing. */
+    go: (owner: string, text: string) => ipcRenderer.invoke('browser:go', owner, text) as Promise<boolean>,
+    /** The page as a PDF in Downloads, opened. */
+    print: (owner: string) => ipcRenderer.invoke('browser:print', owner) as Promise<boolean>,
+    /** A finished download from a page this place shows. */
+    onDownload: (fn: (d: { owner: string; id: string; name: string; state: 'completed' | 'interrupted' | 'cancelled' }) => void) => {
+      const h = (_e: unknown, d: { owner: string; id: string; name: string; state: 'completed' | 'interrupted' | 'cancelled' }) => fn(d)
+      ipcRenderer.on('browser:download', h)
+      return () => {
+        ipcRenderer.removeListener('browser:download', h)
+      }
+    },
+    openDownload: (id: string, how: 'open' | 'show') => ipcRenderer.invoke('browser:openDownload', id, how) as Promise<boolean>,
     clickAt: (owner: string, x: number, y: number) => ipcRenderer.invoke('browser:clickAt', owner, x, y) as Promise<void>,
     typeText: (owner: string, text: string) => ipcRenderer.invoke('browser:typeText', owner, text) as Promise<void>,
     pressKey: (owner: string, key: string) => ipcRenderer.invoke('browser:pressKey', owner, key) as Promise<void>,

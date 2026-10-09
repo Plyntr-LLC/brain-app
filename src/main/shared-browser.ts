@@ -67,9 +67,9 @@ export function closeShared(owner: string): Promise<void> {
   return sharedDeskBrowser().closeOwner?.(owner) ?? Promise.resolve()
 }
 
-export async function faceShared(owner: string): Promise<{ src: string | null; signIn: boolean }> {
+export async function faceShared(owner: string): Promise<{ src: string | null; signIn: boolean; url?: string; canGoBack?: boolean; canGoForward?: boolean; shared?: boolean }> {
   const b = sharedDeskBrowser()
   const src = (await b.picture(owner)) || null
   const seen = await b.look?.(owner)
-  return { src, signIn: !!seen?.signIn }
+  return { src, signIn: !!seen?.signIn, ...(b.facts?.(owner) ?? {}) }
 }
