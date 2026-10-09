@@ -15,4 +15,3 @@ PASS 5 a small picture moves too
 PASS 6 a hidden picture stays where it was, nothing under the new message (F4)
 
 RENDER_UI_PASS browser-follow (15 checks)
-screenshot: /tmp/follow-after/browser-follow.png

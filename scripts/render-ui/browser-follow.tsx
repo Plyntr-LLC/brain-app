@@ -140,18 +140,6 @@ async function main() {
   )
   await until(() => !!document.querySelector('#stage .composer textarea'), 'composer')
 
-  const reply = (text: string) => flushSync(() => chatListeners.forEach((l) => l({ tabId: 'a', kind: 'text', data: text })))
-  const sinceFaces = (n: number) => faces - n
-  const balanced = () => {
-    let live = 0
-    for (const c of calls) {
-      if (c.name !== 'browser.watch' || c.args[0] !== 'chat:a') continue
-      live += c.args[1] ? 1 : -1
-      if (live > 1 || live < 0) return false
-    }
-    return true
-  }
-
   await send('open it')
   reply(Array.from({ length: 60 }, (_, i) => `Paragraph ${i + 1} of a long answer that runs well past the window.`).join('\n\n'))
   done()

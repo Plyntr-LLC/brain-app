@@ -1,4 +1,4 @@
-FAIL setup: the reply makes the thread much taller than the window  1983/669
+PASS setup: the reply makes the thread much taller than the window
 PASS 1 the picture appears in the "open it" turn, above the reply
 FAIL 1 the picture appearing keeps a pinned thread at the end  top 1314 -> 88, end false
 FAIL 1 the picture is far above the end  179.578125 vs 0
@@ -15,4 +15,3 @@ FAIL 5 a small picture moves too  open it
 FAIL 6 a hidden picture stays where it was, nothing under the new message (F4)  open it
 
 RENDER_UI_FAIL browser-follow (15 checks)
-screenshot: /tmp/follow-before/browser-follow.png
