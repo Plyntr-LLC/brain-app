@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import electronUpdater from 'electron-updater'
+import { testFeed } from './update-feed.ts'
 
 const { autoUpdater } = electronUpdater
 
@@ -74,11 +75,8 @@ export function startAutoUpdate(): void {
   if (process.env.BRAIN_APP_NO_AUTO_UPDATE === '1') return
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
-  autoUpdater.setFeedURL({
-    provider: 'github',
-    owner: 'Plyntr-LLC',
-    repo: 'brain-app'
-  })
+  const rehearsal = testFeed()
+  autoUpdater.setFeedURL(rehearsal ? { provider: 'generic', url: rehearsal } : { provider: 'github', owner: 'Plyntr-LLC', repo: 'brain-app' })
   autoUpdater.on('checking-for-update', () => send('checking'))
   autoUpdater.on('update-available', (info) => send('available', String(info.version || '')))
   autoUpdater.on('update-not-available', () => send('none'))
