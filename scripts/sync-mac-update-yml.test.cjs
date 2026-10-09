@@ -49,6 +49,16 @@ test('the floor in latest-mac.yml is the Darwin version electron-updater compare
     assert.equal(lt('22.1.0', floor), false, 'macOS 13 (Darwin 22) is offered')
     assert.equal(lt('25.0.0', floor), false, 'macOS 16 is offered')
     assert.throws(() => writeLatestMacYml({ version: '0.0.0', zipPath, ymlPath, minimumSystemVersion: '13.0' }))
+    const { darwinFloorFromConfig } = require('./sync-mac-update-yml.cjs')
+    const floorFor = (mac) => {
+      writeFileSync(configPath, `mac:\n  minimumSystemVersion: "${mac}"\n`)
+      return darwinFloorFromConfig(configPath)
+    }
+    assert.equal(floorFor('11.0'), '20.0.0')
+    assert.equal(floorFor('15.0'), '24.0.0')
+    assert.equal(floorFor('26.0'), '25.0.0', 'macOS 26 (Tahoe) is Darwin 25')
+    assert.throws(() => floorFor('10.15'))
+    assert.throws(() => floorFor('16.0'))
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

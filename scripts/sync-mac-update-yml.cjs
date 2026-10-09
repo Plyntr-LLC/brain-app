@@ -32,9 +32,9 @@ function darwinFloorFromConfig(configPath) {
   const m = /^\s+minimumSystemVersion:\s*['"]?(\d+)(?:\.\d+)*['"]?\s*$/m.exec(readFileSync(configPath, 'utf8'))
   if (!m) return ''
   const macos = Number(m[1])
-  // macOS 11 (Big Sur) is Darwin 20; each major since adds one.
-  if (!(macos >= 11)) throw new Error(`minimumSystemVersion ${m[1]} is below macOS 11; there is no Darwin mapping for it here.`)
-  return `${macos + 9}.0.0`
+  // macOS 11 (Big Sur) to 15 are Darwin 20 to 24. Then macOS jumped to 26 (Tahoe), which is Darwin 25.
+  if (!((macos >= 11 && macos <= 15) || macos >= 26)) throw new Error(`minimumSystemVersion ${m[1]} has no Darwin mapping here.`)
+  return `${macos >= 26 ? macos - 1 : macos + 9}.0.0`
 }
 
 function writeLatestMacYml(opts) {
