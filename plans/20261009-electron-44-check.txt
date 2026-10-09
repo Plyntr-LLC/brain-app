@@ -7,3 +7,9 @@ ok   node-pty spawns under Electron 44 and reads the child back  ("pty-ok\r\n")
 ELECTRON_44_DEV_PASS
 ok   the Electron 44 run finished  (0)
 ELECTRON_44_PASS
+ok   packed node-pty spawns through the packed executable  (PTY_OK )
+ok   the packed open guard refuses a web page  (1 Brain chats do not open web pages in Chrome. Use the browser_open tool (brain-browser): it opens the page inside Brain and shows it in this chat. If this is a sign-in link for a command-line tool, a)
+ok   the packed open guard passes a file through  (0 /var/folders/1j/w8m_jfjx4bg68kw0h023swth0000gn/T/e44-packed-SjcMut/notes.txt )
+ok   the packed mail helper loads and stops at no-token  (2 no-token )
+ok   the packed text helper loads a brain file and answers lookup  (0 {"sendable":false,"note":"No existing iMessage thread for Nobody Here."} )
+ELECTRON_44_PACKED_PASS
