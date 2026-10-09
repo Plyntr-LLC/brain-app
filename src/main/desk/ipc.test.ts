@@ -38,6 +38,7 @@ export class BaseWindow {}
 export class WebContentsView {}
 export const session = { fromPartition: () => ({}) }
 export const ipcMain = { handle() {}, on() {} }
+export const webContents = { fromFrame: () => undefined }
 export const shell = {}
 export default { app, BrowserWindow, ipcMain, shell }`
     }

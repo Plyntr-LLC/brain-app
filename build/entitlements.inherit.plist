@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
+<!-- Every nested executable (helpers, crashpad, spawn-helper, hq-sync). Never the keychain or identity entitlements:
+     those need the provisioning profile, which only the main app carries, and macOS kills a binary without it. -->
 <dict>
   <key>com.apple.security.cs.allow-jit</key>
   <true/>
@@ -16,14 +18,5 @@
   <true/>
   <key>com.apple.security.device.audio-input</key>
   <true/>
-  <!-- Touch ID passkeys in Brain's browser. Only valid with build/brain.provisionprofile embedded (scripts/pack-mac.cjs). -->
-  <key>com.apple.application-identifier</key>
-  <string>DWYL4KK53B.com.plyntr.brain</string>
-  <key>com.apple.developer.team-identifier</key>
-  <string>DWYL4KK53B</string>
-  <key>keychain-access-groups</key>
-  <array>
-    <string>DWYL4KK53B.com.plyntr.brain.webauthn</string>
-  </array>
 </dict>
 </plist>

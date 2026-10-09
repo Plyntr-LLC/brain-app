@@ -23,6 +23,8 @@ const match = (ids.stdout || '').match(/Developer ID Application: ([^"]+)/)
 const args = ['electron-builder', '--mac', '--publish', 'never']
 if (match) {
   process.env.CSC_NAME = match[1]
+  // Touch ID passkeys: the keychain entitlement in build/entitlements.mac.plist only runs with this profile embedded.
+  args.push('--config.mac.provisioningProfile=build/brain.provisionprofile')
   console.log(`Signing with Developer ID Application: ${match[1]} (not notarizing).`)
 } else {
   process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false'
@@ -33,6 +35,19 @@ if (match) {
 
 const r = spawnSync('npx', args, { stdio: 'inherit', env: process.env })
 if (r.status) process.exit(r.status)
+
+// A signed build whose profile does not match its certificate is killed by macOS at launch: fail here instead.
+if (match) {
+  const { verifyApp } = require('./verify-profile.cjs')
+  const app = join(root, 'dist', 'mac-arm64', 'Brain.app')
+  try {
+    const p = verifyApp(app)
+    console.log(`Profile matches the signing certificate (profile expires ${p.expires}).`)
+  } catch (e) {
+    console.error(String(e.message || e))
+    process.exit(1)
+  }
+}
 
 const pkg = require('../package.json')
 const { syncFromRepo } = require('./sync-mac-update-yml.cjs')

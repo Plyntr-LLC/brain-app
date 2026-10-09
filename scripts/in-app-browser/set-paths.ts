@@ -13,3 +13,5 @@ if (userData) {
   app.setPath('downloads', downloads)
 }
 process.env.BRAIN_GROK_LEADER_SOCK = join(homedir(), '.grok', `leader-bbcheck-${process.pid}.sock`)
+// The page guard every Brain browser session loads; a check's own app path is its bundle folder, not the repo.
+process.env.BRAIN_PAGE_GUARD ??= join(process.env.BB_ROOT || process.cwd(), 'src', 'preload', 'page-guard.cjs')

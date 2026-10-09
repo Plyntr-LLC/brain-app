@@ -23,6 +23,8 @@ extraResources:
     to: browser-mcp.cjs
   - from: src/main/open-guard.cjs
     to: open-guard.cjs
+  - from: src/preload/page-guard.cjs
+    to: page-guard.cjs
 mac:
   category: public.app-category.productivity
   target:
@@ -37,7 +39,11 @@ mac:
   minimumSystemVersion: "13.0"
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.inherit.plist
+  # The provisioning profile (Touch ID passkeys) is passed by scripts/pack-mac.cjs only when it signs with Developer ID.
+  extendInfo:
+    NSCameraUsageDescription: A web page in Brain's browser asked to use your camera.
+    NSMicrophoneUsageDescription: A web page in Brain's browser asked to use your microphone.
   notarize: false
 dmg:
   title: Brain

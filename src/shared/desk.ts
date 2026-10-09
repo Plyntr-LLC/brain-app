@@ -238,9 +238,12 @@ export function payCheck(name: string): 'hold' | 'refuse' | null {
 /** `qrLogin`: the page shows a QR code to sign in with (WhatsApp Web draws one on a labelled canvas). */
 export type PageSnapshot = { url: string; title: string; text: string; controls: string[]; hasPassword: boolean; qrLogin?: boolean }
 export type BrowseStepResult =
-  | { ok: true; url: string; title: string; text: string; controls: string[] }
+  /** `popup` says a pop-up opened on top, or closed, during the step; the page read is the one on top now. */
+  | { ok: true; url: string; title: string; text: string; controls: string[]; popup?: 'opened' | 'closed' }
   | { hold: 'spend'; name: string; url: string }
   | { refused: 'page-changed'; url: string }
+  /** The window on top is not the one the last read was of (a pop-up opened or closed since). */
+  | { refused: 'window-changed'; url: string }
   | { refused: 'pay' | 'missing' | 'ambiguous' | 'no-submit'; name?: string; url: string }
   | { signIn: true; url: string; title: string }
   | { noChrome: true }
@@ -266,6 +269,17 @@ export type KeyInput = { key: string; code: string; modifiers: number; text?: st
 /** One frame of the page an owner is showing, for the wide picture. */
 export type PageFrame = { src: string; url: string }
 
+/**
+ * A card under a chat's browser picture: a site asking for the camera, microphone or clipboard; a passkey request
+ * waiting (Cancel); or the Brain passkeys to pick from. Only a person answers it.
+ */
+export type PageCard =
+  | { owner: string; id: string; kind: 'site'; site: string; uses: ('camera' | 'microphone' | 'clipboard')[] }
+  | { owner: string; id: string; kind: 'passkey'; site: string }
+  | { owner: string; id: string; kind: 'account'; site: string; accounts: { id: string; name: string }[] }
+/** A card that is done: what happened, for its last line. */
+export type PageCardEnd = { owner: string; id: string; note: string }
+
 export type DeskBrowser = {
   open: (browseId: string, owner?: string) => Promise<void | { noChrome: true }>
   cancel: (browseId: string) => void
@@ -281,7 +295,9 @@ export type DeskBrowser = {
   /** The picture's controls: Back, Forward, Reload, the address field, Print, and which places show a window. */
   nav?: (owner: string, action: 'back' | 'forward' | 'reload') => Promise<boolean>
   go?: (owner: string, text: string) => Promise<boolean>
-  facts?: (owner: string) => { url: string; canGoBack: boolean; canGoForward: boolean; shared: boolean } | null
+  facts?: (owner: string) => { url: string; canGoBack: boolean; canGoForward: boolean; shared: boolean; popup: boolean } | null
+  /** Closes the pop-up on top of this place's window. False when there is none. */
+  closeTop?: (owner: string) => Promise<boolean>
   printPage?: (owner: string) => Promise<{ pdf: Buffer; title: string } | null>
   ownersShowing?: (key: string) => string[]
   /** One WhatsApp message through that account's window ('' is main). Only a person's Send click calls this. */

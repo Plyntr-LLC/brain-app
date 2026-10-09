@@ -135,6 +135,9 @@ export class BaseWindow {
 export const session = {
   fromPartition(name) {
     fake.partitions.push(name)
-    return { setUserAgent() {}, setPermissionRequestHandler() {}, setPermissionCheckHandler() {}, on() {} }
+    return { setUserAgent() {}, setPermissionRequestHandler() {}, setPermissionCheckHandler() {}, registerPreloadScript() {}, on() {} }
   }
 }
+
+// The window lookup a passkey account ask uses. Nothing in these tests raises one.
+export const webContents = { fromFrame() { return undefined } }

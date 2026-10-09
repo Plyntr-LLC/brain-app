@@ -321,6 +321,25 @@ try {
   check("Don't send is a button on the card", await press("Don't send", `document.querySelector('.wa-send-card')`))
   await until(() => js<boolean>(`document.querySelector('.wa-send-card .wa-send-outcome')?.textContent === 'Not sent.'`), 'the card saying Not sent.', 10_000)
   check("Don't send leaves the card saying Not sent.", true)
+
+  // B2: a build signed with the provisioning profile offers Touch ID passkeys to pages in Brain's browser.
+  const pages = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()) as { type: string; url: string; webSocketDebuggerUrl: string }[]
+  const inApp = pages.find((t) => t.type === 'page' && t.url.startsWith(base))
+  check("a page in Brain's browser is reachable over the debug port", !!inApp, JSON.stringify(pages.map((t) => `${t.type} ${t.url}`)))
+  const pageWs = new WebSocket(inApp!.webSocketDebuggerUrl)
+  await new Promise((r, j) => {
+    pageWs.onopen = r
+    pageWs.onerror = j
+  })
+  const uvpaa = await new Promise<unknown>((r) => {
+    pageWs.onmessage = (m) => {
+      const d = JSON.parse(String(m.data))
+      if (d.id === 1) r(d.result?.result?.value)
+    }
+    pageWs.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: 'PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()', awaitPromise: true, returnByValue: true } }))
+  })
+  pageWs.close()
+  check('passkeys: the packed, signed app offers Touch ID to pages (isUserVerifyingPlatformAuthenticatorAvailable is true)', uvpaa === true, String(uvpaa))
   ws.close()
 
   process.kill(Number(brainPid), 'SIGTERM')

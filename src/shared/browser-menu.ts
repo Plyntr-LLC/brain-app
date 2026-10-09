@@ -29,6 +29,17 @@ export function addressFor(raw: string): string | null {
   return search
 }
 
+/** Where any Brain window may go: web pages, an empty page, or a page's own blob. Never a file or another app's link. */
+export function navAllowed(url: string): boolean {
+  if (url === 'about:blank') return true
+  try {
+    const p = new URL(url).protocol
+    return p === 'http:' || p === 'https:' || p === 'blob:'
+  } catch {
+    return false
+  }
+}
+
 /** The PDF a printed page saves as: its title made safe for a file name, `Page` when nothing is left. */
 export function pdfName(title: string): string {
   const safe = String(title ?? '')
@@ -48,13 +59,16 @@ export function opensOutside(url: string): boolean {
   }
 }
 
-export type MenuAction = 'back' | 'forward' | 'reload' | 'copyLink' | 'openLink' | 'copy' | 'cut' | 'paste' | 'selectAll' | 'copyImage' | 'print' | 'openPage'
+export type MenuAction = 'back' | 'forward' | 'reload' | 'copyLink' | 'openLink' | 'copy' | 'cut' | 'paste' | 'selectAll' | 'copyImage' | 'print' | 'openPage' | 'forget'
 export type MenuEntry = { action: MenuAction; label: string } | { separator: true }
 
-/** The right-click menu for what was under the mouse. `shared` is a WhatsApp window: no Back or Forward there. */
+/**
+ * The right-click menu for what was under the mouse. `shared` is a WhatsApp window: no Back or Forward there.
+ * `remembered` is a camera or microphone Allow this site has in this login, which the menu can forget.
+ */
 export function menuFor(
   at: { linkURL?: string; selectionText?: string; isEditable?: boolean; mediaType?: string; srcURL?: string; pageURL?: string },
-  page: { canGoBack: boolean; canGoForward: boolean; shared: boolean }
+  page: { canGoBack: boolean; canGoForward: boolean; shared: boolean; remembered?: boolean }
 ): MenuEntry[] {
   const out: MenuEntry[] = []
   const add = (action: MenuAction, label: string) => out.push({ action, label })
@@ -86,5 +100,9 @@ export function menuFor(
   gap()
   add('print', 'Print to PDF')
   if (at.pageURL && opensOutside(at.pageURL)) add('openPage', 'Open page in your browser')
+  if (page.remembered) {
+    gap()
+    add('forget', "Forget this site's permissions")
+  }
   return out
 }

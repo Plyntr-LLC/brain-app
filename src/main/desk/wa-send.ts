@@ -146,7 +146,17 @@ async function clear(page: WhatsAppPage) {
   await page.pressKey('Backspace')
 }
 
-export async function sendOnWhatsApp(page: WhatsAppPage, msg: WhatsAppMessage, limits = { readyMs: 30_000, confirmMs: 20_000 }): Promise<WhatsAppSent> {
+/**
+ * `stillClear` says nothing is open on top of WhatsApp. It is asked before the chat search, before typing and right before
+ * Enter; a pop-up that opens during the send stops it there.
+ */
+export async function sendOnWhatsApp(
+  page: WhatsAppPage,
+  msg: WhatsAppMessage,
+  limits = { readyMs: 30_000, confirmMs: 20_000 },
+  stillClear: () => boolean = () => true
+): Promise<WhatsAppSent> {
+  const covered = { ok: false as const, note: 'A pop-up opened over WhatsApp during the send. Nothing was sent.' }
   const account = msg.account || 'main'
   const body = msg.body.replace(/\r\n?/g, '\n')
   let onSite = false
@@ -162,6 +172,7 @@ export async function sendOnWhatsApp(page: WhatsAppPage, msg: WhatsAppMessage, l
 
   const search = await page.run<{ x: number; y: number } | null>(centreOf, SEARCH)
   if (!search) return { ok: false, note: "Couldn't find WhatsApp's search box. Nothing was sent." }
+  if (!stillClear()) return covered
   await page.clickAt(search.x, search.y)
   await clear(page)
   await page.typeText(msg.to)
@@ -188,6 +199,7 @@ export async function sendOnWhatsApp(page: WhatsAppPage, msg: WhatsAppMessage, l
 
   const box = await page.run<{ x: number; y: number } | null>(centreOf, COMPOSE)
   if (!box) return { ok: false, note: `Couldn't find the message box in ${pick.name}. Nothing was sent.` }
+  if (!stillClear()) return covered
   await page.clickAt(box.x, box.y)
   await clear(page)
   const lines = body.split('\n')
@@ -206,6 +218,10 @@ export async function sendOnWhatsApp(page: WhatsAppPage, msg: WhatsAppMessage, l
   const known = new Set((await page.run<{ id: string }[]>(messageRows)).map((r) => r.id).filter(Boolean))
   // Compared as plain words, so a sent *bold* or emoji line still matches. A line of only emoji matches any new row.
   const first = plainWords(body.split('\n').find((l) => plainWords(l)) || '').split(' ').slice(0, 12).join(' ')
+  if (!stillClear()) {
+    await clear(page)
+    return covered
+  }
   await page.pressKey('Enter')
   const end = Date.now() + limits.confirmMs
   while (Date.now() < end) {

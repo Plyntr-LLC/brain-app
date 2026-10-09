@@ -1,3 +1,4 @@
+import type { PageCard, PageCardEnd } from '../shared/desk'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { AiKind } from '../shared/contracts'
 import type { Approver, FactoryTriage, RepoProfile, RunRecord as FactoryRun } from '../shared/factory'
@@ -1153,7 +1154,34 @@ const brain = {
   },
   browser: {
     face: (owner: string) =>
-      ipcRenderer.invoke('browser:face', owner) as Promise<{ src: string | null; signIn: boolean; url?: string; canGoBack?: boolean; canGoForward?: boolean; shared?: boolean }>,
+      ipcRenderer.invoke('browser:face', owner) as Promise<{
+        src: string | null
+        signIn: boolean
+        url?: string
+        canGoBack?: boolean
+        canGoForward?: boolean
+        shared?: boolean
+        popup?: boolean
+      }>,
+    /** Closes the pop-up on top of the page this place shows. */
+    closePopup: (owner: string) => ipcRenderer.invoke('browser:closePopup', owner) as Promise<boolean>,
+    /** A card under a chat's picture: a site asking for the camera, microphone or clipboard, a passkey request, or passkeys to pick from. */
+    onAsk: (fn: (card: PageCard) => void) => {
+      const h = (_e: unknown, card: PageCard) => fn(card)
+      ipcRenderer.on('browser:ask', h)
+      return () => {
+        ipcRenderer.removeListener('browser:ask', h)
+      }
+    },
+    onAskEnded: (fn: (end: PageCardEnd) => void) => {
+      const h = (_e: unknown, end: PageCardEnd) => fn(end)
+      ipcRenderer.on('browser:askEnded', h)
+      return () => {
+        ipcRenderer.removeListener('browser:askEnded', h)
+      }
+    },
+    /** The person's answer to a card: allow, deny, cancel, or an account's id. Main takes one answer per card. */
+    askAnswer: (owner: string, id: string, answer: string) => ipcRenderer.invoke('browser:askAnswer', owner, id, answer) as Promise<{ ok: true } | { refused: true }>,
     /** Back, Forward or Reload on the page this place shows. False when refused (Back or Forward on a shared WhatsApp window). */
     nav: (owner: string, action: 'back' | 'forward' | 'reload') => ipcRenderer.invoke('browser:nav', owner, action) as Promise<boolean>,
     /** What the address field opens. False when it opens nothing. */

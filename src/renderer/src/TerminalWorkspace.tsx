@@ -30,7 +30,7 @@ import { isSkinComponent } from '../../shared/skin/catalog'
 import { appendThought, collapseAdjacentThinks, paintsThreadSpec } from '../../shared/think-run'
 import { CHAT_RULES } from '../../shared/chat-reach'
 import { pageAfterSend } from '@shared/page-picture'
-import { ChatPageTurn, type PageDownload, type PageNav, type PageView } from './ChatPageTurn'
+import { ChatPageTurn, type PageCardView, type PageDownload, type PageNav, type PageView } from './ChatPageTurn'
 import { WhatsAppSendCard, type SendCardState } from './WhatsAppSendCard'
 import { usePageFollow } from './pin-thread'
 import type { Paste } from '../../shared/saved-msg'
@@ -643,6 +643,7 @@ export function ChatPane({
   const [pageSignIn, setPageSignIn] = useState(false)
   const [pageNav, setPageNav] = useState<PageNav | undefined>(undefined)
   const [pageDownloads, setPageDownloads] = useState<PageDownload[]>([])
+  const [pageCards, setPageCards] = useState<PageCardView[]>([])
   const [sendCards, setSendCards] = useState<SendCardState[]>([])
   const messagesRef = useRef(messages)
   messagesRef.current = messages
@@ -768,7 +769,7 @@ export function ChatPane({
         if (dead || !face) return
         if (face.src) setPageShot(face.src)
         setPageSignIn(!!face.signIn)
-        if (face.url != null) setPageNav({ url: face.url, canGoBack: !!face.canGoBack, canGoForward: !!face.canGoForward, shared: !!face.shared })
+        if (face.url != null) setPageNav({ url: face.url, canGoBack: !!face.canGoBack, canGoForward: !!face.canGoForward, shared: !!face.shared, popup: !!face.popup })
       }).finally(() => {
         busyShot = false
       })
@@ -800,6 +801,22 @@ export function ChatPane({
     if (newestAsk == null || pageAtRef.current == null || pageViewRef.current === 'note') return
     if (newestAsk !== pageAtRef.current) setPageAt(newestAsk)
   }, [newestAsk])
+  // A site, passkey or account card for the page this chat shows: under its picture until it is done.
+  useEffect(() => {
+    const offAsk = window.brain.browser.onAsk((card) => {
+      if (card.owner !== `chat:${id}`) return
+      setPageCards((list) => (list.some((c) => c.id === card.id) ? list : [...list, { ...card, state: 'waiting' as const }].slice(-MAX_DOWNLOAD_LINES)))
+    })
+    const offEnd = window.brain.browser.onAskEnded((end) => {
+      if (end.owner !== `chat:${id}`) return
+      // A card that ends with nothing to say (a passkey request the page finished) just goes.
+      setPageCards((list) => (end.note ? list.map((c) => (c.id === end.id ? { ...c, state: 'ended' as const, note: end.note } : c)) : list.filter((c) => c.id !== end.id)))
+    })
+    return () => {
+      offAsk()
+      offEnd()
+    }
+  }, [id])
   // A finished download from the page this chat shows: a line under its picture.
   useEffect(
     () =>
@@ -2055,6 +2072,12 @@ export function ChatPane({
       onSize={setPageView}
       nav={pageNav}
       downloads={pageDownloads}
+      cards={pageCards}
+      onCard={(cardId, answer) => {
+        setPageCards((list) => list.map((c) => (c.id === cardId ? { ...c, state: 'answering' as const } : c)))
+        void window.brain.browser.askAnswer(pageOwner, cardId, answer)
+      }}
+      onClosePopup={() => void window.brain.browser.closePopup(pageOwner)}
       onNav={(action) => void window.brain.browser.nav(pageOwner, action)}
       onGo={(text) => void window.brain.browser.go(pageOwner, text)}
       onPrint={() => void window.brain.browser.print(pageOwner)}

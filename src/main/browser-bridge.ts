@@ -50,7 +50,13 @@ export function serverSpec(o: { exec: string; script: string; sock: string; toke
 function describe(r: BrowseStepResult): BridgeReply {
   if ('ok' in r) {
     const controls = r.controls.map((c, i) => `#${i + 1} ${c}`).join('\n') || '(none)'
-    return { ok: true, text: `Page: ${r.title || '(no title)'}\nURL: ${r.url}\n\nControls (use the number or the name):\n${controls}\n\nText:\n${r.text}` }
+    const popup =
+      r.popup === 'opened'
+        ? 'A pop-up opened on top. This is the pop-up; when it closes, the page under it comes back.\n\n'
+        : r.popup === 'closed'
+          ? 'The pop-up closed. This is the page that was under it.\n\n'
+          : ''
+    return { ok: true, text: `${popup}Page: ${r.title || '(no title)'}\nURL: ${r.url}\n\nControls (use the number or the name):\n${controls}\n\nText:\n${r.text}` }
   }
   if ('signIn' in r) {
     return {
@@ -70,6 +76,7 @@ function describe(r: BrowseStepResult): BridgeReply {
   if ('refused' in r) {
     if (r.refused === 'ambiguous') return { ok: false, error: `More than one control is named "${r.name}". Use its number from browser_read.` }
     if (r.refused === 'page-changed') return { ok: false, error: `The page moved on (${r.url}). Call browser_read.` }
+    if (r.refused === 'window-changed') return { ok: false, error: 'A pop-up opened (or closed) since your last read, so nothing was pressed. Read the page again.' }
     if (r.refused === 'no-submit') return { ok: false, error: 'There is nothing to submit here. Use browser_key or browser_click.' }
     return { ok: false, error: `No control named "${r.name ?? ''}" on ${r.url || 'this page'}. Call browser_read for the current list.` }
   }
@@ -199,6 +206,8 @@ export function makeBrowserTools(
         }
       }
       case 'browser_close': {
+        // A pop-up on top closes first; the page under it comes back and the session goes on.
+        if (await browser.closeTop?.(owner)) return { ok: true, text: 'Closed the pop-up. The page under it is back; call browser_read.' }
         const id = sessions.get(owner)
         sessions.delete(owner)
         if (id) browser.release(id)
