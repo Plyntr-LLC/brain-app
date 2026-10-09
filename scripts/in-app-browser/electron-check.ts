@@ -534,6 +534,10 @@ async function phaseOne() {
   }
   acpKillAll()
 
+  // BB_SKIP_CODEX=1 only when Codex itself refuses (its account at a usage limit): each Codex step says it was skipped.
+  const codexOn = process.env.BB_SKIP_CODEX !== '1'
+  if (!codexOn) log('skip 18 Codex steps (BB_SKIP_CODEX=1: the Codex account is at its usage limit)')
+  if (codexOn) {
   const g = await codexWarm({ tabId: 'G', cwd })
   const gx = await deadline(codexPrompt({ tabId: 'G', cwd, text: ask, onEvent: noop }), 300_000, 'Codex turn')
   const started = sentFor('thread/start', 'chat:G')
@@ -546,6 +550,7 @@ async function phaseOne() {
   const gr = await deadline(codexPrompt({ tabId: 'G2', cwd, text: ask, onEvent: noop }), 300_000, 'Codex resumed turn')
   check('18 the resumed Codex tab browses as chat:G2', /Purple Walrus 42/.test(gr) && opened.includes('chat:G2'), gr.slice(0, 120))
   codexKillAll()
+  }
 
   // ── 0.1.136: just works ──────────────────────────────────────────────────────────────────────
   const brainDir = join(homedir(), 'Projects', 'agency-brain')
@@ -608,9 +613,11 @@ async function phaseOne() {
   await acpWarm({ kind: 'cursor', tabId: 'K3', cwd })
   const k3 = await twice((text) => deadline(acpPrompt({ kind: 'cursor', tabId: 'K3', cwd, text, alwaysApprove: true, onEvent: noop }), 300_000, 'Cursor shell turn'))
   check('J2 Cursor\'s shell has the open shim and it refuses', shimSeen(k3), k3.slice(0, 200))
-  await codexWarm({ tabId: 'K4', cwd })
-  const k4 = await twice((text) => deadline(codexPrompt({ tabId: 'K4', cwd, text, onEvent: noop }), 300_000, 'Codex shell turn'))
-  check('J2 Codex\'s shell has the open shim and it refuses', shimSeen(k4), k4.slice(0, 200))
+  if (codexOn) {
+    await codexWarm({ tabId: 'K4', cwd })
+    const k4 = await twice((text) => deadline(codexPrompt({ tabId: 'K4', cwd, text, onEvent: noop }), 300_000, 'Codex shell turn'))
+    check('J2 Codex\'s shell has the open shim and it refuses', shimSeen(k4), k4.slice(0, 200))
+  } else log('skip J2 Codex (BB_SKIP_CODEX=1)')
   oracleSame('J2')
 
   const plain1 = 'Open https://example.com and tell me the main heading.'
@@ -621,6 +628,10 @@ async function phaseOne() {
     ['Cursor', async (text) => { await acpWarm({ kind: 'cursor', tabId: 'P3', cwd: brainDir }); return acpPrompt({ kind: 'cursor', tabId: 'P3', cwd: brainDir, text, alwaysApprove: true, onEvent: noop }) }],
     ['Codex', async (text) => { await codexWarm({ tabId: 'P4', cwd: brainDir }); return codexPrompt({ tabId: 'P4', cwd: brainDir, text, onEvent: noop }) }]
   ]
+  if (!codexOn) {
+    plainRuns.pop()
+    log('skip J3 Codex (BB_SKIP_CODEX=1)')
+  }
   for (const [i, [name, run]] of plainRuns.entries()) {
     const owner = `chat:P${i + 1}`
     const first = await deadline(run(plain1), 300_000, `${name} plain turn 1`)
