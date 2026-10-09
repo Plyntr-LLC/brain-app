@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from
 import { mapClick } from '@shared/page-picture'
 
 const EDIT: Record<string, string> = { a: 'selectAll', c: 'copy', v: 'paste', x: 'cut' }
+/** Keys that move or delete in a field. With Cmd, Ctrl or Option they are the page's, not Brain's. */
+const MOVES = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Backspace', 'Delete', 'Home', 'End', 'PageUp', 'PageDown'])
 const LONE = new Set(['Meta', 'Shift', 'Control', 'Alt', 'CapsLock', 'Fn'])
 const MAC = /mac/i.test(navigator.platform)
 
@@ -23,6 +25,7 @@ export function BrowserPicture(props: {
 }) {
   const shot = useRef<HTMLButtonElement>(null)
   const lastMove = useRef(0)
+  const dragging = useRef(false)
   const [live, setLive] = useState<string | null>(null)
   const wide = props.mode === 'wide' && !!props.owner
   const watching = wide && props.active
@@ -60,8 +63,9 @@ export function BrowserPicture(props: {
     )
   }
 
-  /** The page point under the mouse, or null in the empty bands around the page. */
-  function pagePoint(e: MouseEvent<HTMLButtonElement>, clamp: boolean) {
+  /** The page point under the mouse. A press in the empty bands around the page is null; a move or release
+   * (a drag can end anywhere, even outside the picture) is pulled onto the nearest edge of the page. */
+  function pagePoint(e: { clientX: number; clientY: number }, clamp: boolean) {
     const img = shot.current?.querySelector('img')
     if (!img || !img.naturalWidth || !img.naturalHeight) return null
     const rect = img.getBoundingClientRect()
@@ -73,13 +77,16 @@ export function BrowserPicture(props: {
     let x = e.clientX - rect.left - left
     let y = e.clientY - rect.top - top
     if (clamp) {
-      x = Math.min(Math.max(x, 0), box.width)
-      y = Math.min(Math.max(y, 0), box.height)
+      const scale = Math.min(box.width / natural.width, box.height / natural.height)
+      const padX = (box.width - natural.width * scale) / 2
+      const padY = (box.height - natural.height * scale) / 2
+      x = Math.min(Math.max(x, padX), box.width - padX)
+      y = Math.min(Math.max(y, padY), box.height - padY)
     }
     return mapClick({ x, y }, box, natural)
   }
 
-  function pointer(type: 'down' | 'up' | 'move', e: MouseEvent<HTMLButtonElement>) {
+  function pointer(type: 'down' | 'up' | 'move', e: { clientX: number; clientY: number; button: number; buttons: number; detail: number }) {
     const at = pagePoint(e, type !== 'down')
     if (!at) return
     const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left'
@@ -96,7 +103,7 @@ export function BrowserPicture(props: {
   function onKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
     if (!wide || LONE.has(e.key)) return
     const command = MAC ? e.metaKey : e.ctrlKey
-    if (command && !e.altKey) {
+    if (command && !e.altKey && !MOVES.has(e.key)) {
       const k = e.key.toLowerCase()
       const edit = k === 'z' ? (e.shiftKey ? 'redo' : 'undo') : EDIT[k]
       // Cmd+Q, Cmd+W and the other app shortcuts stay Brain's.
@@ -127,12 +134,25 @@ export function BrowserPicture(props: {
         pointer('down', e)
         // Keys go to the page while the picture has focus. Scrolling it into view would move it under the mouse.
         shot.current?.focus({ preventScroll: true })
-      }}
-      onMouseUp={(e) => {
-        if (wide) pointer('up', e)
+        // Until the button comes up, the whole window's mouse belongs to this press, inside the picture or not.
+        dragging.current = true
+        const move = (ev: globalThis.MouseEvent) => {
+          const now = performance.now()
+          if (now - lastMove.current < 33) return
+          lastMove.current = now
+          pointer('move', ev)
+        }
+        const up = (ev: globalThis.MouseEvent) => {
+          window.removeEventListener('mousemove', move, true)
+          window.removeEventListener('mouseup', up, true)
+          dragging.current = false
+          pointer('up', ev)
+        }
+        window.addEventListener('mousemove', move, true)
+        window.addEventListener('mouseup', up, true)
       }}
       onMouseMove={(e) => {
-        if (!wide) return
+        if (!wide || dragging.current) return
         const now = performance.now()
         if (now - lastMove.current < 33) return
         lastMove.current = now

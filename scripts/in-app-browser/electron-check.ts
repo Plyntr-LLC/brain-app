@@ -734,6 +734,22 @@ Module._load = function (request) {
   const board = clipboard.readText()
   await K('z', 'KeyZ', 4, { command: 'undo' })
   check('J7 Cmd+A, Cmd+X empties the field into the clipboard and Cmd+Z brings it back', cutValue === '' && board === 'pasted 7' && (await js('f1.value')) === 'pasted 7', `${JSON.stringify(cutValue)} ${JSON.stringify(board)}`)
+  await js(`f1.value = 'alpha beta gamma'; f1.focus(); f1.setSelectionRange(16, 16)`)
+  await K('ArrowLeft', 'ArrowLeft', 4)
+  const atStart = await js('[f1.selectionStart, f1.selectionEnd]')
+  await K('ArrowRight', 'ArrowRight', 12)
+  const toEnd = await js('f1.value.slice(f1.selectionStart, f1.selectionEnd)')
+  await K('ArrowRight', 'ArrowRight')
+  await K('ArrowLeft', 'ArrowLeft', 1)
+  const wordLeft = await js('f1.selectionStart')
+  await K('Backspace', 'Backspace', 1)
+  const afterWordDelete = await js('f1.value')
+  await K('End', 'End')
+  await K('Backspace', 'Backspace', 4)
+  const afterLineDelete = await js('f1.value')
+  check('J7 Cmd+Left, Cmd+Shift+Right, Option+Left, Option+Backspace and Cmd+Backspace move and delete like a Mac field',
+    JSON.stringify(atStart) === '[0,0]' && toEnd === 'alpha beta gamma' && wordLeft === 11 && afterWordDelete === 'alpha gamma' && afterLineDelete === '',
+    JSON.stringify({ atStart, toEnd, wordLeft, afterWordDelete, afterLineDelete }))
   u.kill()
   v.kill()
 

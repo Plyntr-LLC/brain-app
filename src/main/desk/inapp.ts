@@ -16,6 +16,27 @@ export const VIEW = { width: 1100, height: 800 }
 const STEP_MS = 15_000
 const FRAME_MS = 66
 const EDIT_COMMANDS = new Set(['selectAll', 'copy', 'paste', 'cut', 'undo', 'redo'])
+/** macOS text chords the offscreen page only performs as editing commands. Key: CDP modifiers (Alt 1, Meta 4, Shift 8) and key. */
+const MAC_CHORDS: Record<string, string> = {
+  '4:ArrowLeft': 'moveToBeginningOfLine',
+  '12:ArrowLeft': 'moveToBeginningOfLineAndModifySelection',
+  '4:ArrowRight': 'moveToEndOfLine',
+  '12:ArrowRight': 'moveToEndOfLineAndModifySelection',
+  '4:ArrowUp': 'moveToBeginningOfDocument',
+  '12:ArrowUp': 'moveToBeginningOfDocumentAndModifySelection',
+  '4:ArrowDown': 'moveToEndOfDocument',
+  '12:ArrowDown': 'moveToEndOfDocumentAndModifySelection',
+  '1:ArrowLeft': 'moveWordLeft',
+  '9:ArrowLeft': 'moveWordLeftAndModifySelection',
+  '1:ArrowRight': 'moveWordRight',
+  '9:ArrowRight': 'moveWordRightAndModifySelection',
+  '8:ArrowLeft': 'moveLeftAndModifySelection',
+  '8:ArrowRight': 'moveRightAndModifySelection',
+  '4:Backspace': 'deleteToBeginningOfLine',
+  '1:Backspace': 'deleteWordBackward',
+  '4:Delete': 'deleteToEndOfLine',
+  '1:Delete': 'deleteWordForward'
+}
 const LOAD_MS = 30_000
 
 const KEYS: Record<string, { code: string; vk: number; text?: string }> = {
@@ -169,6 +190,13 @@ function adapterFor(host: BaseWindow, wc: WebContents): DeskPage {
       return
     }
     const named = KEYS[ev.key === ' ' ? 'Space' : ev.key]
+    const chord = process.platform === 'darwin' ? MAC_CHORDS[`${mods}:${ev.key}`] : undefined
+    if (chord && named) {
+      const base = { key: ev.key, code: named.code, modifiers: mods, windowsVirtualKeyCode: named.vk, nativeVirtualKeyCode: named.vk }
+      await cdp('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base, commands: [chord] })
+      await cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...base })
+      return
+    }
     const vk = named?.vk ?? ev.key.toUpperCase().charCodeAt(0)
     const base = { key: ev.key, code: named?.code ?? ev.code, modifiers: mods, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk }
     const text = named?.text && !(mods & 0b0110) ? { text: named.text, unmodifiedText: named.text } : {}

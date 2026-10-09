@@ -230,6 +230,26 @@ async function exercise(root: string, owner: string, widen: () => Promise<void>)
   wide.dispatchEvent(drag)
   check(`${root}: dragging the image itself is cancelled`, drag.defaultPrevented)
 
+  const n4 = calls.length
+  const inside = spot(wide, 0.5, 0.5)
+  const wrect = wide.getBoundingClientRect()
+  mouse(wide, 'mousedown', inside, { detail: 1, buttons: 1 })
+  await tick(45)
+  const outside = { clientX: wrect.right + 80, clientY: wrect.top + wrect.height / 2 }
+  window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: outside.clientX, clientY: outside.clientY, buttons: 1 }))
+  await tick(45)
+  window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: outside.clientX, clientY: outside.clientY, button: 0, buttons: 0, detail: 1 }))
+  await tick(40)
+  const outs = since(n4, 'browser.pointer').map((c) => c.args[1] as { type: string; x: number; y: number })
+  check(
+    `${root}: a drag released outside the picture still sends the release, pulled onto the page's right edge`,
+    outs.map((p) => p.type).join(',') === 'down,move,up' && outs[1].x === wide.naturalWidth && outs[2].x === wide.naturalWidth,
+    JSON.stringify(outs)
+  )
+  mouse(wide, 'mousemove', inside, { buttons: 0 })
+  await tick(45)
+  check(`${root}: after the release, a plain hover is a move with no button held`, (since(n4, 'browser.pointer').at(-1)?.args[1] as { buttons: number; type: string })?.buttons === 0)
+
   const btn = shotButton(root)!
   const composer = document.querySelector(`#chat .composer textarea`) as HTMLTextAreaElement | null
   const composerBefore = composer?.value ?? ''
@@ -252,6 +272,16 @@ async function exercise(root: string, owner: string, widen: () => Promise<void>)
     [{ key: 'z', code: 'KeyZ', metaKey: true, shiftKey: true }, 'redo']
   ]
   const cmdPrevented = cmds.map(([k]) => keydown(btn, k).defaultPrevented)
+  const chords: KeyboardEventInit[] = [
+    { key: 'ArrowLeft', code: 'ArrowLeft', metaKey: true },
+    { key: 'ArrowRight', code: 'ArrowRight', metaKey: true, shiftKey: true },
+    { key: 'ArrowUp', code: 'ArrowUp', metaKey: true },
+    { key: 'ArrowDown', code: 'ArrowDown', metaKey: true },
+    { key: 'Backspace', code: 'Backspace', metaKey: true },
+    { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true },
+    { key: 'Backspace', code: 'Backspace', altKey: true }
+  ]
+  const chordPrevented = chords.map((k) => keydown(btn, k).defaultPrevented)
   const quit = keydown(btn, { key: 'q', code: 'KeyQ', metaKey: true })
   await tick(40)
   const sent = since(n3, 'browser.key').map((c) => ({ owner: c.args[0], ...(c.args[1] as { key: string; modifiers: number; text?: string; command?: string }) }))
@@ -263,10 +293,16 @@ async function exercise(root: string, owner: string, widen: () => Promise<void>)
   )
   check(
     `${root}: Cmd+V, A, C, X, Z and Shift+Z become paste, selectAll, copy, cut, undo, redo`,
-    sent.slice(6).map((k) => k.command).join(',') === cmds.map(([, c]) => c).join(',') && cmdPrevented.every(Boolean),
-    JSON.stringify(sent.slice(6))
+    sent.slice(6, 12).map((k) => k.command).join(',') === cmds.map(([, c]) => c).join(',') && cmdPrevented.every(Boolean),
+    JSON.stringify(sent.slice(6, 12))
   )
-  check(`${root}: Cmd+Q stays Brain's (not sent, not prevented)`, sent.length === 12 && !quit.defaultPrevented)
+  const chordSent = sent.slice(12).map((k) => `${k.key}:${k.modifiers}`).join(' ')
+  check(
+    `${root}: Cmd/Option with arrows and Backspace (line and word moves) reach the page with their modifiers`,
+    chordSent === 'ArrowLeft:4 ArrowRight:12 ArrowUp:4 ArrowDown:4 Backspace:4 ArrowLeft:1 Backspace:1' && chordPrevented.every(Boolean),
+    chordSent
+  )
+  check(`${root}: Cmd+Q stays Brain's (not sent, not prevented)`, sent.length === 19 && !quit.defaultPrevented)
   check(`${root}: Brain's composer got none of those keys`, (composer?.value ?? '') === composerBefore)
 
   const srcBefore = img(root)!.getAttribute('src')
