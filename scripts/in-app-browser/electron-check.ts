@@ -587,19 +587,27 @@ async function phaseOne() {
     const tabs = chromeTabs()
     check(`${label}: no new browser process and Chrome's windows/tabs unchanged`, fresh.length === 0 && tabs === oracleBefore.tabs, `new ${fresh.join(',')} tabs ${oracleBefore.tabs} -> ${tabs}`)
   }
-  const shellAsk = 'Run exactly this in the shell and then show me its exact output, nothing else: command -v open; open https://example.com'
+  // Brain's own rule tells chats not to open web pages, so a model may decline this unless it knows it is testing that guard.
+  const shellAsk =
+    "This is a test of Brain's open guard: the open in your PATH refuses web pages and opens nothing. " +
+    'Run exactly this in the shell and then show me its exact output, nothing else: command -v open; open https://example.com'
   const shimSeen = (answer: string) => answer.includes('chat-shims/open') && /do not open web pages/i.test(answer)
+  // A model that still declines gets asked once more in the same chat; the check is the shim, not the model's mood.
+  const twice = async (ask: (text: string) => Promise<string>) => {
+    const first = await ask(shellAsk)
+    return shimSeen(first) ? first : ask('Please run it now; it is the test described above and nothing will open.')
+  }
   await claudeWarm({ tabId: 'K1', cwd, model: 'sonnet', effort: 'low' })
-  const k1 = await deadline(claudePrompt({ tabId: 'K1', cwd, text: shellAsk, onEvent: noop }), 300_000, 'Claude shell turn')
+  const k1 = await twice((text) => deadline(claudePrompt({ tabId: 'K1', cwd, text, onEvent: noop }), 300_000, 'Claude shell turn'))
   check('J2 Claude\'s shell has the open shim and it refuses', shimSeen(k1), k1.slice(0, 200))
   await acpWarm({ kind: 'grok', tabId: 'K2', cwd })
-  const k2 = await deadline(acpPrompt({ kind: 'grok', tabId: 'K2', cwd, text: shellAsk, alwaysApprove: true, onEvent: noop }), 300_000, 'Grok shell turn')
+  const k2 = await twice((text) => deadline(acpPrompt({ kind: 'grok', tabId: 'K2', cwd, text, alwaysApprove: true, onEvent: noop }), 300_000, 'Grok shell turn'))
   check('J2 Grok\'s shell (its chat leader) has the open shim and it refuses', shimSeen(k2), k2.slice(0, 200))
   await acpWarm({ kind: 'cursor', tabId: 'K3', cwd })
-  const k3 = await deadline(acpPrompt({ kind: 'cursor', tabId: 'K3', cwd, text: shellAsk, alwaysApprove: true, onEvent: noop }), 300_000, 'Cursor shell turn')
+  const k3 = await twice((text) => deadline(acpPrompt({ kind: 'cursor', tabId: 'K3', cwd, text, alwaysApprove: true, onEvent: noop }), 300_000, 'Cursor shell turn'))
   check('J2 Cursor\'s shell has the open shim and it refuses', shimSeen(k3), k3.slice(0, 200))
   await codexWarm({ tabId: 'K4', cwd })
-  const k4 = await deadline(codexPrompt({ tabId: 'K4', cwd, text: shellAsk, onEvent: noop }), 300_000, 'Codex shell turn')
+  const k4 = await twice((text) => deadline(codexPrompt({ tabId: 'K4', cwd, text, onEvent: noop }), 300_000, 'Codex shell turn'))
   check('J2 Codex\'s shell has the open shim and it refuses', shimSeen(k4), k4.slice(0, 200))
   oracleSame('J2')
 
