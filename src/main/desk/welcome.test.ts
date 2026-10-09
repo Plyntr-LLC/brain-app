@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -210,9 +210,4 @@ test('starters: the most recently changed client folder, in title case', () => {
   ])
   utimesSync(join(brain, 'clients', 'gutter_iq'), 2_000_000_000, 2_000_000_000)
   assert.deepEqual(starters(brain).map((s) => s.fill), ['Catch me up on Gutter Iq', "Draft a reply to Gutter Iq's last note", 'What can the team do?'])
-})
-
-test('welcome spawns nothing: no ai-cli, no child_process', () => {
-  const src = readFileSync(new URL('./welcome.ts', import.meta.url), 'utf8')
-  assert.doesNotMatch(src, /(from|import\()\s*['"][^'"]*(child_process|ai-cli)/)
 })

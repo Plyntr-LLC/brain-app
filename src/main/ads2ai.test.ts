@@ -1,7 +1,9 @@
 // Run: npx esbuild src/main/ads2ai.test.ts --bundle --platform=node --format=esm --packages=external --outfile=/tmp/a.test.mjs && node --test /tmp/a.test.mjs
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { installStatus, myTeams, requestCode, resolveInvite, verifyCode } from './ads2ai.ts'
+import './test-resolve.ts'
+
+const { installStatus, myTeams, requestCode, resolveInvite, verifyCode } = await import('./ads2ai.ts')
 
 function withEnv(on: boolean, fn: () => Promise<void>): () => Promise<void> {
   return async () => {

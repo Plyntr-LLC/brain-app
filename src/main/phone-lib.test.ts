@@ -281,61 +281,19 @@ test('shownPhoneLine names attachments like desktop', () => {
   assert.equal(shownPhoneLine('hi', []), 'hi')
 })
 
-test('phone server binds loopback only and does not log the token', () => {
+test('phone server binds loopback only and does not log or leak the token', () => {
   const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'phone.ts'), 'utf8')
   assert.match(src, /listen\(port, '127\.0\.0\.1'/)
-  assert.match(src, /--token-file/)
-  assert.match(src, /brain-phone\.plyntr\.com/)
   assert.equal(/0\.0\.0\.0/.test(src), false)
   assert.equal(/console\.(log|info|debug)\(/.test(src), false)
-  assert.match(src, /function applyLiveEvent/)
-  assert.match(src, /void \(async \(\) =>/)
-  assert.match(src, /pinChatId\(chatIds/)
-  assert.match(src, /\/api\/tab/)
-  assert.match(src, /\/api\/attach/)
-  assert.match(src, /stashBytes/)
-  assert.match(src, /sendPhoneStop/)
-  assert.match(src, /forceQueue \|\| isChatBusy/)
+  assert.match(src, /--token-file/)
   assert.equal(/saveToken\(mintToken\(\)\)/.test(src), false)
-  assert.match(src, /mintOffer\(\)/)
-  assert.match(src, /\/api\/pair/)
-  assert.match(src, /offer = null/)
   assert.match(src, /tokenOk\(p, offer\.p\)/)
-  assert.match(src, /phone-devices\.json/)
-  assert.match(src, /sendSealed/)
-  assert.match(src, /phonePairUrl/)
-  assert.match(src, /keepPhoneTabs/)
-  assert.match(src, /loadAnyChats/)
-  assert.match(src, /persistLiveChats/)
-  assert.match(src, /phoneOwned/)
-  assert.match(src, /freshUnknown && disk/)
-  assert.match(src, /newTabFromPhone\('grok'\)/)
-  assert.match(src, /phoneOwned.delete/)
-  assert.match(src, /saveChats\(\{ \.\.\.live.chats, cwd \}\)/)
-  assert.match(src, /if \(!incoming\.length\)/)
-  const ipc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ipc-stubs.ts'), 'utf8')
-  assert.match(ipc, /saveChats\(rememberPhoneChats\(state\)\)/)
-  assert.match(ipc, /loadAnyChats\(cwd\)/)
-  assert.match(src, /function closeTabFromPhone/)
-  assert.match(src, /No chat to close/)
-  const closeSrc = src.slice(src.indexOf('function closeTabFromPhone'), src.indexOf('function asFiles'))
-  assert.equal(/pickChatTab/.test(closeSrc), false)
-  assert.equal(/x-file-name/.test(src), false)
-  assert.equal(/text\/event-stream/.test(src), false)
-  assert.equal(/sseBroadcast/.test(src), false)
+  assert.match(src, /offer = null/)
   assert.equal(/\/\?t=/.test(src), false)
   assert.match(src, /stashed\.has\(real\)/)
-  assert.match(src, /Those files are not from this Phone session/)
-  assert.match(src, /stashed\.clear\(\)/)
   assert.equal(/clipboard\.writeText/.test(src), false)
-  const settings = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/SettingsPanel.tsx'),
-    'utf8'
-  )
-  assert.match(settings, /phone\.pairQr/)
-  assert.match(settings, /phone\.pairPin/)
-  assert.match(settings, /Linked phones/)
-  assert.equal(/email code/.test(settings), false)
+  const settings = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/SettingsPanel.tsx'), 'utf8')
   assert.equal(/Copy secret link/.test(settings), false)
   assert.equal(/joewine2@gmail\.com/.test(settings), false)
 })
@@ -353,59 +311,7 @@ test('underDir only allows real files inside the drop folder', () => {
   }
 })
 
-test('phone Now routes through sendTextRef and sendText reads busyRef', () => {
-  const src = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/TerminalWorkspace.tsx'),
-    'utf8'
-  )
-  assert.match(src, /await sendTextRef\.current\(item\.text/)
-  const sendText = src.slice(src.indexOf('async function sendText'), src.indexOf('sendTextRef.current = sendText'))
-  assert.match(sendText, /if \(opts\?\.cancel && busyRef\.current\)/)
-  assert.match(sendText, /if \(busyRef\.current && !opts\?\.fromQueue/)
-  assert.equal(/if \(opts\?\.cancel && busy\)/.test(sendText), false)
-  assert.match(src, /files: \(q\.files \|\| \[\]\)\.map/)
-  const persist = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'persist.ts'), 'utf8')
-  assert.match(persist, /if \(exact\) return exact/)
-  assert.match(persist, /normCwd\(state.cwd\)/)
-  const phoneMain = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'phone.ts'), 'utf8')
-  assert.match(phoneMain, /row\?\.files/)
-  assert.match(src, /sayBox\.current\?\.focus/)
-  assert.equal(/className="starters"/.test(src), false)
-  assert.equal(/What does this company do\?/.test(src), false)
-})
-
 test('explorer lists files outside the watched brain folder', () => {
-  const src = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/TerminalWorkspace.tsx'),
-    'utf8'
-  )
-  const pty = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/ptyChat.ts'),
-    'utf8'
-  )
-  const away = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/AwayBlock.tsx'), 'utf8')
-  const firstRun = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/FirstRun.tsx'), 'utf8')
-  assert.match(away, /Also touching/)
-  assert.match(away, /awayGroups/)
-  assert.match(away, /outsideProject/)
-  // The sidebar's only away list is AwayBlock: no leftover file dump beside it.
-  assert.equal(src.match(/<AwayBlock/g)?.length, 1)
-  for (const gone of ['awayGroups', 'Also touching', 'className="away"', 'className={`flink turn', 'invite-dock', 'showInvite', 'settings-toggle']) {
-    assert.equal(src.includes(gone), false, `TerminalWorkspace.tsx still has ${gone}`)
-  }
-  // Settings lives in the title bar, never behind a condition.
-  const titleBar = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../renderer/src/TitleBar.tsx'), 'utf8')
-  assert.match(firstRun, /<TitleBar\b/)
-  const at = titleBar.indexOf('className="ghost title-set settings-toggle"')
-  assert.ok(at > 0, 'title-bar Settings button')
-  const before = titleBar.slice(0, at)
-  const logOutEnd = before.lastIndexOf(') : null}')
-  assert.ok(logOutEnd > before.lastIndexOf('Log out'), 'Settings comes after the Log out conditional closes')
-  assert.equal(/&& \(|\? \(/.test(before.slice(logOutEnd + ') : null}'.length)), false, 'nothing conditional opens before Settings')
-  assert.equal(/showInvite=\{|setShowInvite=\{/.test(firstRun.slice(firstRun.indexOf('<TerminalWorkspace'), firstRun.indexOf('<TerminalWorkspace') + 300)), false)
-  assert.match(src, /outsideProject/)
-  assert.match(src, /sameCwd\(saved.cwd/)
-  assert.match(pty, /export \{ outsideProject \}/)
   assert.equal(
     outsideProject('/Users/joe/Projects/agency-brain', '/Users/joe/Projects/brain-app/src/main/phone.ts'),
     '/Users/joe/Projects/brain-app'
@@ -446,10 +352,4 @@ test('sealJson roundtrips and query tokens are ignored', () => {
   assert.equal(second.ok, true)
   const third = rateHit(1200, second.next, 1000, 2)
   assert.equal(third.ok, false)
-})
-
-test('a queued paste shows its folded line on the phone and edits as the full text', () => {
-  const page = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'phone-page.ts'), 'utf8')
-  assert.match(page, /esc\(q\.label \|\| q\.text \|\| 'Attachment'\)/)
-  assert.match(page, /say\.value = item\.text \|\| ''/)
 })

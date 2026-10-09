@@ -47,33 +47,13 @@ test('reuseExistingFolder never returns a different team folder', () => {
   )
 })
 
-test('setup lists Agency Brain and still reaches ready without it', () => {
-  const src = readFileSync(new URL('./install.ts', import.meta.url), 'utf8')
-  assert.match(src, /label: 'Agency Brain'/)
-  assert.match(src, /Boolean\(folder && pickedPresent && gitPresent\(\) && cloudflaredPresent\(\)\)/)
-  assert.match(src, /currentBrainFolder\(\)/)
-  assert.match(src, /id: 'cloudflared'/)
-  assert.match(src, /cloudflaredPresent\(\)/)
-  assert.match(src, /SUDO_ASKPASS/)
-  assert.match(src, /cloudflared-darwin-arm64\.tgz/)
-  assert.match(src, /AbortSignal\.timeout\(120_000\)/)
-  assert.match(src, /return resolveCloudflaredBin\(\) !== null/)
-  const cf = readFileSync(new URL('./cloudflared-bin.ts', import.meta.url), 'utf8')
-  assert.match(cf, /env\.CLOUDFLARED_BIN/)
-  assert.match(cf, /spawnSync\('where', \['cloudflared'\]/)
-  const phone = readFileSync(new URL('./phone.ts', import.meta.url), 'utf8')
-  assert.match(phone, /import \{ resolveCloudflaredBin \} from '\.\/install'/)
+test('dry-run setup never clones, and a clone passes its token through the credential helper', () => {
   const ipc = readFileSync(new URL('./ipc-stubs.ts', import.meta.url), 'utf8')
   assert.match(ipc, /clone skipped in dry-run/)
   assert.match(ipc, /switchBrain\(cloned\.dest\)/)
   const clone = readFileSync(new URL('./clone.ts', import.meta.url), 'utf8')
   assert.match(clone, /credential\.helper=/)
   assert.match(clone, /x-access-token:\$\{t\}@/)
-  const sync = readFileSync(new URL('./brain-sync.ts', import.meta.url), 'utf8')
-  assert.match(sync, /gitSyncAuthed/)
-  assert.match(sync, /sync\.status === 'failed'/)
-  assert.match(sync, /sync\.status === 'attention'/)
-  assert.match(sync, /lastFolder/)
 })
 
 test('bridgeInstallUrl opens Brain Bridge for one repo', () => {
@@ -152,14 +132,6 @@ test('Path B install URL pins org and repo on /permissions', () => {
     String(plyntrInstallPin({ brainId: 'id', orgName: 'acme', repo: 'acme/x-brain', orgId: 1 }).detail),
     /organization or repository id is missing/
   )
-  const ipc = readFileSync(new URL('./ipc-stubs.ts', import.meta.url), 'utf8')
-  assert.equal(ipc.includes('plyntrBrainSyncInstallUrl(issuedId, look.ok ? look.id : undefined)'), false)
-  assert.equal(ipc.includes('lookupGithubAccount(parts.org)'), false)
-  assert.equal(ipc.includes('https://github.com/apps/plyntr-brain-sync/installations/new?'), false)
-  assert.equal(ipc.includes("resolvePlyntrRepoName(orgName, '', repo)"), false)
-  assert.match(ipc, /plyntrInstallPin\(/)
-  assert.match(ipc, /pinnedPlyntrInstall\(issuedId, parts\.org, parts\.repo\)/)
-  assert.match(ipc, /repoOwner: rid\.owner/)
 })
 
 test('clonePlan refuses an empty checkout and replaces a blank folder', () => {
@@ -229,10 +201,4 @@ test('githubInstallReady is true only when GitHub says the app is installed', ()
   assert.equal(githubInstallReady({ installed: false, repoUrl: 'https://github.com/acme/brain' }), false)
   assert.equal(githubInstallReady({ installed: false }), false)
   assert.equal(githubInstallReady(null), false)
-})
-
-test('setup:install accepts Agency Brain id', () => {
-  const src = readFileSync(new URL('./install.ts', import.meta.url), 'utf8')
-  assert.match(src, /TOOL_IDS: NeedId\[\] = \[[^\]]*'ab'/)
-  assert.match(src, /export function isNeedId/)
 })

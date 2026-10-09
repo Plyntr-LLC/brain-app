@@ -1,0 +1,92 @@
+test cleanup check 2026-10-09T07:17:14Z
+
+## 1. Counts (scripts/audit/count-tests.mjs, before = HEAD 0b9f372 working tree, after = this change)
+before {"f":96,"t":590,"a":3721} after {"f":95,"t":581,"a":3579}
+src/main/agent-label.test.ts: tests 8->7, asserts 69->56
+   removed: the skin pulse is not wrapped in if (busy)
+src/main/claude-thought.test.ts: tests 6->5, asserts 12->10
+   removed: Claude reads thinking itself and asText does not
+src/main/desk/browser.test.ts: tests 27->26, asserts 117->115
+   removed: browser.ts uses payCheck from the shared file and does not split words itself
+src/main/desk/ipc.test.ts: tests 4->4, asserts 41->32
+   removed: the live wiring uses the one shared in-app browser and the dry-run env
+   renamed to: Desk passes the dry-run flag and takes its write role through the guard
+src/main/desk/runner.test.ts: tests 26->26, asserts 182->180
+   removed: the runner returns the child's text as printed and does not parse fences or import ai-cli.ts
+   renamed to: the runner returns the child's text as printed
+src/main/desk/welcome.test.ts: tests 15->14, asserts 59->58
+   removed: welcome spawns nothing: no ai-cli, no child_process
+src/main/factory/conductor.test.ts: tests 11->11, asserts 445->426
+src/main/grok-leader.test.ts: tests 11->10, asserts 40->38
+   removed: Cursor picker keeps live Grok models instead of stripping grok-*
+src/main/phone-lib.test.ts: tests 19->17, asserts 242->179
+   removed: phone server binds loopback only and does not log the token | phone Now routes through sendTextRef and sendText reads busyRef | a queued paste shows its folded line on the phone and edits as the full text
+   renamed to: phone server binds loopback only and does not log or leak the token
+src/main/plyntr-move.test.ts: tests 6->6, asserts 35->34
+src/main/project-hooks.test.ts: tests 3->3, asserts 8->9
+src/main/setup-folder.test.ts: tests 10->9, asserts 87->62
+   removed: setup lists Agency Brain and still reaches ready without it | setup:install accepts Agency Brain id
+   renamed to: dry-run setup never clones, and a clone passes its token through the credential helper
+src/renderer/src/TitleBar.test.ts: tests 1->0, asserts 2->0
+   removed: the app window draws its top row through TitleBar
+src/shared/plyntr-transfer.test.ts: tests 5->5, asserts 22->20
+   removed: settings and the transfer call use the owner-seat gate
+   renamed to: the transfer call uses the owner-seat token and the session role
+(the three revived files were counted before too; they now run: ads2ai 2, sync-attention 1, project-hooks 3)
+
+## 2. Unit tests: node --test --experimental-strip-types on every test file
+95 files, 95 passing; tests pass=581 fail=0 (before: 92 of 96 files passing, 583 pass 4 fail; the 96th listed file now is the deleted TitleBar.test.ts).
+
+## 3. Render pages
+RENDER_UI_PASS activity-fold (6 checks)
+RENDER_UI_PASS away (33 checks)
+RENDER_UI_PASS browser-follow (15 checks)
+RENDER_UI_PASS browser-live (41 checks)
+RENDER_UI_PASS browser-opened (9 checks)
+RENDER_UI_PASS browser-sizes (38 checks)
+RENDER_UI_PASS chat-look (32 checks)
+RENDER_UI_PASS chat-paste (40 checks)
+RENDER_UI_PASS chat (35 checks)
+RENDER_UI_PASS desk (149 checks)
+RENDER_UI_PASS factory (127 checks)
+RENDER_UI_PASS first-run (3 checks)
+RENDER_UI_PASS rail (41 checks)
+RENDER_UI_PASS shared-browser (12 checks)
+RENDER_UI_PASS whatsapp-send (14 checks)
+
+## 4. check-shell-switch.ts
+exit 0, last line: ok
+
+## 5 and 6. Deliberate breaks on a scratch copy (/tmp/mut-brain-app, repo untouched)
+ok   M1 discard pushes: src/main/sync-attention.test.ts untouched pass=1 fail=0; broken pass=0 fail=1
+ok   M2 dry-run setup fetches: src/main/ads2ai.test.ts untouched pass=2 fail=0; broken pass=1 fail=1
+ok   M3 phone logs: src/main/phone-lib.test.ts untouched pass=17 fail=0; broken pass=16 fail=1
+ok   M4 phone listens on all interfaces: src/main/phone-lib.test.ts untouched pass=17 fail=0; broken pass=16 fail=1
+ok   M5 Tester uses npx: src/main/factory/conductor.test.ts untouched pass=11 fail=0; broken pass=10 fail=1
+ok   M6 reads the grok auth file: src/main/cli-auth.test.ts untouched pass=1 fail=0; broken pass=0 fail=1
+ok   M7 transfer uses another token: src/shared/plyntr-transfer.test.ts untouched pass=5 fail=0; broken pass=4 fail=1
+ok   M8 install handler calls quitAndInstall: src/main/phone-lib.test.ts untouched pass=17 fail=0; broken pass=16 fail=1
+ok   M9 Desk drops the dry-run flag: src/main/desk/ipc.test.ts untouched pass=4 fail=0; broken pass=3 fail=1
+ok   M10 Desk hard-codes its write role: src/main/desk/ipc.test.ts untouched pass=4 fail=0; broken pass=3 fail=1
+ok   M11 dry-run setup clones: src/main/setup-folder.test.ts untouched pass=9 fail=0; broken pass=8 fail=1
+ok   M12 slash commands get wrapped: src/main/project-hooks.test.ts untouched pass=3 fail=0; broken pass=2 fail=1
+MUTATIONS_PASS
+(first run: M10 and M12 were not caught; the Desk role check then matched imported names only and the slash test ran in a folder with no hook. Both checks were strengthened, then all 12 caught.)
+
+## 7. Hook users and typecheck
+test-resolve.ts is imported by: src/main/ads2ai.test.ts src/main/project-hooks.test.ts src/main/sync-attention.test.ts 
+npm run typecheck: clean
+
+## 8. Every deleted test: what it held besides wording or code shape, and what covers that now
+
+- `TitleBar.test.ts` "the app window draws its top row through TitleBar": two shape asserts (FirstRun uses `<TitleBar>`, no `className="titlebar"` in FirstRun). No behavior. The title's real rule (it shows the open brain's account, never the shell email) is checked in `check-shell-switch.ts`.
+- `desk/browser.test.ts` "browser.ts uses payCheck from the shared file...": two shape asserts (the import line, no copied word lists). The pay fence itself is covered by the pay tests in the same file, `check-in-app-browser.ts` step 8, and `check-whatsapp-send.ts` step 10.
+- `desk/welcome.test.ts` "welcome spawns nothing": one import scan. No behavior assert; the other 14 welcome tests build the welcome with no process dependencies at all.
+- `claude-thought.test.ts` "Claude reads thinking itself and asText does not": two function-body text checks. Thinking parsing is covered by the other 5 tests in that file.
+- `grok-leader.test.ts` "Cursor picker keeps live Grok models": two renderer text checks. Shape only; no other test.
+- `agent-label.test.ts` "the skin pulse is not wrapped in if (busy)": a source scanner run over SkinPane.tsx plus text pins. The behavior it stood for (the working pulse shows for background work while idle) is asserted by the remaining `skinActivity` tests in that file (idle with background tasks shows, with label and seconds).
+- `phone-lib.test.ts` "phone Now routes through sendTextRef and sendText reads busyRef": TerminalWorkspace, persist.ts and phone.ts text pins. Shape only.
+- `phone-lib.test.ts` "a queued paste shows its folded line on the phone...": two phone-page.ts text pins. Shape only.
+- `setup-folder.test.ts` "setup:install accepts Agency Brain id": two install.ts text pins (`'ab'` in `TOOL_IDS`, `isNeedId` exported). Shape only; install.ts pulls electron at load, which is why it was a text pin.
+
+Pins dropped inside reduced tests are the same kind: Desk's `makeInAppLaunch`, `sharedDeskBrowser` and puppeteer pins (one shared browser is covered by `shared-browser.test.ts` and `check-in-app-browser.ts`); Desk's `before-quit` text pin (the behavior is covered by "before-quit stops busy bots and writes the quit sentence" in the same `desk/ipc.test.ts`, which drives the real handler); and Desk's two checks that the stop sentences (`CLOSED`, `QUIT`) are not written in `desk/ipc.ts` (shape: where the sentence lives; the same file's close and quit tests assert the sentences that are actually written, `stoppedText(desk, CLOSED)` and `stoppedText(desk, QUIT)`), the Path B `ipc-stubs.ts` pins (the URL and pin behavior asserts stay), FactoryPane.tsx and TerminalWorkspace.tsx text in the Factory wording test (the brief, tier, ask-route and limit asserts stay; the factory render page checks the pane on screen, 127 checks), the phone server's ~35 "contains function X" pins (the security asserts stay), the explorer's AwayBlock/FirstRun/TitleBar pins (the `outsideProject` asserts stay), the setup test's Agency Brain label, cloudflared and sync-status pins (the dry-run clone skip and the credential helper stay).

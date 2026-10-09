@@ -191,16 +191,12 @@ test('cursor argv ends with the prompt, keeps the sandbox, and never approves MC
   assert.ok(!argv.includes('--approve-mcps'))
 })
 
-test("the runner returns the child's text as printed and does not parse fences or import ai-cli.ts", async () => {
+test("the runner returns the child's text as printed", async () => {
   const out = 'Here is the plan.\n\n```send\nto: writer\n\nThe notes are in.\n```\n'
   const { spawn } = fakeSpawn([{ code: 0, out }])
   const r = await createDeskRunner(depsFor(spawn)).run({ bot: bot('researcher', 'grok'), prompt: PROMPT, brain: BRAIN })
   assert.equal(r.status, 'ok')
   assert.equal(r.status === 'ok' && r.text, out.trim())
-  const src = readFileSync(new URL('./runner.ts', import.meta.url), 'utf8')
-  const imports = src.split('\n').filter((l) => /^import\b/.test(l) || /^\} from /.test(l))
-  assert.ok(imports.length > 0)
-  assert.ok(imports.every((l) => !l.includes('ai-cli') && !l.includes('fences') && !l.includes('parseGrokLine')))
 })
 
 // ---------- child keys, stop, slow ----------

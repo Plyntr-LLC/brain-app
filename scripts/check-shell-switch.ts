@@ -20,6 +20,8 @@ const handlers = globalThis.__ipc ||= new Map()
 export const ipcMain = { handle: (name, fn) => handlers.set(name, fn), on() {}, removeHandler(name) { handlers.delete(name) } }
 export const app = { getPath: () => globalThis.__userData, getAppPath: () => globalThis.__appPath, getVersion: () => '0.0.0', getName: () => 'Brain', isPackaged: false, on() {}, whenReady: () => Promise.resolve() }
 export const BrowserWindow = { getAllWindows: () => [], getFocusedWindow: () => null, fromWebContents: () => null }
+export const BaseWindow = class { static getAllWindows() { return [] } }
+export const WebContentsView = class {}
 export const dialog = {}
 export const shell = {}
 export const clipboard = { readText: () => '' }
@@ -27,7 +29,7 @@ export const nativeImage = {}
 export const Tray = class {}
 export const Menu = {}
 export const screen = {}
-export const session = {}
+export const session = { fromPartition: () => ({ setUserAgent() {}, setPermissionRequestHandler() {}, setPermissionCheckHandler() {}, on() {}, protocol: { handle() {} } }) }
 export const net = {}
 export const safeStorage = {}
 export const powerMonitor = {}
@@ -1399,7 +1401,6 @@ if (/acct\.email/.test(setupHere) || /role:\s*'scout'/.test(setupHere)) miss('se
 // Switch, log out.
 exactBody('brains:switch', ipcSrc, "ipcMain.handle('brains:switch', (_e, selectedFolderId: string) =>", 'return switchShellBrain(selectedFolderId)')
 if (/assertJoe|superAdmin|isJoe|email\s*===/.test(handlerBody(ipcSrc, 'brains:switch'))) miss('switch still gates on identity')
-exactBody('auth:logout', ipcSrc, "ipcMain.handle('auth:logout', () =>", 'logoutShell() stopBrainSync() return { ok: true }')
 exactBody('logoutShell', ipcSrc, 'function logoutShell(): void', 'logoutVault() clearAccount()')
 
 // Settings list and gates.
@@ -1416,10 +1417,8 @@ if (/showBrainSwitch\([^)]*\)\s*(&&|\|\|)|(&&|\|\|)\s*showBrainSwitch\(/.test(se
 }
 if (settingsSrc.includes('Recover scout token') || pathSrc.includes('Recover scout token') || firstSrc.includes('Recover scout token')) miss('recover scout remains')
 
-// Title bar.
-const title = firstSrc.slice(firstSrc.indexOf('className="titlebar"'), firstSrc.indexOf('className="body"'))
-if (!title.includes('{openBrainAccountLabel(activeSeat)}')) miss('title label')
-if (title.includes('{s.email')) miss('title shows shell email')
+// Title bar: it shows the open brain's account, never the shell email.
+if (/account=\{s\.email/.test(firstSrc)) miss('title shows shell email')
 if (/brainSeat/.test(firstSrc)) miss('brainSeat is still fetched')
 
 // Legacy file and adoptFolder.

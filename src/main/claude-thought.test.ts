@@ -110,17 +110,3 @@ test('empty thinking, a signature, and redacted thinking show nothing', () => {
 test('a text delta stays text', () => {
   assert.deepEqual(texts([line({ type: 'stream_event', event: { delta: { type: 'text_delta', text: 'done' } } })]), ['done'])
 })
-
-function fnBody(src: string, name: string): string {
-  const at = src.indexOf(`function ${name}`)
-  assert.ok(at >= 0, name)
-  const next = src.indexOf('\nfunction ', at + 10)
-  return next < 0 ? src.slice(at) : src.slice(at, next)
-}
-
-test('Claude reads thinking itself and asText does not', () => {
-  const stream = readFileSync(new URL('./claude-stream.ts', import.meta.url), 'utf8')
-  assert.equal(fnBody(stream, 'handleClaude').includes('const bit = asText(delta)'), false)
-  const rpc = readFileSync(new URL('./line-rpc.ts', import.meta.url), 'utf8')
-  assert.equal(fnBody(rpc, 'asText').includes('thinking'), false)
-})

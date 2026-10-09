@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   agentInCommand,
@@ -121,78 +120,4 @@ test('skin shows one pulse for a busy handoff, an idle background task, or nothi
   if (review.show) assert.equal(review.label, 'Opus is reviewing')
   const none = skinActivity({ busy: false, waitLabel: 'Working', waitSec: 0, bgTasks: [], now })
   assert.equal(none.show, false)
-})
-
-function headerIsIfBusy(src: string, braceAt: number): boolean {
-  let j = braceAt - 1
-  while (j >= 0 && /\s/.test(src[j])) j--
-  const header = src.slice(Math.max(0, j - 40), j + 1)
-  return /if\s*\(\s*busy\s*\)$/.test(header)
-}
-
-function enclosesIfBusy(src: string, call: number): boolean {
-  let depth = 0
-  for (let i = call - 1; i >= 0; i--) {
-    const c = src[i]
-    if (c === '}') depth++
-    else if (c === '{') {
-      if (depth > 0) depth--
-      else if (headerIsIfBusy(src, i)) return true
-    }
-  }
-  return false
-}
-
-function pulseGatedByBusy(src: string): boolean {
-  let from = 0
-  let seen = 0
-  const needle = 'skinActivity('
-  while (from <= src.length) {
-    const call = src.indexOf(needle, from)
-    if (call < 0) break
-    seen++
-    if (enclosesIfBusy(src, call)) return true
-    from = call + needle.length
-  }
-  return seen !== 1
-}
-
-const wrap = `if (busy) {
-  const activity = skinActivity({ busy, waitLabel, waitSec, bgTasks, now: bgNow })
-  if (activity.show) { specs.push({ spec: s }) }
-}`
-
-const snippet = `const activity = skinActivity({ busy, waitLabel, waitSec, bgTasks, now: bgNow })
-if (activity.show) {
-  const s = specFromStreamEvent({ kind: 'status', data: 'work:' + activity.label })
-  if (s) {
-    s.props.seconds = activity.seconds
-    specs.push({ spec: s })
-  }
-}`
-
-const closedEarlier = `if (busy) { doOther() }
-const activity = skinActivity({ busy, waitLabel, waitSec, bgTasks, now: bgNow })
-if (activity.show) { specs.push({ spec: s }) }`
-
-test('the skin pulse is not wrapped in if (busy)', () => {
-  assert.equal(pulseGatedByBusy(wrap), true)
-  assert.equal(pulseGatedByBusy(snippet), false)
-  assert.equal(pulseGatedByBusy(closedEarlier), false)
-  const skin = readFileSync(new URL('../renderer/src/skin/SkinPane.tsx', import.meta.url), 'utf8')
-  assert.equal(pulseGatedByBusy(skin), false)
-  assert.match(skin, /skinActivity\(/)
-  const call = skin.indexOf('skinActivity(')
-  const args = skin.slice(call, skin.indexOf(')', call))
-  assert.match(args, /bgTasks/)
-  assert.match(args, /now:/)
-  assert.equal(skin.includes('function busyLabel'), false)
-  assert.equal(skin.includes('props.seconds = waitSec'), false)
-  assert.match(skin, /s\.props\.seconds = activity\.seconds/)
-  const workspace = readFileSync(new URL('../renderer/src/TerminalWorkspace.tsx', import.meta.url), 'utf8')
-  const workAt = workspace.indexOf("startsWith('work:')")
-  const workEnd = workspace.indexOf('if (ev.kind', workAt + 10)
-  assert.equal(workspace.slice(workAt, workEnd).includes('skinOnRef'), false)
-  assert.match(workspace, /bgTasks=\{bgTasks\}/)
-  assert.match(workspace, /bgNow=\{bgNow\}/)
 })

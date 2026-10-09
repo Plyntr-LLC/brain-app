@@ -167,7 +167,7 @@ async function main() {
   const c5 = chip('draft.md')
   check("turn 2: its chip sits in a row of its own", !!c5 && ![c1, c4].some((c) => c.closest('.skin-chips') === c5.closest('.skin-chips')), c5 ? 'shared' : 'missing')
   const avatars = [...thread().querySelectorAll<HTMLElement>('.skin-avatar')]
-  check('two avatars, one per turn, on the first row after your message', avatars.length === 2 && avatarsAfter1 === 1 && avatars.every((av) => av.closest('.skin-row')?.previousElementSibling?.classList.contains('me')), `${avatars.length} ${avatars.map((av) => av.closest('.skin-row')?.previousElementSibling?.className).join(' | ')}`)
+  check('two avatars, one per turn, on the first row after your message', avatars.length === 2 && avatarsAfter1 === 1 && avatars.every((av) => av.closest('.skin-row')?.previousElementSibling?.classList.contains('skin-user-turn')), `${avatars.length} ${avatars.map((av) => av.closest('.skin-row')?.previousElementSibling?.className).join(' | ')}`)
   check('avatars read G for Grok', avatars.every((av) => (av.textContent || '') === 'G'))
   check('no avatar on your own message', !thread().querySelector('.bubble.me .skin-avatar'))
   const perm = thread().querySelector<HTMLElement>('.skin-perm')

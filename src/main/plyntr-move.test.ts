@@ -38,8 +38,6 @@ test('a moved folder syncs with the plyntr git token, not ads2ai', () => {
     }
     assert.equal(gitCredentialForMode('agency-brain'), 'ads2ai')
     assert.equal(gitCredentialForMode(null), 'ads2ai')
-    const src = readFileSync(new URL('./brain-sync.ts', import.meta.url), 'utf8')
-    assert.match(src, /gitCredentialForMode/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -1,15 +1,24 @@
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
-import { extraFromStdout, toolCaptureFromUpdate, wrapPromptWithHooks } from './project-hooks.ts'
+import './test-resolve.ts'
+
+const { extraFromStdout, toolCaptureFromUpdate, wrapPromptWithHooks } = await import('./project-hooks.ts')
 
 test('slash commands skip project hook wrap', () => {
-  const out = wrapPromptWithHooks({
-    cwd: '/tmp',
-    kind: 'cursor',
-    sessionId: 's1',
-    text: '/compact'
-  })
-  assert.equal(out, '/compact')
+  const cwd = mkdtempSync(join(tmpdir(), 'hooks-'))
+  try {
+    const hook = join(cwd, 'code', 'typesafe', 'context-router')
+    mkdirSync(hook, { recursive: true })
+    writeFileSync(join(hook, 'hook.cjs'), 'process.stdout.write(JSON.stringify({ additional_context: "ROUTED" }))')
+    const say = (text: string) => wrapPromptWithHooks({ cwd, kind: 'cursor', sessionId: 's1', text })
+    assert.match(say('what changed today'), /ROUTED/)
+    assert.equal(say('/compact'), '/compact')
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
 })
 
 test('hook stdout additional_context is pulled from JSON', () => {

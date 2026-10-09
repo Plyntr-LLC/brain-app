@@ -89,7 +89,11 @@ const brain = {
     pressKey: (owner: string, key: string) => rec('pressKey', owner, key),
     wheel: (owner: string, deltaY: number) => rec('wheel', owner, deltaY),
     showWindow: () => rec('browserShow'),
-    close: (owner: string) => rec('close', owner)
+    close: (owner: string) => rec('close', owner),
+    watch: (owner: string, on: boolean) => rec('watch', owner, on),
+    onFrame: () => () => undefined,
+    pointer: (owner: string, ev: unknown) => rec('pointer', owner, ev),
+    key: (owner: string, ev: unknown) => rec('key', owner, ev)
   }
 }
 ;(window as unknown as { brain: typeof brain }).brain = brain

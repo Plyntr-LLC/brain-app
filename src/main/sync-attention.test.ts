@@ -7,21 +7,11 @@ import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { discardLocalSync, gitSyncAuthed, redact, setGitRunnerForCheck } from './clone'
-import {
-  discardDivergedSync,
-  holdDiscardForCheck,
-  holdTickForCheck,
-  lastBrainSyncError,
-  noteSyncForCheck,
-  resetTickReachedForCheck,
-  setCwdForCheck,
-  setTokenForCheck,
-  syncAttention,
-  tickForCheck,
-  tickReachedGitForCheck
-} from './brain-sync'
-import { NEEDS_ATTENTION, paintHealth } from './sync-health-paint'
+import './test-resolve.ts'
+
+const { discardLocalSync, gitSyncAuthed, redact, setGitRunnerForCheck } = await import('./clone.ts')
+const { discardDivergedSync, holdDiscardForCheck, holdTickForCheck, lastBrainSyncError, noteSyncForCheck, resetTickReachedForCheck, setCwdForCheck, setTokenForCheck, syncAttention, tickForCheck, tickReachedGitForCheck } = await import('./brain-sync.ts')
+const { NEEDS_ATTENTION, paintHealth } = await import('./sync-health-paint.ts')
 
 function git(cwd: string, args: string[]): string {
   return execFileSync('/usr/bin/git', ['-c', 'credential.helper=', ...args], { cwd, encoding: 'utf8' })

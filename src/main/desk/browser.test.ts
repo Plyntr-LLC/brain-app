@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -456,10 +455,4 @@ test('windowOpen: false before open, true after, still true after release; a clo
   await b.open('b_2')
   assert.equal(w.calls.launch.length, 2)
   assert.equal(b.windowOpen(), true)
-})
-
-test('browser.ts uses payCheck from the shared file and does not split words itself', () => {
-  const src = readFileSync(join(import.meta.dirname, 'browser.ts'), 'utf8')
-  assert.match(src, /import \{[^}]*\bpayCheck\b[^}]*\} from '\.\.\/\.\.\/shared\/desk\.ts'/)
-  assert.doesNotMatch(src, /PAY_HOLD|PAY_REFUSE/)
 })

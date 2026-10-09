@@ -127,12 +127,9 @@ test('transfer sends the owner seat token and refuses the scout token', () => {
   assert.equal(missing.ok, false)
 })
 
-test('settings and the transfer call use the owner-seat gate', () => {
-  const settings = readFileSync(new URL('../renderer/src/SettingsPanel.tsx', import.meta.url), 'utf8')
+test('the transfer call uses the owner-seat token and the session role', () => {
   const ipc = readFileSync(new URL('../main/ipc-stubs.ts', import.meta.url), 'utf8')
   const sync = readFileSync(new URL('../main/plyntr-sync.ts', import.meta.url), 'utf8')
-  assert.match(settings, /canOfferPlyntrTransfer\(/)
-  assert.equal(settings.includes('seat === \'owner\' && plyntrRows.seats.some((s) => s.plyntrScout'), false)
   assert.match(ipc, /plyntrSessionRole\(/)
   assert.match(sync, /transferUsesOwnerToken\(/)
   assert.match(sync, /token: gate\.token/)

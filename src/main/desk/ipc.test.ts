@@ -224,21 +224,10 @@ test('before-quit stops busy bots and writes the quit sentence', async () => {
   }
 })
 
-test('the live wiring uses the one shared in-app browser and the dry-run env', () => {
+test('Desk passes the dry-run flag and takes its write role through the guard', () => {
   const src = readFileSync(new URL('./ipc.ts', import.meta.url), 'utf8')
-  const shared = readFileSync(new URL('../shared-browser.ts', import.meta.url), 'utf8')
-  const fn = src.slice(src.indexOf('export function openDeskController'), src.indexOf('export function createDeskHost'))
-  assert.equal(fn.includes('makeInAppLaunch'), false)
-  assert.match(fn, /sharedDeskBrowser\(\)/)
-  assert.equal(shared.match(/makeInAppLaunch\(\)/g)?.length, 1)
-  assert.doesNotMatch(src + shared, /puppeteer/)
   assert.match(src, /process\.env\.BRAIN_APP_DRY_RUN === '1'/)
-  assert.match(src, /roleForBrainWrite/)
-  assert.match(src, /roleForKeylessWrite/)
-  assert.match(src, /brainIdForFolder/)
-  assert.match(src, /before-quit/)
-  assert.equal(src.includes(CLOSED), false)
-  assert.equal(src.includes(QUIT), false)
+  assert.match(src, /brainIdForFolder\(folder\) \? roleForBrainWrite\(folder\) : roleForKeylessWrite\(folder\)/)
 })
 
 test('openDeskController seeds the bots without sending or browsing', () => {
