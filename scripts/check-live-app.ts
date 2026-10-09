@@ -195,10 +195,11 @@ try {
     return p.wide ? p : null
   }, 'the picture going wide', 5000)
   check('the wide picture is not 1100x800 on screen', wide.w !== 1100 && wide.nw === 1100, `${wide.w}x${wide.h}`)
-  /** Where a page pixel shows on Brain's screen, inside the wide picture (object-fit contain). */
-  const onPicture = (px: number, py: number) => {
-    const scale = Math.min(wide.w / wide.nw, wide.h / wide.nh)
-    return { x: wide.x + (wide.w - wide.nw * scale) / 2 + px * scale, y: wide.y + (wide.h - wide.nh * scale) / 2 + py * scale }
+  /** Where a page pixel shows on Brain's screen right now, inside the wide picture (object-fit contain). The thread can scroll, so it is measured each time. */
+  const onPicture = async (px: number, py: number) => {
+    const now = await pic()
+    const scale = Math.min(now.w / now.nw, now.h / now.nh)
+    return { x: now.x + (now.w - now.nw * scale) / 2 + px * scale, y: now.y + (now.h - now.nh * scale) / 2 + py * scale }
   }
   const centre = (name: string) => {
     const r = rects.get(name)
@@ -207,23 +208,24 @@ try {
   }
 
   const srcBefore = (await pic()).src
-  const nextAt = centre('next')
+  const nextAt = await centre('next')
   const gets = events.filter((e) => e === 'GET /next').length
   await click(nextAt.x, nextAt.y)
   await until(() => events.filter((e) => e === 'GET /next').length > gets, 'GET /next after the picture click', 8000)
   check('a click on the wide picture at the link\'s mapped point opens /next', true)
   await until(async () => (await pic()).src !== srcBefore, 'a new frame in the wide picture within 2 s', 2000)
   check('the wide picture changed within 2 s of the navigation (live frames)', true)
+  await until(() => rects.has('back'), 'the /next page reporting its link', 5000)
   await sleep(500)
-  const backAt = centre('back')
+  const backAt = await centre('back')
   const gotForm = events.filter((e) => e === 'GET /form').length
   await click(backAt.x, backAt.y)
   await until(() => events.filter((e) => e === 'GET /form').length > gotForm, 'back to /form through the picture', 8000)
   await sleep(800)
 
   const f1 = rects.get('f1')!
-  const from = onPicture(f1.x + 8, f1.y + f1.h / 2)
-  const to = onPicture(f1.x + f1.w - 8, f1.y + f1.h / 2)
+  const from = await onPicture(f1.x + 8, f1.y + f1.h / 2)
+  const to = await onPicture(f1.x + f1.w - 8, f1.y + f1.h / 2)
   await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x, y: from.y })
   await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1 })
   for (let i = 1; i <= 5; i++) {
@@ -233,7 +235,7 @@ try {
   await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1 })
   const sel = await until(() => [...events].reverse().find((e) => e.startsWith('sel=')) || null, 'the drag selection report', 5000)
   check('a real drag across the field selects text in the page', Number(sel.slice(4)) > 3, sel)
-  const word = onPicture(f1.x + 30, f1.y + f1.h / 2)
+  const word = await onPicture(f1.x + 30, f1.y + f1.h / 2)
   await click(word.x, word.y, 1)
   await click(word.x, word.y, 2)
   const w = await until(() => [...events].reverse().find((e) => e.startsWith('word=')) || null, 'the double-click word report', 5000)
@@ -267,7 +269,7 @@ try {
   await until(() => events.includes(`val=${second}`), 'the real macOS Cmd+V paste in the page', 5000)
   check('a real macOS Cmd+V (through the Edit menu path) pastes into the page field, not the composer', (await composerValue()) === '', second)
 
-  const boxAt = centre('box')
+  const boxAt = await centre('box')
   await click(boxAt.x, boxAt.y)
   for (const ch of 'hi') await key(ch, `Key${ch.toUpperCase()}`, 0, ch)
   await key('Enter', 'Enter', 0, '\r')
